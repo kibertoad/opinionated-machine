@@ -1,0 +1,7 @@
+{
+    "extends": "@lokalise/tsconfig/tsc",
+    "include": ["src/**/*", "scripts/**/*", "test/**/*", "vitest.config.mts"],
+    "compilerOptions": {
+        "types": ["node", "vitest/globals"]
+    }
+}
