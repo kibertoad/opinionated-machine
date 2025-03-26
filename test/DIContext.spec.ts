@@ -153,7 +153,7 @@ describe('opinionated-machine', () => {
 
       const response = await injectDelete(app, TestController.contracts.deleteItem, {
         pathParams: {
-          userId: 1,
+          userId: '1',
         },
       })
 
