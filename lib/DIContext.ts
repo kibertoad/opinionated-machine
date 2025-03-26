@@ -1,10 +1,8 @@
-import { type AwilixContainer, Lifetime, type NameAndRegistrationPair, type Resolver } from 'awilix'
+import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance } from 'fastify'
 import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
-
-export const SINGLETON_CONFIG = { lifetime: Lifetime.SINGLETON }
 
 export type registerDependenciesParams<Dependencies> = {
   modules: readonly AbstractModule<unknown>[]
@@ -101,11 +99,15 @@ export class DIContext<Dependencies extends object> {
   }
 
   registerRoutes(app: FastifyInstance): void {
-    const controllers: Record<string, AbstractController<unknown>> = this.awilixManager.getWithTags(
-      ['controller'],
-    )
+    // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific schemas here
+    const controllers: Record<string, AbstractController<any>> = this.awilixManager.getWithTags([
+      'controller',
+    ])
     for (const controller of Object.values(controllers)) {
-      for (const route of controller.buildRoutes()) app.route(route)
+      const routes = controller.buildRoutes()
+      for (const route of Object.values(routes)) {
+        app.route(route)
+      }
     }
   }
 }
