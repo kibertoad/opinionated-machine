@@ -1,6 +1,7 @@
 import { type AwilixContainer, Lifetime, type NameAndRegistrationPair, type Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance } from 'fastify'
+import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
 
 export const SINGLETON_CONFIG = { lifetime: Lifetime.SINGLETON }
@@ -100,9 +101,11 @@ export class DIContext<Dependencies extends object> {
   }
 
   registerRoutes(app: FastifyInstance): void {
-    const controllers = this.awilixManager.getWithTags(['controller'])
-    for (const route of routes) {
-      app.route(route)
+    const controllers: Record<string, AbstractController<unknown>> = this.awilixManager.getWithTags(
+      ['controller'],
+    )
+    for (const controller of Object.values(controllers)) {
+      for (const route of controller.buildRoutes()) app.route(route)
     }
   }
 }
