@@ -8,10 +8,13 @@ import type {
 export abstract class AbstractController<
   APIContracts extends Record<
     string,
-    DeleteRouteDefinition<unknown> | GetRouteDefinition<unknown> | PayloadRouteDefinition<unknown>
+    // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
+    | DeleteRouteDefinition<any, any, any>
+    // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
+    | GetRouteDefinition<any, any, any>
+    // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
+    | PayloadRouteDefinition<any, any, any>
   >,
 > {
-  protected abstract contracts: APIContracts
-
   public abstract buildRoutes(): Record<keyof APIContracts, RouteType>
 }

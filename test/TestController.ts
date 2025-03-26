@@ -14,12 +14,10 @@ const contract = buildDeleteRoute({
   pathResolver: (pathParams) => `/users/${pathParams.userId}`,
 })
 
-export class TestController extends AbstractController<{
-  deleteItem: typeof contract
-}> {
-  protected static contracts = { deleteItem: contract }
+export class TestController extends AbstractController<typeof TestController.contracts> {
+  public static contracts = { deleteItem: contract } as const
 
-  protected buildRoutes() {
+  public buildRoutes() {
     return {
       deleteItem: buildFastifyNoPayloadRoute(
         TestController.contracts.deleteItem,
