@@ -1,9 +1,16 @@
 {
     "name": "opinionated-machine",
     "version": "1.0.0",
-    "description": "",
+    "description": "Very opinionated DI framework for fastify, built on top of awilix ",
     "type": "module",
-    "main": "index.js",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "maintainers": [
+        {
+            "name": "Igor Savin",
+            "email": "kibertoad@gmail.com"
+        }
+    ],
     "scripts": {
         "build": "tsc -p tsconfig.build.json",
         "lint": "biome check . && tsc",
@@ -39,5 +46,11 @@
         "typescript": "^5.8.2",
         "zod": "^3.24.2"
     },
-    "private": false
+    "private": false,
+    "publishConfig": {
+        "access": "public"
+    },
+    "keywords": ["dependency", "injection", "opinionated", "awilix", "di"],
+    "homepage": "https://github.com/kibertoad/opinionated-machine",
+    "files": ["README.md", "LICENSE", "dist/*"]
 }
