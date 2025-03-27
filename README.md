@@ -3,10 +3,10 @@ Very opinionated DI framework for fastify, built on top of awilix
 
 ## Basic usage
 
-Define a module, or several modules:
+Define a module, or several modules, that will be used for resolving dependency graphs, using awilix:
 
 ```ts
-import { AbstractModule } from 'opinionated-machine'
+import { AbstractModule, asSingletonClass, asMessageQueueHandlerClass, asJobWorkerClass, asJobQueueClass, asControllerClass } from 'opinionated-machine'
 
 export type ModuleDependencies = {
     service: Service
@@ -55,9 +55,9 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
     }
 
     // controllers will be automatically registered on fastify app
-    resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
+    resolveControllers() {
         return {
-            testController: asControllerClass(TestController),
+            testController: asControllerClass(MyController),
         }
     }
 }
@@ -65,7 +65,7 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
 
 ## Defining controllers
 
-Controllers require using fastify-api-contracts and are automatically registered to fastify app.
+Controllers require using fastify-api-contracts and allow to define application routes.
 
 ```ts
 import { buildFastifyNoPayloadRoute } from '@lokalise/fastify-api-contracts'
@@ -84,7 +84,7 @@ const contract = buildDeleteRoute({
   pathResolver: (pathParams) => `/users/${pathParams.userId}`,
 })
 
-export class MyController extends AbstractController<typeof TestController.contracts> {
+export class MyController extends AbstractController<typeof MyController.contracts> {
   public static contracts = { deleteItem: contract } as const
 
   public buildRoutes() {
@@ -106,6 +106,11 @@ export class MyController extends AbstractController<typeof TestController.contr
 Typical usage with a fastify app looks like this:
 
 ```ts
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
+import { createContainer } from 'awilix'
+import { fastify } from 'fastify'
+import { DIContext } from 'opinionated-machine'
+
 const module = new MyModule()
 const container = createContainer({
     injectionMode: 'PROXY',
@@ -120,7 +125,7 @@ const context = new DIContext<ModuleDependencies>(container, {
 
 context.registerDependencies({
     modules: [module],
-{} // dependency overrides if necessary, usually for testing purposes
+    {} // dependency overrides if necessary, usually for testing purposes
 })
 
 const app = fastify()
