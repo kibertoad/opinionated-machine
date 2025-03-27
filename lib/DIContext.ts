@@ -28,6 +28,8 @@ export class DIContext<Dependencies extends object> {
   private readonly options: DependencyInjectionOptions
   public readonly awilixManager: AwilixManager
   public readonly diContainer: AwilixContainer<Dependencies>
+  // biome-ignore lint/suspicious/noExplicitAny: all controllers are controllers
+  private readonly controllerResolvers: Resolver<any>[]
 
   constructor(diContainer: AwilixContainer, options: DependencyInjectionOptions) {
     this.options = options
@@ -39,6 +41,7 @@ export class DIContext<Dependencies extends object> {
       eagerInject: true,
       strictBooleanEnforced: true,
     })
+    this.controllerResolvers = []
   }
 
   private static preprocessResolver(entry: Resolver<unknown>, name: string): void {
@@ -49,14 +52,6 @@ export class DIContext<Dependencies extends object> {
     // default non-expendable entries to singletons
     if (entry.lifetime === TRANSIENT_LIFECYCLE && entry.entityType !== ENTITY_TYPES.EXPENDABLE) {
       entry.lifetime = SINGLETON_LIFECYCLE
-    }
-
-    if (entry.entityType === ENTITY_TYPES.CONTROLLER) {
-      if (!entry.tags) {
-        entry.tags = [ENTITY_TYPES.CONTROLLER]
-      } else {
-        entry.tags.push(ENTITY_TYPES.CONTROLLER)
-      }
     }
   }
 
@@ -75,6 +70,8 @@ export class DIContext<Dependencies extends object> {
         const currentEntry: Resolver<unknown> = diConfig[key]
         DIContext.preprocessResolver(currentEntry, key)
       }
+
+      this.controllerResolvers.push(...Object.values(module.resolveControllers()))
     }
     this.diContainer.register(diConfig)
 
@@ -99,11 +96,9 @@ export class DIContext<Dependencies extends object> {
   }
 
   registerRoutes(app: FastifyInstance): void {
-    // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific schemas here
-    const controllers: Record<string, AbstractController<any>> = this.awilixManager.getWithTags([
-      'controller',
-    ])
-    for (const controller of Object.values(controllers)) {
+    for (const controllerResolver of this.controllerResolvers) {
+      // biome-ignore lint/suspicious/noExplicitAny: any controller works here
+      const controller: AbstractController<any> = controllerResolver.resolve(this.diContainer)
       const routes = controller.buildRoutes()
       for (const route of Object.values(routes)) {
         app.route(route)
