@@ -1,5 +1,5 @@
 # opinionated-machine
-Very opinionated DI framework for fastify/message-queue-toolkit, built on top of awilix
+Very opinionated DI framework for fastify, built on top of awilix
 
 ## Basic usage
 

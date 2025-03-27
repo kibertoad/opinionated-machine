@@ -1,7 +1,7 @@
 {
     "name": "opinionated-machine",
     "version": "1.0.0",
-    "description": "",
+    "description": "Very opinionated DI framework for fastify, built on top of awilix ",
     "type": "module",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
