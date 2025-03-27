@@ -5,8 +5,8 @@ import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
 
-export type registerDependenciesParams<Dependencies> = {
-  modules: readonly AbstractModule<unknown>[]
+export type registerDependenciesParams<Dependencies, ExternalDependencies> = {
+  modules: readonly AbstractModule<unknown, ExternalDependencies>[]
   dependencyOverrides?: NameAndRegistrationPair<Dependencies>
 }
 
@@ -17,16 +17,10 @@ export type DependencyInjectionOptions = {
   periodicJobsEnabled?: false | typeof ENABLE_ALL
 }
 
-export const ENTITY_TYPES = {
-  EXPENDABLE: 'expendable',
-  CONTROLLER: 'controller',
-}
-
-export class DIContext<Dependencies extends object> {
+export class DIContext<Dependencies extends object, ExternalDependencies = never> {
   private readonly options: DependencyInjectionOptions
   public readonly awilixManager: AwilixManager
   public readonly diContainer: AwilixContainer<Dependencies>
-  //public readonly bgHandlerDiContainer: AwilixContainer
   // biome-ignore lint/suspicious/noExplicitAny: all controllers are controllers
   private readonly controllerResolvers: Resolver<any>[]
 
@@ -43,19 +37,24 @@ export class DIContext<Dependencies extends object> {
     this.controllerResolvers = []
   }
 
-  registerDependencies(params: registerDependenciesParams<Dependencies>): void {
+  registerDependencies(
+    params: registerDependenciesParams<Dependencies, ExternalDependencies>,
+    externalDependencies?: ExternalDependencies,
+  ): void {
     const _dependencyOverrides = params.dependencyOverrides ?? {}
     const diConfig: NameAndRegistrationPair<Dependencies> = {}
 
     for (const module of params.modules) {
-      const resolvedDIConfig = module.resolveDIConfig(this.options)
+      const resolvedDIConfig = module.resolveDependencies(this.options, externalDependencies)
 
       for (const key in resolvedDIConfig) {
         // @ts-expect-error we can't really ensure type-safety here
         diConfig[key] = resolvedDIConfig[key]
       }
 
-      this.controllerResolvers.push(...Object.values(module.resolveControllers()))
+      this.controllerResolvers.push(
+        ...(Object.values(module.resolveControllers()) as Resolver<unknown>[]),
+      )
     }
     this.diContainer.register(diConfig)
 

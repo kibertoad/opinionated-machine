@@ -74,7 +74,7 @@ export type TestModuleDependencies = {
 }
 
 export class TestModule extends AbstractModule<TestModuleDependencies> {
-  resolveDIConfig(
+  resolveDependencies(
     options: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<TestModuleDependencies> {
     return {
@@ -104,7 +104,7 @@ export class TestModule extends AbstractModule<TestModuleDependencies> {
     }
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<any> {
+  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testController: asControllerClass(TestController),
     }

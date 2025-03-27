@@ -5,11 +5,11 @@ export type MandatoryNameAndRegistrationPair<T> = {
   [U in keyof T]: Resolver<T[U]>
 }
 
-export abstract class AbstractModule<ModuleDependencies> {
-  public abstract resolveDIConfig(
+export abstract class AbstractModule<ModuleDependencies, ExternalDependencies = never> {
+  public abstract resolveDependencies(
     options?: DependencyInjectionOptions,
+    externalDependencies?: ExternalDependencies,
   ): MandatoryNameAndRegistrationPair<ModuleDependencies>
 
-  public abstract resolveControllers(): // biome-ignore lint/suspicious/noExplicitAny: we allow any controllers
-  MandatoryNameAndRegistrationPair<any>
+  public abstract resolveControllers(): MandatoryNameAndRegistrationPair<unknown>
 }
