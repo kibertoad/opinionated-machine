@@ -12,9 +12,4 @@ export abstract class AbstractModule<ModuleDependencies> {
 
   public abstract resolveControllers(): // biome-ignore lint/suspicious/noExplicitAny: we allow any controllers
   MandatoryNameAndRegistrationPair<any>
-
-  public abstract resolveBackgroundHandlers(
-    options?: DependencyInjectionOptions,
-    // biome-ignore lint/suspicious/noExplicitAny: we allow any background handlers
-  ): MandatoryNameAndRegistrationPair<any>
 }

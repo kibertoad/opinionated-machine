@@ -3,6 +3,7 @@ import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance } from 'fastify'
 import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
+import type { ENABLE_ALL } from './diConfigUtils.js'
 
 export type registerDependenciesParams<Dependencies> = {
   modules: readonly AbstractModule<unknown>[]
@@ -10,14 +11,11 @@ export type registerDependenciesParams<Dependencies> = {
 }
 
 export type DependencyInjectionOptions = {
-  enqueuedJobQueuesEnabled?: boolean | string[]
-  enqueuedJobProcessorsEnabled?: boolean | string[]
-  messageQueueConsumersEnabled?: boolean | string[]
-  periodicJobsEnabled?: boolean
+  jobQueuesEnabled?: false | typeof ENABLE_ALL | string[]
+  jobWorkersEnabled?: false | typeof ENABLE_ALL | string[]
+  messageQueueConsumersEnabled?: false | typeof ENABLE_ALL | string[]
+  periodicJobsEnabled?: false | typeof ENABLE_ALL
 }
-
-const SINGLETON_LIFECYCLE = 'SINGLETON'
-const TRANSIENT_LIFECYCLE = 'TRANSIENT'
 
 export const ENTITY_TYPES = {
   EXPENDABLE: 'expendable',
@@ -28,6 +26,7 @@ export class DIContext<Dependencies extends object> {
   private readonly options: DependencyInjectionOptions
   public readonly awilixManager: AwilixManager
   public readonly diContainer: AwilixContainer<Dependencies>
+  //public readonly bgHandlerDiContainer: AwilixContainer
   // biome-ignore lint/suspicious/noExplicitAny: all controllers are controllers
   private readonly controllerResolvers: Resolver<any>[]
 
@@ -44,17 +43,6 @@ export class DIContext<Dependencies extends object> {
     this.controllerResolvers = []
   }
 
-  private static preprocessResolver(entry: Resolver<unknown>, name: string): void {
-    if (!entry.entityType) {
-      throw new Error(`entityType param is missing for resolver ${name}`)
-    }
-
-    // default non-expendable entries to singletons
-    if (entry.lifetime === TRANSIENT_LIFECYCLE && entry.entityType !== ENTITY_TYPES.EXPENDABLE) {
-      entry.lifetime = SINGLETON_LIFECYCLE
-    }
-  }
-
   registerDependencies(params: registerDependenciesParams<Dependencies>): void {
     const _dependencyOverrides = params.dependencyOverrides ?? {}
     const diConfig: NameAndRegistrationPair<Dependencies> = {}
@@ -65,10 +53,6 @@ export class DIContext<Dependencies extends object> {
       for (const key in resolvedDIConfig) {
         // @ts-expect-error we can't really ensure type-safety here
         diConfig[key] = resolvedDIConfig[key]
-
-        // @ts-expect-error we can't really ensure type-safety here
-        const currentEntry: Resolver<unknown> = diConfig[key]
-        DIContext.preprocessResolver(currentEntry, key)
       }
 
       this.controllerResolvers.push(...Object.values(module.resolveControllers()))
@@ -78,19 +62,14 @@ export class DIContext<Dependencies extends object> {
     for (const [dependencyKey, _dependencyValue] of Object.entries(_dependencyOverrides)) {
       const dependencyValue = { ...(_dependencyValue as Resolver<unknown>) }
 
-      // preserve entityType and lifetime from original resolver
+      // preserve lifetime from original resolver
       const originalResolver = this.diContainer.getRegistration(dependencyKey)
-      if (!dependencyValue.entityType) {
-        // @ts-ignore
-        dependencyValue.entityType = originalResolver.entityType
-      }
       // @ts-ignore
       if (dependencyValue.lifetime !== originalResolver.lifetime) {
         // @ts-ignore
         dependencyValue.lifetime = originalResolver.lifetime
       }
 
-      DIContext.preprocessResolver(dependencyValue, dependencyKey)
       this.diContainer.register(dependencyKey, dependencyValue)
     }
   }
@@ -104,5 +83,14 @@ export class DIContext<Dependencies extends object> {
         app.route(route)
       }
     }
+  }
+
+  async destroy() {
+    await this.awilixManager.executeDispose()
+    await this.diContainer.dispose()
+  }
+
+  async init() {
+    await this.awilixManager.executeInit()
   }
 }

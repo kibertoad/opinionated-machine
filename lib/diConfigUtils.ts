@@ -1,32 +1,67 @@
 import type { DependencyInjectionOptions } from './DIContext.js'
 
-export const resolveEnqueuedJobQueuesEnabled = (
+export const ENABLE_ALL = Symbol.for('ENABLE_ALL')
+
+export const resolveJobQueuesEnabled = (
   options: DependencyInjectionOptions,
 ): boolean | string[] => {
-  const { enqueuedJobQueuesEnabled } = options
-  if (!enqueuedJobQueuesEnabled) return false
-  if (Array.isArray(enqueuedJobQueuesEnabled)) {
-    return enqueuedJobQueuesEnabled.length ? enqueuedJobQueuesEnabled : false
+  const { jobQueuesEnabled } = options
+  if (!jobQueuesEnabled) {
+    return false
+  }
+  if (jobQueuesEnabled === ENABLE_ALL) {
+    return true
   }
 
-  return enqueuedJobQueuesEnabled
+  if (Array.isArray(jobQueuesEnabled)) {
+    return jobQueuesEnabled.length ? jobQueuesEnabled : false
+  }
+
+  return false
 }
 
-export const isEnqueuedJobProcessorEnabled = (
-  options: DependencyInjectionOptions,
+export const isJobWorkersEnabled = (
+  enabled?: false | typeof ENABLE_ALL | string[],
   name?: string,
-): boolean => isEnabled(options.enqueuedJobProcessorsEnabled, name)
+): boolean => isEnabled(enabled, name)
 
-export const isEnqueuedJobQueueEnabled = (
-  options: DependencyInjectionOptions,
+export const isJobQueueEnabled = (
+  enabled?: false | typeof ENABLE_ALL | string[],
   name?: string,
-): boolean => isEnabled(options.enqueuedJobQueuesEnabled, name)
+): boolean => {
+  if (!enabled) {
+    return false
+  }
+
+  if (Array.isArray(enabled) && (!name || enabled.includes(name))) {
+    return true
+  }
+
+  if (enabled === ENABLE_ALL) {
+    return true
+  }
+
+  return false
+}
 
 export const isMessageQueueConsumerEnabled = (
-  options: DependencyInjectionOptions,
+  messageQueueConsumersEnabled?: false | typeof ENABLE_ALL | string[],
   name?: string,
-): boolean => isEnabled(options.messageQueueConsumersEnabled, name)
+): boolean => isEnabled(messageQueueConsumersEnabled, name)
 
-const isEnabled = (option: boolean | string[] | undefined, name?: string): boolean => {
-  return name && Array.isArray(option) ? option.includes(name) : !!option
+const isEnabled = (
+  option: false | typeof ENABLE_ALL | string[] | undefined,
+  name?: string,
+): boolean => {
+  if (!option) {
+    return false
+  }
+  if (name && Array.isArray(option)) {
+    return option.includes(name)
+  }
+
+  if (option === ENABLE_ALL) {
+    return true
+  }
+  return false
 }
