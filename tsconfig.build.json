@@ -3,6 +3,6 @@
     "compilerOptions": {
         "types": ["node"]
     },
-    "include": ["lib/**/*"],
+    "include": ["lib/**/*", "index.ts"],
     "exclude": ["test/**/*.spec.ts"]
 }
