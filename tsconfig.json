@@ -1,5 +1,7 @@
 {
     "extends": "@lokalise/tsconfig/tsc",
+    // I think index should be included here, also scripts I think it is not needed
+    // Nit: Usually, I prefer to have the index with the code, I mean, within lib/src folder
     "include": ["src/**/*", "scripts/**/*", "test/**/*", "vitest.config.mts"],
     "compilerOptions": {
         "types": ["node", "vitest/globals"]

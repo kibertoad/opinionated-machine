@@ -60,7 +60,7 @@ export type JobWorkerModuleOptions = {
   diOptions: DependencyInjectionOptions
 }
 
-export function asJobWorkerClass<T = object>( // nit: I think we call them processors
+export function asJobWorkerClass<T = object>( // nit: I think we call them processors instead of workers
   Type: Constructor<T>,
   workerOptions: JobWorkerModuleOptions,
   opts?: BuildResolverOptions<T>,
@@ -108,7 +108,7 @@ export type JobQueueModuleOptions = {
   diOptions: DependencyInjectionOptions
 }
 
-export function asJobQueueClass<T = object>(
+export function asJobQueueClass<T = object>( // maybe being more specific and call it JobQueueManagerClass
   Type: Constructor<T>,
   queueOptions: JobQueueModuleOptions,
   opts?: BuildResolverOptions<T>,

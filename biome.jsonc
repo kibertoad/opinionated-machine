@@ -6,6 +6,7 @@
     ],
     "linter": {
         // add overrides here if necessary
+        // I think we have a 'biome-package' (not sure about naming) for this, we should only extend it, so we don't need to add overrides
         "rules": {
             "performance": { "noBarrelFile": "off" }
         }

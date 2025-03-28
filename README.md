@@ -91,7 +91,7 @@ export class MyController extends AbstractController<typeof MyController.contrac
     return {
       deleteItem: buildFastifyNoPayloadRoute(
           MyController.contracts.deleteItem,
-        async (req, reply) => {
+        async (req, reply) => { // I would suggest using/mentioning api contracts here
           req.log.info(req.params.userId)
           await reply.status(204).send()
         },
