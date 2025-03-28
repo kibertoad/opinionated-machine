@@ -20,3 +20,5 @@ export type InferRequestFromContract<
   Querystring: InferredOptionalSchema<Contract['requestQuerySchema']>
   Reply: InferredOptionalSchema<Contract['successResponseBodySchema']>
 }>
+
+// I am not sure if I am understand the purpose of this, isn't it what we have with fastify api contracts repo?

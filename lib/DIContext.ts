@@ -94,3 +94,5 @@ export class DIContext<Dependencies extends object, ExternalDependencies = {}> {
     await this.awilixManager.executeInit()
   }
 }
+
+// Could we extract TestContext? don't have to be right now, just thinking about it

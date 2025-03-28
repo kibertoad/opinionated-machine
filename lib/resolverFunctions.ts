@@ -18,6 +18,8 @@ export function asSingletonClass<T = object>(
   })
 }
 
+// Do we need a as singleton function? (name tbd)
+
 export function asControllerClass<T = object>(
   Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
@@ -54,11 +56,11 @@ export function asMessageQueueHandlerClass<T = object>(
 }
 
 export type JobWorkerModuleOptions = {
-  queueName: string
+  queueName: string // Nit: I think this is called queueId
   diOptions: DependencyInjectionOptions
 }
 
-export function asJobWorkerClass<T = object>(
+export function asJobWorkerClass<T = object>( // nit: I think we call them processors
   Type: Constructor<T>,
   workerOptions: JobWorkerModuleOptions,
   opts?: BuildResolverOptions<T>,
@@ -67,7 +69,7 @@ export function asJobWorkerClass<T = object>(
     // these follow background-jobs-common conventions
     asyncInit: 'start',
     asyncDispose: 'dispose',
-    asyncDisposePriority: 10,
+    asyncDisposePriority: 10, // I think we are using 15, not sure the reason but mentioning just in case
 
     enabled: isJobWorkersEnabled(
       workerOptions.diOptions.jobWorkersEnabled,

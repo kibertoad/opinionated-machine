@@ -9,7 +9,7 @@ export const resolveJobQueuesEnabled = (
   if (!jobQueuesEnabled) {
     return false
   }
-  if (jobQueuesEnabled === ENABLE_ALL) {
+  if (jobQueuesEnabled === ENABLE_ALL) { // nit: Wondering if true might be a bit clear
     return true
   }
 

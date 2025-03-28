@@ -4,7 +4,12 @@
     "description": "Very opinionated DI framework for fastify, built on top of awilix ",
     "type": "module",
     "main": "dist/index.js",
-    "types": "dist/index.d.ts",
+    "types": "dist/index.d.ts", // I think this is not needed
+    // --- I would suggest adding exports
+    "exports": {
+        ".": "./dist/index.js",
+        "./package.json": "./package.json" // <- we saw this is beneficial for some cases, althought can't remember the reason rn
+    },
     "maintainers": [
         {
             "name": "Igor Savin",
