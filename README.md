@@ -21,7 +21,7 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
         _externalDependencies: ExternalDependencies,
     ): MandatoryNameAndRegistrationPair<ModuleDependencies> {
         return {
-            testService: asSingletonClass(Service),
+            service: asSingletonClass(Service),
 
             // by default init and disposal methods from `message-queue-toolkit` consumers
             // will be assumed. If different values are necessary, pass second config object
@@ -57,7 +57,7 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
     // controllers will be automatically registered on fastify app
     resolveControllers() {
         return {
-            testController: asControllerClass(MyController),
+            controller: asControllerClass(MyController),
         }
     }
 }

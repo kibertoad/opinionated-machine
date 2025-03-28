@@ -13,6 +13,8 @@ import { TestController } from './TestController.js'
 
 export class TestService {
   public counter = 0
+
+  execute() {}
 }
 
 export class TestService2 extends TestService {}
