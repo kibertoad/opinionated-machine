@@ -5,6 +5,7 @@ import {
   isJobQueueEnabled,
   isJobWorkersEnabled,
   isMessageQueueConsumerEnabled,
+  isPeriodicJobEnabled,
 } from './diConfigUtils.js'
 
 export function asSingletonClass<T = object>(
@@ -28,7 +29,7 @@ export function asControllerClass<T = object>(
 }
 
 export type MessageQueueConsumerModuleOptions = {
-  queueName: string //
+  queueName: string // can be queue or topic depending on the context
   diOptions: DependencyInjectionOptions
 }
 
@@ -53,7 +54,7 @@ export function asMessageQueueHandlerClass<T = object>(
 }
 
 export type JobWorkerModuleOptions = {
-  queueName: string //
+  queueName: string
   diOptions: DependencyInjectionOptions
 }
 
@@ -71,6 +72,29 @@ export function asJobWorkerClass<T = object>(
     enabled: isJobWorkersEnabled(
       workerOptions.diOptions.jobWorkersEnabled,
       workerOptions.queueName,
+    ),
+    lifetime: 'SINGLETON',
+    ...opts,
+  })
+}
+
+export type PeriodicJobOptions = {
+  jobName: string
+  diOptions: DependencyInjectionOptions
+}
+
+export function asPeriodicJobClass<T = object>(
+  Type: Constructor<T>,
+  workerOptions: PeriodicJobOptions,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  return asClass(Type, {
+    // this follows background-jobs-common conventions
+    eagerInject: 'register',
+
+    enabled: isPeriodicJobEnabled(
+      workerOptions.diOptions.periodicJobsEnabled,
+      workerOptions.jobName,
     ),
     lifetime: 'SINGLETON',
     ...opts,
