@@ -1,7 +1,7 @@
 import { asClass } from 'awilix'
 import type { BuildResolver, BuildResolverOptions, Constructor, DisposableResolver } from 'awilix'
+import type { DependencyInjectionOptions } from './DIContext.js'
 import {
-  type ENABLE_ALL,
   isJobQueueEnabled,
   isJobWorkersEnabled,
   isMessageQueueConsumerEnabled,
@@ -29,7 +29,7 @@ export function asControllerClass<T = object>(
 
 export type MessageQueueConsumerModuleOptions = {
   queueName: string //
-  messageQueueConsumersEnabled?: false | typeof ENABLE_ALL | string[]
+  diOptions: DependencyInjectionOptions
 }
 
 export function asMessageQueueHandlerClass<T = object>(
@@ -44,7 +44,7 @@ export function asMessageQueueHandlerClass<T = object>(
     asyncDisposePriority: 10,
 
     enabled: isMessageQueueConsumerEnabled(
-      mqOptions.messageQueueConsumersEnabled,
+      mqOptions.diOptions.messageQueueConsumersEnabled,
       mqOptions.queueName,
     ),
     lifetime: 'SINGLETON',
@@ -54,7 +54,7 @@ export function asMessageQueueHandlerClass<T = object>(
 
 export type JobWorkerModuleOptions = {
   queueName: string //
-  jobWorkersEnabled?: false | typeof ENABLE_ALL | string[]
+  diOptions: DependencyInjectionOptions
 }
 
 export function asJobWorkerClass<T = object>(
@@ -68,7 +68,10 @@ export function asJobWorkerClass<T = object>(
     asyncDispose: 'dispose',
     asyncDisposePriority: 10,
 
-    enabled: isJobWorkersEnabled(workerOptions.jobWorkersEnabled, workerOptions.queueName),
+    enabled: isJobWorkersEnabled(
+      workerOptions.diOptions.jobWorkersEnabled,
+      workerOptions.queueName,
+    ),
     lifetime: 'SINGLETON',
     ...opts,
   })
@@ -76,7 +79,7 @@ export function asJobWorkerClass<T = object>(
 
 export type JobQueueModuleOptions = {
   queueName?: string // if not specified, assume this is a manager that controls all queues
-  jobQueuesEnabled?: false | typeof ENABLE_ALL | string[]
+  diOptions: DependencyInjectionOptions
 }
 
 export function asJobQueueClass<T = object>(
@@ -90,7 +93,7 @@ export function asJobQueueClass<T = object>(
     asyncDispose: 'dispose',
     asyncDisposePriority: 20,
 
-    enabled: isJobQueueEnabled(queueOptions.jobQueuesEnabled, queueOptions.queueName),
+    enabled: isJobQueueEnabled(queueOptions.diOptions.jobQueuesEnabled, queueOptions.queueName),
     lifetime: 'SINGLETON',
     ...opts,
   })

@@ -77,7 +77,7 @@ export type TestModuleDependencies = {
 
 export class TestModule extends AbstractModule<TestModuleDependencies> {
   resolveDependencies(
-    options: DependencyInjectionOptions,
+    diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<TestModuleDependencies> {
     return {
       testService: asSingletonClass(TestService),
@@ -86,21 +86,21 @@ export class TestModule extends AbstractModule<TestModuleDependencies> {
 
       messageQueueConsumer: asMessageQueueHandlerClass(TestMessageQueueConsumer, {
         queueName: TestMessageQueueConsumer.QUEUE_ID,
-        messageQueueConsumersEnabled: options.messageQueueConsumersEnabled,
+        diOptions,
       }),
 
       jobWorker: asJobWorkerClass(JobWorker, {
         queueName: JobWorker.QUEUE_ID,
-        jobWorkersEnabled: options.jobWorkersEnabled,
+        diOptions,
       }),
 
       queueManager: asJobQueueClass(
         QueueManager,
         {
-          jobQueuesEnabled: options.jobQueuesEnabled,
+          diOptions,
         },
         {
-          asyncInit: (manager) => manager.start(resolveJobQueuesEnabled(options)),
+          asyncInit: (manager) => manager.start(resolveJobQueuesEnabled(diOptions)),
         },
       ),
     }

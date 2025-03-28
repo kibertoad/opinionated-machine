@@ -17,7 +17,7 @@ export type ModuleDependencies = {
 
 export class MyModule extends AbstractModule<ModuleDependencies, ExternalDependencies> {
     resolveDependencies(
-        options: DependencyInjectionOptions,
+        diOptions: DependencyInjectionOptions,
         _externalDependencies: ExternalDependencies,
     ): MandatoryNameAndRegistrationPair<ModuleDependencies> {
         return {
@@ -28,7 +28,7 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
             // and specify "asyncInit" and "asyncDispose" fields
             messageQueueConsumer: asMessageQueueHandlerClass(MessageQueueConsumer, {
                 queueName: MessageQueueConsumer.QUEUE_ID,
-                messageQueueConsumersEnabled: options.messageQueueConsumersEnabled,
+                diOptions,
             }),
 
             // by default init and disposal methods from `background-jobs-commons` job workers
@@ -36,7 +36,7 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
             // and specify "asyncInit" and "asyncDispose" fields
             jobWorker: asJobWorkerClass(JobWorker, {
                 queueName: JobWorker.QUEUE_ID,
-                jobWorkersEnabled: options.jobWorkersEnabled,
+                diOptions,
             }),
 
             // by default disposal methods from `background-jobs-commons` job queue manager
@@ -45,7 +45,7 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
             queueManager: asJobQueueClass(
                 QueueManager,
                 {
-                    jobQueuesEnabled: options.jobQueuesEnabled,
+                    diOptions,
                 },
                 {
                     asyncInit: (manager) => manager.start(resolveJobQueuesEnabled(options)),
