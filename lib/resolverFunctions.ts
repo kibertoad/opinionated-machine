@@ -1,5 +1,6 @@
-import { asClass } from 'awilix'
+import { asClass, asFunction } from 'awilix'
 import type { BuildResolver, BuildResolverOptions, Constructor, DisposableResolver } from 'awilix'
+import type { FunctionReturning } from 'awilix/lib/container'
 import type { DependencyInjectionOptions } from './DIContext.js'
 import {
   isJobQueueEnabled,
@@ -13,6 +14,16 @@ export function asSingletonClass<T = object>(
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type, {
+    ...opts,
+    lifetime: 'SINGLETON',
+  })
+}
+
+export function asSingletonFunction<T>(
+  fn: FunctionReturning<T>,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  return asFunction(fn, {
     ...opts,
     lifetime: 'SINGLETON',
   })
@@ -91,6 +102,7 @@ export function asPeriodicJobClass<T = object>(
   return asClass(Type, {
     // this follows background-jobs-common conventions
     eagerInject: 'register',
+    asyncDispose: 'dispose',
 
     enabled: isPeriodicJobEnabled(
       workerOptions.diOptions.periodicJobsEnabled,

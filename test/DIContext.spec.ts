@@ -7,6 +7,7 @@ import { DIContext, type DependencyInjectionOptions } from '../lib/DIContext.js'
 import { TestController } from './TestController.js'
 import {
   JobWorker,
+  PeriodicJob,
   TestMessageQueueConsumer,
   TestModule,
   type TestModuleDependencies,
@@ -30,7 +31,7 @@ function createContext(
       modules: [module],
       dependencyOverrides,
     },
-    {},
+    undefined,
   )
   return context
 }
@@ -213,6 +214,37 @@ describe('opinionated-machine', () => {
 
       await context.destroy()
       expect(queueManager.startedQueues).toHaveLength(0)
+    })
+  })
+
+  describe('periodic jobs', () => {
+    it('registers periodic jobs, by default they are disabled', async () => {
+      const context = createContext()
+      const { periodicJob } = context.diContainer.cradle
+
+      expect(periodicJob.isStarted).toBe(false)
+      await context.init()
+      expect(periodicJob.isStarted).toBe(false)
+
+      await context.destroy()
+      expect(periodicJob.isStarted).toBe(false)
+    })
+
+    it('registers periodic jobs, enabled explicitly', async () => {
+      const context = createContext(
+        {},
+        {
+          periodicJobsEnabled: [PeriodicJob.JOB_NAME],
+        },
+      )
+      const { periodicJob } = context.diContainer.cradle
+
+      expect(periodicJob.isStarted).toBe(false)
+      await context.init()
+      expect(periodicJob.isStarted).toBe(true)
+
+      await context.destroy()
+      expect(periodicJob.isStarted).toBe(false)
     })
   })
 })

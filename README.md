@@ -86,11 +86,18 @@ const contract = buildDeleteRoute({
 
 export class MyController extends AbstractController<typeof MyController.contracts> {
   public static contracts = { deleteItem: contract } as const
+  private readonly service: Service
 
+  constructor({ service }: ModuleDependencies) {
+      super()
+      this.service = testService
+  }
+  
   public buildRoutes() {
     return {
       deleteItem: buildFastifyNoPayloadRoute(
           MyController.contracts.deleteItem,
+        // types of req and reply are automatically inferred from the linked API contract
         async (req, reply) => {
           req.log.info(req.params.userId)
           await reply.status(204).send()
