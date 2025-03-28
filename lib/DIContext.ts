@@ -14,11 +14,10 @@ export type DependencyInjectionOptions = {
   jobQueuesEnabled?: false | typeof ENABLE_ALL | string[]
   jobWorkersEnabled?: false | typeof ENABLE_ALL | string[]
   messageQueueConsumersEnabled?: false | typeof ENABLE_ALL | string[]
-  periodicJobsEnabled?: false | typeof ENABLE_ALL
+  periodicJobsEnabled?: false | typeof ENABLE_ALL | string[]
 }
 
-// biome-ignore lint/complexity/noBannedTypes: default is empty object
-export class DIContext<Dependencies extends object, ExternalDependencies = {}> {
+export class DIContext<Dependencies extends object, ExternalDependencies = undefined> {
   private readonly options: DependencyInjectionOptions
   public readonly awilixManager: AwilixManager
   public readonly diContainer: AwilixContainer<Dependencies>
@@ -41,6 +40,7 @@ export class DIContext<Dependencies extends object, ExternalDependencies = {}> {
   registerDependencies(
     params: RegisterDependenciesParams<Dependencies, ExternalDependencies>,
     externalDependencies: ExternalDependencies,
+    resolveControllers = true,
   ): void {
     const _dependencyOverrides = params.dependencyOverrides ?? {}
     const diConfig: NameAndRegistrationPair<Dependencies> = {}
@@ -53,9 +53,11 @@ export class DIContext<Dependencies extends object, ExternalDependencies = {}> {
         diConfig[key] = resolvedDIConfig[key]
       }
 
-      this.controllerResolvers.push(
-        ...(Object.values(module.resolveControllers()) as Resolver<unknown>[]),
-      )
+      if (resolveControllers) {
+        this.controllerResolvers.push(
+          ...(Object.values(module.resolveControllers()) as Resolver<unknown>[]),
+        )
+      }
     }
     this.diContainer.register(diConfig)
 

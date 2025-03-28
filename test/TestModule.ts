@@ -7,6 +7,7 @@ import {
   asJobQueueClass,
   asJobWorkerClass,
   asMessageQueueHandlerClass,
+  asPeriodicJobClass,
   asSingletonClass,
 } from '../lib/resolverFunctions.js'
 import { TestController } from './TestController.js'
@@ -67,12 +68,28 @@ export class JobWorker {
   }
 }
 
+export class PeriodicJob {
+  public static readonly JOB_NAME = 'periodic_job'
+  isStarted = false
+
+  register() {
+    this.isStarted = true
+    return Promise.resolve()
+  }
+
+  dispose() {
+    this.isStarted = false
+    return Promise.resolve()
+  }
+}
+
 export type TestModuleDependencies = {
   testService: TestService
   testExpendable: TestService
   messageQueueConsumer: TestMessageQueueConsumer
   jobWorker: JobWorker
   queueManager: QueueManager
+  periodicJob: PeriodicJob
 }
 
 export class TestModule extends AbstractModule<TestModuleDependencies> {
@@ -91,6 +108,11 @@ export class TestModule extends AbstractModule<TestModuleDependencies> {
 
       jobWorker: asJobWorkerClass(JobWorker, {
         queueName: JobWorker.QUEUE_ID,
+        diOptions,
+      }),
+
+      periodicJob: asPeriodicJobClass(PeriodicJob, {
+        jobName: PeriodicJob.JOB_NAME,
         diOptions,
       }),
 
