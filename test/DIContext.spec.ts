@@ -25,10 +25,13 @@ function createContext(
 
   const context = new DIContext<TestModuleDependencies>(container, options)
 
-  context.registerDependencies({
-    modules: [module],
-    dependencyOverrides,
-  })
+  context.registerDependencies(
+    {
+      modules: [module],
+      dependencyOverrides,
+    },
+    {},
+  )
   return context
 }
 
