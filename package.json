@@ -20,7 +20,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/kibertoad/opinionated-machine.git"
+        "url": "git+https://github.com/kibertoad/opinionated-machine.git"
     },
     "peerDependencies": {
         "@lokalise/fastify-api-contracts": ">=1.4.4",
@@ -51,7 +51,17 @@
     "publishConfig": {
         "access": "public"
     },
-    "keywords": ["dependency", "injection", "opinionated", "awilix", "di"],
+    "keywords": [
+        "dependency",
+        "injection",
+        "opinionated",
+        "awilix",
+        "di"
+    ],
     "homepage": "https://github.com/kibertoad/opinionated-machine",
-    "files": ["README.md", "LICENSE", "dist/*"]
+    "files": [
+        "README.md",
+        "LICENSE",
+        "dist/*"
+    ]
 }
