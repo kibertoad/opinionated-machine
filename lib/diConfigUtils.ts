@@ -25,6 +25,11 @@ export const isJobWorkersEnabled = (
   name?: string,
 ): boolean => isEnabled(enabled, name)
 
+export const isPeriodicJobEnabled = (
+  enabled?: false | typeof ENABLE_ALL | string[],
+  name?: string,
+): boolean => isEnabled(enabled, name)
+
 export const isJobQueueEnabled = (
   enabled?: false | typeof ENABLE_ALL | string[],
   name?: string,

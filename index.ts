@@ -10,6 +10,7 @@ export {
   isJobQueueEnabled,
   isMessageQueueConsumerEnabled,
   isJobWorkersEnabled,
+  isPeriodicJobEnabled,
 } from './lib/diConfigUtils.js'
 export { AbstractController } from './lib/AbstractController.js'
 export {
@@ -18,9 +19,11 @@ export {
   asMessageQueueHandlerClass,
   asControllerClass,
   asSingletonClass,
+  asPeriodicJobClass,
 } from './lib/resolverFunctions.js'
 
 export type {
+  PeriodicJobOptions,
   JobQueueModuleOptions,
   MessageQueueConsumerModuleOptions,
   JobWorkerModuleOptions,

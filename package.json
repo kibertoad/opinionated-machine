@@ -51,17 +51,7 @@
     "publishConfig": {
         "access": "public"
     },
-    "keywords": [
-        "dependency",
-        "injection",
-        "opinionated",
-        "awilix",
-        "di"
-    ],
+    "keywords": ["dependency", "injection", "opinionated", "awilix", "di"],
     "homepage": "https://github.com/kibertoad/opinionated-machine",
-    "files": [
-        "README.md",
-        "LICENSE",
-        "dist/*"
-    ]
+    "files": ["README.md", "LICENSE", "dist/*"]
 }

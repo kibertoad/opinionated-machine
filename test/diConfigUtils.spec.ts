@@ -3,6 +3,7 @@ import {
   ENABLE_ALL,
   isJobWorkersEnabled,
   isMessageQueueConsumerEnabled,
+  isPeriodicJobEnabled,
   resolveJobQueuesEnabled,
 } from '../lib/diConfigUtils.js'
 
@@ -48,6 +49,28 @@ describe('diConfigUtils', () => {
 
     it('returns false when isJobWorkersEnabled is an array that does not include the queue name', () => {
       expect(isJobWorkersEnabled(['e1', 'e2'], 'e3')).toBeFalsy()
+    })
+  })
+
+  describe('isPeriodicJobEnabled', () => {
+    it('returns true when isPeriodicJobEnabled is ENABLE_ALL', () => {
+      expect(isPeriodicJobEnabled(ENABLE_ALL)).toBeTruthy()
+    })
+
+    it('returns false when isPeriodicJobEnabled is false', () => {
+      expect(isPeriodicJobEnabled(false)).toBeFalsy()
+    })
+
+    it('returns false when isPeriodicJobEnabled is undefined', () => {
+      expect(isPeriodicJobEnabled()).toBeFalsy()
+    })
+
+    it('returns false when isPeriodicJobEnabled is an array that includes the queue name', () => {
+      expect(isPeriodicJobEnabled(['e1', 'e2'], 'e1')).toBeTruthy()
+    })
+
+    it('returns false when isPeriodicJobEnabled is an array that does not include the queue name', () => {
+      expect(isPeriodicJobEnabled(['e1', 'e2'], 'e3')).toBeFalsy()
     })
   })
 
