@@ -20,6 +20,7 @@ export {
   asControllerClass,
   asSingletonClass,
   asPeriodicJobClass,
+  asSingletonFunction,
 } from './lib/resolverFunctions.js'
 
 export type {
@@ -29,3 +30,9 @@ export type {
   JobWorkerModuleOptions,
 } from './lib/resolverFunctions.js'
 export type { InferRequestFromContract } from './lib/typeUtils.js'
+
+export {
+  AbstractTestContextFactory,
+  type CreateTestContextParams,
+  type ConfigOverrides,
+} from './lib/AbstractTestContextFactory.js'
