@@ -92,19 +92,21 @@ export class MyController extends AbstractController<typeof MyController.contrac
       super()
       this.service = testService
   }
-  
-  public buildRoutes() {
-    return {
-      deleteItem: buildFastifyNoPayloadRoute(
-          MyController.contracts.deleteItem,
-        // types of req and reply are automatically inferred from the linked API contract
+
+    private deleteItem = buildFastifyNoPayloadRoute(
+        TestController.contracts.deleteItem,
         async (req, reply) => {
-          req.log.info(req.params.userId)
-          await reply.status(204).send()
+            req.log.info(req.params.userId)
+            this.service.execute()
+            await reply.status(204).send()
         },
-      ),
+    )
+
+    public buildRoutes() {
+        return {
+            deleteItem: this.deleteItem,
+        }
     }
-  }
 }
 ```
 

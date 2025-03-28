@@ -78,7 +78,7 @@ export function asJobWorkerClass<T = object>(
     // these follow background-jobs-common conventions
     asyncInit: 'start',
     asyncDispose: 'dispose',
-    asyncDisposePriority: 10,
+    asyncDisposePriority: 15,
 
     enabled: isJobWorkersEnabled(
       workerOptions.diOptions.jobWorkersEnabled,

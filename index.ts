@@ -29,7 +29,6 @@ export type {
   MessageQueueConsumerModuleOptions,
   JobWorkerModuleOptions,
 } from './lib/resolverFunctions.js'
-export type { InferRequestFromContract } from './lib/typeUtils.js'
 
 export {
   AbstractTestContextFactory,
