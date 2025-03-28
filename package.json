@@ -16,7 +16,7 @@
         }
     ],
     "scripts": {
-        "build": "tsc -p tsconfig.build.json",
+        "build": "rimraf dist && tsc -p tsconfig.build.json",
         "lint": "biome check . && tsc",
         "lint:fix": "biome check --write .",
         "test": "vitest --coverage",
@@ -51,6 +51,7 @@
         "fastify": "^5.2.2",
         "fastify-type-provider-zod": "^4.0.2",
         "vitest": "^3.0.9",
+        "rimraf": "^6.0.1",
         "typescript": "^5.8.2",
         "zod": "^3.24.2"
     },
