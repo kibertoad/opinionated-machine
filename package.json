@@ -22,6 +22,9 @@
         "type": "git",
         "url": "git+https://github.com/kibertoad/opinionated-machine.git"
     },
+    "dependencies": {
+        "ts-deepmerge": "^7.0.2"
+    },
     "peerDependencies": {
         "@lokalise/fastify-api-contracts": ">=1.4.4",
         "@lokalise/universal-ts-utils": ">=4.2.0",

@@ -5,7 +5,7 @@ import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
 
-export type registerDependenciesParams<Dependencies, ExternalDependencies> = {
+export type RegisterDependenciesParams<Dependencies, ExternalDependencies> = {
   modules: readonly AbstractModule<unknown, ExternalDependencies>[]
   dependencyOverrides?: NameAndRegistrationPair<Dependencies>
 }
@@ -39,7 +39,7 @@ export class DIContext<Dependencies extends object, ExternalDependencies = {}> {
   }
 
   registerDependencies(
-    params: registerDependenciesParams<Dependencies, ExternalDependencies>,
+    params: RegisterDependenciesParams<Dependencies, ExternalDependencies>,
     externalDependencies: ExternalDependencies,
   ): void {
     const _dependencyOverrides = params.dependencyOverrides ?? {}

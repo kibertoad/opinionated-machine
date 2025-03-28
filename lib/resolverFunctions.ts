@@ -1,4 +1,4 @@
-import { asClass } from 'awilix'
+import {asClass, asFunction} from 'awilix'
 import type { BuildResolver, BuildResolverOptions, Constructor, DisposableResolver } from 'awilix'
 import type { DependencyInjectionOptions } from './DIContext.js'
 import {
@@ -7,12 +7,20 @@ import {
   isMessageQueueConsumerEnabled,
   isPeriodicJobEnabled,
 } from './diConfigUtils.js'
+import {FunctionReturning} from "awilix/lib/container";
 
 export function asSingletonClass<T = object>(
   Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type, {
+    ...opts,
+    lifetime: 'SINGLETON',
+  })
+}
+
+export function asSingletonFunction<T>(fn: FunctionReturning<T>, opts?: BuildResolverOptions<T>): BuildResolver<T> & DisposableResolver<T> {
+  return asFunction(fn, {
     ...opts,
     lifetime: 'SINGLETON',
   })

@@ -1,7 +1,7 @@
 export {
   DIContext,
   type DependencyInjectionOptions,
-  type registerDependenciesParams,
+  type RegisterDependenciesParams,
 } from './lib/DIContext.js'
 export { AbstractModule, type MandatoryNameAndRegistrationPair } from './lib/AbstractModule.js'
 export {
