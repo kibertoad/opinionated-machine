@@ -7,8 +7,8 @@ export type MandatoryNameAndRegistrationPair<T> = {
 
 export abstract class AbstractModule<ModuleDependencies, ExternalDependencies = never> {
   public abstract resolveDependencies(
-    diOptions?: DependencyInjectionOptions,
-    externalDependencies?: ExternalDependencies,
+    diOptions: DependencyInjectionOptions,
+    externalDependencies: ExternalDependencies,
   ): MandatoryNameAndRegistrationPair<ModuleDependencies>
 
   public abstract resolveControllers(): MandatoryNameAndRegistrationPair<unknown>

@@ -39,7 +39,7 @@ export class DIContext<Dependencies extends object, ExternalDependencies = never
 
   registerDependencies(
     params: registerDependenciesParams<Dependencies, ExternalDependencies>,
-    externalDependencies?: ExternalDependencies,
+    externalDependencies: ExternalDependencies,
   ): void {
     const _dependencyOverrides = params.dependencyOverrides ?? {}
     const diConfig: NameAndRegistrationPair<Dependencies> = {}

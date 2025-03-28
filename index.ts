@@ -3,7 +3,7 @@ export {
   type DependencyInjectionOptions,
   type registerDependenciesParams,
 } from './lib/DIContext.js'
-export { AbstractModule } from './lib/AbstractModule.js'
+export { AbstractModule, type MandatoryNameAndRegistrationPair } from './lib/AbstractModule.js'
 export {
   ENABLE_ALL,
   resolveJobQueuesEnabled,
