@@ -17,7 +17,8 @@ export type DependencyInjectionOptions = {
   periodicJobsEnabled?: false | typeof ENABLE_ALL
 }
 
-export class DIContext<Dependencies extends object, ExternalDependencies = never> {
+// biome-ignore lint/complexity/noBannedTypes: default is empty object
+export class DIContext<Dependencies extends object, ExternalDependencies = {}> {
   private readonly options: DependencyInjectionOptions
   public readonly awilixManager: AwilixManager
   public readonly diContainer: AwilixContainer<Dependencies>
@@ -39,7 +40,7 @@ export class DIContext<Dependencies extends object, ExternalDependencies = never
 
   registerDependencies(
     params: registerDependenciesParams<Dependencies, ExternalDependencies>,
-    externalDependencies?: ExternalDependencies,
+    externalDependencies: ExternalDependencies,
   ): void {
     const _dependencyOverrides = params.dependencyOverrides ?? {}
     const diConfig: NameAndRegistrationPair<Dependencies> = {}
