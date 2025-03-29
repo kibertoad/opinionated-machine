@@ -3,6 +3,7 @@
     "version": "2.7.2",
     "description": "Very opinionated DI framework for fastify, built on top of awilix ",
     "type": "module",
+    "license": "MIT",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
     "exports": {
