@@ -3,8 +3,8 @@ import type { BuildResolver, BuildResolverOptions, Constructor, DisposableResolv
 import type { FunctionReturning } from 'awilix/lib/container'
 import type { DependencyInjectionOptions } from './DIContext.js'
 import {
+  isEnqueuedJobWorkersEnabled,
   isJobQueueEnabled,
-  isJobWorkersEnabled,
   isMessageQueueConsumerEnabled,
   isPeriodicJobEnabled,
 } from './diConfigUtils.js'
@@ -106,14 +106,14 @@ export function asMessageQueueHandlerClass<T = object>(
   })
 }
 
-export type JobWorkerModuleOptions = {
+export type EnqueuedJobWorkerModuleOptions = {
   queueName: string
   diOptions: DependencyInjectionOptions
 }
 
-export function asJobWorkerClass<T = object>(
+export function asEnqueuedJobWorkerClass<T = object>(
   Type: Constructor<T>,
-  workerOptions: JobWorkerModuleOptions,
+  workerOptions: EnqueuedJobWorkerModuleOptions,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type, {
@@ -123,8 +123,8 @@ export function asJobWorkerClass<T = object>(
     asyncDisposePriority: 15,
     public: false,
 
-    enabled: isJobWorkersEnabled(
-      workerOptions.diOptions.jobWorkersEnabled,
+    enabled: isEnqueuedJobWorkersEnabled(
+      workerOptions.diOptions.enqueuedJobWorkersEnabled,
       workerOptions.queueName,
     ),
     lifetime: 'SINGLETON',

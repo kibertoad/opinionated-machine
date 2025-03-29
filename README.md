@@ -34,7 +34,7 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
             // by default init and disposal methods from `background-jobs-commons` job workers
             // will be assumed. If different values are necessary, pass second config object
             // and specify "asyncInit" and "asyncDispose" fields
-            jobWorker: asJobWorkerClass(JobWorker, {
+            jobWorker: asEnqueuedJobWorkerClass(JobWorker, {
                 queueName: JobWorker.QUEUE_ID,
                 diOptions,
             }),
@@ -125,7 +125,17 @@ const container = createContainer({
     injectionMode: 'PROXY',
 })
 
-const context = new DIContext<ModuleDependencies>(container, {
+type AppConfig = {
+    DATABASE_URL: string
+    // ...
+    // everything related to app configuration
+}
+
+type ExternalDependencies = {
+    logger: Logger // most likely you would like to reuse logger instance from fastify app
+}
+
+const context = new DIContext<ModuleDependencies, AppConfig, ExternalDependencies>(container, {
     messageQueueConsumersEnabled: [MessageQueueConsumer.QUEUE_ID],
     jobQueuesEnabled: false,
     jobWorkersEnabled: false,
@@ -134,7 +144,14 @@ const context = new DIContext<ModuleDependencies>(container, {
 
 context.registerDependencies({
     modules: [module],
-    {} // dependency overrides if necessary, usually for testing purposes
+    secondaryModules: [someOtherModule] // only dependencies marked as public are injected from secondary modules. This is useful for catching encapsulation violations in integration tests. 
+    dependencyOverrides: {}, // dependency overrides if necessary, usually for testing purposes
+    configOverrides: {}, // config overrides if necessary, will be merged with value inside existing config
+    configDependencyId?: string // what is the dependency id in the graph for the config entity. Only used for config overrides. Default value is `config`
+}, 
+    // external dependencies that are instantiated outside of DI
+    {
+    logger: app.logger
 })
 
 const app = fastify()

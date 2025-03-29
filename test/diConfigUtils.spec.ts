@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ENABLE_ALL,
   isAnyMessageQueueConsumerEnabled,
-  isJobWorkersEnabled,
+  isEnqueuedJobWorkersEnabled,
   isMessageQueueConsumerEnabled,
   isPeriodicJobEnabled,
   resolveJobQueuesEnabled,
@@ -33,23 +33,23 @@ describe('diConfigUtils', () => {
 
   describe('isJobWorkersEnabled', () => {
     it('returns true when isJobWorkersEnabled is ENABLE_ALL', () => {
-      expect(isJobWorkersEnabled(ENABLE_ALL)).toBeTruthy()
+      expect(isEnqueuedJobWorkersEnabled(ENABLE_ALL)).toBeTruthy()
     })
 
     it('returns false when isJobWorkersEnabled is false', () => {
-      expect(isJobWorkersEnabled(false)).toBeFalsy()
+      expect(isEnqueuedJobWorkersEnabled(false)).toBeFalsy()
     })
 
     it('returns false when isJobWorkersEnabled is undefined', () => {
-      expect(isJobWorkersEnabled()).toBeFalsy()
+      expect(isEnqueuedJobWorkersEnabled()).toBeFalsy()
     })
 
     it('returns false when isJobWorkersEnabled is an array that includes the queue name', () => {
-      expect(isJobWorkersEnabled(['e1', 'e2'], 'e1')).toBeTruthy()
+      expect(isEnqueuedJobWorkersEnabled(['e1', 'e2'], 'e1')).toBeTruthy()
     })
 
     it('returns false when isJobWorkersEnabled is an array that does not include the queue name', () => {
-      expect(isJobWorkersEnabled(['e1', 'e2'], 'e3')).toBeFalsy()
+      expect(isEnqueuedJobWorkersEnabled(['e1', 'e2'], 'e3')).toBeFalsy()
     })
   })
 

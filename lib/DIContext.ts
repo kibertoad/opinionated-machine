@@ -16,7 +16,7 @@ export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencie
 
 export type DependencyInjectionOptions = {
   jobQueuesEnabled?: false | typeof ENABLE_ALL | string[]
-  jobWorkersEnabled?: false | typeof ENABLE_ALL | string[]
+  enqueuedJobWorkersEnabled?: false | typeof ENABLE_ALL | string[]
   messageQueueConsumersEnabled?: false | typeof ENABLE_ALL | string[]
   periodicJobsEnabled?: false | typeof ENABLE_ALL | string[]
 }

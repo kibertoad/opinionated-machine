@@ -6,7 +6,7 @@ describe('TestContext', () => {
     const testContext = await testContextFactory.createTestContext({
       diOptions: {
         messageQueueConsumersEnabled: [TestMessageQueueConsumer.QUEUE_ID],
-        jobWorkersEnabled: false,
+        enqueuedJobWorkersEnabled: false,
       },
     })
 

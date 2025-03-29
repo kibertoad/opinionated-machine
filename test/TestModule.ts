@@ -4,8 +4,8 @@ import type { DependencyInjectionOptions } from '../lib/DIContext.js'
 import { resolveJobQueuesEnabled } from '../lib/diConfigUtils.js'
 import {
   asControllerClass,
+  asEnqueuedJobWorkerClass,
   asJobQueueClass,
-  asJobWorkerClass,
   asMessageQueueHandlerClass,
   asPeriodicJobClass,
   asServiceClass,
@@ -123,7 +123,7 @@ export class TestModule extends AbstractModule<TestModuleDependencies> {
         diOptions,
       }),
 
-      jobWorker: asJobWorkerClass(JobWorker, {
+      jobWorker: asEnqueuedJobWorkerClass(JobWorker, {
         queueName: JobWorker.QUEUE_ID,
         diOptions,
       }),

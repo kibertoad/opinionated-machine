@@ -20,7 +20,7 @@ export const resolveJobQueuesEnabled = (
   return false
 }
 
-export const isJobWorkersEnabled = (
+export const isEnqueuedJobWorkersEnabled = (
   enabled?: false | typeof ENABLE_ALL | string[],
   name?: string,
 ): boolean => isEnabled(enabled, name)

@@ -186,7 +186,7 @@ describe('opinionated-machine', () => {
       const context = createContext(
         {},
         {
-          jobWorkersEnabled: [JobWorker.QUEUE_ID],
+          enqueuedJobWorkersEnabled: [JobWorker.QUEUE_ID],
         },
       )
       const { jobWorker } = context.diContainer.cradle
