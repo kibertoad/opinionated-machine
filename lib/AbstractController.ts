@@ -13,7 +13,7 @@ export abstract class AbstractController<
     // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
     | GetRouteDefinition<any, any, any>
     // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
-    | PayloadRouteDefinition<any, any, any>
+    | PayloadRouteDefinition<any, any, any, any, any, any, any, any>
   >,
 > {
   public abstract buildRoutes(): Record<keyof APIContracts, RouteType>

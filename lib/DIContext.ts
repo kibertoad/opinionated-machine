@@ -132,7 +132,8 @@ export class DIContext<
     }
   }
 
-  registerRoutes(app: FastifyInstance): void {
+  // biome-ignore lint/suspicious/noExplicitAny: we don't care about what instance we get here
+  registerRoutes(app: FastifyInstance<any, any, any, any>): void {
     for (const controllerResolver of this.controllerResolvers) {
       // biome-ignore lint/suspicious/noExplicitAny: any controller works here
       const controller: AbstractController<any> = controllerResolver.resolve(this.diContainer)
