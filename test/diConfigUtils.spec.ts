@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ENABLE_ALL,
+  isAnyMessageQueueConsumerEnabled,
   isJobWorkersEnabled,
   isMessageQueueConsumerEnabled,
   isPeriodicJobEnabled,
@@ -93,6 +94,27 @@ describe('diConfigUtils', () => {
 
     it('returns false when isMessageQueueConsumerEnabled is an array that does not include the job name', () => {
       expect(isMessageQueueConsumerEnabled(['e1', 'e2'], 'e3')).toBeFalsy()
+    })
+  })
+  describe('isAnyMessageQueueConsumerEnabled', () => {
+    it('returns true when isMessageQueueConsumerEnabled is true', () => {
+      expect(
+        isAnyMessageQueueConsumerEnabled({ messageQueueConsumersEnabled: ENABLE_ALL }),
+      ).toBeTruthy()
+    })
+
+    it('returns false when isMessageQueueConsumerEnabled is false', () => {
+      expect(isAnyMessageQueueConsumerEnabled({ messageQueueConsumersEnabled: false })).toBeFalsy()
+    })
+
+    it('returns false when isMessageQueueConsumerEnabled is undefined', () => {
+      expect(isAnyMessageQueueConsumerEnabled({})).toBeFalsy()
+    })
+
+    it('returns true when isMessageQueueConsumerEnabled is an array', () => {
+      expect(
+        isAnyMessageQueueConsumerEnabled({ messageQueueConsumersEnabled: ['e1', 'e2'] }),
+      ).toBeTruthy()
     })
   })
 })

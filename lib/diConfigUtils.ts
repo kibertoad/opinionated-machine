@@ -54,6 +54,9 @@ export const isMessageQueueConsumerEnabled = (
   name?: string,
 ): boolean => isEnabled(messageQueueConsumersEnabled, name)
 
+export const isAnyMessageQueueConsumerEnabled = (options: DependencyInjectionOptions): boolean =>
+  !!options.messageQueueConsumersEnabled
+
 const isEnabled = (
   option: false | typeof ENABLE_ALL | string[] | undefined,
   name?: string,
