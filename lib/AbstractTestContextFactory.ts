@@ -1,4 +1,4 @@
-import { type NameAndRegistrationPair, createContainer } from 'awilix'
+import { type AwilixContainer, type NameAndRegistrationPair, createContainer } from 'awilix'
 import { merge } from 'ts-deepmerge'
 import type { AbstractModule } from './AbstractModule.js'
 import { DIContext, type DependencyInjectionOptions } from './DIContext.js'
@@ -22,6 +22,7 @@ export abstract class AbstractTestContextFactory<
   ExternalDependencies,
   Config extends object,
 > {
+  public diContainer: AwilixContainer<Dependencies>
   private readonly externalDependencies: ExternalDependencies
   protected configDependencyId = 'config' // override in subclass if different
   private readonly allModules: readonly AbstractModule<unknown>[]
@@ -29,9 +30,15 @@ export abstract class AbstractTestContextFactory<
   constructor(
     externalDependencies: ExternalDependencies,
     allModules: readonly AbstractModule<unknown>[],
+    diContainer?: AwilixContainer,
   ) {
     this.externalDependencies = externalDependencies
     this.allModules = allModules
+    this.diContainer =
+      diContainer ??
+      createContainer({
+        injectionMode: 'PROXY',
+      })
   }
 
   resetExternalDependencies() {
@@ -43,12 +50,8 @@ export abstract class AbstractTestContextFactory<
   async createTestContext(
     params: CreateTestContextParams<Dependencies, Config> = {},
   ): Promise<DIContext<Dependencies, ExternalDependencies>> {
-    const diContainer = createContainer({
-      injectionMode: 'PROXY',
-    })
-
     const context = new DIContext<Dependencies, ExternalDependencies>(
-      diContainer,
+      this.diContainer,
       params.diOptions ?? {},
     )
 
