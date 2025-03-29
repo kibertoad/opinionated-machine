@@ -11,14 +11,14 @@ export type NestedPartial<T> = {
  */
 export function mergeConfigAndDependencyOverrides<Dependencies, Config extends object>(
   baseConfig: Config,
+  configDependencyId: string,
   configOverrides?: NestedPartial<Config>,
   dependencyOverrides?: NameAndRegistrationPair<Dependencies>,
 ) {
   return configOverrides
     ? ({
         ...dependencyOverrides,
-        // @ts-expect-error we can't make this type-safe
-        [this.configDependencyId]: asSingletonFunction(() => {
+        [configDependencyId]: asSingletonFunction(() => {
           // biome-ignore lint/style/noNonNullAssertion: there is a ternary condition above
           return merge(baseConfig, configOverrides!)
         }),

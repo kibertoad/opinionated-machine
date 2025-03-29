@@ -11,6 +11,7 @@ export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencie
   secondaryModules?: readonly AbstractModule<unknown, ExternalDependencies>[] // only public dependencies from secondary modules are injected
   dependencyOverrides?: NameAndRegistrationPair<Dependencies>
   configOverrides?: NestedPartial<Config>
+  configDependencyId?: string // defaults to 'config'
 }
 
 export type DependencyInjectionOptions = {
@@ -84,6 +85,7 @@ export class DIContext<
   ): void {
     const mergedOverrides = mergeConfigAndDependencyOverrides(
       this.appConfig,
+      params.configDependencyId ?? 'config',
       params.configOverrides,
       params.dependencyOverrides ?? {},
     )
