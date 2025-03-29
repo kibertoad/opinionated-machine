@@ -25,16 +25,22 @@ export class DIContext<Dependencies extends object, ExternalDependencies = undef
   // biome-ignore lint/suspicious/noExplicitAny: all controllers are controllers
   private readonly controllerResolvers: Resolver<any>[]
 
-  constructor(diContainer: AwilixContainer, options: DependencyInjectionOptions) {
+  constructor(
+    diContainer: AwilixContainer,
+    options: DependencyInjectionOptions,
+    awilixManager?: AwilixManager,
+  ) {
     this.options = options
     this.diContainer = diContainer
-    this.awilixManager = new AwilixManager({
-      asyncDispose: true,
-      asyncInit: true,
-      diContainer,
-      eagerInject: true,
-      strictBooleanEnforced: true,
-    })
+    this.awilixManager =
+      awilixManager ??
+      new AwilixManager({
+        asyncDispose: true,
+        asyncInit: true,
+        diContainer,
+        eagerInject: true,
+        strictBooleanEnforced: true,
+      })
     this.controllerResolvers = []
   }
 
