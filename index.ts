@@ -41,5 +41,6 @@ export type {
 export {
   AbstractTestContextFactory,
   type CreateTestContextParams,
-  type ConfigOverrides,
 } from './lib/AbstractTestContextFactory.js'
+
+export type { NestedPartial } from './lib/configUtils.ts'

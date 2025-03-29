@@ -1,20 +1,13 @@
 import { type AwilixContainer, type NameAndRegistrationPair, createContainer } from 'awilix'
-import { merge } from 'ts-deepmerge'
 import type { AbstractModule } from './AbstractModule.js'
 import { DIContext, type DependencyInjectionOptions } from './DIContext.js'
-import { asSingletonFunction } from './resolverFunctions.js'
-
-type NestedPartial<T> = {
-  [P in keyof T]?: NestedPartial<T[P]>
-}
-
-export type ConfigOverrides<Config> = NestedPartial<Config>
+import type { NestedPartial } from './configUtils.js'
 
 export type CreateTestContextParams<Dependencies, Config extends object> = {
   modules?: readonly AbstractModule<unknown>[]
   diOptions?: DependencyInjectionOptions
   dependencyOverrides?: NameAndRegistrationPair<Dependencies>
-  configOverrides?: ConfigOverrides<Config>
+  configOverrides?: NestedPartial<Config>
 }
 
 export abstract class AbstractTestContextFactory<
@@ -49,26 +42,18 @@ export abstract class AbstractTestContextFactory<
 
   async createTestContext(
     params: CreateTestContextParams<Dependencies, Config> = {},
-  ): Promise<DIContext<Dependencies, ExternalDependencies>> {
-    const context = new DIContext<Dependencies, ExternalDependencies>(
+  ): Promise<DIContext<Dependencies, Config, ExternalDependencies>> {
+    const context = new DIContext<Dependencies, Config, ExternalDependencies>(
       this.diContainer,
       params.diOptions ?? {},
+      this.resolveBaseAppConfig(),
     )
-
-    const dependencyOverrides = params.configOverrides
-      ? ({
-          ...params.dependencyOverrides,
-          [this.configDependencyId]: asSingletonFunction(() => {
-            // biome-ignore lint/style/noNonNullAssertion: there is a ternary condition above
-            return merge(this.resolveBaseAppConfig(), params.configOverrides!)
-          }),
-        } as NameAndRegistrationPair<Dependencies>)
-      : params.dependencyOverrides
 
     const modules = params.modules ?? this.allModules
     context.registerDependencies(
       {
-        dependencyOverrides,
+        dependencyOverrides: params.dependencyOverrides,
+        configOverrides: params.configOverrides,
         modules,
       },
       this.externalDependencies,

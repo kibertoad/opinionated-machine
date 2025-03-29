@@ -3,12 +3,14 @@ import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance } from 'fastify'
 import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
+import { type NestedPartial, mergeConfigAndDependencyOverrides } from './configUtils.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
 
-export type RegisterDependenciesParams<Dependencies, ExternalDependencies> = {
+export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
   modules: readonly AbstractModule<unknown, ExternalDependencies>[]
   secondaryModules?: readonly AbstractModule<unknown, ExternalDependencies>[] // only public dependencies from secondary modules are injected
   dependencyOverrides?: NameAndRegistrationPair<Dependencies>
+  configOverrides?: NestedPartial<Config>
 }
 
 export type DependencyInjectionOptions = {
@@ -18,20 +20,27 @@ export type DependencyInjectionOptions = {
   periodicJobsEnabled?: false | typeof ENABLE_ALL | string[]
 }
 
-export class DIContext<Dependencies extends object, ExternalDependencies = undefined> {
+export class DIContext<
+  Dependencies extends object,
+  Config extends object,
+  ExternalDependencies = undefined,
+> {
   private readonly options: DependencyInjectionOptions
   public readonly awilixManager: AwilixManager
   public readonly diContainer: AwilixContainer<Dependencies>
   // biome-ignore lint/suspicious/noExplicitAny: all controllers are controllers
   private readonly controllerResolvers: Resolver<any>[]
+  private readonly appConfig: Config
 
   constructor(
     diContainer: AwilixContainer,
     options: DependencyInjectionOptions,
+    appConfig: Config,
     awilixManager?: AwilixManager,
   ) {
     this.options = options
     this.diContainer = diContainer
+    this.appConfig = appConfig
     this.awilixManager =
       awilixManager ??
       new AwilixManager({
@@ -69,11 +78,15 @@ export class DIContext<Dependencies extends object, ExternalDependencies = undef
   }
 
   registerDependencies(
-    params: RegisterDependenciesParams<Dependencies, ExternalDependencies>,
+    params: RegisterDependenciesParams<Dependencies, Config, ExternalDependencies>,
     externalDependencies: ExternalDependencies,
     resolveControllers = true,
   ): void {
-    const _dependencyOverrides = params.dependencyOverrides ?? {}
+    const mergedOverrides = mergeConfigAndDependencyOverrides(
+      this.appConfig,
+      params.configOverrides,
+      params.dependencyOverrides ?? {},
+    )
     const targetDiConfig: NameAndRegistrationPair<Dependencies> = {}
 
     for (const primaryModule of params.modules) {
@@ -100,7 +113,9 @@ export class DIContext<Dependencies extends object, ExternalDependencies = undef
 
     this.diContainer.register(targetDiConfig)
 
-    for (const [dependencyKey, _dependencyValue] of Object.entries(_dependencyOverrides)) {
+    // append dependency overrides
+    // @ts-expect-error FixMe check this later
+    for (const [dependencyKey, _dependencyValue] of Object.entries(mergedOverrides)) {
       const dependencyValue = { ...(_dependencyValue as Resolver<unknown>) }
 
       // preserve lifetime from original resolver

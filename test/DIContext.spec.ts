@@ -27,14 +27,17 @@ function createTestContainer() {
   })
 }
 
+// biome-ignore lint/complexity/noBannedTypes: <explanation>
+type Config = {}
+
 function createContext<TargetDependencies extends object = TestModuleDependencies>(
   dependencyOverrides?: NameAndRegistrationPair<TargetDependencies>,
   options: DependencyInjectionOptions = {},
   secondaryModules: AbstractModule<unknown>[] = [],
-): DIContext<TargetDependencies> {
+): DIContext<TargetDependencies, Config> {
   const module = new TestModule()
   const container = createTestContainer()
-  const context = new DIContext<TargetDependencies>(container, options)
+  const context = new DIContext<TargetDependencies, Config>(container, options, {})
 
   context.registerDependencies(
     {
