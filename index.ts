@@ -3,7 +3,11 @@ export {
   type DependencyInjectionOptions,
   type RegisterDependenciesParams,
 } from './lib/DIContext.js'
-export { AbstractModule, type MandatoryNameAndRegistrationPair } from './lib/AbstractModule.js'
+export {
+  AbstractModule,
+  type MandatoryNameAndRegistrationPair,
+  type UnionToIntersection,
+} from './lib/AbstractModule.js'
 export {
   ENABLE_ALL,
   resolveJobQueuesEnabled,
@@ -21,6 +25,9 @@ export {
   asSingletonClass,
   asPeriodicJobClass,
   asSingletonFunction,
+  asServiceClass,
+  asRepositoryClass,
+  asUseCaseClass,
 } from './lib/resolverFunctions.js'
 
 export type {
