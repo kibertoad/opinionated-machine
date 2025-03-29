@@ -9,6 +9,13 @@ import {
   isPeriodicJobEnabled,
 } from './diConfigUtils.js'
 
+declare module 'awilix' {
+  // biome-ignore lint/correctness/noUnusedVariables: expected by the signature
+  interface ResolverOptions<T> {
+    public?: boolean // if module is used as secondary, only public dependencies will be exposed. default is false
+  }
+}
+
 export function asSingletonClass<T = object>(
   Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
@@ -29,11 +36,45 @@ export function asSingletonFunction<T>(
   })
 }
 
+export function asServiceClass<T = object>(
+  Type: Constructor<T>,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  return asClass(Type, {
+    public: true,
+    ...opts,
+    lifetime: 'SINGLETON',
+  })
+}
+
+export function asUseCaseClass<T = object>(
+  Type: Constructor<T>,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  return asClass(Type, {
+    public: true,
+    ...opts,
+    lifetime: 'SINGLETON',
+  })
+}
+
+export function asRepositoryClass<T = object>(
+  Type: Constructor<T>,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  return asClass(Type, {
+    public: false,
+    ...opts,
+    lifetime: 'SINGLETON',
+  })
+}
+
 export function asControllerClass<T = object>(
   Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type, {
+    public: false,
     ...opts,
     lifetime: 'SINGLETON',
   })
@@ -60,6 +101,7 @@ export function asMessageQueueHandlerClass<T = object>(
       mqOptions.queueName,
     ),
     lifetime: 'SINGLETON',
+    public: false,
     ...opts,
   })
 }
@@ -79,6 +121,7 @@ export function asJobWorkerClass<T = object>(
     asyncInit: 'start',
     asyncDispose: 'dispose',
     asyncDisposePriority: 15,
+    public: false,
 
     enabled: isJobWorkersEnabled(
       workerOptions.diOptions.jobWorkersEnabled,
@@ -103,6 +146,7 @@ export function asPeriodicJobClass<T = object>(
     // this follows background-jobs-common conventions
     eagerInject: 'register',
     asyncDispose: 'dispose',
+    public: false,
 
     enabled: isPeriodicJobEnabled(
       workerOptions.diOptions.periodicJobsEnabled,
@@ -128,6 +172,7 @@ export function asJobQueueClass<T = object>(
     asyncInit: 'start',
     asyncDispose: 'dispose',
     asyncDisposePriority: 20,
+    public: true,
 
     enabled: isJobQueueEnabled(queueOptions.diOptions.jobQueuesEnabled, queueOptions.queueName),
     lifetime: 'SINGLETON',

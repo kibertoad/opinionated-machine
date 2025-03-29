@@ -3,6 +3,7 @@ import { type NameAndRegistrationPair, asClass, createContainer } from 'awilix'
 import { fastify } from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { describe, it } from 'vitest'
+import type { AbstractModule, UnionToIntersection } from '../lib/AbstractModule.js'
 import { DIContext, type DependencyInjectionOptions } from '../lib/DIContext.js'
 import { TestController } from './TestController.js'
 import {
@@ -14,21 +15,31 @@ import {
   TestService,
   TestService2,
 } from './TestModule.js'
+import {
+  TestModuleSecondary,
+  type TestModuleSecondaryDependencies,
+  type TestModuleSecondaryPublicDependencies,
+} from './TestModuleSecondary.js'
 
-function createContext(
-  dependencyOverrides?: NameAndRegistrationPair<TestModuleDependencies>,
-  options: DependencyInjectionOptions = {},
-) {
-  const module = new TestModule()
-  const container = createContainer({
+function createTestContainer() {
+  return createContainer({
     injectionMode: 'PROXY',
   })
+}
 
-  const context = new DIContext<TestModuleDependencies>(container, options)
+function createContext<TargetDependencies extends object = TestModuleDependencies>(
+  dependencyOverrides?: NameAndRegistrationPair<TargetDependencies>,
+  options: DependencyInjectionOptions = {},
+  secondaryModules: AbstractModule<unknown>[] = [],
+): DIContext<TargetDependencies> {
+  const module = new TestModule()
+  const container = createTestContainer()
+  const context = new DIContext<TargetDependencies>(container, options)
 
   context.registerDependencies(
     {
       modules: [module],
+      secondaryModules,
       dependencyOverrides,
     },
     undefined,
@@ -245,6 +256,36 @@ describe('opinionated-machine', () => {
 
       await context.destroy()
       expect(periodicJob.isStarted).toBe(false)
+    })
+  })
+
+  describe('secondary modules', () => {
+    it('resolves public dependencies from a secondary module', async () => {
+      const context = createContext<
+        UnionToIntersection<TestModuleDependencies | TestModuleSecondaryPublicDependencies>
+      >({}, {}, [new TestModuleSecondary()])
+
+      const { testServiceSecondary } = context.diContainer.cradle
+
+      await testServiceSecondary.execute()
+    })
+
+    it('does not resolve private dependency from a secondary module', async () => {
+      const context = createContext<
+        UnionToIntersection<TestModuleDependencies | TestModuleSecondaryDependencies>
+      >({}, {}, [new TestModuleSecondary()])
+
+      expect(() => context.diContainer.cradle.testRepository).toThrowError(/Could not resolve/)
+    })
+
+    it('resolves transitive dependencies from a secondary module', async () => {
+      const context = createContext<
+        UnionToIntersection<TestModuleDependencies | TestModuleSecondaryPublicDependencies>
+      >({}, {}, [new TestModuleSecondary()])
+
+      const { testServiceWithTransitive } = context.diContainer.cradle
+
+      await testServiceWithTransitive.execute()
     })
   })
 })

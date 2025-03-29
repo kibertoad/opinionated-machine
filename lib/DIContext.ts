@@ -7,6 +7,7 @@ import type { ENABLE_ALL } from './diConfigUtils.js'
 
 export type RegisterDependenciesParams<Dependencies, ExternalDependencies> = {
   modules: readonly AbstractModule<unknown, ExternalDependencies>[]
+  secondaryModules?: readonly AbstractModule<unknown, ExternalDependencies>[] // only public dependencies from secondary modules are injected
   dependencyOverrides?: NameAndRegistrationPair<Dependencies>
 }
 
@@ -37,29 +38,61 @@ export class DIContext<Dependencies extends object, ExternalDependencies = undef
     this.controllerResolvers = []
   }
 
+  private registerModule(
+    module: AbstractModule<unknown, ExternalDependencies>,
+    targetDiConfig: NameAndRegistrationPair<Dependencies>,
+    externalDependencies: ExternalDependencies,
+    resolveControllers: boolean,
+    isPrimaryModule: boolean,
+  ) {
+    const resolvedDIConfig = module.resolveDependencies(this.options, externalDependencies)
+
+    for (const key in resolvedDIConfig) {
+      // @ts-expect-error we can't really ensure type-safety here
+      if (isPrimaryModule || resolvedDIConfig[key].public) {
+        // @ts-expect-error we can't really ensure type-safety here
+        targetDiConfig[key] = resolvedDIConfig[key]
+      }
+    }
+
+    if (isPrimaryModule && resolveControllers) {
+      this.controllerResolvers.push(
+        ...(Object.values(module.resolveControllers()) as Resolver<unknown>[]),
+      )
+    }
+  }
+
   registerDependencies(
     params: RegisterDependenciesParams<Dependencies, ExternalDependencies>,
     externalDependencies: ExternalDependencies,
     resolveControllers = true,
   ): void {
     const _dependencyOverrides = params.dependencyOverrides ?? {}
-    const diConfig: NameAndRegistrationPair<Dependencies> = {}
+    const targetDiConfig: NameAndRegistrationPair<Dependencies> = {}
 
-    for (const module of params.modules) {
-      const resolvedDIConfig = module.resolveDependencies(this.options, externalDependencies)
+    for (const primaryModule of params.modules) {
+      this.registerModule(
+        primaryModule,
+        targetDiConfig,
+        externalDependencies,
+        resolveControllers,
+        true,
+      )
+    }
 
-      for (const key in resolvedDIConfig) {
-        // @ts-expect-error we can't really ensure type-safety here
-        diConfig[key] = resolvedDIConfig[key]
-      }
-
-      if (resolveControllers) {
-        this.controllerResolvers.push(
-          ...(Object.values(module.resolveControllers()) as Resolver<unknown>[]),
+    if (params.secondaryModules) {
+      for (const secondaryModule of params.secondaryModules) {
+        this.registerModule(
+          secondaryModule,
+          targetDiConfig,
+          externalDependencies,
+          resolveControllers,
+          false,
         )
       }
     }
-    this.diContainer.register(diConfig)
+
+    this.diContainer.register(targetDiConfig)
 
     for (const [dependencyKey, _dependencyValue] of Object.entries(_dependencyOverrides)) {
       const dependencyValue = { ...(_dependencyValue as Resolver<unknown>) }

@@ -8,9 +8,13 @@ import {
   asJobWorkerClass,
   asMessageQueueHandlerClass,
   asPeriodicJobClass,
-  asSingletonClass,
+  asServiceClass,
 } from '../lib/resolverFunctions.js'
 import { TestController } from './TestController.js'
+import type {
+  TestModuleSecondaryPublicDependencies,
+  TestServiceSecondary,
+} from './TestModuleSecondary.js'
 
 export class TestService {
   public counter = 0
@@ -19,6 +23,17 @@ export class TestService {
 }
 
 export class TestService2 extends TestService {}
+
+export class TestServiceWithTransitive {
+  private service: TestServiceSecondary
+  constructor({ testServiceSecondary }: TestModuleSecondaryPublicDependencies) {
+    this.service = testServiceSecondary
+  }
+
+  execute(): Promise<void> {
+    return this.service.execute()
+  }
+}
 
 export class TestMessageQueueConsumer {
   public static readonly QUEUE_ID = 'queue'
@@ -85,6 +100,7 @@ export class PeriodicJob {
 
 export type TestModuleDependencies = {
   testService: TestService
+  testServiceWithTransitive: TestServiceWithTransitive
   testExpendable: TestService
   messageQueueConsumer: TestMessageQueueConsumer
   jobWorker: JobWorker
@@ -97,7 +113,8 @@ export class TestModule extends AbstractModule<TestModuleDependencies> {
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<TestModuleDependencies> {
     return {
-      testService: asSingletonClass(TestService),
+      testService: asServiceClass(TestService),
+      testServiceWithTransitive: asServiceClass(TestServiceWithTransitive),
 
       testExpendable: asClass(TestService),
 
