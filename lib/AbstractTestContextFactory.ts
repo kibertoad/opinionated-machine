@@ -55,6 +55,7 @@ export abstract class AbstractTestContextFactory<
         dependencyOverrides: params.dependencyOverrides,
         configOverrides: params.configOverrides,
         modules,
+        configDependencyId: this.configDependencyId,
       },
       this.externalDependencies,
       false,
