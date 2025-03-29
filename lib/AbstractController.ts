@@ -11,7 +11,7 @@ export abstract class AbstractController<
     // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
     | DeleteRouteDefinition<any, any, any>
     // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
-    | GetRouteDefinition<any, any, any>
+    | GetRouteDefinition<any, any, any, any, any, any>
     // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
     | PayloadRouteDefinition<any, any, any, any, any, any, any, any>
   >,
