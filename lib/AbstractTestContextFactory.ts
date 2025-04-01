@@ -5,6 +5,7 @@ import type { NestedPartial } from './configUtils.js'
 
 export type CreateTestContextParams<Dependencies, Config extends object> = {
   modules?: readonly AbstractModule<unknown>[]
+  secondaryModules?: readonly AbstractModule<unknown>[] // only public dependencies from secondary modules are injected
   diOptions?: DependencyInjectionOptions
   dependencyOverrides?: NameAndRegistrationPair<Dependencies>
   configOverrides?: NestedPartial<Config>
@@ -55,6 +56,7 @@ export abstract class AbstractTestContextFactory<
         dependencyOverrides: params.dependencyOverrides,
         configOverrides: params.configOverrides,
         modules,
+        secondaryModules: params.secondaryModules,
         configDependencyId: this.configDependencyId,
       },
       this.externalDependencies,
