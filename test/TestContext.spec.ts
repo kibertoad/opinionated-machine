@@ -1,8 +1,9 @@
 import { testContextFactory } from './ExampleTestContextFactory.js'
-import { TestMessageQueueConsumer } from './TestModule.js'
+import { TestMessageQueueConsumer, TestModule } from './TestModule.js'
+import { TestModuleSecondary } from './TestModuleSecondary.js'
 
 describe('TestContext', () => {
-  it('bootstraps given module', async () => {
+  it('bootstraps for all modules', async () => {
     const testContext = await testContextFactory.createTestContext({
       diOptions: {
         messageQueueConsumersEnabled: [TestMessageQueueConsumer.QUEUE_ID],
@@ -19,5 +20,26 @@ describe('TestContext', () => {
 
     expect(messageQueueConsumer.isStarted).toBe(false)
     expect(jobWorker.isStarted).toBe(false)
+  })
+
+  it('does not resolve private dependency from a secondary module', async () => {
+    const testContext = await testContextFactory.createTestContext({
+      modules: [new TestModule()],
+      secondaryModules: [new TestModuleSecondary()],
+    })
+
+    // @ts-expect-error private dependency
+    expect(() => testContext.diContainer.cradle.testRepository).toThrowError(/Could not resolve/)
+  })
+
+  it('resolves public dependency from a secondary module', async () => {
+    const testContext = await testContextFactory.createTestContext({
+      modules: [new TestModule()],
+      secondaryModules: [new TestModuleSecondary()],
+    })
+
+    const { testServiceWithTransitive } = testContext.diContainer.cradle
+
+    await testServiceWithTransitive.execute()
   })
 })
