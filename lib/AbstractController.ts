@@ -1,36 +1,58 @@
-import type {buildFastifyNoPayloadRoute, buildFastifyPayloadRoute} from '@lokalise/fastify-api-contracts'
+import type {
+  buildFastifyNoPayloadRoute,
+  buildFastifyPayloadRoute,
+} from '@lokalise/fastify-api-contracts'
 import type {
   CommonRouteDefinition,
-  DeleteRouteDefinition, GetRouteDefinition, PayloadRouteDefinition
+  DeleteRouteDefinition,
+  GetRouteDefinition,
+  PayloadRouteDefinition,
 } from '@lokalise/universal-ts-utils/api-contracts/apiContracts'
+import type { z } from 'zod'
 
 // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
-export type AnyCommonRouteDefinition = CommonRouteDefinition<any, any, any, any, any, any, any>
+type AnyCommonRouteDefinition = CommonRouteDefinition<any, any, any, any, any, any, any>
+type OptionalZodSchema = z.Schema | undefined
 
-// TODO: Try to simplify by using CommonRouteDefinition directly
+type FastifyPayloadRoute<
+  RequestBody extends OptionalZodSchema,
+  ResponseBody extends OptionalZodSchema,
+  Path extends OptionalZodSchema,
+  Query extends OptionalZodSchema,
+  Headers extends OptionalZodSchema,
+> = ReturnType<typeof buildFastifyPayloadRoute<RequestBody, ResponseBody, Path, Query, Headers>>
+type FastifyNoPayloadRoute<
+  RequestBody extends OptionalZodSchema,
+  Path extends OptionalZodSchema,
+  Query extends OptionalZodSchema,
+  Headers extends OptionalZodSchema,
+> = ReturnType<typeof buildFastifyNoPayloadRoute<RequestBody, Path, Query, Headers>>
+
 export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonRouteDefinition>> = {
-  [K in keyof APIContracts]: APIContracts[K] extends DeleteRouteDefinition<
+  [K in keyof APIContracts]: APIContracts[K] extends PayloadRouteDefinition<
+    unknown,
+    infer RequestBody,
+    infer ResponseBody,
+    infer Path,
+    infer Query,
+    infer Headers
+  >
+    ? FastifyPayloadRoute<RequestBody, ResponseBody, Path, Query, Headers>
+    : APIContracts[K] extends GetRouteDefinition<
           unknown,
-          infer A,
-          infer B,
-          infer C,
-          infer D
-      >
-      ? ReturnType<typeof buildFastifyNoPayloadRoute<A, B, C, D>>
-      : APIContracts[K] extends GetRouteDefinition<unknown, infer A, infer B, infer C, infer D>
-          ? ReturnType<typeof buildFastifyNoPayloadRoute<A, B, C, D>>
-          : APIContracts[K] extends PayloadRouteDefinition<
-                  unknown,
-                  infer A,
-                  infer B,
-                  infer C,
-                  infer D,
-                  infer E,
-                  infer F,
-                  infer G
-              >
-              ? ReturnType<typeof buildFastifyPayloadRoute<A, B, C, D, E, F, G>>
-              : never
+          infer GetRequestBody,
+          infer GetPath,
+          infer GetQuery,
+          infer GetHeaders
+        > | DeleteRouteDefinition<
+            unknown,
+            infer DeleteRequestBody,
+            infer DeletePath,
+            infer DeleteQuery,
+            infer DeleteHeaders
+        >
+      ? FastifyNoPayloadRoute<GetRequestBody | DeleteRequestBody, GetPath | DeletePath, GetQuery | DeleteQuery, GetHeaders | DeleteHeaders>
+      : never
 }
 
 export abstract class AbstractController<
