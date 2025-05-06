@@ -18,12 +18,6 @@ describe('AbstractController', () => {
       value: z.string(),
     })
 
-    const _a = buildGetRoute({
-      successResponseBodySchema: ITEM_SCHEMA,
-      requestPathParamsSchema: ITEM_SCHEMA.pick({ id: true }),
-      pathResolver: (pathParams) => `/users/${pathParams.id}`,
-    })
-
     const contracts = {
       getItem: buildGetRoute({
         successResponseBodySchema: ITEM_SCHEMA,
