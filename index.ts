@@ -17,7 +17,7 @@ export {
   isEnqueuedJobWorkersEnabled,
   isPeriodicJobEnabled,
 } from './lib/diConfigUtils.js'
-export { AbstractController } from './lib/AbstractController.js'
+export { AbstractController, type BuildRoutesReturnType } from './lib/AbstractController.js'
 export {
   asJobQueueClass,
   asEnqueuedJobWorkerClass,
