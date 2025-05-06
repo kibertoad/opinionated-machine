@@ -3,17 +3,18 @@ import {
   buildFastifyPayloadRoute,
 } from '@lokalise/fastify-api-contracts'
 import {
-  buildDeleteRoute, buildGetRoute,
+  buildDeleteRoute,
+  buildGetRoute,
   buildPayloadRoute,
 } from '@lokalise/universal-ts-utils/api-contracts/apiContracts'
-import {boolean, z} from 'zod'
+import { boolean, z } from 'zod'
 import { AbstractController, type BuildRoutesReturnType } from '../lib/AbstractController.js'
 import type { TestModuleDependencies, TestService } from './TestModule.js'
 
 const REQUEST_BODY_SCHEMA = z.object({
   name: z.string(),
 })
-const RESPONSE_BODY_SCHEMA = z.object({success: boolean()})
+const RESPONSE_BODY_SCHEMA = z.object({ success: boolean() })
 const PATH_PARAMS_SCHEMA = z.object({
   userId: z.string(),
 })
@@ -56,7 +57,7 @@ export class TestController extends AbstractController<typeof TestController.con
     async (req, reply) => {
       req.log.info(req.params.userId)
       this.service.execute()
-      await reply.status(200).send({success: true})
+      await reply.status(200).send({ success: true })
     },
   )
 
@@ -65,7 +66,7 @@ export class TestController extends AbstractController<typeof TestController.con
     async (req, reply) => {
       req.log.info(req.params.userId)
       this.service.execute()
-      await reply.status(200).send({success: true})
+      await reply.status(200).send({ success: true })
     },
   )
 
@@ -74,7 +75,7 @@ export class TestController extends AbstractController<typeof TestController.con
     async (req, reply) => {
       req.log.info(req.params.userId)
       this.service.execute()
-      await reply.status(200).send({success: true})
+      await reply.status(200).send({ success: true })
     },
   )
 

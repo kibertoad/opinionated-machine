@@ -14,14 +14,14 @@ import type { z } from 'zod'
 type AnyCommonRouteDefinition = CommonRouteDefinition<any, any, any, any, any, any, any>
 type OptionalZodSchema = z.Schema | undefined
 
-type FastifyPayloadRoute<
+type FastifyPayloadRouteReturnType<
   RequestBody extends OptionalZodSchema,
   ResponseBody extends OptionalZodSchema,
   Path extends OptionalZodSchema,
   Query extends OptionalZodSchema,
   Headers extends OptionalZodSchema,
 > = ReturnType<typeof buildFastifyPayloadRoute<RequestBody, ResponseBody, Path, Query, Headers>>
-type FastifyNoPayloadRoute<
+type FastifyNoPayloadRouteReturnType<
   RequestBody extends OptionalZodSchema,
   Path extends OptionalZodSchema,
   Query extends OptionalZodSchema,
@@ -37,21 +37,28 @@ export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonR
     infer Query,
     infer Headers
   >
-    ? FastifyPayloadRoute<RequestBody, ResponseBody, Path, Query, Headers>
-    : APIContracts[K] extends GetRouteDefinition<
-          unknown,
-          infer GetRequestBody,
-          infer GetPath,
-          infer GetQuery,
-          infer GetHeaders
-        > | DeleteRouteDefinition<
-            unknown,
-            infer DeleteRequestBody,
-            infer DeletePath,
-            infer DeleteQuery,
-            infer DeleteHeaders
+    ? FastifyPayloadRouteReturnType<RequestBody, ResponseBody, Path, Query, Headers>
+    : APIContracts[K] extends
+          | GetRouteDefinition<
+              unknown,
+              infer GetRequestBody,
+              infer GetPath,
+              infer GetQuery,
+              infer GetHeaders
+            >
+          | DeleteRouteDefinition<
+              unknown,
+              infer DeleteRequestBody,
+              infer DeletePath,
+              infer DeleteQuery,
+              infer DeleteHeaders
+            >
+      ? FastifyNoPayloadRouteReturnType<
+          GetRequestBody | DeleteRequestBody,
+          GetPath | DeletePath,
+          GetQuery | DeleteQuery,
+          GetHeaders | DeleteHeaders
         >
-      ? FastifyNoPayloadRoute<GetRequestBody | DeleteRequestBody, GetPath | DeletePath, GetQuery | DeleteQuery, GetHeaders | DeleteHeaders>
       : never
 }
 
