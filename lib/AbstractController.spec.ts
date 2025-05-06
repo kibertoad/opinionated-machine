@@ -51,14 +51,12 @@ describe('AbstractController', () => {
       }),
     )
 
-    const deleteItem = buildFastifyNoPayloadRoute(
-      contracts.deleteItem,
-      async (_, reply) => reply.status(200).send(),
+    const deleteItem = buildFastifyNoPayloadRoute(contracts.deleteItem, async (_, reply) =>
+      reply.status(200).send(),
     )
 
-    const updateItem = buildFastifyPayloadRoute(
-      contracts.updateItem,
-      async (_, reply) => reply.status(200).send({ success: true }),
+    const updateItem = buildFastifyPayloadRoute(contracts.updateItem, async (_, reply) =>
+      reply.status(200).send({ success: true }),
     )
 
     it('should narrow down type correctly', () => {
@@ -105,7 +103,7 @@ describe('AbstractController', () => {
         deleteItem,
         updateItem: deleteItem,
       }
-      expectTypeOf(usingDeleteInGet).not.toExtend<ExpectedType>()
+      expectTypeOf(usingDeleteInUpdate).not.toExtend<ExpectedType>()
 
       const usingUpdateInGet = {
         getItem: updateItem,
