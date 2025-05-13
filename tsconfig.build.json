@@ -4,5 +4,5 @@
         "types": ["node"]
     },
     "include": ["lib/**/*", "index.ts"],
-    "exclude": ["test/**/*.spec.ts"]
+    "exclude": ["lib/**/*.spec.ts"]
 }
