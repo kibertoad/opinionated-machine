@@ -21,8 +21,18 @@ type FastifyPayloadRouteReturnType<
   Query extends OptionalZodSchema,
   Headers extends OptionalZodSchema,
   IsNonJSONResponseExpected extends boolean,
-  IsEmptyResponseExpected extends boolean
-> = ReturnType<typeof buildFastifyPayloadRoute<RequestBody, ResponseBody, Path, Query, Headers, IsNonJSONResponseExpected, IsEmptyResponseExpected>>
+  IsEmptyResponseExpected extends boolean,
+> = ReturnType<
+  typeof buildFastifyPayloadRoute<
+    RequestBody,
+    ResponseBody,
+    Path,
+    Query,
+    Headers,
+    IsNonJSONResponseExpected,
+    IsEmptyResponseExpected
+  >
+>
 type FastifyNoPayloadRouteReturnType<
   RequestBody extends OptionalZodSchema,
   Path extends OptionalZodSchema,
@@ -41,7 +51,15 @@ export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonR
     infer IsNonJSONResponseExpected,
     infer IsEmptyResponseExpected
   >
-    ? FastifyPayloadRouteReturnType<RequestBody, ResponseBody, Path, Query, Headers, IsNonJSONResponseExpected, IsEmptyResponseExpected>
+    ? FastifyPayloadRouteReturnType<
+        RequestBody,
+        ResponseBody,
+        Path,
+        Query,
+        Headers,
+        IsNonJSONResponseExpected,
+        IsEmptyResponseExpected
+      >
     : APIContracts[K] extends
           | GetRouteDefinition<
               unknown,

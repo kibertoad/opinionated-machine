@@ -81,10 +81,10 @@ export class TestController extends AbstractController<typeof TestController.con
   )
 
   private createItem = buildFastifyPayloadRoute(
-      TestController.contracts.createItem,
-      async (_, reply) => {
-        await reply.status(200).send()
-      },
+    TestController.contracts.createItem,
+    async (_, reply) => {
+      await reply.status(200).send()
+    },
   )
 
   private updateItem = buildFastifyPayloadRoute(
@@ -101,7 +101,7 @@ export class TestController extends AbstractController<typeof TestController.con
       getItem: this.getItem,
       deleteItem: this.deleteItem,
       updateItem: this.updateItem,
-      createItem: this.createItem
+      createItem: this.createItem,
     }
   }
 }
