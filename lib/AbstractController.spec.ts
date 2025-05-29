@@ -1,12 +1,8 @@
+import { buildDeleteRoute, buildGetRoute, buildPayloadRoute } from '@lokalise/api-contracts'
 import {
   buildFastifyNoPayloadRoute,
   buildFastifyPayloadRoute,
 } from '@lokalise/fastify-api-contracts'
-import {
-  buildDeleteRoute,
-  buildGetRoute,
-  buildPayloadRoute,
-} from '@lokalise/universal-ts-utils/api-contracts/apiContracts'
 import { expectTypeOf } from 'vitest'
 import { z } from 'zod'
 import type { BuildRoutesReturnType } from '../lib/AbstractController.ts'

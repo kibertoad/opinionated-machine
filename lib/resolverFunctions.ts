@@ -7,6 +7,7 @@ import {
   isJobQueueEnabled,
   isMessageQueueConsumerEnabled,
   isPeriodicJobEnabled,
+  resolveJobQueuesEnabled,
 } from './diConfigUtils.js'
 
 declare module 'awilix' {
@@ -14,6 +15,11 @@ declare module 'awilix' {
   interface ResolverOptions<T> {
     public?: boolean // if module is used as secondary, only public dependencies will be exposed. default is false
   }
+}
+
+// this follows background-jobs-common conventions
+export interface EnqueuedJobQueueManager {
+  start(enabled?: string[] | boolean): Promise<void>
 }
 
 export function asSingletonClass<T = object>(
@@ -175,6 +181,24 @@ export function asJobQueueClass<T = object>(
     public: true,
 
     enabled: isJobQueueEnabled(queueOptions.diOptions.jobQueuesEnabled, queueOptions.queueName),
+    lifetime: 'SINGLETON',
+    ...opts,
+  })
+}
+
+export function asEnqueuedJobQueueManagerFunction<T extends EnqueuedJobQueueManager>(
+  fn: FunctionReturning<T>,
+  diOptions: DependencyInjectionOptions,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  return asFunction(fn, {
+    // these follow background-jobs-common conventions
+    asyncInit: (manager) => manager.start(resolveJobQueuesEnabled(diOptions)),
+    asyncDispose: 'dispose',
+    asyncInitPriority: 20,
+    asyncDisposePriority: 20,
+    public: true,
+    enabled: isJobQueueEnabled(diOptions.jobQueuesEnabled),
     lifetime: 'SINGLETON',
     ...opts,
   })

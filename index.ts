@@ -29,6 +29,8 @@ export {
   asServiceClass,
   asRepositoryClass,
   asUseCaseClass,
+  asEnqueuedJobQueueManagerFunction,
+  type EnqueuedJobQueueManager,
 } from './lib/resolverFunctions.js'
 
 export type {
