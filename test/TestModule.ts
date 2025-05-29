@@ -1,9 +1,9 @@
 import { asClass } from 'awilix'
 import { AbstractModule, type MandatoryNameAndRegistrationPair } from '../lib/AbstractModule.js'
 import type { DependencyInjectionOptions } from '../lib/DIContext.js'
-import { resolveJobQueuesEnabled } from '../lib/diConfigUtils.js'
 import {
   asControllerClass,
+  asEnqueuedJobQueueManagerFunction,
   asEnqueuedJobWorkerClass,
   asJobQueueClass,
   asMessageQueueHandlerClass,
@@ -49,6 +49,8 @@ export class TestMessageQueueConsumer {
     return Promise.resolve()
   }
 }
+
+export class Queue {}
 
 export class QueueManager {
   startedQueues: string[] = []
@@ -105,6 +107,7 @@ export type TestModuleDependencies = {
   messageQueueConsumer: TestMessageQueueConsumer
   jobWorker: JobWorker
   queueManager: QueueManager
+  queue: Queue
   periodicJob: PeriodicJob
 }
 
@@ -133,15 +136,12 @@ export class TestModule extends AbstractModule<TestModuleDependencies> {
         diOptions,
       }),
 
-      queueManager: asJobQueueClass(
-        QueueManager,
-        {
-          diOptions,
-        },
-        {
-          asyncInit: (manager) => manager.start(resolveJobQueuesEnabled(diOptions)),
-        },
-      ),
+      queue: asJobQueueClass(Queue, {
+        diOptions,
+        queueName: 'dummy',
+      }),
+
+      queueManager: asEnqueuedJobQueueManagerFunction(() => new QueueManager(), diOptions),
     }
   }
 

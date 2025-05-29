@@ -1,4 +1,3 @@
-import type { QueueManager } from '@lokalise/background-jobs-common'
 import { asClass, asFunction } from 'awilix'
 import type { BuildResolver, BuildResolverOptions, Constructor, DisposableResolver } from 'awilix'
 import type { FunctionReturning } from 'awilix/lib/container'
@@ -16,6 +15,11 @@ declare module 'awilix' {
   interface ResolverOptions<T> {
     public?: boolean // if module is used as secondary, only public dependencies will be exposed. default is false
   }
+}
+
+// this follows background-jobs-common conventions
+export interface JobQueueManager {
+  start(enabled?: string[] | boolean): Promise<void>
 }
 
 export function asSingletonClass<T = object>(
@@ -182,10 +186,7 @@ export function asJobQueueClass<T = object>(
   })
 }
 
-// ToDo add tests, will require adding docker-compose with Redis
-/* c8 ignore start */
-// biome-ignore lint/suspicious/noExplicitAny: we do not care
-export function asEnqueuedJobQueueManagerFunction<T extends QueueManager<any> = QueueManager<any>>(
+export function asEnqueuedJobQueueManagerFunction<T extends JobQueueManager>(
   fn: FunctionReturning<T>,
   diOptions: DependencyInjectionOptions,
   opts?: BuildResolverOptions<T>,
@@ -201,5 +202,4 @@ export function asEnqueuedJobQueueManagerFunction<T extends QueueManager<any> = 
     lifetime: 'SINGLETON',
     ...opts,
   })
-  /* c8 ignore stop */
 }
