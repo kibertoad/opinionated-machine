@@ -185,7 +185,7 @@ export function asJobQueueClass<T = object>(
 // ToDo add tests, will require adding docker-compose with Redis
 /* c8 ignore start */
 // biome-ignore lint/suspicious/noExplicitAny: we do not care
-export function asJobQueueManagerFunction<T extends QueueManager<any> = QueueManager<any>>(
+export function asEnqueuedJobQueueManagerFunction<T extends QueueManager<any> = QueueManager<any>>(
   fn: FunctionReturning<T>,
   diOptions: DependencyInjectionOptions,
   opts?: BuildResolverOptions<T>,

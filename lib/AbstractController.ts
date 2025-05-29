@@ -1,13 +1,13 @@
 import type {
-  buildFastifyNoPayloadRoute,
-  buildFastifyPayloadRoute,
-} from '@lokalise/fastify-api-contracts'
-import type {
   CommonRouteDefinition,
   DeleteRouteDefinition,
   GetRouteDefinition,
   PayloadRouteDefinition,
-} from '@lokalise/universal-ts-utils/api-contracts/apiContracts'
+} from '@lokalise/api-contracts'
+import type {
+  buildFastifyNoPayloadRoute,
+  buildFastifyPayloadRoute,
+} from '@lokalise/fastify-api-contracts'
 import type { z } from 'zod'
 
 // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
