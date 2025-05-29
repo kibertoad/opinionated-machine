@@ -1,3 +1,4 @@
+import type { QueueManager } from '@lokalise/background-jobs-common'
 import { asClass, asFunction } from 'awilix'
 import type { BuildResolver, BuildResolverOptions, Constructor, DisposableResolver } from 'awilix'
 import type { FunctionReturning } from 'awilix/lib/container'
@@ -7,6 +8,7 @@ import {
   isJobQueueEnabled,
   isMessageQueueConsumerEnabled,
   isPeriodicJobEnabled,
+  resolveJobQueuesEnabled,
 } from './diConfigUtils.js'
 
 declare module 'awilix' {
@@ -178,4 +180,26 @@ export function asJobQueueClass<T = object>(
     lifetime: 'SINGLETON',
     ...opts,
   })
+}
+
+// ToDo add tests, will require adding docker-compose with Redis
+/* c8 ignore start */
+// biome-ignore lint/suspicious/noExplicitAny: we do not care
+export function asJobQueueManagerFunction<T extends QueueManager<any> = QueueManager<any>>(
+  fn: FunctionReturning<T>,
+  diOptions: DependencyInjectionOptions,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  return asFunction(fn, {
+    // these follow background-jobs-common conventions
+    asyncInit: (manager) => manager.start(resolveJobQueuesEnabled(diOptions)),
+    asyncDispose: 'dispose',
+    asyncInitPriority: 20,
+    asyncDisposePriority: 20,
+    public: true,
+    enabled: isJobQueueEnabled(diOptions.jobQueuesEnabled),
+    lifetime: 'SINGLETON',
+    ...opts,
+  })
+  /* c8 ignore stop */
 }

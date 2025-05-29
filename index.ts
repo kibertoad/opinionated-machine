@@ -29,6 +29,7 @@ export {
   asServiceClass,
   asRepositoryClass,
   asUseCaseClass,
+  asJobQueueManagerFunction,
 } from './lib/resolverFunctions.js'
 
 export type {

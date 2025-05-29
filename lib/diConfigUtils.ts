@@ -30,6 +30,11 @@ export const isPeriodicJobEnabled = (
   name?: string,
 ): boolean => isEnabled(enabled, name)
 
+/**
+ * Returns true if either specific queue is enabled (if name is specified), or if any queue is enabled (if no name is provided)
+ * @param enabled
+ * @param name
+ */
 export const isJobQueueEnabled = (
   enabled?: false | typeof ENABLE_ALL | string[],
   name?: string,
