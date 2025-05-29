@@ -18,7 +18,7 @@ declare module 'awilix' {
 }
 
 // this follows background-jobs-common conventions
-export interface JobQueueManager {
+export interface EnqueuedJobQueueManager {
   start(enabled?: string[] | boolean): Promise<void>
 }
 
@@ -186,7 +186,7 @@ export function asJobQueueClass<T = object>(
   })
 }
 
-export function asEnqueuedJobQueueManagerFunction<T extends JobQueueManager>(
+export function asEnqueuedJobQueueManagerFunction<T extends EnqueuedJobQueueManager>(
   fn: FunctionReturning<T>,
   diOptions: DependencyInjectionOptions,
   opts?: BuildResolverOptions<T>,
