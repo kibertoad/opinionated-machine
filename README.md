@@ -144,7 +144,6 @@ const context = new DIContext<ModuleDependencies, AppConfig, ExternalDependencie
 
 context.registerDependencies({
     modules: [module],
-    secondaryModules: [someOtherModule] // only dependencies marked as public are injected from secondary modules. This is useful for catching encapsulation violations in integration tests. 
     dependencyOverrides: {}, // dependency overrides if necessary, usually for testing purposes
     configOverrides: {}, // config overrides if necessary, will be merged with value inside existing config
     configDependencyId?: string // what is the dependency id in the graph for the config entity. Only used for config overrides. Default value is `config`
