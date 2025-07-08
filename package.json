@@ -42,7 +42,7 @@
     },
     "devDependencies": {
         "@types/node": "^22.13.13",
-        "@biomejs/biome": "2.0.6",
+        "@biomejs/biome": "2.1.1",
         "@lokalise/biome-config": "^3.0.0",
         "@lokalise/fastify-api-contracts": "^2.2.0",
         "@lokalise/tsconfig": "^2.0.0",
