@@ -1,5 +1,5 @@
-import { asClass, asFunction } from 'awilix'
 import type { BuildResolver, BuildResolverOptions, Constructor, DisposableResolver } from 'awilix'
+import { asClass, asFunction } from 'awilix'
 import type { FunctionReturning } from 'awilix/lib/container'
 import type { DependencyInjectionOptions } from './DIContext.js'
 import {

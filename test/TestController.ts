@@ -3,7 +3,7 @@ import {
   buildFastifyNoPayloadRoute,
   buildFastifyPayloadRoute,
 } from '@lokalise/fastify-api-contracts'
-import { boolean, z } from 'zod'
+import { boolean, z } from 'zod/v4'
 import { AbstractController, type BuildRoutesReturnType } from '../lib/AbstractController.js'
 import type { TestModuleDependencies, TestService } from './TestModule.js'
 

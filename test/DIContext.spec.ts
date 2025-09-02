@@ -1,10 +1,10 @@
 import { injectDelete } from '@lokalise/fastify-api-contracts'
-import { type NameAndRegistrationPair, asClass, createContainer } from 'awilix'
+import { asClass, createContainer, type NameAndRegistrationPair } from 'awilix'
 import { fastify } from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { describe, it } from 'vitest'
 import type { AbstractModule, UnionToIntersection } from '../lib/AbstractModule.js'
-import { DIContext, type DependencyInjectionOptions } from '../lib/DIContext.js'
+import { type DependencyInjectionOptions, DIContext } from '../lib/DIContext.js'
 import { TestController } from './TestController.js'
 import {
   JobWorker,
@@ -27,7 +27,7 @@ function createTestContainer() {
   })
 }
 
-// biome-ignore lint/complexity/noBannedTypes: <explanation>
+// biome-ignore lint/complexity/noBannedTypes: it's ok
 type Config = {}
 
 function createContext<TargetDependencies extends object = TestModuleDependencies>(
@@ -273,7 +273,7 @@ describe('opinionated-machine', () => {
       await testServiceSecondary.execute()
     })
 
-    it('does not resolve private dependency from a secondary module', async () => {
+    it('does not resolve private dependency from a secondary module', () => {
       const context = createContext<
         UnionToIntersection<TestModuleDependencies | TestModuleSecondaryDependencies>
       >({}, {}, [new TestModuleSecondary()])

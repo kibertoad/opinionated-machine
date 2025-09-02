@@ -1,10 +1,10 @@
 import { AbstractTestContextFactory } from '../lib/AbstractTestContextFactory.js'
 import { TestModule, type TestModuleDependencies } from './TestModule.js'
 
-// biome-ignore lint/complexity/noBannedTypes: <explanation>
+// biome-ignore lint/complexity/noBannedTypes: it's ok
 type ExternalDependencies = {}
 
-// biome-ignore lint/complexity/noBannedTypes: <explanation>
+// biome-ignore lint/complexity/noBannedTypes: it's ok
 type Config = {}
 
 export class ExampleTestContextFactory extends AbstractTestContextFactory<

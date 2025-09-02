@@ -4,7 +4,7 @@ import {
   buildFastifyPayloadRoute,
 } from '@lokalise/fastify-api-contracts'
 import { expectTypeOf } from 'vitest'
-import { z } from 'zod'
+import { z } from 'zod/v4'
 import type { BuildRoutesReturnType } from '../lib/AbstractController.ts'
 
 describe('AbstractController', () => {

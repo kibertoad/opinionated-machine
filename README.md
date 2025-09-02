@@ -70,7 +70,7 @@ Controllers require using fastify-api-contracts and allow to define application 
 ```ts
 import { buildFastifyNoPayloadRoute } from '@lokalise/fastify-api-contracts'
 import { buildDeleteRoute } from '@lokalise/universal-ts-utils/api-contracts/apiContracts'
-import { z } from 'zod'
+import { z } from 'zod/v4'
 import { AbstractController } from 'opinionated-machine'
 
 const BODY_SCHEMA = z.object({})
