@@ -8,7 +8,7 @@ import type {
   buildFastifyNoPayloadRoute,
   buildFastifyPayloadRoute,
 } from '@lokalise/fastify-api-contracts'
-import type { z } from 'zod'
+import type { z } from 'zod/v4'
 
 // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
 type AnyCommonRouteDefinition = CommonRouteDefinition<any, any, any, any, any, any, any>
@@ -42,14 +42,14 @@ type FastifyNoPayloadRouteReturnType<
 
 export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonRouteDefinition>> = {
   [K in keyof APIContracts]: APIContracts[K] extends PayloadRouteDefinition<
-    unknown,
     infer RequestBody,
     infer ResponseBody,
     infer Path,
     infer Query,
     infer Headers,
     infer IsNonJSONResponseExpected,
-    infer IsEmptyResponseExpected
+    infer IsEmptyResponseExpected,
+    infer _ResponseSchemasByStatusCode
   >
     ? FastifyPayloadRouteReturnType<
         RequestBody,
@@ -62,21 +62,25 @@ export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonR
       >
     : APIContracts[K] extends
           | GetRouteDefinition<
-              unknown,
-              infer GetRequestBody,
+              infer GetResponseBody,
               infer GetPath,
               infer GetQuery,
-              infer GetHeaders
+              infer GetHeaders,
+              infer _GetIsNonJSONResponseExpected,
+              infer _GetIsEmptyResponseExpected,
+              infer _GetResponseSchemasByStatusCode
             >
           | DeleteRouteDefinition<
-              unknown,
-              infer DeleteRequestBody,
+              infer DeleteResponseBody,
               infer DeletePath,
               infer DeleteQuery,
-              infer DeleteHeaders
+              infer DeleteHeaders,
+              infer _DeleteIsNonJSONResponseExpected,
+              infer _DeleteIsEmptyResponseExpected,
+              infer _DeleteResponseSchemasByStatusCode
             >
       ? FastifyNoPayloadRouteReturnType<
-          GetRequestBody | DeleteRequestBody,
+          GetResponseBody | DeleteResponseBody,
           GetPath | DeletePath,
           GetQuery | DeleteQuery,
           GetHeaders | DeleteHeaders

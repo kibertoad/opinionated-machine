@@ -3,7 +3,7 @@ import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance } from 'fastify'
 import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
-import { type NestedPartial, mergeConfigAndDependencyOverrides } from './configUtils.js'
+import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configUtils.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
@@ -122,9 +122,9 @@ export class DIContext<
 
       // preserve lifetime from original resolver
       const originalResolver = this.diContainer.getRegistration(dependencyKey)
-      // @ts-ignore
+      // @ts-expect-error
       if (dependencyValue.lifetime !== originalResolver.lifetime) {
-        // @ts-ignore
+        // @ts-expect-error
         dependencyValue.lifetime = originalResolver.lifetime
       }
 
