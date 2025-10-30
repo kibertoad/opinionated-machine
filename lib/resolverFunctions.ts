@@ -1,14 +1,14 @@
 import type { BuildResolver, BuildResolverOptions, Constructor, DisposableResolver } from 'awilix'
 import { asClass, asFunction } from 'awilix'
 import type { FunctionReturning } from 'awilix/lib/container'
-import type { DependencyInjectionOptions } from './DIContext.js'
+import type { DependencyInjectionOptions } from './DIContext.ts'
 import {
   isEnqueuedJobWorkersEnabled,
   isJobQueueEnabled,
   isMessageQueueConsumerEnabled,
   isPeriodicJobEnabled,
   resolveJobQueuesEnabled,
-} from './diConfigUtils.js'
+} from './diConfigUtils.ts'
 
 declare module 'awilix' {
   // biome-ignore lint/correctness/noUnusedVariables: expected by the signature
