@@ -1,6 +1,6 @@
-import { AbstractModule, type MandatoryNameAndRegistrationPair } from '../lib/AbstractModule.js'
-import type { DependencyInjectionOptions } from '../lib/DIContext.js'
-import { asRepositoryClass, asServiceClass } from '../lib/resolverFunctions.js'
+import { AbstractModule, type MandatoryNameAndRegistrationPair } from '../lib/AbstractModule.ts'
+import type { DependencyInjectionOptions } from '../lib/DIContext.ts'
+import { asRepositoryClass, asServiceClass } from '../lib/resolverFunctions.ts'
 
 export class TestRepository {}
 

@@ -1,7 +1,7 @@
 import { type AwilixContainer, createContainer, type NameAndRegistrationPair } from 'awilix'
-import type { AbstractModule } from './AbstractModule.js'
-import type { NestedPartial } from './configUtils.js'
-import { type DependencyInjectionOptions, DIContext } from './DIContext.js'
+import type { AbstractModule } from './AbstractModule.ts'
+import type { NestedPartial } from './configUtils.ts'
+import { type DependencyInjectionOptions, DIContext } from './DIContext.ts'
 
 export type CreateTestContextParams<Dependencies, Config extends object> = {
   modules?: readonly AbstractModule<unknown>[]

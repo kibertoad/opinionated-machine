@@ -1,4 +1,4 @@
-import type { DependencyInjectionOptions } from './DIContext.js'
+import type { DependencyInjectionOptions } from './DIContext.ts'
 
 export const ENABLE_ALL = Symbol.for('ENABLE_ALL')
 

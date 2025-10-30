@@ -6,7 +6,7 @@ import {
   isMessageQueueConsumerEnabled,
   isPeriodicJobEnabled,
   resolveJobQueuesEnabled,
-} from '../lib/diConfigUtils.js'
+} from '../lib/diConfigUtils.ts'
 
 describe('diConfigUtils', () => {
   describe('resolveJobQueuesEnabled', () => {

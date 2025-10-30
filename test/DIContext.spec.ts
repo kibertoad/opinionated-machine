@@ -3,9 +3,9 @@ import { asClass, createContainer, type NameAndRegistrationPair } from 'awilix'
 import { fastify } from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { describe, it } from 'vitest'
-import type { AbstractModule, UnionToIntersection } from '../lib/AbstractModule.js'
-import { type DependencyInjectionOptions, DIContext } from '../lib/DIContext.js'
-import { TestController } from './TestController.js'
+import type { AbstractModule, UnionToIntersection } from '../lib/AbstractModule.ts'
+import { type DependencyInjectionOptions, DIContext } from '../lib/DIContext.ts'
+import { TestController } from './TestController.ts'
 import {
   JobWorker,
   PeriodicJob,
@@ -14,12 +14,12 @@ import {
   type TestModuleDependencies,
   TestService,
   TestService2,
-} from './TestModule.js'
+} from './TestModule.ts'
 import {
   TestModuleSecondary,
   type TestModuleSecondaryDependencies,
   type TestModuleSecondaryPublicDependencies,
-} from './TestModuleSecondary.js'
+} from './TestModuleSecondary.ts'
 
 function createTestContainer() {
   return createContainer({

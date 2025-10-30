@@ -5,7 +5,7 @@ import {
 } from '@lokalise/fastify-api-contracts'
 import { expectTypeOf } from 'vitest'
 import { z } from 'zod/v4'
-import type { BuildRoutesReturnType } from '../lib/AbstractController.ts'
+import type { BuildRoutesReturnType } from './AbstractController.ts'
 
 describe('AbstractController', () => {
   describe('BuildRoutesReturnType', () => {

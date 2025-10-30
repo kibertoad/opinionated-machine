@@ -1,10 +1,10 @@
 import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance } from 'fastify'
-import type { AbstractController } from './AbstractController.js'
-import type { AbstractModule } from './AbstractModule.js'
-import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configUtils.js'
-import type { ENABLE_ALL } from './diConfigUtils.js'
+import type { AbstractController } from './AbstractController.ts'
+import type { AbstractModule } from './AbstractModule.ts'
+import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configUtils.ts'
+import type { ENABLE_ALL } from './diConfigUtils.ts'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
   modules: readonly AbstractModule<unknown, ExternalDependencies>[]

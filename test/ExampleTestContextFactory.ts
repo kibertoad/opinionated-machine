@@ -1,5 +1,5 @@
-import { AbstractTestContextFactory } from '../lib/AbstractTestContextFactory.js'
-import { TestModule, type TestModuleDependencies } from './TestModule.js'
+import { AbstractTestContextFactory } from '../lib/AbstractTestContextFactory.ts'
+import { TestModule, type TestModuleDependencies } from './TestModule.ts'
 
 // biome-ignore lint/complexity/noBannedTypes: it's ok
 type ExternalDependencies = {}

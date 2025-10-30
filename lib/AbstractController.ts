@@ -19,7 +19,8 @@ type FastifyPayloadRouteReturnType<
   ResponseBody extends OptionalZodSchema,
   Path extends OptionalZodSchema,
   Query extends OptionalZodSchema,
-  Headers extends OptionalZodSchema,
+  RequestHeaders extends OptionalZodSchema,
+  ResponseHeaders extends OptionalZodSchema,
   IsNonJSONResponseExpected extends boolean,
   IsEmptyResponseExpected extends boolean,
 > = ReturnType<
@@ -28,7 +29,8 @@ type FastifyPayloadRouteReturnType<
     ResponseBody,
     Path,
     Query,
-    Headers,
+    RequestHeaders,
+    ResponseHeaders,
     IsNonJSONResponseExpected,
     IsEmptyResponseExpected
   >
@@ -37,8 +39,11 @@ type FastifyNoPayloadRouteReturnType<
   RequestBody extends OptionalZodSchema,
   Path extends OptionalZodSchema,
   Query extends OptionalZodSchema,
-  Headers extends OptionalZodSchema,
-> = ReturnType<typeof buildFastifyNoPayloadRoute<RequestBody, Path, Query, Headers>>
+  RequestHeaders extends OptionalZodSchema,
+  ResponseHeaders extends OptionalZodSchema,
+> = ReturnType<
+  typeof buildFastifyNoPayloadRoute<RequestBody, Path, Query, RequestHeaders, ResponseHeaders>
+>
 
 export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonRouteDefinition>> = {
   [K in keyof APIContracts]: APIContracts[K] extends PayloadRouteDefinition<
@@ -46,7 +51,8 @@ export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonR
     infer ResponseBody,
     infer Path,
     infer Query,
-    infer Headers,
+    infer RequestHeaders,
+    infer ResponseHeaders,
     infer IsNonJSONResponseExpected,
     infer IsEmptyResponseExpected,
     infer _ResponseSchemasByStatusCode
@@ -56,7 +62,8 @@ export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonR
         ResponseBody,
         Path,
         Query,
-        Headers,
+        RequestHeaders,
+        ResponseHeaders,
         IsNonJSONResponseExpected,
         IsEmptyResponseExpected
       >
@@ -65,7 +72,8 @@ export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonR
               infer GetResponseBody,
               infer GetPath,
               infer GetQuery,
-              infer GetHeaders,
+              infer GetRequestHeaders,
+              infer GetResponseHeaders,
               infer _GetIsNonJSONResponseExpected,
               infer _GetIsEmptyResponseExpected,
               infer _GetResponseSchemasByStatusCode
@@ -74,7 +82,8 @@ export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonR
               infer DeleteResponseBody,
               infer DeletePath,
               infer DeleteQuery,
-              infer DeleteHeaders,
+              infer DeleteRequestHeaders,
+              infer DeleteResponseHeaders,
               infer _DeleteIsNonJSONResponseExpected,
               infer _DeleteIsEmptyResponseExpected,
               infer _DeleteResponseSchemasByStatusCode
@@ -83,7 +92,8 @@ export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonR
           GetResponseBody | DeleteResponseBody,
           GetPath | DeletePath,
           GetQuery | DeleteQuery,
-          GetHeaders | DeleteHeaders
+          GetRequestHeaders | DeleteRequestHeaders,
+          GetResponseHeaders | DeleteResponseHeaders
         >
       : never
 }

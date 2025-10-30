@@ -1,6 +1,6 @@
-import { testContextFactory } from './ExampleTestContextFactory.js'
-import { TestMessageQueueConsumer, TestModule } from './TestModule.js'
-import { TestModuleSecondary } from './TestModuleSecondary.js'
+import { testContextFactory } from './ExampleTestContextFactory.ts'
+import { TestMessageQueueConsumer, TestModule } from './TestModule.ts'
+import { TestModuleSecondary } from './TestModuleSecondary.ts'
 
 describe('TestContext', () => {
   it('bootstraps for all modules', async () => {
