@@ -1,6 +1,6 @@
 {
     "name": "opinionated-machine",
-    "version": "4.0.0",
+    "version": "5.0.0",
     "description": "Very opinionated DI framework for fastify, built on top of awilix ",
     "type": "module",
     "license": "MIT",
