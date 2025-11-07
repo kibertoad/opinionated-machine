@@ -1,5 +1,5 @@
 import type { Resolver } from 'awilix'
-import type { DependencyInjectionOptions } from './DIContext.js'
+import type { DependencyInjectionOptions } from './DIContext.ts'
 
 export type MandatoryNameAndRegistrationPair<T> = {
   [U in keyof T]: Resolver<T[U]>
