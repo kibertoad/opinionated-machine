@@ -4,8 +4,8 @@ import {
   buildFastifyPayloadRoute,
 } from '@lokalise/fastify-api-contracts'
 import { boolean, z } from 'zod/v4'
-import { AbstractController, type BuildRoutesReturnType } from '../lib/AbstractController.ts'
-import type { TestModuleDependencies, TestService } from './TestModule.ts'
+import { AbstractController, type BuildRoutesReturnType } from '../lib/AbstractController.js'
+import type { TestModuleDependencies, TestService } from './TestModule.js'
 
 const REQUEST_BODY_SCHEMA = z.object({
   name: z.string(),

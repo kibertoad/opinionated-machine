@@ -1,19 +1,19 @@
-export { AbstractController, type BuildRoutesReturnType } from './lib/AbstractController.ts'
+export { AbstractController, type BuildRoutesReturnType } from './lib/AbstractController.js'
 export {
   AbstractModule,
   type MandatoryNameAndRegistrationPair,
   type UnionToIntersection,
-} from './lib/AbstractModule.ts'
+} from './lib/AbstractModule.js'
 export {
   AbstractTestContextFactory,
   type CreateTestContextParams,
-} from './lib/AbstractTestContextFactory.ts'
-export type { NestedPartial } from './lib/configUtils.ts'
+} from './lib/AbstractTestContextFactory.js'
+export type { NestedPartial } from './lib/configUtils.js'
 export {
   type DependencyInjectionOptions,
   DIContext,
   type RegisterDependenciesParams,
-} from './lib/DIContext.ts'
+} from './lib/DIContext.js'
 export {
   ENABLE_ALL,
   isAnyMessageQueueConsumerEnabled,
@@ -22,13 +22,13 @@ export {
   isMessageQueueConsumerEnabled,
   isPeriodicJobEnabled,
   resolveJobQueuesEnabled,
-} from './lib/diConfigUtils.ts'
+} from './lib/diConfigUtils.js'
 export type {
   EnqueuedJobWorkerModuleOptions,
   JobQueueModuleOptions,
   MessageQueueConsumerModuleOptions,
   PeriodicJobOptions,
-} from './lib/resolverFunctions.ts'
+} from './lib/resolverFunctions.js'
 export {
   asControllerClass,
   asEnqueuedJobQueueManagerFunction,
@@ -42,4 +42,4 @@ export {
   asSingletonFunction,
   asUseCaseClass,
   type EnqueuedJobQueueManager,
-} from './lib/resolverFunctions.ts'
+} from './lib/resolverFunctions.js'
