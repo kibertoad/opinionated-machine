@@ -6,6 +6,12 @@
         "./node_modules/@lokalise/biome-config/configs/biome-package.jsonc"
     ],
     "linter": {
-        // add overrides here if necessary
+        "rules": {
+            "correctness": {
+                "useImportExtensions": {
+                    "level": "off"
+                }
+            }
+        }
     }
 }

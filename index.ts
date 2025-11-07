@@ -8,7 +8,7 @@ export {
   AbstractTestContextFactory,
   type CreateTestContextParams,
 } from './lib/AbstractTestContextFactory.js'
-export type { NestedPartial } from './lib/configUtils.ts'
+export type { NestedPartial } from './lib/configUtils.js'
 export {
   type DependencyInjectionOptions,
   DIContext,
