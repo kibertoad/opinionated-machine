@@ -1,6 +1,6 @@
 import type { NameAndRegistrationPair } from 'awilix'
 import { merge } from 'ts-deepmerge'
-import { asSingletonFunction } from './resolverFunctions.ts'
+import { asSingletonFunction } from './resolverFunctions.js'
 
 export type NestedPartial<T> = {
   [P in keyof T]?: NestedPartial<T[P]>

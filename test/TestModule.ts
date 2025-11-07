@@ -1,6 +1,6 @@
 import { asClass } from 'awilix'
-import { AbstractModule, type MandatoryNameAndRegistrationPair } from '../lib/AbstractModule.ts'
-import type { DependencyInjectionOptions } from '../lib/DIContext.ts'
+import { AbstractModule, type MandatoryNameAndRegistrationPair } from '../lib/AbstractModule.js'
+import type { DependencyInjectionOptions } from '../lib/DIContext.js'
 import {
   asControllerClass,
   asEnqueuedJobQueueManagerFunction,
@@ -9,12 +9,12 @@ import {
   asMessageQueueHandlerClass,
   asPeriodicJobClass,
   asServiceClass,
-} from '../lib/resolverFunctions.ts'
-import { TestController } from './TestController.ts'
+} from '../lib/resolverFunctions.js'
+import { TestController } from './TestController.js'
 import type {
   TestModuleSecondaryPublicDependencies,
   TestServiceSecondary,
-} from './TestModuleSecondary.ts'
+} from './TestModuleSecondary.js'
 
 export class TestService {
   public counter = 0
