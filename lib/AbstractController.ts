@@ -11,7 +11,7 @@ import type {
 import type { z } from 'zod/v4'
 
 // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
-type AnyCommonRouteDefinition = CommonRouteDefinition<any, any, any, any, any, any, any>
+type AnyCommonRouteDefinition = CommonRouteDefinition<any, any, any, any, any, any, any, any>
 type OptionalZodSchema = z.Schema | undefined
 
 type FastifyPayloadRouteReturnType<
