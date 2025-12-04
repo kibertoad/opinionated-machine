@@ -38,6 +38,9 @@ jobs:
       - name: Run Tests
         run: npm run test:ci
 
+      - name: Run Linting
+        run: npm run lint
+
   automerge:
     needs: build
     runs-on: ubuntu-latest
