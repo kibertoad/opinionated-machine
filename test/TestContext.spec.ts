@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest'
 import { testContextFactory } from './ExampleTestContextFactory.js'
 import { TestMessageQueueConsumer, TestModule } from './TestModule.js'
 import { TestModuleSecondary } from './TestModuleSecondary.js'

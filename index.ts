@@ -36,6 +36,7 @@ export {
   asJobQueueClass,
   asMessageQueueHandlerClass,
   asPeriodicJobClass,
+  asPgBossProcessorClass,
   asRepositoryClass,
   asServiceClass,
   asSingletonClass,

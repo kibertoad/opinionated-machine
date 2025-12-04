@@ -151,24 +151,24 @@ export function asEnqueuedJobWorkerClass<T = object>(
  * ```
  */
 export function asPgBossProcessorClass<T extends { start(): Promise<void>; stop(): Promise<void> }>(
-    Type: Constructor<T>,
-    processorOptions: EnqueuedJobWorkerModuleOptions,
-    opts?: BuildResolverOptions<T>,
+  Type: Constructor<T>,
+  processorOptions: EnqueuedJobWorkerModuleOptions,
+  opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
-    return asClass(Type, {
-        asyncInit: "start",
-        asyncInitPriority: 20, // Initialize after pgBoss (priority 10)
-        asyncDispose: "stop",
-        asyncDisposePriority: 10,
-        public: false,
+  return asClass(Type, {
+    asyncInit: 'start',
+    asyncInitPriority: 20, // Initialize after pgBoss (priority 10)
+    asyncDispose: 'stop',
+    asyncDisposePriority: 10,
+    public: false,
 
-        enabled: isEnqueuedJobWorkersEnabled(
-            processorOptions.diOptions.enqueuedJobWorkersEnabled,
-            processorOptions.queueName,
-        ),
-        lifetime: "SINGLETON",
-        ...opts,
-    });
+    enabled: isEnqueuedJobWorkersEnabled(
+      processorOptions.diOptions.enqueuedJobWorkersEnabled,
+      processorOptions.queueName,
+    ),
+    lifetime: 'SINGLETON',
+    ...opts,
+  })
 }
 
 export type PeriodicJobOptions = {
