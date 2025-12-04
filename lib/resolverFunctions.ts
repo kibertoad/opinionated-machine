@@ -138,6 +138,39 @@ export function asEnqueuedJobWorkerClass<T = object>(
   })
 }
 
+/**
+ * Helper function to register a pg-boss job processor class with the DI container.
+ * Handles asyncInit/asyncDispose lifecycle and enabled check based on diOptions.
+ *
+ * @example
+ * ```typescript
+ * enrichUserPresenceJob: asPgBossProcessorClass(EnrichUserPresenceJob, {
+ *   diOptions,
+ *   queueName: EnrichUserPresenceJob.QUEUE_ID,
+ * }),
+ * ```
+ */
+export function asPgBossProcessorClass<T extends { start(): Promise<void>; stop(): Promise<void> }>(
+  Type: Constructor<T>,
+  processorOptions: EnqueuedJobWorkerModuleOptions,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  return asClass(Type, {
+    asyncInit: 'start',
+    asyncInitPriority: 20, // Initialize after pgBoss (priority 10)
+    asyncDispose: 'stop',
+    asyncDisposePriority: 10,
+    public: false,
+
+    enabled: isEnqueuedJobWorkersEnabled(
+      processorOptions.diOptions.enqueuedJobWorkersEnabled,
+      processorOptions.queueName,
+    ),
+    lifetime: 'SINGLETON',
+    ...opts,
+  })
+}
+
 export type PeriodicJobOptions = {
   jobName: string
   diOptions: DependencyInjectionOptions
