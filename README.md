@@ -162,3 +162,117 @@ app.after(() => {
 })
 await app.ready()
 ```
+
+## Resolver Functions
+
+The library provides a set of resolver functions that wrap awilix's `asClass` and `asFunction` with sensible defaults for different types of dependencies. All resolvers create singletons by default.
+
+### Basic Resolvers
+
+#### `asSingletonClass(Type, opts?)`
+Basic singleton class resolver. Use for general-purpose dependencies that don't fit other categories.
+
+```ts
+service: asSingletonClass(MyService)
+```
+
+#### `asSingletonFunction(fn, opts?)`
+Basic singleton function resolver. Use when you need to resolve a dependency using a factory function.
+
+```ts
+config: asSingletonFunction(() => loadConfig())
+```
+
+### Domain Layer Resolvers
+
+#### `asServiceClass(Type, opts?)`
+For service classes. Marks the dependency as **public** (exposed when module is used as secondary).
+
+```ts
+userService: asServiceClass(UserService)
+```
+
+#### `asUseCaseClass(Type, opts?)`
+For use case classes. Marks the dependency as **public**.
+
+```ts
+createUserUseCase: asUseCaseClass(CreateUserUseCase)
+```
+
+#### `asRepositoryClass(Type, opts?)`
+For repository classes. Marks the dependency as **private** (not exposed when module is secondary).
+
+```ts
+userRepository: asRepositoryClass(UserRepository)
+```
+
+#### `asControllerClass(Type, opts?)`
+For controller classes. Marks the dependency as **private**. Use in `resolveControllers()`.
+
+```ts
+userController: asControllerClass(UserController)
+```
+
+### Message Queue Resolvers
+
+#### `asMessageQueueHandlerClass(Type, mqOptions, opts?)`
+For message queue consumers following `message-queue-toolkit` conventions. Automatically handles `start`/`close` lifecycle and respects `messageQueueConsumersEnabled` option.
+
+```ts
+messageQueueConsumer: asMessageQueueHandlerClass(MessageQueueConsumer, {
+    queueName: MessageQueueConsumer.QUEUE_ID,
+    diOptions,
+})
+```
+
+### Background Job Resolvers
+
+#### `asEnqueuedJobWorkerClass(Type, workerOptions, opts?)`
+For enqueued job workers following `background-jobs-common` conventions. Automatically handles `start`/`dispose` lifecycle and respects `enqueuedJobWorkersEnabled` option.
+
+```ts
+jobWorker: asEnqueuedJobWorkerClass(JobWorker, {
+    queueName: JobWorker.QUEUE_ID,
+    diOptions,
+})
+```
+
+#### `asPgBossProcessorClass(Type, processorOptions, opts?)`
+For pg-boss job processor classes. Similar to `asEnqueuedJobWorkerClass` but uses `start`/`stop` lifecycle methods and initializes after pgBoss (priority 20).
+
+```ts
+enrichUserPresenceJob: asPgBossProcessorClass(EnrichUserPresenceJob, {
+    queueName: EnrichUserPresenceJob.QUEUE_ID,
+    diOptions,
+})
+```
+
+#### `asPeriodicJobClass(Type, workerOptions, opts?)`
+For periodic job classes following `background-jobs-common` conventions. Uses eager injection via `register` method and respects `periodicJobsEnabled` option.
+
+```ts
+cleanupJob: asPeriodicJobClass(CleanupJob, {
+    jobName: CleanupJob.JOB_NAME,
+    diOptions,
+})
+```
+
+#### `asJobQueueClass(Type, queueOptions, opts?)`
+For job queue classes. Marks the dependency as **public**. Respects `jobQueuesEnabled` option.
+
+```ts
+queueManager: asJobQueueClass(QueueManager, {
+    diOptions,
+})
+```
+
+#### `asEnqueuedJobQueueManagerFunction(fn, diOptions, opts?)`
+For job queue manager factory functions. Automatically calls `start()` with resolved enabled queues during initialization.
+
+```ts
+jobQueueManager: asEnqueuedJobQueueManagerFunction(
+    createJobQueueManager,
+    diOptions,
+)
+```
+
