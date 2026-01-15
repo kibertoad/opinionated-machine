@@ -29,6 +29,7 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Prerequisites](#prerequisites)
   - [Defining SSE Contracts](#defining-sse-contracts)
   - [Creating SSE Controllers](#creating-sse-controllers)
+  - [Type-Safe SSE Handlers with buildSSEHandler](#type-safe-sse-handlers-with-buildssehandler)
   - [SSE Controllers Without Dependencies](#sse-controllers-without-dependencies)
   - [Registering SSE Controllers](#registering-sse-controllers)
   - [Registering SSE Routes](#registering-sse-routes)
@@ -413,11 +414,15 @@ export const chatCompletionContract = buildPayloadSSERoute({
 
 ### Creating SSE Controllers
 
-SSE controllers extend `AbstractSSEController` and must implement a two-parameter constructor:
+SSE controllers extend `AbstractSSEController` and must implement a two-parameter constructor. Use `buildSSEHandler` for automatic type inference of request parameters:
 
 ```ts
-import { AbstractSSEController, type SSEControllerConfig, type SSEConnection } from 'opinionated-machine'
-import type { FastifyRequest } from 'fastify'
+import {
+  AbstractSSEController,
+  buildSSEHandler,
+  type SSEControllerConfig,
+  type SSEConnection
+} from 'opinionated-machine'
 
 type Contracts = {
   notificationsStream: typeof notificationsContract
@@ -453,22 +458,23 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
     }
   }
 
-  // Handler for incoming connections
-  private handleStream = async (
-    request: FastifyRequest<{ Querystring: { userId?: string } }>,
-    connection: SSEConnection,
-  ) => {
-    const userId = request.query.userId ?? 'anonymous'
-    connection.context = { userId }
+  // Handler with automatic type inference from contract
+  private handleStream = buildSSEHandler(
+    notificationsContract,
+    async (request, connection) => {
+      // request.query is typed from contract: { userId?: string }
+      const userId = request.query.userId ?? 'anonymous'
+      connection.context = { userId }
 
-    // Subscribe to notifications for this user
-    this.notificationService.subscribe(userId, async (notification) => {
-      await this.sendEvent(connection.id, {
-        event: 'notification',
-        data: notification,
+      // Subscribe to notifications for this user
+      this.notificationService.subscribe(userId, async (notification) => {
+        await this.sendEvent(connection.id, {
+          event: 'notification',
+          data: notification,
+        })
       })
-    })
-  }
+    },
+  )
 
   private onConnect = (connection: SSEConnection) => {
     console.log('Client connected:', connection.id)
@@ -479,6 +485,70 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
     this.notificationService.unsubscribe(userId)
     console.log('Client disconnected:', connection.id)
   }
+}
+```
+
+### Type-Safe SSE Handlers with `buildSSEHandler`
+
+For automatic type inference of request parameters (similar to `buildFastifyPayloadRoute` for regular controllers), use `buildSSEHandler`:
+
+```ts
+import {
+  AbstractSSEController,
+  buildSSEHandler,
+  type SSEControllerConfig,
+  type SSEConnection
+} from 'opinionated-machine'
+
+class ChatSSEController extends AbstractSSEController<Contracts> {
+  public static contracts = {
+    chatCompletion: chatCompletionContract,
+  } as const
+
+  constructor(deps: Dependencies, sseConfig?: SSEControllerConfig) {
+    super(deps, sseConfig)
+  }
+
+  // Handler with automatic type inference from contract
+  private handleChatCompletion = buildSSEHandler(
+    chatCompletionContract,
+    async (request, connection) => {
+      // request.body is typed as { message: string; stream: true }
+      // request.query, request.params, request.headers all typed from contract
+      const words = request.body.message.split(' ')
+
+      for (const word of words) {
+        await this.sendEvent(connection.id, {
+          event: 'chunk',
+          data: { content: word },
+        })
+      }
+
+      this.closeConnection(connection.id)
+    },
+  )
+
+  public buildSSERoutes() {
+    return {
+      chatCompletion: {
+        contract: ChatSSEController.contracts.chatCompletion,
+        handler: this.handleChatCompletion,
+      },
+    }
+  }
+}
+```
+
+You can also use `InferSSERequest<Contract>` for manual type annotation when needed:
+
+```ts
+import { type InferSSERequest } from 'opinionated-machine'
+
+private handleStream = async (
+  request: InferSSERequest<typeof chatCompletionContract>,
+  connection: SSEConnection,
+) => {
+  // request.body, request.params, etc. all typed from contract
 }
 ```
 
@@ -641,13 +711,13 @@ if (!sent) {
 - Events sent via `sendEvent()` from external triggers
 
 ```ts
-private handleStream = async (request, connection) => {
+private handleStream = buildSSEHandler(streamContract, async (request, connection) => {
   // Set up subscription
   this.service.subscribe(connection.id, (data) => {
     this.sendEvent(connection.id, { event: 'update', data })
   })
   // Handler returns, connection stays open
-}
+})
 ```
 
 **Request-response streaming** (AI completions):
@@ -655,7 +725,8 @@ private handleStream = async (request, connection) => {
 - Similar to regular HTTP but with streaming body
 
 ```ts
-private handleChatCompletion = async (request, connection) => {
+private handleChatCompletion = buildSSEHandler(chatCompletionContract, async (request, connection) => {
+  // request.body is typed from contract
   const words = request.body.message.split(' ')
 
   for (const word of words) {
@@ -672,7 +743,7 @@ private handleChatCompletion = async (request, connection) => {
 
   // Close connection when done
   this.closeConnection(connection.id)
-}
+})
 ```
 
 ### SSE Parsing Utilities

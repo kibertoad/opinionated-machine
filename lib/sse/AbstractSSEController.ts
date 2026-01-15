@@ -14,6 +14,7 @@ export type { SSEConnectionEvent } from './SSEConnectionSpy.ts'
 export { SSEConnectionSpy } from './SSEConnectionSpy.ts'
 export type {
   BuildSSERoutesReturnType,
+  InferSSERequest,
   SSEConnection,
   SSEControllerConfig,
   SSEHandlerConfig,

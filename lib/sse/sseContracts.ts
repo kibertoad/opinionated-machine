@@ -1,4 +1,5 @@
 import type { z } from 'zod'
+import type { SSERouteHandler } from './sseTypes.ts'
 
 /**
  * Supported HTTP methods for SSE routes.
@@ -173,4 +174,45 @@ export function buildPayloadSSERoute<
     events: config.events,
     isSSE: true,
   }
+}
+
+/**
+ * Type-inference helper for SSE handlers.
+ *
+ * Similar to `buildFastifyPayloadRoute`, this function provides automatic
+ * type inference for the request and connection parameters based on the contract.
+ *
+ * @example
+ * ```typescript
+ * class MyController extends AbstractSSEController<{ stream: typeof streamContract }> {
+ *   private handleStream = buildSSEHandler(
+ *     streamContract,
+ *     async (request, connection) => {
+ *       // request.body is typed from contract
+ *       // request.query is typed from contract
+ *       const { message } = request.body
+ *     },
+ *   )
+ *
+ *   buildSSERoutes() {
+ *     return {
+ *       stream: {
+ *         contract: streamContract,
+ *         handler: this.handleStream,
+ *       },
+ *     }
+ *   }
+ * }
+ * ```
+ */
+export function buildSSEHandler<Contract extends AnySSERouteDefinition>(
+  _contract: Contract,
+  handler: SSERouteHandler<
+    z.infer<Contract['params']>,
+    z.infer<Contract['query']>,
+    z.infer<Contract['requestHeaders']>,
+    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+  >,
+): typeof handler {
+  return handler
 }

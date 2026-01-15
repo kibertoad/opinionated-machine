@@ -136,6 +136,30 @@ export type BuildSSERoutesReturnType<APIContracts extends Record<string, AnySSER
 }
 
 /**
+ * Infer the FastifyRequest type from an SSE contract.
+ *
+ * Use this to get properly typed request parameters in handlers without
+ * manually spelling out the types.
+ *
+ * @example
+ * ```typescript
+ * const handler = async (
+ *   request: InferSSERequest<typeof chatCompletionContract>,
+ *   connection: SSEConnection,
+ * ) => {
+ *   // request.body is typed as { message: string; stream: true }
+ *   const { message } = request.body
+ * }
+ * ```
+ */
+export type InferSSERequest<Contract extends AnySSERouteDefinition> = FastifyRequest<{
+  Params: z.infer<Contract['params']>
+  Querystring: z.infer<Contract['query']>
+  Headers: z.infer<Contract['requestHeaders']>
+  Body: Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+}>
+
+/**
  * Configuration options for SSE controllers.
  */
 export type SSEControllerConfig = {

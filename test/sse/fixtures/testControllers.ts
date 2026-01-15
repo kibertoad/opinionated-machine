@@ -1,7 +1,7 @@
-import type { FastifyRequest } from 'fastify'
 import {
   AbstractSSEController,
   type BuildSSERoutesReturnType,
+  buildSSEHandler,
   type SSEConnection,
   type SSEControllerConfig,
 } from '../../../index.js'
@@ -50,10 +50,7 @@ export class StreamController extends AbstractSSEController<{
     }
   }
 
-  private handleStream = (
-    request: FastifyRequest<{ Querystring: { userId?: string } }>,
-    connection: SSEConnection,
-  ) => {
+  private handleStream = buildSSEHandler(streamContract, (request, connection) => {
     const userId = request.query.userId ?? 'anonymous'
     connection.context = { userId }
 
@@ -61,7 +58,7 @@ export class StreamController extends AbstractSSEController<{
     this.eventService.subscribe(connection.id, async (data) => {
       await this.sendEvent(connection.id, { event: 'message', data })
     })
-  }
+  })
 
   // Testing helper
   pushToConnection(connectionId: string, data: unknown) {
@@ -107,18 +104,18 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
     }
   }
 
-  private handleStream = async (
-    request: FastifyRequest<{ Querystring: { userId?: string } }>,
-    connection: SSEConnection,
-  ) => {
-    const userId = request.query.userId ?? 'default'
-    connection.context = { userId }
+  private handleStream = buildSSEHandler(
+    notificationsStreamContract,
+    async (request, connection) => {
+      const userId = request.query.userId ?? 'default'
+      connection.context = { userId }
 
-    // Wait for test to signal completion
-    await new Promise<void>((resolve) => {
-      this.handlerDoneResolvers.set(connection.id, resolve)
-    })
-  }
+      // Wait for test to signal completion
+      await new Promise<void>((resolve) => {
+        this.handlerDoneResolvers.set(connection.id, resolve)
+      })
+    },
+  )
 
   private onConnect = (_connection: SSEConnection) => {
     // Setup subscription when connected
@@ -190,24 +187,24 @@ export class TestPostSSEController extends AbstractSSEController<TestPostSSECont
     }
   }
 
-  private handleChatCompletion = async (
-    request: FastifyRequest<{ Body: { message: string; stream: true } }>,
-    connection: SSEConnection,
-  ) => {
-    // Simulate streaming response
-    const words = request.body.message.split(' ')
-    for (const word of words) {
+  private handleChatCompletion = buildSSEHandler(
+    chatCompletionContract,
+    async (request, connection) => {
+      // Simulate streaming response
+      const words = request.body.message.split(' ')
+      for (const word of words) {
+        await this.sendEvent(connection.id, {
+          event: 'chunk',
+          data: { content: word },
+        })
+      }
       await this.sendEvent(connection.id, {
-        event: 'chunk',
-        data: { content: word },
+        event: 'done',
+        data: { totalTokens: words.length },
       })
-    }
-    await this.sendEvent(connection.id, {
-      event: 'done',
-      data: { totalTokens: words.length },
-    })
-    this.closeConnection(connection.id)
-  }
+      this.closeConnection(connection.id)
+    },
+  )
 }
 
 /**
@@ -240,17 +237,17 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
     }
   }
 
-  private handleAuthenticatedStream = async (
-    _request: FastifyRequest<{ Headers: { authorization: string } }>,
-    connection: SSEConnection,
-  ) => {
-    await this.sendEvent(connection.id, {
-      event: 'data',
-      data: { value: 'authenticated data' },
-    })
-    // Close connection after sending - needed for inject tests to complete
-    this.closeConnection(connection.id)
-  }
+  private handleAuthenticatedStream = buildSSEHandler(
+    authenticatedStreamContract,
+    async (_request, connection) => {
+      await this.sendEvent(connection.id, {
+        event: 'data',
+        data: { value: 'authenticated data' },
+      })
+      // Close connection after sending - needed for inject tests to complete
+      this.closeConnection(connection.id)
+    },
+  )
 }
 
 /**
@@ -274,25 +271,22 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
     }
   }
 
-  private handleChannelStream = async (
-    request: FastifyRequest<{
-      Params: { channelId: string }
-      Querystring: { since?: string }
-    }>,
-    connection: SSEConnection,
-  ) => {
-    connection.context = { channelId: request.params.channelId }
-    await this.sendEvent(connection.id, {
-      event: 'message',
-      data: {
-        id: '1',
-        content: `Welcome to channel ${request.params.channelId}`,
-        author: 'system',
-      },
-    })
-    // Close connection after sending - needed for inject tests to complete
-    this.closeConnection(connection.id)
-  }
+  private handleChannelStream = buildSSEHandler(
+    channelStreamContract,
+    async (request, connection) => {
+      connection.context = { channelId: request.params.channelId }
+      await this.sendEvent(connection.id, {
+        event: 'message',
+        data: {
+          id: '1',
+          content: `Welcome to channel ${request.params.channelId}`,
+          author: 'system',
+        },
+      })
+      // Close connection after sending - needed for inject tests to complete
+      this.closeConnection(connection.id)
+    },
+  )
 }
 
 /**
@@ -334,15 +328,18 @@ export class TestReconnectSSEController extends AbstractSSEController<TestReconn
     }
   }
 
-  private handleReconnectStream = async (_request: FastifyRequest, connection: SSEConnection) => {
-    // Send a new event after connection
-    await this.sendEvent(connection.id, {
-      event: 'event',
-      data: { id: '6', data: 'New event after reconnect' },
-      id: '6',
-    })
-    this.closeConnection(connection.id)
-  }
+  private handleReconnectStream = buildSSEHandler(
+    reconnectStreamContract,
+    async (_request, connection) => {
+      // Send a new event after connection
+      await this.sendEvent(connection.id, {
+        event: 'event',
+        data: { id: '6', data: 'New event after reconnect' },
+        id: '6',
+      })
+      this.closeConnection(connection.id)
+    },
+  )
 
   private handleReconnect = (
     _connection: SSEConnection,
@@ -403,15 +400,18 @@ export class TestAsyncReconnectSSEController extends AbstractSSEController<TestA
     }
   }
 
-  private handleReconnectStream = async (_request: FastifyRequest, connection: SSEConnection) => {
-    // Send a new event after connection
-    await this.sendEvent(connection.id, {
-      event: 'event',
-      data: { id: '4', data: 'Async new event after reconnect' },
-      id: '4',
-    })
-    this.closeConnection(connection.id)
-  }
+  private handleReconnectStream = buildSSEHandler(
+    asyncReconnectStreamContract,
+    async (_request, connection) => {
+      // Send a new event after connection
+      await this.sendEvent(connection.id, {
+        event: 'event',
+        data: { id: '4', data: 'Async new event after reconnect' },
+        id: '4',
+      })
+      this.closeConnection(connection.id)
+    },
+  )
 
   // Async generator for replay - simulates fetching from database
   private handleReconnect = (

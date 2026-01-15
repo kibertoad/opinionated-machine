@@ -50,6 +50,7 @@ export {
 export {
   AbstractSSEController,
   type BuildSSERoutesReturnType,
+  type InferSSERequest,
   type SSEConnection,
   type SSEConnectionEvent,
   SSEConnectionSpy,
@@ -63,6 +64,7 @@ export {
 export {
   type AnySSERouteDefinition,
   buildPayloadSSERoute,
+  buildSSEHandler,
   buildSSERoute,
   type PayloadSSERouteConfig,
   type SSEMethod,
