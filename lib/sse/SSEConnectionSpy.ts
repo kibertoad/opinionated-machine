@@ -86,7 +86,9 @@ export class SSEConnectionSpy {
     const timeout = options?.timeout ?? 5000
 
     // Check if already disconnected
-    const hasDisconnected = this.events.some((e) => e.type === 'disconnect' && e.connectionId === connectionId)
+    const hasDisconnected = this.events.some(
+      (e) => e.type === 'disconnect' && e.connectionId === connectionId,
+    )
     if (hasDisconnected) {
       return Promise.resolve()
     }

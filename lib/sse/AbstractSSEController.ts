@@ -1,15 +1,15 @@
 import type { SSEReplyInterface } from '@fastify/sse'
 import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { z } from 'zod'
-import type { AnySSERouteDefinition } from './sseContracts.ts'
 import { SSEConnectionSpy } from './SSEConnectionSpy.ts'
+import type { AnySSERouteDefinition } from './sseContracts.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
  */
 type SSEReply = FastifyReply & { sse: SSEReplyInterface }
 
-export { SSEConnectionSpy, type SSEConnectionEvent } from './SSEConnectionSpy.ts'
+export { type SSEConnectionEvent, SSEConnectionSpy } from './SSEConnectionSpy.ts'
 
 /**
  * Represents an active SSE connection with typed context.

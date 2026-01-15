@@ -5,18 +5,6 @@ export {
   type UnionToIntersection,
 } from './lib/AbstractModule.js'
 export {
-  AbstractSSEController,
-  type BuildSSERoutesReturnType,
-  type SSEConnection,
-  type SSEConnectionEvent,
-  SSEConnectionSpy,
-  type SSEControllerConfig,
-  type SSEHandlerConfig,
-  type SSEMessage,
-  type SSERouteHandler,
-  type SSERouteOptions,
-} from './lib/sse/AbstractSSEController.ts'
-export {
   AbstractTestContextFactory,
   type CreateTestContextParams,
 } from './lib/AbstractTestContextFactory.js'
@@ -59,6 +47,18 @@ export {
   type EnqueuedJobQueueManager,
   type SSEControllerModuleOptions,
 } from './lib/resolverFunctions.js'
+export {
+  AbstractSSEController,
+  type BuildSSERoutesReturnType,
+  type SSEConnection,
+  type SSEConnectionEvent,
+  SSEConnectionSpy,
+  type SSEControllerConfig,
+  type SSEHandlerConfig,
+  type SSEMessage,
+  type SSERouteHandler,
+  type SSERouteOptions,
+} from './lib/sse/AbstractSSEController.ts'
 export {
   type AnySSERouteDefinition,
   buildPayloadSSERoute,

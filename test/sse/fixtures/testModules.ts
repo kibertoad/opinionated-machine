@@ -5,7 +5,13 @@ import {
   type DependencyInjectionOptions,
   type MandatoryNameAndRegistrationPair,
 } from '../../../index.js'
-import { StreamController, TestPostSSEController, TestSSEController } from './testControllers.js'
+import {
+  StreamController,
+  TestAuthSSEController,
+  TestChannelSSEController,
+  TestPostSSEController,
+  TestSSEController,
+} from './testControllers.js'
 import { EventService, TestNotificationService } from './testServices.js'
 
 /**
@@ -112,4 +118,58 @@ export class NoSSEModule extends AbstractModule<NoSSEModuleDependencies> {
   }
 
   // Uses default resolveSSEControllers() which returns {}
+}
+
+/**
+ * Module with authenticated SSE controller
+ */
+export type TestAuthSSEModuleDependencies = {
+  testAuthSSEController: TestAuthSSEController
+}
+
+export class TestAuthSSEModule extends AbstractModule<TestAuthSSEModuleDependencies> {
+  resolveDependencies(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<TestAuthSSEModuleDependencies> {
+    return {
+      testAuthSSEController: asSSEControllerClass(TestAuthSSEController, { diOptions }),
+    }
+  }
+
+  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
+    return {}
+  }
+
+  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testAuthSSEController: asSSEControllerClass(TestAuthSSEController),
+    }
+  }
+}
+
+/**
+ * Module with channel SSE controller (path params)
+ */
+export type TestChannelSSEModuleDependencies = {
+  testChannelSSEController: TestChannelSSEController
+}
+
+export class TestChannelSSEModule extends AbstractModule<TestChannelSSEModuleDependencies> {
+  resolveDependencies(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<TestChannelSSEModuleDependencies> {
+    return {
+      testChannelSSEController: asSSEControllerClass(TestChannelSSEController, { diOptions }),
+    }
+  }
+
+  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
+    return {}
+  }
+
+  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testChannelSSEController: asSSEControllerClass(TestChannelSSEController),
+    }
+  }
 }

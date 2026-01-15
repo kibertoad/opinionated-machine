@@ -179,10 +179,6 @@ export class TestPostSSEController extends AbstractSSEController<TestPostSSECont
     chatCompletion: chatCompletionContract,
   } as const
 
-  constructor(deps: object, sseConfig?: SSEControllerConfig) {
-    super(deps, sseConfig)
-  }
-
   public buildSSERoutes(): BuildSSERoutesReturnType<TestPostSSEContracts> {
     return {
       chatCompletion: {
@@ -224,10 +220,6 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
     authenticatedStream: authenticatedStreamContract,
   } as const
 
-  constructor(deps: object, sseConfig?: SSEControllerConfig) {
-    super(deps, sseConfig)
-  }
-
   public buildSSERoutes(): BuildSSERoutesReturnType<TestAuthSSEContracts> {
     return {
       authenticatedStream: {
@@ -237,9 +229,9 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
           preHandler: (request, reply) => {
             const auth = request.headers.authorization
             if (!auth || !auth.startsWith('Bearer ')) {
-              reply.code(401).send({ error: 'Unauthorized' })
-              return
+              return reply.code(401).send({ error: 'Unauthorized' })
             }
+            // Auth valid - continue to handler
           },
         },
       },
@@ -254,6 +246,8 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
       event: 'data',
       data: { value: 'authenticated data' },
     })
+    // Close connection after sending - needed for inject tests to complete
+    this.closeConnection(connection.id)
   }
 }
 
@@ -268,10 +262,6 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
   public static contracts = {
     channelStream: channelStreamContract,
   } as const
-
-  constructor(deps: object, sseConfig?: SSEControllerConfig) {
-    super(deps, sseConfig)
-  }
 
   public buildSSERoutes(): BuildSSERoutesReturnType<TestChannelSSEContracts> {
     return {
@@ -298,5 +288,7 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
         author: 'system',
       },
     })
+    // Close connection after sending - needed for inject tests to complete
+    this.closeConnection(connection.id)
   }
 }
