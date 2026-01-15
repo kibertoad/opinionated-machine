@@ -18,6 +18,7 @@ export type {
   SSEConnection,
   SSEControllerConfig,
   SSEHandlerConfig,
+  SSELogger,
   SSEMessage,
   SSEPreHandler,
   SSERouteHandler,
@@ -98,7 +99,8 @@ export abstract class AbstractSSEController<
    * @example
    * ```typescript
    * // In test, create controller with spy enabled
-   * const controller = new MySSEController({ enableConnectionSpy: true })
+   * // Pass dependencies first, then config with enableConnectionSpy
+   * const controller = new MySSEController({}, { enableConnectionSpy: true })
    *
    * // Start connection (async)
    * connectSSE(baseUrl, '/api/stream')
@@ -169,7 +171,8 @@ export abstract class AbstractSSEController<
     } catch {
       // Send failed - connection is likely closed (client disconnected, network error, etc.)
       // Remove from tracking to prevent further send attempts to a dead connection
-      this.connections.delete(connectionId)
+      // Use unregisterConnection to ensure hooks and spy are notified
+      this.unregisterConnection(connectionId)
       return false
     }
   }
@@ -249,7 +252,8 @@ export abstract class AbstractSSEController<
       // Connection may already be closed
     }
 
-    this.connections.delete(connectionId)
+    // Use unregisterConnection to ensure hooks and spy are notified
+    this.unregisterConnection(connectionId)
     return true
   }
 
@@ -279,13 +283,17 @@ export abstract class AbstractSSEController<
   /**
    * Unregister a connection (called internally by route builder).
    * Triggers the onConnectionClosed hook and spy if defined.
+   * This method is idempotent - calling it multiple times for the same
+   * connection ID has no effect after the first call.
    * @internal
    */
   public unregisterConnection(connectionId: string): void {
     const connection = this.connections.get(connectionId)
-    if (connection) {
-      this.onConnectionClosed?.(connection)
+    if (!connection) {
+      // Already unregistered or never existed - do nothing (idempotent)
+      return
     }
+    this.onConnectionClosed?.(connection)
     // Notify spy of disconnection
     this._connectionSpy?.addDisconnection(connectionId)
     this.connections.delete(connectionId)

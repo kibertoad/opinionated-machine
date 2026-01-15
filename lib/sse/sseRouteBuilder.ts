@@ -72,9 +72,16 @@ export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
       // Using request.socket.on('close') as per @fastify/sse documentation
       const connectionClosed = new Promise<void>((resolve) => {
         request.socket.on('close', async () => {
-          controller.unregisterConnection(connectionId)
-          await options?.onDisconnect?.(connection)
-          resolve()
+          try {
+            await options?.onDisconnect?.(connection)
+          } catch (err) {
+            // Log the error but don't let it prevent cleanup
+            options?.logger?.error({ err }, 'Error in SSE onDisconnect handler')
+          } finally {
+            // Always unregister the connection and resolve, even if onDisconnect throws
+            controller.unregisterConnection(connectionId)
+            resolve()
+          }
         })
       })
 

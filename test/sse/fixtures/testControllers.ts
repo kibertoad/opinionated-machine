@@ -4,6 +4,7 @@ import {
   buildSSEHandler,
   type SSEConnection,
   type SSEControllerConfig,
+  type SSELogger,
 } from '../../../index.js'
 import {
   asyncReconnectStreamContract,
@@ -11,6 +12,7 @@ import {
   channelStreamContract,
   chatCompletionContract,
   largeContentStreamContract,
+  loggerTestStreamContract,
   notificationsStreamContract,
   reconnectStreamContract,
   streamContract,
@@ -122,8 +124,14 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
     // Setup subscription when connected
   }
 
-  private onDisconnect = (_connection: SSEConnection) => {
+  private onDisconnect = (connection: SSEConnection) => {
     // Cleanup when disconnected
+    // Resolve any pending handler resolver for this connection so completeHandler won't hang
+    const resolve = this.handlerDoneResolvers.get(connection.id)
+    if (resolve) {
+      resolve()
+      this.handlerDoneResolvers.delete(connection.id)
+    }
   }
 
   /** Call this from tests to signal the handler can complete */
@@ -492,4 +500,51 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
       this.closeConnection(connection.id)
     },
   )
+}
+
+/**
+ * Test SSE controller for logger error handling.
+ * The onDisconnect handler throws an error to test that:
+ * 1. The logger is called with the error
+ * 2. The connection is still properly unregistered despite the error
+ */
+export type TestLoggerSSEContracts = {
+  loggerTestStream: typeof loggerTestStreamContract
+}
+
+export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSEContracts> {
+  public static contracts = {
+    loggerTestStream: loggerTestStreamContract,
+  } as const
+
+  private readonly logger: SSELogger
+
+  constructor(deps: { logger: SSELogger }, sseConfig?: SSEControllerConfig) {
+    super(deps, sseConfig)
+    this.logger = deps.logger
+  }
+
+  public buildSSERoutes(): BuildSSERoutesReturnType<TestLoggerSSEContracts> {
+    return {
+      loggerTestStream: {
+        contract: TestLoggerSSEController.contracts.loggerTestStream,
+        handler: this.handleStream,
+        options: {
+          logger: this.logger,
+          onDisconnect: () => {
+            // Intentionally throw to test error handling
+            throw new Error('Test error in onDisconnect')
+          },
+        },
+      },
+    }
+  }
+
+  private handleStream = buildSSEHandler(loggerTestStreamContract, async (_request, connection) => {
+    await this.sendEvent(connection.id, {
+      event: 'message',
+      data: { text: 'Hello from logger test' },
+    })
+    // Don't close connection - let client close to trigger onDisconnect
+  })
 }

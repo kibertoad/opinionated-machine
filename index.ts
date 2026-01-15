@@ -56,11 +56,12 @@ export {
   SSEConnectionSpy,
   type SSEControllerConfig,
   type SSEHandlerConfig,
+  type SSELogger,
   type SSEMessage,
   type SSEPreHandler,
   type SSERouteHandler,
   type SSERouteOptions,
-} from './lib/sse/AbstractSSEController.ts'
+} from './lib/sse/AbstractSSEController.js'
 export {
   type AnySSERouteDefinition,
   buildPayloadSSERoute,
@@ -70,29 +71,29 @@ export {
   type SSEMethod,
   type SSERouteConfig,
   type SSERouteDefinition,
-} from './lib/sse/sseContracts.ts'
+} from './lib/sse/sseContracts.js'
 // SSE parsing utilities (production)
 export {
   type ParsedSSEEvent,
   type ParseSSEBufferResult,
   parseSSEBuffer,
   parseSSEEvents,
-} from './lib/sse/sseParser.ts'
+} from './lib/sse/sseParser.js'
 export {
   buildFastifySSERoute,
   type RegisterSSERoutesOptions,
-} from './lib/sse/sseRouteBuilder.ts'
+} from './lib/sse/sseRouteBuilder.js'
 // SSE testing utilities
 export {
   type HasConnectionSpy,
   SSEHttpClient,
   type SSEHttpConnectOptions,
+  type SSEHttpConnectResult,
   type SSEHttpConnectWithSpyOptions,
-  type SSEHttpConnectWithSpyResult,
-} from './lib/testing/sseConnect.ts'
-export { buildUrl, injectPayloadSSE, injectSSE } from './lib/testing/sseInjectHelpers.ts'
-export { SSEInjectClient, SSEInjectConnection } from './lib/testing/sseTestClient.ts'
-export { SSETestServer } from './lib/testing/sseTestServer.ts'
+} from './lib/testing/sseHttpClient.js'
+export { SSEInjectClient, SSEInjectConnection } from './lib/testing/sseInjectClient.js'
+export { buildUrl, injectPayloadSSE, injectSSE } from './lib/testing/sseInjectHelpers.js'
+export { SSETestServer } from './lib/testing/sseTestServer.js'
 export type {
   CreateSSETestServerOptions,
   InjectPayloadSSEOptions,
@@ -101,4 +102,4 @@ export type {
   SSEConnectOptions,
   SSEResponse,
   SSETestConnection,
-} from './lib/testing/sseTestTypes.ts'
+} from './lib/testing/sseTestTypes.js'

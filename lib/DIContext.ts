@@ -2,13 +2,14 @@ import type { RouteType } from '@lokalise/fastify-api-contracts'
 import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance, RouteOptions } from 'fastify'
+import { merge } from 'ts-deepmerge'
 import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
 import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configUtils.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
-import type { AbstractSSEController } from './sse/AbstractSSEController.ts'
-import type { AnySSERouteDefinition } from './sse/sseContracts.ts'
-import { buildFastifySSERoute, type RegisterSSERoutesOptions } from './sse/sseRouteBuilder.ts'
+import type { AbstractSSEController } from './sse/AbstractSSEController.js'
+import type { AnySSERouteDefinition } from './sse/sseContracts.js'
+import { buildFastifySSERoute, type RegisterSSERoutesOptions } from './sse/sseRouteBuilder.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
   modules: readonly AbstractModule<unknown, ExternalDependencies>[]
@@ -220,6 +221,19 @@ export class DIContext<
     }
     if (options?.rateLimit) {
       this.applyRateLimit(route, options.rateLimit)
+    }
+    // Apply SSE-specific options (heartbeatInterval, serializer)
+    if (options?.heartbeatInterval !== undefined || options?.serializer !== undefined) {
+      // biome-ignore lint/suspicious/noExplicitAny: config types vary by plugins
+      const routeWithConfig = route as RouteOptions & { config?: any }
+      routeWithConfig.config = merge(routeWithConfig.config || {}, {
+        sse: {
+          ...(options.heartbeatInterval !== undefined && {
+            heartbeatInterval: options.heartbeatInterval,
+          }),
+          ...(options.serializer !== undefined && { serializer: options.serializer }),
+        },
+      })
     }
   }
 

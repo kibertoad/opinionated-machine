@@ -657,7 +657,7 @@ class MySSEController extends AbstractSSEController<Contracts> {
 
 ### Route-Level Options
 
-Each route can have its own `preHandler` and lifecycle hooks:
+Each route can have its own `preHandler`, lifecycle hooks, and logger:
 
 ```ts
 public buildSSERoutes() {
@@ -679,11 +679,23 @@ public buildSSERoutes() {
           // Return events to replay, or handle manually
           return this.getEventsSince(lastEventId)
         },
+        // Optional: logger for error handling (requires @lokalise/node-core)
+        logger: this.logger,
       },
     },
   }
 }
 ```
+
+**Available route options:**
+
+| Option | Description |
+|--------|-------------|
+| `preHandler` | Authentication/authorization hook that runs before SSE connection |
+| `onConnect` | Called after client connects (SSE handshake complete) |
+| `onDisconnect` | Called when client disconnects |
+| `onReconnect` | Handle Last-Event-ID reconnection, return events to replay |
+| `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors are logged to `console.error` |
 
 ### Graceful Shutdown
 

@@ -1,9 +1,11 @@
 import {
   AbstractModule,
   asServiceClass,
+  asSingletonFunction,
   asSSEControllerClass,
   type DependencyInjectionOptions,
   type MandatoryNameAndRegistrationPair,
+  type SSELogger,
 } from '../../../index.js'
 import {
   StreamController,
@@ -11,6 +13,7 @@ import {
   TestAuthSSEController,
   TestChannelSSEController,
   TestLargeContentSSEController,
+  TestLoggerSSEController,
   TestPostSSEController,
   TestReconnectSSEController,
   TestSSEController,
@@ -208,6 +211,43 @@ export class TestReconnectSSEModule extends AbstractModule<TestReconnectSSEModul
     return {
       testReconnectSSEController: asSSEControllerClass(TestReconnectSSEController),
       testAsyncReconnectSSEController: asSSEControllerClass(TestAsyncReconnectSSEController),
+    }
+  }
+}
+
+/**
+ * Module with logger test SSE controller for testing error handling in onDisconnect
+ */
+export type TestLoggerSSEModuleDependencies = {
+  logger: SSELogger
+  testLoggerSSEController: TestLoggerSSEController
+}
+
+export class TestLoggerSSEModule extends AbstractModule<TestLoggerSSEModuleDependencies> {
+  private mockLogger: SSELogger
+
+  constructor(mockLogger: SSELogger) {
+    super()
+    this.mockLogger = mockLogger
+  }
+
+  resolveDependencies(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<TestLoggerSSEModuleDependencies> {
+    const logger = this.mockLogger
+    return {
+      logger: asSingletonFunction(() => logger),
+      testLoggerSSEController: asSSEControllerClass(TestLoggerSSEController, { diOptions }),
+    }
+  }
+
+  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
+    return {}
+  }
+
+  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testLoggerSSEController: asSSEControllerClass(TestLoggerSSEController),
     }
   }
 }

@@ -1,12 +1,14 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DIContext, SSEHttpClient, SSETestServer } from '../../index.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DIContext, SSEHttpClient, type SSELogger, SSETestServer } from '../../index.js'
 import type { TestSSEController } from './fixtures/testControllers.js'
 import {
   TestAuthSSEModule,
   TestChannelSSEModule,
+  TestLoggerSSEModule,
+  type TestLoggerSSEModuleDependencies,
   TestPostSSEModule,
   TestSSEModule,
   type TestSSEModuleDependencies,
@@ -899,6 +901,73 @@ describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
       client.close()
     },
   )
+
+  it(
+    'waitForConnection with predicate resolves when matching connection arrives (lines 40-49)',
+    { timeout: 10000 },
+    async () => {
+      const controller = getController()
+
+      // Start waiting for a connection with a specific predicate BEFORE connecting
+      const connectionPromise = controller.connectionSpy.waitForConnection({
+        timeout: 5000,
+        predicate: (c) => c.request.url.includes('predicate-user'),
+      })
+
+      // Give time for waiter to be registered
+      await delay(10)
+
+      // Now create the connection that matches the predicate
+      const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
+        query: { userId: 'predicate-user' },
+      })
+
+      // The waiter should resolve with the matching connection
+      const connection = await connectionPromise
+      expect(connection).toBeDefined()
+      expect(connection.request.url).toContain('predicate-user')
+
+      controller.completeHandler(connection.id)
+      client.close()
+    },
+  )
+
+  it(
+    'waitForDisconnection resolves when disconnection occurs (lines 61-65)',
+    { timeout: 10000 },
+    async () => {
+      const controller = getController()
+
+      // First establish a connection
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/notifications/stream',
+        {
+          query: { userId: 'disconnect-waiter-test' },
+          awaitServerConnection: { controller },
+        },
+      )
+
+      // Start waiting for disconnection BEFORE disconnecting
+      const disconnectionPromise = controller.connectionSpy.waitForDisconnection(
+        serverConnection.id,
+        { timeout: 5000 },
+      )
+
+      // Give time for waiter to be registered
+      await delay(10)
+
+      // Now close the connection
+      controller.completeHandler(serverConnection.id)
+      controller.testCloseConnection(serverConnection.id)
+      client.close()
+
+      // The waiter should resolve when disconnection is detected
+      await disconnectionPromise
+      // If we get here without timeout, the disconnection was properly detected
+      expect(controller.connectionSpy.isConnected(serverConnection.id)).toBe(false)
+    },
+  )
 })
 
 describe('SSE HTTP E2E (authentication)', () => {
@@ -1129,4 +1198,198 @@ describe('SSE HTTP E2E (large content streaming)', () => {
     expect(doneData.totalChunks).toBe(chunkCount)
     expect(doneData.totalBytes).toBe(expectedTotalBytes)
   })
+})
+
+describe('SSE HTTP E2E (server closes connection)', () => {
+  let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+  let context: DIContext<TestSSEModuleDependencies, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  function getController(): TestSSEController {
+    return server.resources.context.diContainer.cradle.testSSEController
+  }
+
+  it(
+    'events() generator completes when server closes connection (lines 218-219)',
+    { timeout: 10000 },
+    async () => {
+      const controller = getController()
+
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/notifications/stream',
+        {
+          query: { userId: 'server-close-test' },
+          awaitServerConnection: { controller },
+        },
+      )
+
+      // Send one event
+      await controller.testSendEvent(serverConnection.id, {
+        event: 'notification',
+        data: { id: '1', message: 'Before server close' },
+      })
+
+      // Use the events() generator directly
+      const collectedEvents: Array<{ event?: string; data: string }> = []
+      const generatorPromise = (async () => {
+        for await (const event of client.events()) {
+          collectedEvents.push(event)
+        }
+      })()
+
+      // Give time for the first event to be received
+      await delay(50)
+
+      // Server closes the connection
+      controller.completeHandler(serverConnection.id)
+      controller.testCloseConnection(serverConnection.id)
+
+      // Wait for the generator to complete
+      await generatorPromise
+
+      // Generator should have yielded the event and then completed (not thrown)
+      expect(collectedEvents).toHaveLength(1)
+      expect(JSON.parse(collectedEvents[0]!.data).message).toBe('Before server close')
+
+      client.close()
+    },
+  )
+
+  it(
+    'collectEvents returns early when server closes connection (line 285)',
+    { timeout: 10000 },
+    async () => {
+      const controller = getController()
+
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/notifications/stream',
+        {
+          query: { userId: 'server-close-collect-test' },
+          awaitServerConnection: { controller },
+        },
+      )
+
+      // Send one event
+      await controller.testSendEvent(serverConnection.id, {
+        event: 'notification',
+        data: { id: '1', message: 'Only event' },
+      })
+
+      // Start collecting more events than will arrive
+      const collectPromise = client.collectEvents(5, 5000)
+
+      // Give time for the first event to be received
+      await delay(50)
+
+      // Server closes the connection before sending 5 events
+      controller.completeHandler(serverConnection.id)
+      controller.testCloseConnection(serverConnection.id)
+
+      // collectEvents should return with only 1 event (not throw timeout)
+      const events = await collectPromise
+      expect(events).toHaveLength(1)
+      expect(JSON.parse(events[0]!.data).message).toBe('Only event')
+
+      client.close()
+    },
+  )
+})
+
+describe('SSE HTTP E2E (logger error handling)', () => {
+  let server: SSETestServer<{ context: DIContext<TestLoggerSSEModuleDependencies, object> }>
+  let context: DIContext<TestLoggerSSEModuleDependencies, object>
+  let mockLogger: SSELogger
+
+  beforeEach(async () => {
+    // Create mock logger to capture error calls
+    mockLogger = {
+      error: vi.fn(),
+    }
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<TestLoggerSSEModuleDependencies, object>(
+      container,
+      { isTestMode: true },
+      {},
+    )
+    context.registerDependencies({ modules: [new TestLoggerSSEModule(mockLogger)] }, undefined)
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it(
+    'logs error when onDisconnect throws and still cleans up connection',
+    { timeout: 10000 },
+    async () => {
+      // Connect to the endpoint that throws in onDisconnect
+      const client = await SSEHttpClient.connect(server.baseUrl, '/api/logger-test/stream')
+
+      expect(client.response.ok).toBe(true)
+
+      // Collect the event sent by the handler
+      const events = await client.collectEvents(1)
+      expect(events).toHaveLength(1)
+      expect(JSON.parse(events[0]!.data)).toEqual({ text: 'Hello from logger test' })
+
+      // Close the client (this triggers onDisconnect which throws)
+      client.close()
+
+      // Wait for the disconnect to be processed
+      await delay(100)
+
+      // Verify the logger was called with the error
+      expect(mockLogger.error).toHaveBeenCalledTimes(1)
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        { err: expect.any(Error) },
+        'Error in SSE onDisconnect handler',
+      )
+
+      // Verify the error message is correct
+      const errorArg = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+        err: Error
+      }
+      expect(errorArg.err.message).toBe('Test error in onDisconnect')
+    },
+  )
 })

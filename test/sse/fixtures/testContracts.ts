@@ -152,3 +152,16 @@ export const largeContentStreamContract = buildPayloadSSERoute({
     }),
   },
 })
+
+/**
+ * GET SSE route for testing logger error handling
+ */
+export const loggerTestStreamContract = buildSSERoute({
+  path: '/api/logger-test/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    message: z.object({ text: z.string() }),
+  },
+})

@@ -38,7 +38,7 @@ export type SSEHttpConnectWithSpyOptions = SSEHttpConnectOptions & {
 /**
  * Result when connecting with awaitServerConnection option.
  */
-export type SSEHttpConnectWithSpyResult = {
+export type SSEHttpConnectResult = {
   client: SSEHttpClient
   serverConnection: SSEConnection
 }
@@ -148,7 +148,7 @@ export class SSEHttpClient {
     baseUrl: string,
     path: string,
     options: SSEHttpConnectWithSpyOptions,
-  ): Promise<SSEHttpConnectWithSpyResult>
+  ): Promise<SSEHttpConnectResult>
   static async connect(
     baseUrl: string,
     path: string,
@@ -158,7 +158,7 @@ export class SSEHttpClient {
     baseUrl: string,
     path: string,
     options?: SSEHttpConnectOptions | SSEHttpConnectWithSpyOptions,
-  ): Promise<SSEHttpClient | SSEHttpConnectWithSpyResult> {
+  ): Promise<SSEHttpClient | SSEHttpConnectResult> {
     // Build path with query string
     let pathWithQuery = path
     if (options?.query) {
@@ -261,18 +261,37 @@ export class SSEHttpClient {
     const collected: ParsedSSEEvent[] = []
     const startTime = Date.now()
     const isCount = typeof countOrPredicate === 'number'
+    const iterator = this.events()
 
-    for await (const event of this.events()) {
-      collected.push(event)
+    while (true) {
+      const remainingTime = timeout - (Date.now() - startTime)
+      if (remainingTime <= 0) {
+        throw new Error(`Timeout collecting events (got ${collected.length})`)
+      }
+
+      // Race between the next event and timeout
+      const timeoutPromise = new Promise<{ timeout: true }>((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), remainingTime),
+      )
+      const nextPromise = iterator.next().then((result) => ({ ...result, timeout: false as const }))
+
+      const result = await Promise.race([nextPromise, timeoutPromise])
+
+      if (result.timeout) {
+        throw new Error(`Timeout collecting events (got ${collected.length})`)
+      }
+
+      if (result.done) {
+        break
+      }
+
+      collected.push(result.value)
 
       if (isCount && collected.length >= countOrPredicate) {
         break
       }
-      if (!isCount && countOrPredicate(event)) {
+      if (!isCount && countOrPredicate(result.value)) {
         break
-      }
-      if (Date.now() - startTime > timeout) {
-        throw new Error(`Timeout collecting events (got ${collected.length})`)
       }
     }
 

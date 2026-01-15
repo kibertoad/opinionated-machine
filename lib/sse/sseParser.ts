@@ -257,6 +257,8 @@ export function parseSSEBuffer(buffer: string): ParseSSEBufferResult {
   }
 
   // Return remaining incomplete data
-  const remaining = dataLines.length > 0 ? buffer.slice(lastCompleteEventEnd) : ''
+  // Preserve any unconsumed content after the last complete event,
+  // including incomplete events with only id:/event:/retry: lines (not just data: lines)
+  const remaining = lastCompleteEventEnd < buffer.length ? buffer.slice(lastCompleteEventEnd) : ''
   return { events, remaining }
 }

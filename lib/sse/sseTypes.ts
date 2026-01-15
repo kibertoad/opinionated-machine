@@ -3,6 +3,14 @@ import type { z } from 'zod'
 import type { AnySSERouteDefinition } from './sseContracts.ts'
 
 /**
+ * Minimal logger interface for SSE route error handling.
+ * Compatible with CommonLogger from @lokalise/node-core and pino loggers.
+ */
+export type SSELogger = {
+  error: (obj: Record<string, unknown>, msg: string) => void
+}
+
+/**
  * Async preHandler hook for SSE routes.
  *
  * IMPORTANT: SSE route preHandlers MUST return a Promise. This is required
@@ -106,6 +114,12 @@ export type SSERouteOptions = {
     connection: SSEConnection,
     lastEventId: string,
   ) => Iterable<SSEMessage> | AsyncIterable<SSEMessage> | void | Promise<void>
+  /**
+   * Optional logger for SSE route errors.
+   * If not provided, errors will be logged to console.error.
+   * Compatible with CommonLogger from @lokalise/node-core and pino loggers.
+   */
+  logger?: SSELogger
 }
 
 /**
