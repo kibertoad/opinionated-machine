@@ -81,17 +81,16 @@ export {
   type RegisterSSERoutesOptions,
 } from './lib/sse/sseRouteBuilder.ts'
 // SSE testing utilities
-export {
-  type CreateSSETestServerOptions,
-  type InjectPayloadSSEOptions,
-  type InjectSSEOptions,
-  type InjectSSEResult,
-  injectPayloadSSE,
-  injectSSE,
-  type SSEConnectOptions,
-  SSEHttpClient,
-  SSEInjectClient,
-  type SSEResponse,
-  type SSETestConnection,
-  SSETestServer,
-} from './lib/testing/sseTestUtils.js'
+export { SSEHttpClient, type SSEHttpConnectOptions } from './lib/testing/sseConnect.ts'
+export { buildUrl, injectPayloadSSE, injectSSE } from './lib/testing/sseInjectHelpers.ts'
+export { SSEInjectClient, SSEInjectConnection } from './lib/testing/sseTestClient.ts'
+export { SSETestServer } from './lib/testing/sseTestServer.ts'
+export type {
+  CreateSSETestServerOptions,
+  InjectPayloadSSEOptions,
+  InjectSSEOptions,
+  InjectSSEResult,
+  SSEConnectOptions,
+  SSEResponse,
+  SSETestConnection,
+} from './lib/testing/sseTestTypes.ts'

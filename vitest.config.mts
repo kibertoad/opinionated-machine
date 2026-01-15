@@ -9,7 +9,11 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['lib/**/*.ts'],
-      exclude: [],
+      exclude: [
+        'lib/AbstractController.ts', // Types and abstract class only
+        'lib/sse/sseTypes.ts',
+        'lib/testing/sseTestTypes.ts',
+      ],
       reporter: ['text', 'lcov'],
       thresholds: {
         statements: 90,

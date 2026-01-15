@@ -3,76 +3,107 @@ import { type ParsedSSEEvent, parseSSEEvents } from '../sse/sseParser.ts'
 import type { SSEConnectOptions, SSETestConnection } from './sseTestTypes.ts'
 
 /**
- * Create an SSE test connection from a Fastify inject response.
- * @internal
+ * Response from a Fastify inject() call for SSE.
  */
-function createTestConnection(
-  response: {
-    statusCode: number
-    headers: Record<string, string | string[] | undefined>
-    body: string
-  },
-  abortController: AbortController,
-): SSETestConnection {
-  const receivedEvents: ParsedSSEEvent[] = []
-  let closed = false
+export type SSEInjectResponse = {
+  statusCode: number
+  headers: Record<string, string | string[] | undefined>
+  body: string
+}
 
-  // Parse all events from response body (inject waits for complete response)
-  if (response.body) {
-    const events = parseSSEEvents(response.body)
-    receivedEvents.push(...events)
+/**
+ * SSE connection object returned by SSEInjectClient.
+ *
+ * Represents a completed SSE response from Fastify's inject().
+ * Since inject() waits for the complete response, all events
+ * are available immediately after construction.
+ */
+export class SSEInjectConnection implements SSETestConnection {
+  private readonly receivedEvents: ParsedSSEEvent[] = []
+  private readonly response: SSEInjectResponse
+
+  constructor(response: SSEInjectResponse) {
+    this.response = response
+
+    // Parse all events from response body (inject waits for complete response)
+    if (response.body) {
+      const events = parseSSEEvents(response.body)
+      this.receivedEvents.push(...events)
+    }
   }
 
-  return {
-    async waitForEvent(eventName: string, timeout = 5000): Promise<ParsedSSEEvent> {
-      const startTime = Date.now()
+  /**
+   * Wait for a specific event by name.
+   * Since inject() returns the complete response, this searches
+   * the already-received events.
+   */
+  async waitForEvent(eventName: string, timeout = 5000): Promise<ParsedSSEEvent> {
+    const startTime = Date.now()
 
-      while (Date.now() - startTime < timeout) {
-        const event = receivedEvents.find((e) => e.event === eventName)
-        if (event) {
-          return event
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10))
+    while (Date.now() - startTime < timeout) {
+      const event = this.receivedEvents.find((e) => e.event === eventName)
+      if (event) {
+        return event
       }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
 
-      throw new Error(`Timeout waiting for event: ${eventName}`)
-    },
+    throw new Error(`Timeout waiting for event: ${eventName}`)
+  }
 
-    async waitForEvents(count: number, timeout = 5000): Promise<ParsedSSEEvent[]> {
-      const startTime = Date.now()
+  /**
+   * Wait for a specific number of events.
+   * Since inject() returns the complete response, this checks
+   * the already-received events.
+   */
+  async waitForEvents(count: number, timeout = 5000): Promise<ParsedSSEEvent[]> {
+    const startTime = Date.now()
 
-      while (Date.now() - startTime < timeout) {
-        if (receivedEvents.length >= count) {
-          return receivedEvents.slice(0, count)
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10))
+    while (Date.now() - startTime < timeout) {
+      if (this.receivedEvents.length >= count) {
+        return this.receivedEvents.slice(0, count)
       }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
 
-      throw new Error(`Timeout waiting for ${count} events, received ${receivedEvents.length}`)
-    },
+    throw new Error(`Timeout waiting for ${count} events, received ${this.receivedEvents.length}`)
+  }
 
-    getReceivedEvents(): ParsedSSEEvent[] {
-      return [...receivedEvents]
-    },
+  /**
+   * Get all events received in the response.
+   */
+  getReceivedEvents(): ParsedSSEEvent[] {
+    return [...this.receivedEvents]
+  }
 
-    close(): void {
-      if (!closed) {
-        closed = true
-        abortController.abort()
-      }
-    },
+  /**
+   * Close the connection. No-op for inject connections since
+   * the response is already complete.
+   */
+  close(): void {
+    // No-op - inject() responses are already complete
+  }
 
-    isClosed(): boolean {
-      return closed
-    },
+  /**
+   * Check if the connection has been closed.
+   * Always returns true for inject connections since response is complete.
+   */
+  isClosed(): boolean {
+    return true
+  }
 
-    getStatusCode(): number {
-      return response.statusCode
-    },
+  /**
+   * Get the HTTP status code from the response.
+   */
+  getStatusCode(): number {
+    return this.response.statusCode
+  }
 
-    getHeaders(): Record<string, string | string[] | undefined> {
-      return response.headers
-    },
+  /**
+   * Get the response headers.
+   */
+  getHeaders(): Record<string, string | string[] | undefined> {
+    return this.response.headers
   }
 }
 
@@ -174,9 +205,7 @@ export class SSEInjectClient {
   async connect(
     url: string,
     options?: Omit<SSEConnectOptions, 'method' | 'body'>,
-  ): Promise<SSETestConnection> {
-    const abortController = new AbortController()
-
+  ): Promise<SSEInjectConnection> {
     const response = await this.app.inject({
       method: 'GET',
       url,
@@ -186,14 +215,11 @@ export class SSEInjectClient {
       },
     })
 
-    return createTestConnection(
-      {
-        statusCode: response.statusCode,
-        headers: response.headers as Record<string, string | string[] | undefined>,
-        body: response.body,
-      },
-      abortController,
-    )
+    return new SSEInjectConnection({
+      statusCode: response.statusCode,
+      headers: response.headers as Record<string, string | string[] | undefined>,
+      body: response.body,
+    })
   }
 
   /**
@@ -224,9 +250,7 @@ export class SSEInjectClient {
     url: string,
     body: unknown,
     options?: Omit<SSEConnectOptions, 'body'>,
-  ): Promise<SSETestConnection> {
-    const abortController = new AbortController()
-
+  ): Promise<SSEInjectConnection> {
     const response = await this.app.inject({
       method: options?.method ?? 'POST',
       url,
@@ -238,13 +262,10 @@ export class SSEInjectClient {
       payload: JSON.stringify(body),
     })
 
-    return createTestConnection(
-      {
-        statusCode: response.statusCode,
-        headers: response.headers as Record<string, string | string[] | undefined>,
-        body: response.body,
-      },
-      abortController,
-    )
+    return new SSEInjectConnection({
+      statusCode: response.statusCode,
+      headers: response.headers as Record<string, string | string[] | undefined>,
+      body: response.body,
+    })
   }
 }

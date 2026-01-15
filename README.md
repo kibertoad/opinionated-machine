@@ -842,15 +842,31 @@ if (this.hasConnectionSpy()) {
 
 ### SSE Test Utilities
 
-The library provides utilities for testing SSE endpoints with two different approaches:
+The library provides utilities for testing SSE endpoints.
 
-| `SSEInjectClient`                     | `SSEHttpClient`                        |
-|---------------------------------------|----------------------------------------|
-| Uses Fastify's `inject()` (no network)| Real HTTP connection via `fetch()`     |
-| All events returned at once           | Events arrive incrementally            |
-| Handler must close the connection     | Connection can stay open indefinitely  |
-| Works without starting server         | Requires running server (`listen()`)   |
-| **Use for:** OpenAI-style streaming   | **Use for:** notifications, live feeds |
+**Two connection methods:**
+- **Inject** - Uses Fastify's built-in `inject()` to simulate HTTP requests directly in-memory, without network overhead. No `listen()` required. Handler must close the connection for the request to complete.
+- **Real HTTP** - Actual HTTP connection via `fetch()`. Requires the server to be listening. Supports long-lived connections.
+
+#### Quick Reference
+
+| Utility | Connection | Requires Contract | Use Case |
+|---------|------------|-------------------|----------|
+| `SSEInjectClient` | Inject (in-memory) | No | Request-response SSE without contracts |
+| `injectSSE` / `injectPayloadSSE` | Inject (in-memory) | **Yes** | Request-response SSE with type-safe contracts |
+| `SSEHttpClient` | Real HTTP | No | Long-lived SSE connections |
+
+`SSEInjectClient` and `injectSSE`/`injectPayloadSSE` do the same thing (Fastify inject), but `injectSSE`/`injectPayloadSSE` provide type safety via contracts while `SSEInjectClient` works with raw URLs.
+
+#### Inject vs HTTP Comparison
+
+| Feature | Inject (`SSEInjectClient`, `injectSSE`) | HTTP (`SSEHttpClient`) |
+|---------|----------------------------------------|------------------------|
+| **Connection** | Fastify's `inject()` - in-memory | Real HTTP via `fetch()` |
+| **Event delivery** | All events returned at once (after handler closes) | Events arrive incrementally |
+| **Connection lifecycle** | Handler must close for request to complete | Can stay open indefinitely |
+| **Server requirement** | No `listen()` needed | Requires running server |
+| **Best for** | OpenAI-style streaming, batch exports | Notifications, live feeds, chat |
 
 #### SSETestServer
 
@@ -982,5 +998,67 @@ const { closed } = injectPayloadSSE(app, chatCompletionContract, {
 })
 const result = await closed
 const events = parseSSEEvents(result.body)
+```
+
+#### SSE Parsing Utilities
+
+The `sseParser` module provides utilities for parsing SSE event streams according to the W3C specification:
+
+**`parseSSEEvents(text)`** - Parse a complete SSE response into events (for testing or complete responses):
+
+```ts
+import { parseSSEEvents } from 'opinionated-machine'
+
+const text = `event: message
+data: {"text":"hello"}
+
+event: done
+data: {"status":"complete"}
+
+`
+const events = parseSSEEvents(text)
+// events = [
+//   { event: 'message', data: '{"text":"hello"}' },
+//   { event: 'done', data: '{"status":"complete"}' }
+// ]
+
+// Parse JSON data from events
+const payload = JSON.parse(events[0].data)
+```
+
+**`parseSSEBuffer(buffer)`** - Incremental parsing for streaming scenarios (production use):
+
+```ts
+import { parseSSEBuffer } from 'opinionated-machine'
+
+// Streaming SSE parsing with fetch
+const response = await fetch(url)
+const reader = response.body!.getReader()
+const decoder = new TextDecoder()
+let buffer = ''
+
+while (true) {
+  const { done, value } = await reader.read()
+  if (done) break
+
+  buffer += decoder.decode(value, { stream: true })
+  const { events, remaining } = parseSSEBuffer(buffer)
+  buffer = remaining
+
+  for (const event of events) {
+    console.log('Received:', event.event, JSON.parse(event.data))
+  }
+}
+```
+
+**ParsedSSEEvent type:**
+
+```ts
+type ParsedSSEEvent = {
+  id?: string     // Event ID for Last-Event-ID reconnection
+  event?: string  // Event type (defaults to 'message')
+  data: string    // Event payload (parse with JSON.parse if needed)
+  retry?: number  // Reconnection delay hint in ms
+}
 ```
 
