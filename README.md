@@ -39,10 +39,19 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Error Handling](#error-handling)
   - [Long-lived Connections vs Request-Response Streaming](#long-lived-connections-vs-request-response-streaming)
   - [SSE Parsing Utilities](#sse-parsing-utilities)
+    - [parseSSEEvents](#parsesseevents)
+    - [parseSSEBuffer](#parsessebuffer)
+    - [ParsedSSEEvent Type](#parsedssevent-type)
   - [Testing SSE Controllers](#testing-sse-controllers)
   - [SSEConnectionSpy API](#sseconnectionspy-api)
   - [Connection Monitoring](#connection-monitoring)
   - [SSE Test Utilities](#sse-test-utilities)
+    - [Quick Reference](#quick-reference)
+    - [Inject vs HTTP Comparison](#inject-vs-http-comparison)
+    - [SSETestServer](#ssetestserver)
+    - [SSEHttpClient](#ssehttpclient)
+    - [SSEInjectClient](#sseinjectclient)
+    - [Contract-Aware Inject Helpers](#contract-aware-inject-helpers)
 
 ## Basic usage
 
@@ -668,11 +677,18 @@ private handleChatCompletion = async (request, connection) => {
 
 ### SSE Parsing Utilities
 
-The library provides production-ready utilities for parsing SSE (Server-Sent Events) streams. These are general-purpose utilities that work in any context - server-side, client-side, or testing.
+The library provides production-ready utilities for parsing SSE (Server-Sent Events) streams:
+
+| Function | Use Case |
+|----------|----------|
+| `parseSSEEvents` | **Testing & complete responses** - when you have the full response body |
+| `parseSSEBuffer` | **Production streaming** - when data arrives incrementally in chunks |
 
 #### parseSSEEvents
 
-Parse a complete SSE response body into an array of events. Use this when you have the entire response available (e.g., after an HTTP request completes or when using Fastify's `inject()`):
+Parse a complete SSE response body into an array of events.
+
+**When to use:** Testing with Fastify's `inject()`, or when the full response is available (e.g., request-response style SSE like OpenAI completions):
 
 ```ts
 import { parseSSEEvents, type ParsedSSEEvent } from 'opinionated-machine'
@@ -698,7 +714,9 @@ const notifications = events.map(e => JSON.parse(e.data))
 
 #### parseSSEBuffer
 
-Parse a streaming SSE buffer, handling incomplete events at the boundary. Use this when processing SSE data as it arrives in chunks:
+Parse a streaming SSE buffer, handling incomplete events at chunk boundaries.
+
+**When to use:** Production clients consuming real-time SSE streams (notifications, live feeds, chat) where events arrive incrementally:
 
 ```ts
 import { parseSSEBuffer, type ParseSSEBufferResult } from 'opinionated-machine'
@@ -716,7 +734,29 @@ for await (const chunk of stream) {
   }
 
   // Keep incomplete data for next chunk
-  buffer = result.remainder
+  buffer = result.remaining
+}
+```
+
+**Production example with fetch:**
+
+```ts
+const response = await fetch(url)
+const reader = response.body!.getReader()
+const decoder = new TextDecoder()
+let buffer = ''
+
+while (true) {
+  const { done, value } = await reader.read()
+  if (done) break
+
+  buffer += decoder.decode(value, { stream: true })
+  const { events, remaining } = parseSSEBuffer(buffer)
+  buffer = remaining
+
+  for (const event of events) {
+    console.log('Received:', event.event, JSON.parse(event.data))
+  }
 }
 ```
 
@@ -998,67 +1038,5 @@ const { closed } = injectPayloadSSE(app, chatCompletionContract, {
 })
 const result = await closed
 const events = parseSSEEvents(result.body)
-```
-
-#### SSE Parsing Utilities
-
-The `sseParser` module provides utilities for parsing SSE event streams according to the W3C specification:
-
-**`parseSSEEvents(text)`** - Parse a complete SSE response into events (for testing or complete responses):
-
-```ts
-import { parseSSEEvents } from 'opinionated-machine'
-
-const text = `event: message
-data: {"text":"hello"}
-
-event: done
-data: {"status":"complete"}
-
-`
-const events = parseSSEEvents(text)
-// events = [
-//   { event: 'message', data: '{"text":"hello"}' },
-//   { event: 'done', data: '{"status":"complete"}' }
-// ]
-
-// Parse JSON data from events
-const payload = JSON.parse(events[0].data)
-```
-
-**`parseSSEBuffer(buffer)`** - Incremental parsing for streaming scenarios (production use):
-
-```ts
-import { parseSSEBuffer } from 'opinionated-machine'
-
-// Streaming SSE parsing with fetch
-const response = await fetch(url)
-const reader = response.body!.getReader()
-const decoder = new TextDecoder()
-let buffer = ''
-
-while (true) {
-  const { done, value } = await reader.read()
-  if (done) break
-
-  buffer += decoder.decode(value, { stream: true })
-  const { events, remaining } = parseSSEBuffer(buffer)
-  buffer = remaining
-
-  for (const event of events) {
-    console.log('Received:', event.event, JSON.parse(event.data))
-  }
-}
-```
-
-**ParsedSSEEvent type:**
-
-```ts
-type ParsedSSEEvent = {
-  id?: string     // Event ID for Last-Event-ID reconnection
-  event?: string  // Event type (defaults to 'message')
-  data: string    // Event payload (parse with JSON.parse if needed)
-  retry?: number  // Reconnection delay hint in ms
-}
 ```
 
