@@ -69,28 +69,29 @@ export {
   type SSERouteConfig,
   type SSERouteDefinition,
 } from './lib/sse/sseContracts.ts'
+// SSE parsing utilities (production)
+export {
+  type ParsedSSEEvent,
+  type ParseSSEBufferResult,
+  parseSSEBuffer,
+  parseSSEEvents,
+} from './lib/sse/sseParser.ts'
 export {
   buildFastifySSERoute,
   type RegisterSSERoutesOptions,
 } from './lib/sse/sseRouteBuilder.ts'
+// SSE testing utilities
 export {
   type CreateSSETestServerOptions,
-  connectSSE,
-  createMockSSEMessage,
-  createSSETestClient,
-  createSSETestServer,
   type InjectPayloadSSEOptions,
   type InjectSSEOptions,
   type InjectSSEResult,
   injectPayloadSSE,
   injectSSE,
-  type ParsedSSEEvent,
-  parseSSEEvents,
-  type SSEClientConnection,
   type SSEConnectOptions,
+  SSEHttpClient,
+  SSEInjectClient,
   type SSEResponse,
-  type SSETestClient,
   type SSETestConnection,
-  type SSETestServer,
-  waitFor,
+  SSETestServer,
 } from './lib/testing/sseTestUtils.js'

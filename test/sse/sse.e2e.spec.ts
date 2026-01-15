@@ -2,13 +2,12 @@ import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  connectSSE,
-  createSSETestServer,
   DIContext,
   injectPayloadSSE,
   injectSSE,
   parseSSEEvents,
-  type SSETestServer,
+  SSEHttpClient,
+  SSETestServer,
 } from '../../index.js'
 import {
   asyncReconnectStreamContract,
@@ -38,7 +37,7 @@ describe('SSE E2E (long-lived connections)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await createSSETestServer(
+    server = await SSETestServer.create(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -68,9 +67,13 @@ describe('SSE E2E (long-lived connections)', () => {
       const controller = getController()
 
       // Connect using our helper - returns when headers received (connection established)
-      const clientConnection = await connectSSE(server.baseUrl, '/api/notifications/stream', {
-        query: { userId: 'test-user' },
-      })
+      const clientConnection = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/notifications/stream',
+        {
+          query: { userId: 'test-user' },
+        },
+      )
 
       // Headers received = connection established
       expect(clientConnection.response.ok).toBe(true)
@@ -119,9 +122,13 @@ describe('SSE E2E (long-lived connections)', () => {
   it('handles interleaved events with delays', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const clientConnection = await connectSSE(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'delayed-user' },
-    })
+    const clientConnection = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'delayed-user' },
+      },
+    )
 
     const eventsPromise = clientConnection.collectEvents(3)
     const serverConnection = await controller.connectionSpy.waitForConnection()
@@ -162,10 +169,10 @@ describe('SSE E2E (long-lived connections)', () => {
     const controller = getController()
 
     // Connect two clients
-    const client1 = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client1 = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'user-1' },
     })
-    const client2 = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client2 = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'user-2' },
     })
 
@@ -210,9 +217,15 @@ describe('SSE E2E (long-lived connections)', () => {
 
     // Connect three clients
     const clients = await Promise.all([
-      connectSSE(server.baseUrl, '/api/notifications/stream', { query: { userId: 'u1' } }),
-      connectSSE(server.baseUrl, '/api/notifications/stream', { query: { userId: 'u2' } }),
-      connectSSE(server.baseUrl, '/api/notifications/stream', { query: { userId: 'u3' } }),
+      SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
+        query: { userId: 'u1' },
+      }),
+      SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
+        query: { userId: 'u2' },
+      }),
+      SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
+        query: { userId: 'u3' },
+      }),
     ])
 
     const eventsPromises = clients.map((c) => c.collectEvents(1))
@@ -248,10 +261,10 @@ describe('SSE E2E (long-lived connections)', () => {
     const controller = getController()
 
     // Connect two clients with different contexts
-    const vipClient = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const vipClient = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'vip-user' },
     })
-    const regularClient = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const regularClient = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'regular-user' },
     })
 
@@ -293,13 +306,13 @@ describe('SSE E2E (long-lived connections)', () => {
 
     expect(controller.testGetConnectionCount()).toBe(0)
 
-    const client1 = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client1 = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'u1' },
     })
     await controller.connectionSpy.waitForConnection()
     expect(controller.testGetConnectionCount()).toBe(1)
 
-    const client2 = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client2 = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'u2' },
     })
     await new Promise((r) => setTimeout(r, 50))
@@ -323,7 +336,7 @@ describe('SSE E2E (long-lived connections)', () => {
   it('server can close connection', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'will-be-closed' },
     })
 
@@ -356,7 +369,7 @@ describe('SSE E2E (OpenAI-style streaming)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
 
-    server = await createSSETestServer(
+    server = await SSETestServer.create(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -444,7 +457,7 @@ describe('SSE E2E (authentication)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestAuthSSEModule()] }, undefined)
 
-    server = await createSSETestServer(
+    server = await SSETestServer.create(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -501,7 +514,7 @@ describe('SSE E2E (authentication)', () => {
 
   it('works with real HTTP connection and auth headers', { timeout: 10000 }, async () => {
     // Test using connectSSE (real HTTP) instead of inject
-    const client = await connectSSE(server.baseUrl, '/api/protected/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/protected/stream', {
       headers: { Authorization: 'Bearer real-token' },
     })
 
@@ -526,7 +539,7 @@ describe('SSE E2E (path parameters)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestChannelSSEModule()] }, undefined)
 
-    server = await createSSETestServer(
+    server = await SSETestServer.create(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -595,7 +608,7 @@ describe('SSE E2E (path parameters)', () => {
   })
 
   it('works with real HTTP connection and path params', { timeout: 10000 }, async () => {
-    const client = await connectSSE(server.baseUrl, '/api/channels/my-channel/stream')
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/channels/my-channel/stream')
 
     expect(client.response.ok).toBe(true)
 
@@ -615,7 +628,7 @@ describe('SSE E2E (error handling)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await createSSETestServer(
+    server = await SSETestServer.create(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -660,7 +673,7 @@ describe('SSE E2E (error handling)', () => {
   it('handles client disconnect during event sending', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'disconnect-test' },
     })
 
@@ -694,7 +707,7 @@ describe('SSE E2E (serialization)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await createSSETestServer(
+    server = await SSETestServer.create(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -720,7 +733,7 @@ describe('SSE E2E (serialization)', () => {
   it('serializes nested objects correctly', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'serialization-test' },
     })
 
@@ -758,7 +771,7 @@ describe('SSE E2E (serialization)', () => {
   it('handles special characters in data', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'special-chars' },
     })
 
@@ -787,7 +800,7 @@ describe('SSE E2E (serialization)', () => {
   it('handles arrays at top level', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'array-test' },
     })
 
@@ -818,7 +831,7 @@ describe('SSE E2E (serialization)', () => {
   it('handles null and undefined values', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'null-test' },
     })
 
@@ -848,7 +861,7 @@ describe('SSE E2E (serialization)', () => {
   it('handles numeric values correctly', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'numeric-test' },
     })
 
@@ -881,7 +894,7 @@ describe('SSE E2E (serialization)', () => {
   it('handles boolean values correctly', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'boolean-test' },
     })
 
@@ -919,7 +932,7 @@ describe('SSE E2E (event metadata)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await createSSETestServer(
+    server = await SSETestServer.create(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -945,7 +958,7 @@ describe('SSE E2E (event metadata)', () => {
   it('sends event with custom ID', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'event-id-test' },
     })
 
@@ -968,7 +981,7 @@ describe('SSE E2E (event metadata)', () => {
   it('sends events with different event types', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'event-types-test' },
     })
 
@@ -1003,7 +1016,7 @@ describe('SSE E2E (event metadata)', () => {
   it('sends event without explicit event type (uses message)', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'no-event-type' },
     })
 
@@ -1034,7 +1047,7 @@ describe('SSE E2E (connection lifecycle)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await createSSETestServer(
+    server = await SSETestServer.create(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1060,7 +1073,7 @@ describe('SSE E2E (connection lifecycle)', () => {
   it('tracks connection events in spy', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'lifecycle-test' },
     })
 
@@ -1090,7 +1103,7 @@ describe('SSE E2E (connection lifecycle)', () => {
   it('isConnected returns correct status', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'connected-test' },
     })
 
@@ -1110,7 +1123,7 @@ describe('SSE E2E (connection lifecycle)', () => {
   it('connection context is preserved', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'context-user-123' },
     })
 
@@ -1127,7 +1140,7 @@ describe('SSE E2E (connection lifecycle)', () => {
   it('connection has metadata', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'metadata-test' },
     })
 
@@ -1169,7 +1182,7 @@ describe('SSE E2E (Last-Event-ID reconnection)', () => {
     )
     context.registerDependencies({ modules: [new TestReconnectSSEModule()] }, undefined)
 
-    server = await createSSETestServer(
+    server = await SSETestServer.create(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1283,7 +1296,7 @@ describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await createSSETestServer(
+    server = await SSETestServer.create(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1318,7 +1331,7 @@ describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
   it('waitForDisconnection times out when connection stays open', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'timeout-test' },
     })
 
@@ -1355,7 +1368,7 @@ describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
   it('clear() cancels pending disconnection waiters', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'clear-test' },
     })
 
@@ -1384,7 +1397,7 @@ describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
     async () => {
       const controller = getController()
 
-      const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+      const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
         query: { userId: 'already-disconnected' },
       })
 
@@ -1410,7 +1423,7 @@ describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
     async () => {
       const controller = getController()
 
-      const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+      const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
         query: { userId: 'already-connected' },
       })
 

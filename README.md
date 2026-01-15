@@ -32,16 +32,17 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [SSE Controllers Without Dependencies](#sse-controllers-without-dependencies)
   - [Registering SSE Controllers](#registering-sse-controllers)
   - [Registering SSE Routes](#registering-sse-routes)
-  - [Testing SSE Controllers](#testing-sse-controllers)
-  - [SSEConnectionSpy API](#sseconnectionspy-api)
-  - [Connection Monitoring](#connection-monitoring)
-  - [SSE Test Utilities](#sse-test-utilities)
   - [Broadcasting Events](#broadcasting-events)
   - [Controller-Level Hooks](#controller-level-hooks)
   - [Route-Level Options](#route-level-options)
   - [Graceful Shutdown](#graceful-shutdown)
   - [Error Handling](#error-handling)
   - [Long-lived Connections vs Request-Response Streaming](#long-lived-connections-vs-request-response-streaming)
+  - [SSE Parsing Utilities](#sse-parsing-utilities)
+  - [Testing SSE Controllers](#testing-sse-controllers)
+  - [SSEConnectionSpy API](#sseconnectionspy-api)
+  - [Connection Monitoring](#connection-monitoring)
+  - [SSE Test Utilities](#sse-test-utilities)
 
 ## Basic usage
 
@@ -536,142 +537,6 @@ context.registerSSERoutes(app, {
 await app.ready()
 ```
 
-### Testing SSE Controllers
-
-Enable the connection spy for testing by passing `isTestMode: true` in diOptions:
-
-```ts
-import { createContainer } from 'awilix'
-import { DIContext, createSSETestServer, connectSSE } from 'opinionated-machine'
-
-describe('NotificationsSSEController', () => {
-  let server: SSETestServer
-  let controller: NotificationsSSEController
-
-  beforeEach(async () => {
-    // Create test server with isTestMode enabled
-    server = await createSSETestServer({
-      modules: [new NotificationsModule()],
-      diOptions: { isTestMode: true }, // Enables connectionSpy
-    })
-
-    controller = server.resources.context.diContainer.cradle.notificationsSSEController
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it('receives notifications over SSE', async () => {
-    // Connect to SSE endpoint
-    const clientConnection = await connectSSE(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'test-user' },
-    })
-
-    expect(clientConnection.response.ok).toBe(true)
-
-    // Wait for server-side connection to be established
-    const serverConnection = await controller.connectionSpy.waitForConnection()
-
-    // Send events from server
-    await controller.sendEvent(serverConnection.id, {
-      event: 'notification',
-      data: { id: '1', message: 'Hello!' },
-    })
-
-    await controller.sendEvent(serverConnection.id, {
-      event: 'notification',
-      data: { id: '2', message: 'World!' },
-    })
-
-    // Collect buffered events
-    const events = await clientConnection.collectEvents(2)
-
-    expect(events).toHaveLength(2)
-    expect(JSON.parse(events[0].data)).toEqual({ id: '1', message: 'Hello!' })
-    expect(JSON.parse(events[1].data)).toEqual({ id: '2', message: 'World!' })
-
-    // Clean up
-    clientConnection.close()
-  })
-})
-```
-
-### SSEConnectionSpy API
-
-The `connectionSpy` is available when `isTestMode: true` is passed to `asSSEControllerClass`:
-
-```ts
-// Wait for a connection to be established (with timeout)
-const connection = await controller.connectionSpy.waitForConnection({ timeout: 5000 })
-
-// Check if a specific connection is active
-const isConnected = controller.connectionSpy.isConnected(connectionId)
-
-// Wait for a specific connection to disconnect
-await controller.connectionSpy.waitForDisconnection(connectionId, { timeout: 5000 })
-
-// Get all connection events (connect/disconnect history)
-const events = controller.connectionSpy.getEvents()
-
-// Clear event history between tests
-controller.connectionSpy.clear()
-```
-
-### Connection Monitoring
-
-Controllers have access to utility methods for monitoring connections:
-
-```ts
-// Get count of active connections
-const count = this.getConnectionCount()
-
-// Get all active connections (for iteration/inspection)
-const connections = this.getConnections()
-
-// Check if connection spy is enabled (useful for conditional logic)
-if (this.hasConnectionSpy()) {
-  // ...
-}
-```
-
-### SSE Test Utilities
-
-The library provides utilities for testing SSE endpoints:
-
-```ts
-import { connectSSE, createSSETestServer, parseSSEEvents, injectPayloadSSE } from 'opinionated-machine'
-
-// Create a test server with SSE support
-const server = await createSSETestServer({
-  modules: [new MyModule()],
-  diOptions: { isTestMode: true },
-})
-
-// Connect to a GET SSE endpoint
-const connection = await connectSSE(server.baseUrl, '/api/stream', {
-  query: { userId: 'test' },
-  headers: { authorization: 'Bearer token' },
-})
-
-// Collect events with timeout
-const events = await connection.collectEvents(3, 5000) // 3 events, 5s timeout
-
-// Or collect until a predicate is satisfied
-const events = await connection.collectEvents(
-  (event) => event.event === 'done',
-  5000,
-)
-
-// For POST SSE endpoints, use injectPayloadSSE
-const { closed } = injectPayloadSSE(app, chatCompletionContract, {
-  body: { message: 'Hello', stream: true },
-})
-const result = await closed
-const events = parseSSEEvents(result.body)
-```
-
 ### Broadcasting Events
 
 Send events to multiple connections using `broadcast()` or `broadcastIf()`:
@@ -799,5 +664,323 @@ private handleChatCompletion = async (request, connection) => {
   // Close connection when done
   this.closeConnection(connection.id)
 }
+```
+
+### SSE Parsing Utilities
+
+The library provides production-ready utilities for parsing SSE (Server-Sent Events) streams. These are general-purpose utilities that work in any context - server-side, client-side, or testing.
+
+#### parseSSEEvents
+
+Parse a complete SSE response body into an array of events. Use this when you have the entire response available (e.g., after an HTTP request completes or when using Fastify's `inject()`):
+
+```ts
+import { parseSSEEvents, type ParsedSSEEvent } from 'opinionated-machine'
+
+const responseBody = `event: notification
+data: {"id":"1","message":"Hello"}
+
+event: notification
+data: {"id":"2","message":"World"}
+
+`
+
+const events: ParsedSSEEvent[] = parseSSEEvents(responseBody)
+// Result:
+// [
+//   { event: 'notification', data: '{"id":"1","message":"Hello"}' },
+//   { event: 'notification', data: '{"id":"2","message":"World"}' }
+// ]
+
+// Access parsed data
+const notifications = events.map(e => JSON.parse(e.data))
+```
+
+#### parseSSEBuffer
+
+Parse a streaming SSE buffer, handling incomplete events at the boundary. Use this when processing SSE data as it arrives in chunks:
+
+```ts
+import { parseSSEBuffer, type ParseSSEBufferResult } from 'opinionated-machine'
+
+let buffer = ''
+
+// As chunks arrive from a stream...
+for await (const chunk of stream) {
+  buffer += chunk
+  const result: ParseSSEBufferResult = parseSSEBuffer(buffer)
+
+  // Process complete events
+  for (const event of result.events) {
+    console.log('Received:', event.event, event.data)
+  }
+
+  // Keep incomplete data for next chunk
+  buffer = result.remainder
+}
+```
+
+#### ParsedSSEEvent Type
+
+Both functions return events with this structure:
+
+```ts
+type ParsedSSEEvent = {
+  id?: string      // Event ID (from "id:" field)
+  event?: string   // Event type (from "event:" field)
+  data: string     // Event data (from "data:" field, always present)
+  retry?: number   // Reconnection interval (from "retry:" field)
+}
+```
+
+### Testing SSE Controllers
+
+Enable the connection spy for testing by passing `isTestMode: true` in diOptions:
+
+```ts
+import { createContainer } from 'awilix'
+import { DIContext, SSETestServer, SSEHttpClient } from 'opinionated-machine'
+
+describe('NotificationsSSEController', () => {
+  let server: SSETestServer
+  let controller: NotificationsSSEController
+
+  beforeEach(async () => {
+    // Create test server with isTestMode enabled
+    server = await SSETestServer.create(
+      async (app) => {
+        // Register your SSE routes here
+      },
+      {
+        setup: async () => {
+          // Set up DI container and resources
+          return { context }
+        },
+      }
+    )
+
+    controller = server.resources.context.diContainer.cradle.notificationsSSEController
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it('receives notifications over SSE', async () => {
+    // Connect to SSE endpoint using SSEHttpClient
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
+      query: { userId: 'test-user' },
+    })
+
+    expect(client.response.ok).toBe(true)
+
+    // Wait for server-side connection to be established
+    const serverConnection = await controller.connectionSpy.waitForConnection()
+
+    // Send events from server
+    await controller.sendEvent(serverConnection.id, {
+      event: 'notification',
+      data: { id: '1', message: 'Hello!' },
+    })
+
+    await controller.sendEvent(serverConnection.id, {
+      event: 'notification',
+      data: { id: '2', message: 'World!' },
+    })
+
+    // Collect buffered events
+    const events = await client.collectEvents(2)
+
+    expect(events).toHaveLength(2)
+    expect(JSON.parse(events[0].data)).toEqual({ id: '1', message: 'Hello!' })
+    expect(JSON.parse(events[1].data)).toEqual({ id: '2', message: 'World!' })
+
+    // Clean up
+    client.close()
+  })
+})
+```
+
+### SSEConnectionSpy API
+
+The `connectionSpy` is available when `isTestMode: true` is passed to `asSSEControllerClass`:
+
+```ts
+// Wait for a connection to be established (with timeout)
+const connection = await controller.connectionSpy.waitForConnection({ timeout: 5000 })
+
+// Check if a specific connection is active
+const isConnected = controller.connectionSpy.isConnected(connectionId)
+
+// Wait for a specific connection to disconnect
+await controller.connectionSpy.waitForDisconnection(connectionId, { timeout: 5000 })
+
+// Get all connection events (connect/disconnect history)
+const events = controller.connectionSpy.getEvents()
+
+// Clear event history between tests
+controller.connectionSpy.clear()
+```
+
+### Connection Monitoring
+
+Controllers have access to utility methods for monitoring connections:
+
+```ts
+// Get count of active connections
+const count = this.getConnectionCount()
+
+// Get all active connections (for iteration/inspection)
+const connections = this.getConnections()
+
+// Check if connection spy is enabled (useful for conditional logic)
+if (this.hasConnectionSpy()) {
+  // ...
+}
+```
+
+### SSE Test Utilities
+
+The library provides utilities for testing SSE endpoints with two different approaches:
+
+| `SSEInjectClient`                     | `SSEHttpClient`                        |
+|---------------------------------------|----------------------------------------|
+| Uses Fastify's `inject()` (no network)| Real HTTP connection via `fetch()`     |
+| All events returned at once           | Events arrive incrementally            |
+| Handler must close the connection     | Connection can stay open indefinitely  |
+| Works without starting server         | Requires running server (`listen()`)   |
+| **Use for:** OpenAI-style streaming   | **Use for:** notifications, live feeds |
+
+#### SSETestServer
+
+Creates a test server with `@fastify/sse` pre-configured:
+
+```ts
+import { SSETestServer, SSEHttpClient } from 'opinionated-machine'
+
+// Basic usage
+const server = await SSETestServer.create(async (app) => {
+  app.get('/api/events', async (request, reply) => {
+    reply.sse({ event: 'message', data: { hello: 'world' } })
+    reply.sseClose()
+  })
+})
+
+// Connect and test
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/events')
+const events = await client.collectEvents(1)
+expect(events[0].event).toBe('message')
+
+// Cleanup
+client.close()
+await server.close()
+```
+
+With custom resources (DI container, controllers):
+
+```ts
+const server = await SSETestServer.create(
+  async (app) => {
+    // Register routes using resources from setup
+    myController.registerRoutes(app)
+  },
+  {
+    configureApp: async (app) => {
+      app.setValidatorCompiler(validatorCompiler)
+    },
+    setup: async () => {
+      // Resources are available via server.resources
+      const container = createContainer()
+      return { container }
+    },
+  }
+)
+
+const { container } = server.resources
+```
+
+#### SSEHttpClient
+
+For testing long-lived SSE connections using real HTTP:
+
+```ts
+import { SSEHttpClient } from 'opinionated-machine'
+
+// Connect to SSE endpoint
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/stream', {
+  query: { userId: 'test' },
+  headers: { authorization: 'Bearer token' },
+})
+
+// Access response info
+expect(client.response.ok).toBe(true)
+expect(client.response.headers.get('content-type')).toBe('text/event-stream')
+
+// Collect events by count with timeout
+const events = await client.collectEvents(3, 5000) // 3 events, 5s timeout
+
+// Or collect until a predicate is satisfied
+const events = await client.collectEvents(
+  (event) => event.event === 'done',
+  5000,
+)
+
+// Iterate over events as they arrive
+for await (const event of client.events()) {
+  console.log(event.event, event.data)
+  if (event.event === 'done') break
+}
+
+// Cleanup
+client.close()
+```
+
+#### SSEInjectClient
+
+For testing request-response style SSE streams (like OpenAI completions):
+
+```ts
+import { SSEInjectClient } from 'opinionated-machine'
+
+const client = new SSEInjectClient(app) // No server.listen() needed
+
+// GET request
+const conn = await client.connect('/api/export/progress', {
+  headers: { authorization: 'Bearer token' },
+})
+
+// POST request with body (OpenAI-style)
+const conn = await client.connectWithBody(
+  '/api/chat/completions',
+  { model: 'gpt-4', messages: [...], stream: true },
+)
+
+// All events are available immediately (inject waits for complete response)
+expect(conn.getStatusCode()).toBe(200)
+const events = conn.getReceivedEvents()
+const chunks = events.filter(e => e.event === 'chunk')
+```
+
+#### Contract-Aware Inject Helpers
+
+For typed testing with SSE contracts:
+
+```ts
+import { injectSSE, injectPayloadSSE, parseSSEEvents } from 'opinionated-machine'
+
+// For GET SSE endpoints with contracts
+const { closed } = injectSSE(app, notificationsContract, {
+  query: { userId: 'test' },
+})
+const result = await closed
+const events = parseSSEEvents(result.body)
+
+// For POST/PUT/PATCH SSE endpoints with contracts
+const { closed } = injectPayloadSSE(app, chatCompletionContract, {
+  body: { message: 'Hello', stream: true },
+})
+const result = await closed
+const events = parseSSEEvents(result.body)
 ```
 
