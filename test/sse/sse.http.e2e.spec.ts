@@ -7,6 +7,7 @@ import type { TestSSEController } from './fixtures/testControllers.js'
 import {
   TestAuthSSEModule,
   TestChannelSSEModule,
+  TestPostSSEModule,
   TestSSEModule,
   type TestSSEModuleDependencies,
 } from './fixtures/testModules.js'
@@ -1033,5 +1034,99 @@ describe('SSE HTTP E2E (awaitServerConnection option)', () => {
 
     controller.completeHandler(serverConnection.id)
     client.close()
+  })
+})
+
+describe('SSE HTTP E2E (large content streaming)', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it('streams 10MB of content via real HTTP without data loss', { timeout: 10000 }, async () => {
+    // 10MB total: 1000 chunks × 10KB each
+    const chunkCount = 1000
+    const chunkSize = 10000
+    const expectedTotalBytes = chunkCount * chunkSize // 10MB
+
+    // Use real HTTP POST request
+    const response = await fetch(`${server.baseUrl}/api/large-content/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({ chunkCount, chunkSize }),
+    })
+
+    expect(response.ok).toBe(true)
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+
+    // Read the entire response body
+    const body = await response.text()
+
+    // Verify body size is substantial (SSE overhead adds event:/data:/newlines)
+    // Each chunk adds: "event:chunk\ndata:{...}\n\n" where data includes ~10KB content
+    // Minimum expected: 10MB of content + SSE framing
+    expect(body.length).toBeGreaterThan(expectedTotalBytes)
+
+    // Parse SSE events manually
+    const events: Array<{ event?: string; data: string }> = []
+    const lines = body.split('\n')
+    let currentEvent: { event?: string; data: string } = { data: '' }
+
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        currentEvent.event = line.slice(6).trim()
+      } else if (line.startsWith('data:')) {
+        currentEvent.data = line.slice(5).trim()
+      } else if (line === '' && currentEvent.data) {
+        events.push(currentEvent)
+        currentEvent = { data: '' }
+      }
+    }
+
+    const chunkEvents = events.filter((e) => e.event === 'chunk')
+    const doneEvents = events.filter((e) => e.event === 'done')
+
+    // Verify all chunks were received
+    expect(chunkEvents).toHaveLength(chunkCount)
+    expect(doneEvents).toHaveLength(1)
+
+    // Verify first, middle, and last chunks for order and content integrity
+    const checkIndices = [0, Math.floor(chunkCount / 2), chunkCount - 1]
+    for (const i of checkIndices) {
+      const data = JSON.parse(chunkEvents[i]!.data)
+      expect(data.index).toBe(i)
+      expect(data.content.length).toBe(chunkSize)
+      expect(data.content).toContain(`[chunk-${i}]`)
+    }
+
+    // Verify done event totals
+    const doneData = JSON.parse(doneEvents[0]!.data)
+    expect(doneData.totalChunks).toBe(chunkCount)
+    expect(doneData.totalBytes).toBe(expectedTotalBytes)
   })
 })

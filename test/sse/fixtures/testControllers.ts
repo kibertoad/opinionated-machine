@@ -10,6 +10,7 @@ import {
   authenticatedStreamContract,
   channelStreamContract,
   chatCompletionContract,
+  largeContentStreamContract,
   notificationsStreamContract,
   reconnectStreamContract,
   streamContract,
@@ -436,4 +437,62 @@ export class TestAsyncReconnectSSEController extends AbstractSSEController<TestA
 
     return generateEvents()
   }
+}
+
+/**
+ * Test SSE controller for large content streaming.
+ * Verifies that closeConnection doesn't cut off data transfer.
+ */
+export type TestLargeContentSSEContracts = {
+  largeContentStream: typeof largeContentStreamContract
+}
+
+export class TestLargeContentSSEController extends AbstractSSEController<TestLargeContentSSEContracts> {
+  public static contracts = {
+    largeContentStream: largeContentStreamContract,
+  } as const
+
+  public buildSSERoutes(): BuildSSERoutesReturnType<TestLargeContentSSEContracts> {
+    return {
+      largeContentStream: {
+        contract: TestLargeContentSSEController.contracts.largeContentStream,
+        handler: this.handleLargeContentStream,
+      },
+    }
+  }
+
+  private handleLargeContentStream = buildSSEHandler(
+    largeContentStreamContract,
+    async (request, connection) => {
+      const { chunkCount, chunkSize } = request.body
+
+      // Generate content of specified size (repeating pattern for easy verification)
+      const generateContent = (index: number): string => {
+        const pattern = `[chunk-${index}]`
+        const repeatCount = Math.ceil(chunkSize / pattern.length)
+        return pattern.repeat(repeatCount).slice(0, chunkSize)
+      }
+
+      let totalBytes = 0
+
+      // Stream all chunks
+      for (let i = 0; i < chunkCount; i++) {
+        const content = generateContent(i)
+        totalBytes += content.length
+        await this.sendEvent(connection.id, {
+          event: 'chunk',
+          data: { index: i, content },
+        })
+      }
+
+      // Send completion event with totals
+      await this.sendEvent(connection.id, {
+        event: 'done',
+        data: { totalChunks: chunkCount, totalBytes },
+      })
+
+      // Close connection after sending all data
+      this.closeConnection(connection.id)
+    },
+  )
 }

@@ -126,3 +126,29 @@ export const asyncReconnectStreamContract = buildSSERoute({
     }),
   },
 })
+
+/**
+ * POST SSE route for testing large content streaming
+ * Verifies that closeConnection doesn't cut off data transfer
+ */
+export const largeContentStreamContract = buildPayloadSSERoute({
+  method: 'POST',
+  path: '/api/large-content/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  body: z.object({
+    chunkCount: z.number(),
+    chunkSize: z.number(),
+  }),
+  events: {
+    chunk: z.object({
+      index: z.number(),
+      content: z.string(),
+    }),
+    done: z.object({
+      totalChunks: z.number(),
+      totalBytes: z.number(),
+    }),
+  },
+})

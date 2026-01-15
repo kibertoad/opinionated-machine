@@ -10,6 +10,7 @@ import {
   TestAsyncReconnectSSEController,
   TestAuthSSEController,
   TestChannelSSEController,
+  TestLargeContentSSEController,
   TestPostSSEController,
   TestReconnectSSEController,
   TestSSEController,
@@ -75,10 +76,11 @@ export class TestSSEModule extends AbstractModule<TestSSEModuleDependencies> {
 }
 
 /**
- * Module with POST SSE controller
+ * Module with POST SSE controllers (OpenAI-style and large content streaming)
  */
 export type TestPostSSEModuleDependencies = {
   testPostSSEController: TestPostSSEController
+  testLargeContentSSEController: TestLargeContentSSEController
 }
 
 export class TestPostSSEModule extends AbstractModule<TestPostSSEModuleDependencies> {
@@ -87,6 +89,7 @@ export class TestPostSSEModule extends AbstractModule<TestPostSSEModuleDependenc
   ): MandatoryNameAndRegistrationPair<TestPostSSEModuleDependencies> {
     return {
       testPostSSEController: asSSEControllerClass(TestPostSSEController),
+      testLargeContentSSEController: asSSEControllerClass(TestLargeContentSSEController),
     }
   }
 
@@ -97,6 +100,7 @@ export class TestPostSSEModule extends AbstractModule<TestPostSSEModuleDependenc
   override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testPostSSEController: asSSEControllerClass(TestPostSSEController),
+      testLargeContentSSEController: asSSEControllerClass(TestLargeContentSSEController),
     }
   }
 }

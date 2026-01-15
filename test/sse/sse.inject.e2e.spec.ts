@@ -13,6 +13,7 @@ import {
   authenticatedStreamContract,
   channelStreamContract,
   chatCompletionContract,
+  largeContentStreamContract,
   reconnectStreamContract,
 } from './fixtures/testContracts.js'
 import {
@@ -121,6 +122,77 @@ describe('SSE Inject E2E (OpenAI-style streaming)', () => {
 
     expect(response.headers['content-type']).toContain('text/event-stream')
     expect(response.headers['cache-control']).toContain('no-cache')
+  })
+
+  it(
+    'streams large content without data loss from closeConnection',
+    { timeout: 10000 },
+    async () => {
+      // Test with many chunks of significant size to verify closeConnection
+      // doesn't cut off data transfer prematurely
+      // 10MB total: 1000 chunks × 10KB each
+      const chunkCount = 1000
+      const chunkSize = 10000
+      const expectedTotalBytes = chunkCount * chunkSize
+
+      const { closed } = injectPayloadSSE(server.app, largeContentStreamContract, {
+        body: { chunkCount, chunkSize },
+      })
+
+      const response = await closed
+
+      expect(response.statusCode).toBe(200)
+
+      // Verify response body is substantial
+      expect(response.body.length).toBeGreaterThan(expectedTotalBytes)
+
+      const events = parseSSEEvents(response.body)
+      const chunkEvents = events.filter((e) => e.event === 'chunk')
+      const doneEvents = events.filter((e) => e.event === 'done')
+
+      // Verify all chunks were received
+      expect(chunkEvents).toHaveLength(chunkCount)
+      expect(doneEvents).toHaveLength(1)
+
+      // Verify first, middle, and last chunks for order and content integrity
+      const checkIndices = [0, Math.floor(chunkCount / 2), chunkCount - 1]
+      for (const i of checkIndices) {
+        const data = JSON.parse(chunkEvents[i]!.data)
+        expect(data.index).toBe(i)
+        expect(data.content.length).toBe(chunkSize)
+        expect(data.content).toContain(`[chunk-${i}]`)
+      }
+
+      // Verify done event totals
+      const doneData = JSON.parse(doneEvents[0]!.data)
+      expect(doneData.totalChunks).toBe(chunkCount)
+      expect(doneData.totalBytes).toBe(expectedTotalBytes)
+    },
+  )
+
+  it('handles very large individual chunks', { timeout: 10000 }, async () => {
+    // Test with fewer but larger chunks (10 x 10KB = 100KB)
+    const chunkCount = 10
+    const chunkSize = 10000
+
+    const { closed } = injectPayloadSSE(server.app, largeContentStreamContract, {
+      body: { chunkCount, chunkSize },
+    })
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+
+    const events = parseSSEEvents(response.body)
+    const chunkEvents = events.filter((e) => e.event === 'chunk')
+
+    expect(chunkEvents).toHaveLength(chunkCount)
+
+    // Verify each large chunk is complete
+    for (const event of chunkEvents) {
+      const data = JSON.parse(event.data)
+      expect(data.content.length).toBe(chunkSize)
+    }
   })
 })
 
