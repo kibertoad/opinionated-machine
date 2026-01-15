@@ -1,3 +1,4 @@
+import type { FastifyInstance } from 'fastify'
 import type { z } from 'zod'
 import type { AnySSERouteDefinition } from '../sse/sseContracts.ts'
 import type { ParsedSSEEvent } from '../sse/sseParser.ts'
@@ -109,7 +110,8 @@ export type CreateSSETestServerOptions<T> = {
    * Configure the Fastify instance before SSE routes are registered.
    * Use this to add plugins, validators, etc.
    */
-  configureApp?: (app: unknown) => void | Promise<void>
+  // biome-ignore lint/suspicious/noExplicitAny: Fastify instance types are complex
+  configureApp?: (app: FastifyInstance<any, any, any, any>) => void | Promise<void>
   /**
    * Custom setup function that returns resources to be cleaned up.
    * The returned value will be passed to the cleanup function.
