@@ -926,6 +926,12 @@ The `connectionSpy` is available when `isTestMode: true` is passed to `asSSECont
 // Wait for a connection to be established (with timeout)
 const connection = await controller.connectionSpy.waitForConnection({ timeout: 5000 })
 
+// Wait for a connection matching a predicate (useful for multiple connections)
+const connection = await controller.connectionSpy.waitForConnection({
+  timeout: 5000,
+  predicate: (conn) => conn.request.url.includes('/api/notifications'),
+})
+
 // Check if a specific connection is active
 const isConnected = controller.connectionSpy.isConnected(connectionId)
 
@@ -935,9 +941,11 @@ await controller.connectionSpy.waitForDisconnection(connectionId, { timeout: 500
 // Get all connection events (connect/disconnect history)
 const events = controller.connectionSpy.getEvents()
 
-// Clear event history between tests
+// Clear event history and claimed connections between tests
 controller.connectionSpy.clear()
 ```
+
+**Note**: `waitForConnection` tracks "claimed" connections internally. Each call returns a unique unclaimed connection, allowing sequential waits for the same URL path without returning the same connection twice. This is used internally by `SSEHttpClient.connect()` with `awaitServerConnection`.
 
 ### Connection Monitoring
 

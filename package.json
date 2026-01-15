@@ -30,6 +30,7 @@
     },
     "dependencies": {
         "@fastify/sse": "^0.4.0",
+        "fast-querystring": "^1.1.2",
         "ts-deepmerge": "^7.0.3"
     },
     "peerDependencies": {

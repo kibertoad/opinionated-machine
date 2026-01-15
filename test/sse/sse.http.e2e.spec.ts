@@ -154,28 +154,29 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
   it('supports multiple concurrent connections', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    // Connect two clients
-    const client1 = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'user-1' },
-    })
-    const client2 = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'user-2' },
-    })
+    // Connect two clients - predicate-based waitForConnection allows multiple connections
+    const { client: client1, serverConnection: conn1 } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'user-1' },
+        awaitServerConnection: { controller },
+      },
+    )
+    const { client: client2, serverConnection: conn2 } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'user-2' },
+        awaitServerConnection: { controller },
+      },
+    )
+
+    expect(controller.testGetConnectionCount()).toBe(2)
+    expect(conn1.id).not.toBe(conn2.id)
 
     const events1Promise = client1.collectEvents(1)
     const events2Promise = client2.collectEvents(1)
-
-    // Wait for both connections
-    const conn1 = await controller.connectionSpy.waitForConnection()
-
-    // Need to wait a bit for the second connection to register
-    await delay(50)
-
-    // Get all connections and find the second one
-    expect(controller.testGetConnectionCount()).toBe(2)
-    const connections = controller.testGetConnections()
-    const conn2 = connections.find((c) => c.id !== conn1.id)!
-    expect(conn2).toBeDefined()
 
     // Send different events to each
     await controller.testSendEvent(conn1.id, {
@@ -202,23 +203,24 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
     const controller = getController()
 
     // Connect three clients
-    const clients = await Promise.all([
-      SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
+    const connections = [
+      await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
         query: { userId: 'u1' },
+        awaitServerConnection: { controller },
       }),
-      SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
+      await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
         query: { userId: 'u2' },
+        awaitServerConnection: { controller },
       }),
-      SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
+      await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
         query: { userId: 'u3' },
+        awaitServerConnection: { controller },
       }),
-    ])
+    ]
 
-    const eventsPromises = clients.map((c) => c.collectEvents(1))
-
-    // Wait for all connections
-    await delay(100)
     expect(controller.testGetConnectionCount()).toBe(3)
+
+    const eventsPromises = connections.map((c) => c.client.collectEvents(1))
 
     // Broadcast to all
     const sentCount = await controller.testBroadcast({
@@ -235,10 +237,8 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
     }
 
     // Cleanup
-    for (const conn of controller.testGetConnections()) {
-      controller.completeHandler(conn.id)
-    }
-    for (const client of clients) {
+    for (const { client, serverConnection } of connections) {
+      controller.completeHandler(serverConnection.id)
       client.close()
     }
   })
@@ -247,24 +247,22 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
     const controller = getController()
 
     // Connect two clients with different contexts
-    const vipClient = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'vip-user' },
-    })
-    const regularClient = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'regular-user' },
-    })
-
-    // Wait for connections and set up context
-    await delay(100)
-
-    const connections = controller.testGetConnections()
-    // Set context to identify VIP connection
-    const vipConn = connections.find(
-      (c) => (c.context as { userId?: string })?.userId === 'vip-user',
-    )!
-    const regularConn = connections.find(
-      (c) => (c.context as { userId?: string })?.userId === 'regular-user',
-    )!
+    const { client: vipClient, serverConnection: vipConn } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'vip-user' },
+        awaitServerConnection: { controller },
+      },
+    )
+    const { client: regularClient, serverConnection: regularConn } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'regular-user' },
+        awaitServerConnection: { controller },
+      },
+    )
 
     const vipEventsPromise = vipClient.collectEvents(1, 2000)
 
@@ -292,29 +290,35 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
 
     expect(controller.testGetConnectionCount()).toBe(0)
 
-    const client1 = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'u1' },
-    })
-    await controller.connectionSpy.waitForConnection()
+    const { client: client1, serverConnection: conn1 } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'u1' },
+        awaitServerConnection: { controller },
+      },
+    )
     expect(controller.testGetConnectionCount()).toBe(1)
 
-    const client2 = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'u2' },
-    })
-    await delay(50)
+    const { client: client2, serverConnection: conn2 } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'u2' },
+        awaitServerConnection: { controller },
+      },
+    )
     expect(controller.testGetConnectionCount()).toBe(2)
 
     // Close one client
-    const conn1 = controller.testGetConnections()[0]!
     controller.completeHandler(conn1.id)
     controller.testCloseConnection(conn1.id)
     client1.close()
 
-    await delay(50)
+    await controller.connectionSpy.waitForDisconnection(conn1.id)
     expect(controller.testGetConnectionCount()).toBe(1)
 
     // Close remaining
-    const conn2 = controller.testGetConnections()[0]!
     controller.completeHandler(conn2.id)
     client2.close()
   })

@@ -1,3 +1,4 @@
+import { stringify } from 'fast-querystring'
 import type { SSEConnectionSpy } from '../sse/SSEConnectionSpy.ts'
 import { type ParsedSSEEvent, parseSSEBuffer } from '../sse/sseParser.ts'
 import type { SSEConnection } from '../sse/sseTypes.ts'
@@ -158,24 +159,18 @@ export class SSEHttpClient {
     path: string,
     options?: SSEHttpConnectOptions | SSEHttpConnectWithSpyOptions,
   ): Promise<SSEHttpClient | SSEHttpConnectWithSpyResult> {
-    // Build URL with query params
-    let url = `${baseUrl}${path}`
+    // Build path with query string
+    let pathWithQuery = path
     if (options?.query) {
-      const params = new URLSearchParams()
-      for (const [key, value] of Object.entries(options.query)) {
-        if (value !== undefined) {
-          params.append(key, value)
-        }
-      }
-      const queryString = params.toString()
+      const queryString = stringify(options.query)
       if (queryString) {
-        url = `${url}?${queryString}`
+        pathWithQuery = `${path}?${queryString}`
       }
     }
 
     // Connect - fetch() returns when headers are received
     const abortController = new AbortController()
-    const response = await fetch(url, {
+    const response = await fetch(`${baseUrl}${pathWithQuery}`, {
       headers: {
         Accept: 'text/event-stream',
         ...options?.headers,
@@ -190,6 +185,7 @@ export class SSEHttpClient {
       const { controller, timeout } = options.awaitServerConnection
       const serverConnection = await controller.connectionSpy.waitForConnection({
         timeout: timeout ?? 5000,
+        predicate: (conn) => conn.request.url === pathWithQuery,
       })
       return { client, serverConnection }
     }

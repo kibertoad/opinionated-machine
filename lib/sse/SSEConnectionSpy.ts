@@ -4,6 +4,7 @@ type ConnectionWaiter = {
   resolve: (connection: SSEConnection) => void
   reject: (error: Error) => void
   timeoutId: ReturnType<typeof setTimeout>
+  predicate?: (connection: SSEConnection) => boolean
 }
 
 type DisconnectionWaiter = {
@@ -26,6 +27,7 @@ export type SSEConnectionEvent = {
 export class SSEConnectionSpy {
   private events: SSEConnectionEvent[] = []
   private activeConnections: Set<string> = new Set()
+  private claimedConnections: Set<string> = new Set()
   private connectionWaiters: ConnectionWaiter[] = []
   private disconnectionWaiters: DisconnectionWaiter[] = []
 
@@ -34,10 +36,16 @@ export class SSEConnectionSpy {
     this.events.push({ type: 'connect', connectionId: connection.id, connection })
     this.activeConnections.add(connection.id)
 
-    // Resolve first pending connection waiter if any
-    const waiter = this.connectionWaiters.shift()
-    if (waiter) {
+    // Find and resolve first matching connection waiter
+    const waiterIndex = this.connectionWaiters.findIndex(
+      (w) => !w.predicate || w.predicate(connection),
+    )
+    if (waiterIndex !== -1) {
+      // biome-ignore lint/style/noNonNullAssertion: we just received this index
+      const waiter = this.connectionWaiters[waiterIndex]!
+      this.connectionWaiters.splice(waiterIndex, 1)
       clearTimeout(waiter.timeoutId)
+      this.claimedConnections.add(connection.id)
       waiter.resolve(connection)
     }
   }
@@ -59,17 +67,47 @@ export class SSEConnectionSpy {
     }
   }
 
-  /** Wait for a connection to be established */
-  waitForConnection(options?: { timeout?: number }): Promise<SSEConnection> {
+  /**
+   * Wait for a connection to be established.
+   *
+   * @param options.timeout - Timeout in milliseconds (default: 5000)
+   * @param options.predicate - Optional predicate to match a specific connection.
+   *   When provided, waits for an unclaimed connection that matches the predicate.
+   *   Connections are "claimed" when returned by waitForConnection, allowing
+   *   multiple sequential waits for the same URL path.
+   *
+   * @example
+   * ```typescript
+   * // Wait for any connection
+   * const conn = await spy.waitForConnection()
+   *
+   * // Wait for a connection with specific URL
+   * const conn = await spy.waitForConnection({
+   *   predicate: (c) => c.request.url.includes('/api/notifications'),
+   * })
+   * ```
+   */
+  waitForConnection(options?: {
+    timeout?: number
+    predicate?: (connection: SSEConnection) => boolean
+  }): Promise<SSEConnection> {
     const timeout = options?.timeout ?? 5000
+    const predicate = options?.predicate
 
-    // Check if a connection already exists
-    const connectEvent = this.events.find((e) => e.type === 'connect' && e.connection)
+    // Check if a matching unclaimed connection already exists
+    const connectEvent = this.events.find(
+      (e) =>
+        e.type === 'connect' &&
+        e.connection &&
+        !this.claimedConnections.has(e.connection.id) &&
+        (!predicate || predicate(e.connection)),
+    )
     if (connectEvent?.connection) {
+      this.claimedConnections.add(connectEvent.connection.id)
       return Promise.resolve(connectEvent.connection)
     }
 
-    // No connection yet, create a waiter
+    // No matching connection yet, create a waiter
     return new Promise<SSEConnection>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         const index = this.connectionWaiters.findIndex((w) => w.resolve === resolve)
@@ -79,7 +117,7 @@ export class SSEConnectionSpy {
         reject(new Error(`Timeout waiting for connection after ${timeout}ms`))
       }, timeout)
 
-      this.connectionWaiters.push({ resolve, reject, timeoutId })
+      this.connectionWaiters.push({ resolve, reject, timeoutId, predicate })
     })
   }
 
@@ -123,6 +161,7 @@ export class SSEConnectionSpy {
   clear(): void {
     this.events = []
     this.activeConnections.clear()
+    this.claimedConnections.clear()
     for (const waiter of this.connectionWaiters) {
       clearTimeout(waiter.timeoutId)
       waiter.reject(new Error('ConnectionSpy was cleared'))
