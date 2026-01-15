@@ -228,6 +228,11 @@ export abstract class AbstractSSEController<
   /**
    * Close a specific connection.
    *
+   * This gracefully ends the SSE stream by calling the underlying `reply.sse.close()`.
+   * All previously sent data is flushed to the client before the connection terminates.
+   * Use this to signal end-of-stream after sending all events (e.g., in request-response
+   * style streaming like OpenAI completions).
+   *
    * @param connectionId - The connection to close
    * @returns true if connection was found and closed
    */

@@ -245,7 +245,6 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
         event: 'data',
         data: { value: 'authenticated data' },
       })
-      // Close connection after sending - needed for inject tests to complete
       this.closeConnection(connection.id)
     },
   )
@@ -284,7 +283,6 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
           author: 'system',
         },
       })
-      // Close connection after sending - needed for inject tests to complete
       this.closeConnection(connection.id)
     },
   )
@@ -491,7 +489,6 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
         data: { totalChunks: chunkCount, totalBytes },
       })
 
-      // Close connection after sending all data
       this.closeConnection(connection.id)
     },
   )
