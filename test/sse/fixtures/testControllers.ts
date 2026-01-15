@@ -231,7 +231,8 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
             if (!auth || !auth.startsWith('Bearer ')) {
               return reply.code(401).send({ error: 'Unauthorized' })
             }
-            // Auth valid - continue to handler
+            // Auth valid - must return Promise for SSE routes
+            return Promise.resolve()
           },
         },
       },

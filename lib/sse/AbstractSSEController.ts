@@ -1,8 +1,30 @@
 import type { SSEReplyInterface } from '@fastify/sse'
-import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify'
+import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
 import { SSEConnectionSpy } from './SSEConnectionSpy.ts'
 import type { AnySSERouteDefinition } from './sseContracts.ts'
+
+/**
+ * Async preHandler hook for SSE routes.
+ *
+ * IMPORTANT: SSE route preHandlers MUST return a Promise. This is required
+ * for proper integration with @fastify/sse. Synchronous handlers will cause
+ * connection issues.
+ *
+ * For rejection (auth failure), return the reply after sending:
+ * ```typescript
+ * preHandler: (request, reply) => {
+ *   if (!validAuth) {
+ *     return reply.code(401).send({ error: 'Unauthorized' })
+ *   }
+ *   return Promise.resolve()
+ * }
+ * ```
+ */
+export type SSEPreHandler = (
+  request: FastifyRequest,
+  reply: FastifyReply,
+) => Promise<FastifyReply | void>
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
@@ -70,11 +92,15 @@ export type SSERouteHandler<
  */
 export type SSERouteOptions = {
   /**
-   * Fastify preHandler hooks for authentication/authorization.
-   * These run BEFORE the SSE connection is established.
-   * Throw an error or reply with 401/403 to reject the connection.
+   * Async preHandler hook for authentication/authorization.
+   * Runs BEFORE the SSE connection is established.
+   *
+   * MUST return a Promise - synchronous handlers will cause connection issues.
+   * Return `reply.code(401).send(...)` for rejection, or `Promise.resolve()` for success.
+   *
+   * @see SSEPreHandler for usage examples
    */
-  preHandler?: preHandlerHookHandler | preHandlerHookHandler[]
+  preHandler?: SSEPreHandler
   /**
    * Called when client connects (after SSE handshake).
    */
