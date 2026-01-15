@@ -1063,6 +1063,21 @@ for await (const event of client.events()) {
 client.close()
 ```
 
+**Important: Race condition with server-side registration**
+
+`SSEHttpClient.connect()` resolves when HTTP response headers are received, but the server-side connection registration (`registerConnection()`) may not have completed yet due to async timing. When testing with `connectionSpy`, always use `waitForConnection()` to ensure the connection is fully registered:
+
+```ts
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/stream')
+
+// DON'T assume connection is registered after connect()
+// DO wait for server-side registration:
+const serverConn = await controller.connectionSpy.waitForConnection()
+
+// Now you can safely send events to this connection
+await controller.sendEvent(serverConn.id, { event: 'test', data: {} })
+```
+
 #### SSEInjectClient
 
 For testing request-response style SSE streams (like OpenAI completions):

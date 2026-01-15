@@ -1,33 +1,26 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {
-  DIContext,
-  injectPayloadSSE,
-  injectSSE,
-  parseSSEEvents,
-  SSEHttpClient,
-  SSETestServer,
-} from '../../index.js'
-import {
-  asyncReconnectStreamContract,
-  authenticatedStreamContract,
-  channelStreamContract,
-  chatCompletionContract,
-  reconnectStreamContract,
-} from './fixtures/testContracts.js'
+import { DIContext, SSEHttpClient, SSETestServer } from '../../index.js'
 import type { TestSSEController } from './fixtures/testControllers.js'
 import {
   TestAuthSSEModule,
   TestChannelSSEModule,
-  TestPostSSEModule,
-  TestReconnectSSEModule,
-  type TestReconnectSSEModuleDependencies,
   TestSSEModule,
   type TestSSEModuleDependencies,
 } from './fixtures/testModules.js'
 
-describe('SSE E2E (long-lived connections)', () => {
+/**
+ * SSE E2E tests using SSEHttpClient (real HTTP connections).
+ *
+ * These tests use actual HTTP connections via fetch(), suitable for:
+ * - Long-lived SSE connections (notifications, live feeds)
+ * - Testing real network behavior
+ * - Testing connection lifecycle (connect/disconnect events)
+ */
+
+describe('SSE HTTP E2E (long-lived connections)', () => {
   let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
@@ -79,10 +72,13 @@ describe('SSE E2E (long-lived connections)', () => {
       expect(clientConnection.response.ok).toBe(true)
       expect(clientConnection.response.headers.get('content-type')).toContain('text/event-stream')
 
-      // Start collecting events - this keeps the connection alive by reading from the stream
+      // Start collecting events in the background
       const eventsPromise = clientConnection.collectEvents(3)
 
-      // Wait for the connection to be registered on the server side
+      // Wait for the connection to be registered on the server side.
+      // Note: SSEHttpClient.connect() resolves when response headers are received,
+      // but server-side connection registration may not have completed yet due to
+      // async timing. waitForConnection() handles this race condition.
       const serverConnection = await controller.connectionSpy.waitForConnection()
       const connectionId = serverConnection.id
 
@@ -139,14 +135,14 @@ describe('SSE E2E (long-lived connections)', () => {
       data: { id: '1', message: 'Immediate' },
     })
 
-    await new Promise((r) => setTimeout(r, 100))
+    await delay(100)
 
     await controller.testSendEvent(serverConnection.id, {
       event: 'notification',
       data: { id: '2', message: 'After 100ms' },
     })
 
-    await new Promise((r) => setTimeout(r, 200))
+    await delay(200)
 
     await controller.testSendEvent(serverConnection.id, {
       event: 'notification',
@@ -183,7 +179,7 @@ describe('SSE E2E (long-lived connections)', () => {
     const conn1 = await controller.connectionSpy.waitForConnection()
 
     // Need to wait a bit for the second connection to register
-    await new Promise((r) => setTimeout(r, 50))
+    await delay(50)
 
     // Get all connections and find the second one
     expect(controller.testGetConnectionCount()).toBe(2)
@@ -231,7 +227,7 @@ describe('SSE E2E (long-lived connections)', () => {
     const eventsPromises = clients.map((c) => c.collectEvents(1))
 
     // Wait for all connections
-    await new Promise((r) => setTimeout(r, 100))
+    await delay(100)
     expect(controller.testGetConnectionCount()).toBe(3)
 
     // Broadcast to all
@@ -269,7 +265,7 @@ describe('SSE E2E (long-lived connections)', () => {
     })
 
     // Wait for connections and set up context
-    await new Promise((r) => setTimeout(r, 100))
+    await delay(100)
 
     const connections = controller.testGetConnections()
     // Set context to identify VIP connection
@@ -315,7 +311,7 @@ describe('SSE E2E (long-lived connections)', () => {
     const client2 = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
       query: { userId: 'u2' },
     })
-    await new Promise((r) => setTimeout(r, 50))
+    await delay(50)
     expect(controller.testGetConnectionCount()).toBe(2)
 
     // Close one client
@@ -324,7 +320,7 @@ describe('SSE E2E (long-lived connections)', () => {
     controller.testCloseConnection(conn1.id)
     client1.close()
 
-    await new Promise((r) => setTimeout(r, 50))
+    await delay(50)
     expect(controller.testGetConnectionCount()).toBe(1)
 
     // Close remaining
@@ -360,266 +356,7 @@ describe('SSE E2E (long-lived connections)', () => {
   })
 })
 
-describe('SSE E2E (OpenAI-style streaming)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
-  let context: DIContext<object, object>
-
-  beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
-    context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
-
-    server = await SSETestServer.create(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it('streams response chunks for POST request', { timeout: 10000 }, async () => {
-    const { closed } = injectPayloadSSE(server.app, chatCompletionContract, {
-      body: { message: 'Hello World', stream: true as const },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-    expect(response.headers['content-type']).toContain('text/event-stream')
-
-    const events = parseSSEEvents(response.body)
-
-    // Should have chunk events for each word plus a done event
-    const chunkEvents = events.filter((e) => e.event === 'chunk')
-    const doneEvents = events.filter((e) => e.event === 'done')
-
-    expect(chunkEvents).toHaveLength(2) // "Hello" and "World"
-    expect(doneEvents).toHaveLength(1)
-
-    expect(JSON.parse(chunkEvents[0]!.data)).toEqual({ content: 'Hello' })
-    expect(JSON.parse(chunkEvents[1]!.data)).toEqual({ content: 'World' })
-    expect(JSON.parse(doneEvents[0]!.data)).toEqual({ totalTokens: 2 })
-  })
-
-  it('handles longer streaming responses', { timeout: 10000 }, async () => {
-    const longMessage = 'The quick brown fox jumps over the lazy dog'
-    const words = longMessage.split(' ')
-
-    const { closed } = injectPayloadSSE(server.app, chatCompletionContract, {
-      body: { message: longMessage, stream: true as const },
-    })
-
-    const response = await closed
-    const events = parseSSEEvents(response.body)
-
-    const chunkEvents = events.filter((e) => e.event === 'chunk')
-    expect(chunkEvents).toHaveLength(words.length)
-
-    // Verify all words streamed in order
-    for (let i = 0; i < words.length; i++) {
-      expect(JSON.parse(chunkEvents[i]!.data).content).toBe(words[i])
-    }
-
-    // Done event should have correct token count
-    const doneEvent = events.find((e) => e.event === 'done')!
-    expect(JSON.parse(doneEvent.data).totalTokens).toBe(words.length)
-  })
-
-  it('returns proper SSE headers for POST requests', { timeout: 10000 }, async () => {
-    const { closed } = injectPayloadSSE(server.app, chatCompletionContract, {
-      body: { message: 'test', stream: true as const },
-    })
-
-    const response = await closed
-
-    expect(response.headers['content-type']).toContain('text/event-stream')
-    expect(response.headers['cache-control']).toContain('no-cache')
-  })
-})
-
-describe('SSE E2E (authentication)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
-  let context: DIContext<object, object>
-
-  beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
-    context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestAuthSSEModule()] }, undefined)
-
-    server = await SSETestServer.create(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it('rejects requests without authorization header', { timeout: 10000 }, async () => {
-    const { closed } = injectSSE(server.app, authenticatedStreamContract, {
-      headers: { authorization: '' },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(401)
-  })
-
-  it('rejects requests with invalid authorization format', { timeout: 10000 }, async () => {
-    const { closed } = injectSSE(server.app, authenticatedStreamContract, {
-      headers: { authorization: 'Basic invalid' },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(401)
-  })
-
-  it('accepts requests with valid Bearer token', { timeout: 10000 }, async () => {
-    const { closed } = injectSSE(server.app, authenticatedStreamContract, {
-      headers: { authorization: 'Bearer valid-token' },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-    expect(response.headers['content-type']).toContain('text/event-stream')
-
-    const events = parseSSEEvents(response.body)
-    expect(events).toHaveLength(1)
-    expect(events[0]!.event).toBe('data')
-    expect(JSON.parse(events[0]!.data)).toEqual({ value: 'authenticated data' })
-  })
-
-  it('works with real HTTP connection and auth headers', { timeout: 10000 }, async () => {
-    // Test using connectSSE (real HTTP) instead of inject
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/protected/stream', {
-      headers: { Authorization: 'Bearer real-token' },
-    })
-
-    expect(client.response.ok).toBe(true)
-    expect(client.response.headers.get('content-type')).toContain('text/event-stream')
-
-    // The handler sends one event and then completes
-    const events = await client.collectEvents(1)
-    expect(events[0]!.event).toBe('data')
-    expect(JSON.parse(events[0]!.data)).toEqual({ value: 'authenticated data' })
-
-    client.close()
-  })
-})
-
-describe('SSE E2E (path parameters)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
-  let context: DIContext<object, object>
-
-  beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
-    context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestChannelSSEModule()] }, undefined)
-
-    server = await SSETestServer.create(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it('handles path parameters correctly', { timeout: 10000 }, async () => {
-    const { closed } = injectSSE(server.app, channelStreamContract, {
-      params: { channelId: 'general' },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-
-    const events = parseSSEEvents(response.body)
-    expect(events).toHaveLength(1)
-    expect(events[0]!.event).toBe('message')
-    expect(JSON.parse(events[0]!.data)).toEqual({
-      id: '1',
-      content: 'Welcome to channel general',
-      author: 'system',
-    })
-  })
-
-  it('handles different channel IDs', { timeout: 10000 }, async () => {
-    const channelIds = ['channel-1', 'lobby', 'support-123']
-
-    for (const channelId of channelIds) {
-      const { closed } = injectSSE(server.app, channelStreamContract, {
-        params: { channelId },
-      })
-
-      const response = await closed
-      const events = parseSSEEvents(response.body)
-
-      expect(JSON.parse(events[0]!.data).content).toBe(`Welcome to channel ${channelId}`)
-    }
-  })
-
-  it('handles path params with query params together', { timeout: 10000 }, async () => {
-    const { closed } = injectSSE(server.app, channelStreamContract, {
-      params: { channelId: 'test-channel' },
-      query: { since: '2024-01-01' },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-
-    const events = parseSSEEvents(response.body)
-    expect(events).toHaveLength(1)
-    expect(JSON.parse(events[0]!.data).content).toBe('Welcome to channel test-channel')
-  })
-
-  it('works with real HTTP connection and path params', { timeout: 10000 }, async () => {
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/channels/my-channel/stream')
-
-    expect(client.response.ok).toBe(true)
-
-    const events = await client.collectEvents(1)
-    expect(JSON.parse(events[0]!.data).content).toBe('Welcome to channel my-channel')
-
-    client.close()
-  })
-})
-
-describe('SSE E2E (error handling)', () => {
+describe('SSE HTTP E2E (error handling)', () => {
   let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
@@ -683,7 +420,7 @@ describe('SSE E2E (error handling)', () => {
     client.close()
 
     // Wait a bit for disconnect to propagate
-    await new Promise((r) => setTimeout(r, 100))
+    await delay(100)
 
     // Sending should now fail or handle gracefully
     const result = await controller.testSendEvent(serverConn.id, {
@@ -698,7 +435,7 @@ describe('SSE E2E (error handling)', () => {
   })
 })
 
-describe('SSE E2E (serialization)', () => {
+describe('SSE HTTP E2E (serialization)', () => {
   let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
@@ -923,7 +660,7 @@ describe('SSE E2E (serialization)', () => {
   })
 })
 
-describe('SSE E2E (event metadata)', () => {
+describe('SSE HTTP E2E (event metadata)', () => {
   let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
@@ -1038,7 +775,7 @@ describe('SSE E2E (event metadata)', () => {
   })
 })
 
-describe('SSE E2E (connection lifecycle)', () => {
+describe('SSE HTTP E2E (connection lifecycle)', () => {
   let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
@@ -1157,137 +894,7 @@ describe('SSE E2E (connection lifecycle)', () => {
   })
 })
 
-/**
- * Tests for SSE Last-Event-ID reconnection mechanism.
- *
- * How SSE reconnection works:
- * 1. Client connects and receives events, each with an `id` field
- * 2. Client disconnects (network error, server restart, etc.)
- * 3. Browser automatically reconnects and sends `Last-Event-ID` header with the last received event ID
- * 4. Server's `onReconnect` handler receives this ID and replays missed events
- *
- * These tests simulate step 3 by sending the `Last-Event-ID` header directly.
- * The server doesn't track previous sessions - it just responds to the header.
- */
-describe('SSE E2E (Last-Event-ID reconnection)', () => {
-  let server: SSETestServer<{ context: DIContext<TestReconnectSSEModuleDependencies, object> }>
-  let context: DIContext<TestReconnectSSEModuleDependencies, object>
-
-  beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
-    context = new DIContext<TestReconnectSSEModuleDependencies, object>(
-      container,
-      { isTestMode: true },
-      {},
-    )
-    context.registerDependencies({ modules: [new TestReconnectSSEModule()] }, undefined)
-
-    server = await SSETestServer.create(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it('replays events after Last-Event-ID on reconnection', { timeout: 10000 }, async () => {
-    // Use injectSSE with Last-Event-ID header to simulate reconnection
-    const { closed } = injectSSE(server.app, reconnectStreamContract, {
-      headers: { 'last-event-id': '2' } as Record<string, string>,
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-
-    const events = parseSSEEvents(response.body)
-    // Should replay events 3, 4, 5 (after id 2) plus the new event 6
-    const eventDatas = events.map((e) => JSON.parse(e.data))
-
-    // Events 3, 4, 5 are replayed, then 6 is sent by the handler
-    expect(eventDatas).toContainEqual({ id: '3', data: 'Third event' })
-    expect(eventDatas).toContainEqual({ id: '4', data: 'Fourth event' })
-    expect(eventDatas).toContainEqual({ id: '5', data: 'Fifth event' })
-    expect(eventDatas).toContainEqual({ id: '6', data: 'New event after reconnect' })
-  })
-
-  it('sends only new events when reconnecting with latest ID', { timeout: 10000 }, async () => {
-    const { closed } = injectSSE(server.app, reconnectStreamContract, {
-      headers: { 'last-event-id': '5' } as Record<string, string>,
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-
-    const events = parseSSEEvents(response.body)
-    // No events to replay after id 5, just the new event 6
-    expect(events).toHaveLength(1)
-    expect(JSON.parse(events[0]!.data)).toEqual({ id: '6', data: 'New event after reconnect' })
-  })
-
-  it('connects without replay when no Last-Event-ID', { timeout: 10000 }, async () => {
-    const { closed } = injectSSE(server.app, reconnectStreamContract, {})
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-
-    const events = parseSSEEvents(response.body)
-    // Just the new event, no replay
-    expect(events).toHaveLength(1)
-    expect(JSON.parse(events[0]!.data)).toEqual({ id: '6', data: 'New event after reconnect' })
-  })
-
-  it('replays events using async iterable', { timeout: 10000 }, async () => {
-    const { closed } = injectSSE(server.app, asyncReconnectStreamContract, {
-      headers: { 'last-event-id': '1' },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-
-    const events = parseSSEEvents(response.body)
-    const eventDatas = events.map((e) => JSON.parse(e.data))
-
-    // Events 2, 3 are replayed via async generator, then 4 is sent by handler
-    expect(eventDatas).toContainEqual({ id: '2', data: 'Async second event' })
-    expect(eventDatas).toContainEqual({ id: '3', data: 'Async third event' })
-    expect(eventDatas).toContainEqual({ id: '4', data: 'Async new event after reconnect' })
-  })
-
-  it('async replay works with no events to replay', { timeout: 10000 }, async () => {
-    const { closed } = injectSSE(server.app, asyncReconnectStreamContract, {
-      headers: { 'last-event-id': '3' },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-
-    const events = parseSSEEvents(response.body)
-    // No events to replay after id 3, just the new event 4
-    expect(events).toHaveLength(1)
-    expect(JSON.parse(events[0]!.data)).toEqual({
-      id: '4',
-      data: 'Async new event after reconnect',
-    })
-  })
-})
-
-describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
+describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
   let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
@@ -1354,7 +961,7 @@ describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
     const waitPromise = controller.connectionSpy.waitForConnection({ timeout: 5000 })
 
     // Give the waiter time to register
-    await new Promise((r) => setTimeout(r, 50))
+    await delay(50)
 
     // Clear the spy - should reject the pending waiter
     controller.connectionSpy.clear()
@@ -1380,7 +987,7 @@ describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
     })
 
     // Give the waiter time to register
-    await new Promise((r) => setTimeout(r, 50))
+    await delay(50)
 
     // Clear the spy
     controller.connectionSpy.clear()
@@ -1409,7 +1016,7 @@ describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
       client.close()
 
       // Wait for the disconnect to be processed
-      await new Promise((r) => setTimeout(r, 100))
+      await delay(100)
 
       // Now wait for disconnection - should resolve immediately since already disconnected
       await controller.connectionSpy.waitForDisconnection(serverConn.id, { timeout: 100 })
@@ -1428,7 +1035,7 @@ describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
       })
 
       // Wait for the connection to be established
-      await new Promise((r) => setTimeout(r, 100))
+      await delay(100)
 
       // Now waitForConnection should resolve immediately since connection exists
       const connection = await controller.connectionSpy.waitForConnection({ timeout: 100 })
@@ -1441,23 +1048,87 @@ describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
   )
 })
 
-describe('SSE E2E (controller without spy)', () => {
-  it('throws error when accessing connectionSpy without enableConnectionSpy', async () => {
-    // Create a controller without spy enabled (isTestMode: false)
+describe('SSE HTTP E2E (authentication)', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
     const container = createContainer({ injectionMode: 'PROXY' })
-    const context = new DIContext<TestSSEModuleDependencies, object>(
-      container,
-      { isTestMode: false }, // Spy not enabled
-      {},
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestAuthSSEModule()] }, undefined)
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
     )
-    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+  })
 
-    const controller = context.diContainer.cradle.testSSEController
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
 
-    expect(() => controller.connectionSpy).toThrow(
-      'Connection spy is not enabled. Pass { enableConnectionSpy: true } to the constructor.',
+  it('works with real HTTP connection and auth headers', { timeout: 10000 }, async () => {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/protected/stream', {
+      headers: { Authorization: 'Bearer real-token' },
+    })
+
+    expect(client.response.ok).toBe(true)
+    expect(client.response.headers.get('content-type')).toContain('text/event-stream')
+
+    // The handler sends one event and then closes the connection
+    const events = await client.collectEvents(1)
+    expect(events[0]!.event).toBe('data')
+    expect(JSON.parse(events[0]!.data)).toEqual({ value: 'authenticated data' })
+
+    client.close()
+  })
+})
+
+describe('SSE HTTP E2E (path parameters)', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestChannelSSEModule()] }, undefined)
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
     )
+  })
 
-    await context.destroy()
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it('works with real HTTP connection and path params', { timeout: 10000 }, async () => {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/channels/my-channel/stream')
+
+    expect(client.response.ok).toBe(true)
+
+    const events = await client.collectEvents(1)
+    expect(JSON.parse(events[0]!.data).content).toBe('Welcome to channel my-channel')
+
+    client.close()
   })
 })
