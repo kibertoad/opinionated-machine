@@ -1,150 +1,32 @@
 import type { SSEReplyInterface } from '@fastify/sse'
-import type { FastifyReply, FastifyRequest } from 'fastify'
-import type { z } from 'zod'
+import type { FastifyReply } from 'fastify'
 import { SSEConnectionSpy } from './SSEConnectionSpy.ts'
 import type { AnySSERouteDefinition } from './sseContracts.ts'
+import type {
+  BuildSSERoutesReturnType,
+  SSEConnection,
+  SSEControllerConfig,
+  SSEMessage,
+} from './sseTypes.ts'
 
-/**
- * Async preHandler hook for SSE routes.
- *
- * IMPORTANT: SSE route preHandlers MUST return a Promise. This is required
- * for proper integration with @fastify/sse. Synchronous handlers will cause
- * connection issues.
- *
- * For rejection (auth failure), return the reply after sending:
- * ```typescript
- * preHandler: (request, reply) => {
- *   if (!validAuth) {
- *     return reply.code(401).send({ error: 'Unauthorized' })
- *   }
- *   return Promise.resolve()
- * }
- * ```
- */
-export type SSEPreHandler = (
-  request: FastifyRequest,
-  reply: FastifyReply,
-) => Promise<FastifyReply | void>
+// Re-export types for backwards compatibility
+export type { SSEConnectionEvent } from './SSEConnectionSpy.ts'
+export { SSEConnectionSpy } from './SSEConnectionSpy.ts'
+export type {
+  BuildSSERoutesReturnType,
+  SSEConnection,
+  SSEControllerConfig,
+  SSEHandlerConfig,
+  SSEMessage,
+  SSEPreHandler,
+  SSERouteHandler,
+  SSERouteOptions,
+} from './sseTypes.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
  */
 type SSEReply = FastifyReply & { sse: SSEReplyInterface }
-
-export { type SSEConnectionEvent, SSEConnectionSpy } from './SSEConnectionSpy.ts'
-
-/**
- * Represents an active SSE connection with typed context.
- *
- * @template Context - Custom context data stored per connection
- */
-export type SSEConnection<Context = unknown> = {
-  /** Unique identifier for this connection */
-  id: string
-  /** The original Fastify request */
-  request: FastifyRequest
-  /** The Fastify reply with SSE capabilities from @fastify/sse */
-  reply: FastifyReply
-  /** Custom context data for this connection */
-  context: Context
-  /** Timestamp when the connection was established */
-  connectedAt: Date
-}
-
-/**
- * SSE message format compatible with @fastify/sse.
- *
- * @template T - Type of the event data
- */
-export type SSEMessage<T = unknown> = {
-  /** Event name (maps to EventSource 'event' field) */
-  event?: string
-  /** Event data (will be JSON serialized) */
-  data: T
-  /** Event ID for client reconnection via Last-Event-ID */
-  id?: string
-  /** Reconnection delay hint in milliseconds */
-  retry?: number
-}
-
-/**
- * Handler called when an SSE connection is established.
- *
- * @template Params - Path parameters type
- * @template Query - Query string parameters type
- * @template Headers - Request headers type
- * @template Body - Request body type (for POST/PUT/PATCH)
- * @template Context - Connection context type
- */
-export type SSERouteHandler<
-  Params = unknown,
-  Query = unknown,
-  Headers = unknown,
-  Body = unknown,
-  Context = unknown,
-> = (
-  request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
-  connection: SSEConnection<Context>,
-) => void | Promise<void>
-
-/**
- * Options for configuring an SSE route.
- */
-export type SSERouteOptions = {
-  /**
-   * Async preHandler hook for authentication/authorization.
-   * Runs BEFORE the SSE connection is established.
-   *
-   * MUST return a Promise - synchronous handlers will cause connection issues.
-   * Return `reply.code(401).send(...)` for rejection, or `Promise.resolve()` for success.
-   *
-   * @see SSEPreHandler for usage examples
-   */
-  preHandler?: SSEPreHandler
-  /**
-   * Called when client connects (after SSE handshake).
-   */
-  onConnect?: (connection: SSEConnection) => void | Promise<void>
-  /**
-   * Called when client disconnects.
-   */
-  onDisconnect?: (connection: SSEConnection) => void | Promise<void>
-  /**
-   * Handler for Last-Event-ID reconnection.
-   * Return an async iterable of events to replay, or handle replay manually.
-   */
-  onReconnect?: (
-    connection: SSEConnection,
-    lastEventId: string,
-  ) => AsyncIterable<SSEMessage> | void | Promise<void>
-}
-
-/**
- * Route configuration returned by buildSSERoutes().
- *
- * @template Contract - The SSE route definition
- */
-export type SSEHandlerConfig<Contract extends AnySSERouteDefinition> = {
-  /** The SSE route contract */
-  contract: Contract
-  /** Handler called when connection is established */
-  handler: SSERouteHandler<
-    z.infer<Contract['params']>,
-    z.infer<Contract['query']>,
-    z.infer<Contract['requestHeaders']>,
-    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-    unknown
-  >
-  /** Optional route configuration */
-  options?: SSERouteOptions
-}
-
-/**
- * Maps SSE contracts to handler configurations for type checking.
- */
-export type BuildSSERoutesReturnType<APIContracts extends Record<string, AnySSERouteDefinition>> = {
-  [K in keyof APIContracts]: SSEHandlerConfig<APIContracts[K]>
-}
 
 /**
  * Abstract base class for SSE controllers.
@@ -173,20 +55,6 @@ export type BuildSSERoutesReturnType<APIContracts extends Record<string, AnySSER
  * }
  * ```
  */
-
-/**
- * Configuration options for SSE controllers.
- */
-export type SSEControllerConfig = {
-  /**
-   * Enable connection spying for testing.
-   * When enabled, the controller tracks connections and allows waiting for them.
-   * Only enable this in test environments.
-   * @default false
-   */
-  enableConnectionSpy?: boolean
-}
-
 export abstract class AbstractSSEController<
   APIContracts extends Record<string, AnySSERouteDefinition>,
 > {

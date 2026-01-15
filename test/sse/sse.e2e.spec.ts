@@ -11,15 +11,19 @@ import {
   type SSETestServer,
 } from '../../index.js'
 import {
+  asyncReconnectStreamContract,
   authenticatedStreamContract,
   channelStreamContract,
   chatCompletionContract,
+  reconnectStreamContract,
 } from './fixtures/testContracts.js'
 import type { TestSSEController } from './fixtures/testControllers.js'
 import {
   TestAuthSSEModule,
   TestChannelSSEModule,
   TestPostSSEModule,
+  TestReconnectSSEModule,
+  type TestReconnectSSEModuleDependencies,
   TestSSEModule,
   type TestSSEModuleDependencies,
 } from './fixtures/testModules.js'
@@ -1137,5 +1141,310 @@ describe('SSE E2E (connection lifecycle)', () => {
 
     controller.completeHandler(serverConn.id)
     client.close()
+  })
+})
+
+/**
+ * Tests for SSE Last-Event-ID reconnection mechanism.
+ *
+ * How SSE reconnection works:
+ * 1. Client connects and receives events, each with an `id` field
+ * 2. Client disconnects (network error, server restart, etc.)
+ * 3. Browser automatically reconnects and sends `Last-Event-ID` header with the last received event ID
+ * 4. Server's `onReconnect` handler receives this ID and replays missed events
+ *
+ * These tests simulate step 3 by sending the `Last-Event-ID` header directly.
+ * The server doesn't track previous sessions - it just responds to the header.
+ */
+describe('SSE E2E (Last-Event-ID reconnection)', () => {
+  let server: SSETestServer<{ context: DIContext<TestReconnectSSEModuleDependencies, object> }>
+  let context: DIContext<TestReconnectSSEModuleDependencies, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<TestReconnectSSEModuleDependencies, object>(
+      container,
+      { isTestMode: true },
+      {},
+    )
+    context.registerDependencies({ modules: [new TestReconnectSSEModule()] }, undefined)
+
+    server = await createSSETestServer(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it('replays events after Last-Event-ID on reconnection', { timeout: 10000 }, async () => {
+    // Use injectSSE with Last-Event-ID header to simulate reconnection
+    const { closed } = injectSSE(server.app, reconnectStreamContract, {
+      headers: { 'last-event-id': '2' } as Record<string, string>,
+    })
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+
+    const events = parseSSEEvents(response.body)
+    // Should replay events 3, 4, 5 (after id 2) plus the new event 6
+    const eventDatas = events.map((e) => JSON.parse(e.data))
+
+    // Events 3, 4, 5 are replayed, then 6 is sent by the handler
+    expect(eventDatas).toContainEqual({ id: '3', data: 'Third event' })
+    expect(eventDatas).toContainEqual({ id: '4', data: 'Fourth event' })
+    expect(eventDatas).toContainEqual({ id: '5', data: 'Fifth event' })
+    expect(eventDatas).toContainEqual({ id: '6', data: 'New event after reconnect' })
+  })
+
+  it('sends only new events when reconnecting with latest ID', { timeout: 10000 }, async () => {
+    const { closed } = injectSSE(server.app, reconnectStreamContract, {
+      headers: { 'last-event-id': '5' } as Record<string, string>,
+    })
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+
+    const events = parseSSEEvents(response.body)
+    // No events to replay after id 5, just the new event 6
+    expect(events).toHaveLength(1)
+    expect(JSON.parse(events[0]!.data)).toEqual({ id: '6', data: 'New event after reconnect' })
+  })
+
+  it('connects without replay when no Last-Event-ID', { timeout: 10000 }, async () => {
+    const { closed } = injectSSE(server.app, reconnectStreamContract, {})
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+
+    const events = parseSSEEvents(response.body)
+    // Just the new event, no replay
+    expect(events).toHaveLength(1)
+    expect(JSON.parse(events[0]!.data)).toEqual({ id: '6', data: 'New event after reconnect' })
+  })
+
+  it('replays events using async iterable', { timeout: 10000 }, async () => {
+    const { closed } = injectSSE(server.app, asyncReconnectStreamContract, {
+      headers: { 'last-event-id': '1' },
+    })
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+
+    const events = parseSSEEvents(response.body)
+    const eventDatas = events.map((e) => JSON.parse(e.data))
+
+    // Events 2, 3 are replayed via async generator, then 4 is sent by handler
+    expect(eventDatas).toContainEqual({ id: '2', data: 'Async second event' })
+    expect(eventDatas).toContainEqual({ id: '3', data: 'Async third event' })
+    expect(eventDatas).toContainEqual({ id: '4', data: 'Async new event after reconnect' })
+  })
+
+  it('async replay works with no events to replay', { timeout: 10000 }, async () => {
+    const { closed } = injectSSE(server.app, asyncReconnectStreamContract, {
+      headers: { 'last-event-id': '3' },
+    })
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+
+    const events = parseSSEEvents(response.body)
+    // No events to replay after id 3, just the new event 4
+    expect(events).toHaveLength(1)
+    expect(JSON.parse(events[0]!.data)).toEqual({
+      id: '4',
+      data: 'Async new event after reconnect',
+    })
+  })
+})
+
+describe('SSE E2E (SSEConnectionSpy edge cases)', () => {
+  let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+  let context: DIContext<TestSSEModuleDependencies, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    server = await createSSETestServer(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  function getController(): TestSSEController {
+    return server.resources.context.diContainer.cradle.testSSEController
+  }
+
+  it('waitForConnection times out when no connection arrives', { timeout: 10000 }, async () => {
+    const controller = getController()
+
+    // Wait for a connection that never comes - should timeout
+    await expect(controller.connectionSpy.waitForConnection({ timeout: 100 })).rejects.toThrow(
+      'Timeout waiting for connection after 100ms',
+    )
+  })
+
+  it('waitForDisconnection times out when connection stays open', { timeout: 10000 }, async () => {
+    const controller = getController()
+
+    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+      query: { userId: 'timeout-test' },
+    })
+
+    const serverConn = await controller.connectionSpy.waitForConnection()
+
+    // Wait for disconnection but don't close the connection - should timeout
+    await expect(
+      controller.connectionSpy.waitForDisconnection(serverConn.id, { timeout: 100 }),
+    ).rejects.toThrow('Timeout waiting for disconnection after 100ms')
+
+    // Clean up
+    controller.completeHandler(serverConn.id)
+    client.close()
+  })
+
+  it('clear() cancels pending waiters and resets state', { timeout: 10000 }, async () => {
+    const controller = getController()
+
+    // Start waiting for connection (will never arrive)
+    const waitPromise = controller.connectionSpy.waitForConnection({ timeout: 5000 })
+
+    // Give the waiter time to register
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Clear the spy - should reject the pending waiter
+    controller.connectionSpy.clear()
+
+    await expect(waitPromise).rejects.toThrow('ConnectionSpy was cleared')
+
+    // Events should be empty after clear
+    expect(controller.connectionSpy.getEvents()).toHaveLength(0)
+  })
+
+  it('clear() cancels pending disconnection waiters', { timeout: 10000 }, async () => {
+    const controller = getController()
+
+    const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+      query: { userId: 'clear-test' },
+    })
+
+    const serverConn = await controller.connectionSpy.waitForConnection()
+
+    // Start waiting for disconnection
+    const waitPromise = controller.connectionSpy.waitForDisconnection(serverConn.id, {
+      timeout: 5000,
+    })
+
+    // Give the waiter time to register
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Clear the spy
+    controller.connectionSpy.clear()
+
+    await expect(waitPromise).rejects.toThrow('ConnectionSpy was cleared')
+
+    controller.completeHandler(serverConn.id)
+    client.close()
+  })
+
+  it(
+    'waitForDisconnection resolves immediately if already disconnected',
+    { timeout: 10000 },
+    async () => {
+      const controller = getController()
+
+      const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+        query: { userId: 'already-disconnected' },
+      })
+
+      const serverConn = await controller.connectionSpy.waitForConnection()
+
+      // Close the connection first
+      controller.completeHandler(serverConn.id)
+      controller.testCloseConnection(serverConn.id)
+      client.close()
+
+      // Wait for the disconnect to be processed
+      await new Promise((r) => setTimeout(r, 100))
+
+      // Now wait for disconnection - should resolve immediately since already disconnected
+      await controller.connectionSpy.waitForDisconnection(serverConn.id, { timeout: 100 })
+      // If we get here without timeout, the test passes
+    },
+  )
+
+  it(
+    'waitForConnection resolves immediately if connection already exists',
+    { timeout: 10000 },
+    async () => {
+      const controller = getController()
+
+      const client = await connectSSE(server.baseUrl, '/api/notifications/stream', {
+        query: { userId: 'already-connected' },
+      })
+
+      // Wait for the connection to be established
+      await new Promise((r) => setTimeout(r, 100))
+
+      // Now waitForConnection should resolve immediately since connection exists
+      const connection = await controller.connectionSpy.waitForConnection({ timeout: 100 })
+      expect(connection).toBeDefined()
+      expect(connection.id).toBeDefined()
+
+      controller.completeHandler(connection.id)
+      client.close()
+    },
+  )
+})
+
+describe('SSE E2E (controller without spy)', () => {
+  it('throws error when accessing connectionSpy without enableConnectionSpy', async () => {
+    // Create a controller without spy enabled (isTestMode: false)
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<TestSSEModuleDependencies, object>(
+      container,
+      { isTestMode: false }, // Spy not enabled
+      {},
+    )
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    const controller = context.diContainer.cradle.testSSEController
+
+    expect(() => controller.connectionSpy).toThrow(
+      'Connection spy is not enabled. Pass { enableConnectionSpy: true } to the constructor.',
+    )
+
+    await context.destroy()
   })
 })

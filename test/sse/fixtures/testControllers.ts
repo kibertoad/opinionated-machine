@@ -6,10 +6,12 @@ import {
   type SSEControllerConfig,
 } from '../../../index.js'
 import {
+  asyncReconnectStreamContract,
   authenticatedStreamContract,
   channelStreamContract,
   chatCompletionContract,
   notificationsStreamContract,
+  reconnectStreamContract,
   streamContract,
 } from './testContracts.js'
 import type { EventService, TestNotificationService } from './testServices.js'
@@ -229,9 +231,8 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
           preHandler: (request, reply) => {
             const auth = request.headers.authorization
             if (!auth || !auth.startsWith('Bearer ')) {
-              return reply.code(401).send({ error: 'Unauthorized' })
+              return Promise.resolve(reply.code(401).send({ error: 'Unauthorized' }))
             }
-            // Auth valid - must return Promise for SSE routes
             return Promise.resolve()
           },
         },
@@ -291,5 +292,148 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
     })
     // Close connection after sending - needed for inject tests to complete
     this.closeConnection(connection.id)
+  }
+}
+
+/**
+ * Test SSE controller with reconnection support (Last-Event-ID)
+ */
+export type TestReconnectSSEContracts = {
+  reconnectStream: typeof reconnectStreamContract
+}
+
+export class TestReconnectSSEController extends AbstractSSEController<TestReconnectSSEContracts> {
+  public static contracts = {
+    reconnectStream: reconnectStreamContract,
+  } as const
+
+  // Simulated event storage for replay
+  private eventHistory: Array<{ id: string; data: string }> = []
+
+  constructor(deps: object, sseConfig?: SSEControllerConfig) {
+    super(deps, sseConfig)
+    // Pre-populate some events for replay testing
+    this.eventHistory = [
+      { id: '1', data: 'First event' },
+      { id: '2', data: 'Second event' },
+      { id: '3', data: 'Third event' },
+      { id: '4', data: 'Fourth event' },
+      { id: '5', data: 'Fifth event' },
+    ]
+  }
+
+  public buildSSERoutes(): BuildSSERoutesReturnType<TestReconnectSSEContracts> {
+    return {
+      reconnectStream: {
+        contract: TestReconnectSSEController.contracts.reconnectStream,
+        handler: this.handleReconnectStream,
+        options: {
+          onReconnect: this.handleReconnect,
+        },
+      },
+    }
+  }
+
+  private handleReconnectStream = async (_request: FastifyRequest, connection: SSEConnection) => {
+    // Send a new event after connection
+    await this.sendEvent(connection.id, {
+      event: 'event',
+      data: { id: '6', data: 'New event after reconnect' },
+      id: '6',
+    })
+    this.closeConnection(connection.id)
+  }
+
+  private handleReconnect = (
+    _connection: SSEConnection,
+    lastEventId: string,
+  ): Iterable<{ event?: string; data: { id: string; data: string }; id?: string }> => {
+    // Find events after the lastEventId
+    const lastIdNum = Number.parseInt(lastEventId, 10)
+    const eventsToReplay = this.eventHistory.filter((e) => Number.parseInt(e.id, 10) > lastIdNum)
+
+    // Return events to replay as an array (sync iterable)
+    return eventsToReplay.map((event) => ({
+      event: 'event',
+      data: event,
+      id: event.id,
+    }))
+  }
+
+  // For testing: add an event to history
+  public addEvent(id: string, data: string): void {
+    this.eventHistory.push({ id, data })
+  }
+}
+
+/**
+ * Test SSE controller with async reconnection support (Last-Event-ID)
+ */
+export type TestAsyncReconnectSSEContracts = {
+  asyncReconnectStream: typeof asyncReconnectStreamContract
+}
+
+export class TestAsyncReconnectSSEController extends AbstractSSEController<TestAsyncReconnectSSEContracts> {
+  public static contracts = {
+    asyncReconnectStream: asyncReconnectStreamContract,
+  } as const
+
+  // Simulated event storage for replay
+  private eventHistory: Array<{ id: string; data: string }> = []
+
+  constructor(deps: object, sseConfig?: SSEControllerConfig) {
+    super(deps, sseConfig)
+    // Pre-populate some events for replay testing
+    this.eventHistory = [
+      { id: '1', data: 'Async first event' },
+      { id: '2', data: 'Async second event' },
+      { id: '3', data: 'Async third event' },
+    ]
+  }
+
+  public buildSSERoutes(): BuildSSERoutesReturnType<TestAsyncReconnectSSEContracts> {
+    return {
+      asyncReconnectStream: {
+        contract: TestAsyncReconnectSSEController.contracts.asyncReconnectStream,
+        handler: this.handleReconnectStream,
+        options: {
+          onReconnect: this.handleReconnect,
+        },
+      },
+    }
+  }
+
+  private handleReconnectStream = async (_request: FastifyRequest, connection: SSEConnection) => {
+    // Send a new event after connection
+    await this.sendEvent(connection.id, {
+      event: 'event',
+      data: { id: '4', data: 'Async new event after reconnect' },
+      id: '4',
+    })
+    this.closeConnection(connection.id)
+  }
+
+  // Async generator for replay - simulates fetching from database
+  private handleReconnect = (
+    _connection: SSEConnection,
+    lastEventId: string,
+  ): AsyncIterable<{ event?: string; data: { id: string; data: string }; id?: string }> => {
+    const lastIdNum = Number.parseInt(lastEventId, 10)
+    const eventsToReplay = this.eventHistory.filter((e) => Number.parseInt(e.id, 10) > lastIdNum)
+
+    // Simulate async data source with an async generator
+    async function* generateEvents() {
+      for (const event of eventsToReplay) {
+        // Simulate async delay (e.g., database fetch)
+        await new Promise((resolve) => setTimeout(resolve, 1))
+        yield {
+          event: 'event',
+          data: event,
+          id: event.id,
+        }
+      }
+    }
+
+    return generateEvents()
   }
 }

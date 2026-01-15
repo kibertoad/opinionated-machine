@@ -1,18 +1,34 @@
 import { randomUUID } from 'node:crypto'
 import type { SSEReplyInterface } from '@fastify/sse'
 import type { FastifyReply, RouteOptions } from 'fastify'
-import type {
-  AbstractSSEController,
-  SSEConnection,
-  SSEHandlerConfig,
-  SSEMessage,
-} from './AbstractSSEController.ts'
+import type { AbstractSSEController } from './AbstractSSEController.ts'
 import type { AnySSERouteDefinition } from './sseContracts.ts'
+import type { SSEConnection, SSEHandlerConfig, SSEMessage } from './sseTypes.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
  */
 type SSEReply = FastifyReply & { sse: SSEReplyInterface }
+
+/**
+ * Send replay events from either sync or async iterables.
+ */
+async function sendReplayEvents(
+  sseReply: SSEReply,
+  replayEvents: Iterable<SSEMessage> | AsyncIterable<SSEMessage>,
+): Promise<void> {
+  // biome-ignore lint/suspicious/noExplicitAny: checking for iterator symbols
+  const iterable = replayEvents as any
+  if (typeof iterable[Symbol.asyncIterator] === 'function') {
+    for await (const event of replayEvents as AsyncIterable<SSEMessage>) {
+      await sseReply.sse.send(event)
+    }
+  } else if (typeof iterable[Symbol.iterator] === 'function') {
+    for (const event of replayEvents as Iterable<SSEMessage>) {
+      await sseReply.sse.send(event)
+    }
+  }
+}
 
 /**
  * Build a Fastify route configuration for an SSE endpoint.
@@ -80,10 +96,8 @@ export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
       const lastEventId = request.headers['last-event-id']
       if (lastEventId && options?.onReconnect) {
         const replayEvents = await options.onReconnect(connection, lastEventId as string)
-        if (replayEvents && typeof replayEvents[Symbol.asyncIterator] === 'function') {
-          for await (const event of replayEvents as AsyncIterable<SSEMessage>) {
-            await sseReply.sse.send(event)
-          }
+        if (replayEvents) {
+          await sendReplayEvents(sseReply, replayEvents)
         }
       }
 

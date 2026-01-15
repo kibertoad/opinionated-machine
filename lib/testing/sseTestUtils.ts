@@ -1,8 +1,8 @@
 import FastifySSEPlugin from '@fastify/sse'
 import fastify, { type FastifyInstance } from 'fastify'
 import type { z } from 'zod'
-import type { SSEMessage } from '../sse/AbstractSSEController.ts'
 import type { AnySSERouteDefinition, SSERouteDefinition } from '../sse/sseContracts.ts'
+import type { SSEMessage } from '../sse/sseTypes.ts'
 
 /**
  * Parsed SSE event from the stream.

@@ -56,6 +56,7 @@ export {
   type SSEControllerConfig,
   type SSEHandlerConfig,
   type SSEMessage,
+  type SSEPreHandler,
   type SSERouteHandler,
   type SSERouteOptions,
 } from './lib/sse/AbstractSSEController.ts'

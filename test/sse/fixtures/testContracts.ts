@@ -90,3 +90,39 @@ export const channelStreamContract = buildSSERoute({
     }),
   },
 })
+
+/**
+ * GET SSE route for testing Last-Event-ID reconnection (sync replay)
+ */
+export const reconnectStreamContract = buildSSERoute({
+  path: '/api/reconnect/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({
+    'last-event-id': z.string().optional(),
+  }),
+  events: {
+    event: z.object({
+      id: z.string(),
+      data: z.string(),
+    }),
+  },
+})
+
+/**
+ * GET SSE route for testing Last-Event-ID reconnection (async replay)
+ */
+export const asyncReconnectStreamContract = buildSSERoute({
+  path: '/api/async-reconnect/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({
+    'last-event-id': z.string().optional(),
+  }),
+  events: {
+    event: z.object({
+      id: z.string(),
+      data: z.string(),
+    }),
+  },
+})

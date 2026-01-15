@@ -7,9 +7,11 @@ import {
 } from '../../../index.js'
 import {
   StreamController,
+  TestAsyncReconnectSSEController,
   TestAuthSSEController,
   TestChannelSSEController,
   TestPostSSEController,
+  TestReconnectSSEController,
   TestSSEController,
 } from './testControllers.js'
 import { EventService, TestNotificationService } from './testServices.js'
@@ -170,6 +172,38 @@ export class TestChannelSSEModule extends AbstractModule<TestChannelSSEModuleDep
   override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testChannelSSEController: asSSEControllerClass(TestChannelSSEController),
+    }
+  }
+}
+
+/**
+ * Module with reconnect SSE controllers (Last-Event-ID, both sync and async replay)
+ */
+export type TestReconnectSSEModuleDependencies = {
+  testReconnectSSEController: TestReconnectSSEController
+  testAsyncReconnectSSEController: TestAsyncReconnectSSEController
+}
+
+export class TestReconnectSSEModule extends AbstractModule<TestReconnectSSEModuleDependencies> {
+  resolveDependencies(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<TestReconnectSSEModuleDependencies> {
+    return {
+      testReconnectSSEController: asSSEControllerClass(TestReconnectSSEController, { diOptions }),
+      testAsyncReconnectSSEController: asSSEControllerClass(TestAsyncReconnectSSEController, {
+        diOptions,
+      }),
+    }
+  }
+
+  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
+    return {}
+  }
+
+  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testReconnectSSEController: asSSEControllerClass(TestReconnectSSEController),
+      testAsyncReconnectSSEController: asSSEControllerClass(TestAsyncReconnectSSEController),
     }
   }
 }
