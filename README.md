@@ -716,6 +716,29 @@ if (!sent) {
 }
 ```
 
+**Lifecycle hook errors** (`onConnect`, `onReconnect`, `onDisconnect`):
+- All lifecycle hooks are wrapped in try/catch to prevent crashes
+- If a `logger` is provided in route options, errors are logged with context
+- If no logger is provided, errors are silently ignored
+- The connection lifecycle continues even if a hook throws
+
+```ts
+// Provide a logger to capture lifecycle errors
+public buildSSERoutes() {
+  return {
+    stream: {
+      contract: streamContract,
+      handler: this.handleStream,
+      options: {
+        logger: this.logger, // pino-compatible logger
+        onConnect: (conn) => { /* may throw */ },
+        onDisconnect: (conn) => { /* may throw */ },
+      },
+    },
+  }
+}
+```
+
 ### Long-lived Connections vs Request-Response Streaming
 
 **Long-lived connections** (notifications, live updates):

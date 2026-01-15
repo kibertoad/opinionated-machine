@@ -102,14 +102,22 @@ export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
       // Handle reconnection with Last-Event-ID
       const lastEventId = request.headers['last-event-id']
       if (lastEventId && options?.onReconnect) {
-        const replayEvents = await options.onReconnect(connection, lastEventId as string)
-        if (replayEvents) {
-          await sendReplayEvents(sseReply, replayEvents)
+        try {
+          const replayEvents = await options.onReconnect(connection, lastEventId as string)
+          if (replayEvents) {
+            await sendReplayEvents(sseReply, replayEvents)
+          }
+        } catch (err) {
+          options?.logger?.error({ err, lastEventId }, 'Error in SSE onReconnect handler')
         }
       }
 
       // Notify connection established
-      await options?.onConnect?.(connection)
+      try {
+        await options?.onConnect?.(connection)
+      } catch (err) {
+        options?.logger?.error({ err }, 'Error in SSE onConnect handler')
+      }
 
       // Call user handler for setup (subscriptions, initial data, etc.)
       // biome-ignore lint/suspicious/noExplicitAny: Handler types are validated by SSEHandlerConfig
