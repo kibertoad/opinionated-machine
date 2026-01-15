@@ -1,4 +1,11 @@
+import type { SSEConnectionSpy } from '../sse/SSEConnectionSpy.ts'
 import { type ParsedSSEEvent, parseSSEBuffer } from '../sse/sseParser.ts'
+import type { SSEConnection } from '../sse/sseTypes.ts'
+
+/**
+ * Interface for objects that have a connectionSpy (e.g., SSE controllers in test mode).
+ */
+export type HasConnectionSpy = { connectionSpy: SSEConnectionSpy }
 
 /**
  * Options for connecting to an SSE endpoint via HTTP.
@@ -8,6 +15,31 @@ export type SSEHttpConnectOptions = {
   query?: Record<string, string | undefined>
   /** Additional headers to send with the request */
   headers?: Record<string, string>
+}
+
+/**
+ * Options for connecting with automatic server-side connection waiting.
+ */
+export type SSEHttpConnectWithSpyOptions = SSEHttpConnectOptions & {
+  /**
+   * Wait for server-side connection registration after HTTP headers are received.
+   * This eliminates the race condition between `connect()` returning and the
+   * server-side handler completing connection registration.
+   */
+  awaitServerConnection: {
+    /** The SSE controller (must have connectionSpy enabled via isTestMode) */
+    controller: HasConnectionSpy
+    /** Timeout in milliseconds (default: 5000) */
+    timeout?: number
+  }
+}
+
+/**
+ * Result when connecting with awaitServerConnection option.
+ */
+export type SSEHttpConnectWithSpyResult = {
+  client: SSEHttpClient
+  serverConnection: SSEConnection
 }
 
 /**
@@ -94,18 +126,38 @@ export class SSEHttpClient {
    *
    * @example
    * ```typescript
+   * // Basic connection (returns when HTTP headers received)
    * const client = await SSEHttpClient.connect(
    *   'http://localhost:3000',
    *   '/api/stream',
    *   { query: { userId: '123' }, headers: { authorization: 'Bearer token' } }
    * )
+   *
+   * // With awaitServerConnection (waits for server-side registration)
+   * const { client, serverConnection } = await SSEHttpClient.connect(
+   *   'http://localhost:3000',
+   *   '/api/stream',
+   *   { awaitServerConnection: { controller } }
+   * )
+   * // serverConnection is ready to use immediately
+   * await controller.sendEvent(serverConnection.id, { event: 'test', data: {} })
    * ```
    */
   static async connect(
     baseUrl: string,
     path: string,
+    options: SSEHttpConnectWithSpyOptions,
+  ): Promise<SSEHttpConnectWithSpyResult>
+  static async connect(
+    baseUrl: string,
+    path: string,
     options?: SSEHttpConnectOptions,
-  ): Promise<SSEHttpClient> {
+  ): Promise<SSEHttpClient>
+  static async connect(
+    baseUrl: string,
+    path: string,
+    options?: SSEHttpConnectOptions | SSEHttpConnectWithSpyOptions,
+  ): Promise<SSEHttpClient | SSEHttpConnectWithSpyResult> {
     // Build URL with query params
     let url = `${baseUrl}${path}`
     if (options?.query) {
@@ -131,7 +183,18 @@ export class SSEHttpClient {
       signal: abortController.signal,
     })
 
-    return new SSEHttpClient(response, abortController)
+    const client = new SSEHttpClient(response, abortController)
+
+    // If awaitServerConnection is specified, wait for server-side registration
+    if (options && 'awaitServerConnection' in options && options.awaitServerConnection) {
+      const { controller, timeout } = options.awaitServerConnection
+      const serverConnection = await controller.connectionSpy.waitForConnection({
+        timeout: timeout ?? 5000,
+      })
+      return { client, serverConnection }
+    }
+
+    return client
   }
 
   /**

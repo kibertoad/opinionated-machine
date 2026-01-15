@@ -879,17 +879,22 @@ describe('NotificationsSSEController', () => {
   })
 
   it('receives notifications over SSE', async () => {
-    // Connect to SSE endpoint using SSEHttpClient
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'test-user' },
-    })
+    // Connect with awaitServerConnection to eliminate race condition
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'test-user' },
+        awaitServerConnection: { controller },
+      },
+    )
 
     expect(client.response.ok).toBe(true)
 
-    // Wait for server-side connection to be established
-    const serverConnection = await controller.connectionSpy.waitForConnection()
+    // Start collecting events
+    const eventsPromise = client.collectEvents(2)
 
-    // Send events from server
+    // Send events from server (serverConnection is ready immediately)
     await controller.sendEvent(serverConnection.id, {
       event: 'notification',
       data: { id: '1', message: 'Hello!' },
@@ -900,8 +905,8 @@ describe('NotificationsSSEController', () => {
       data: { id: '2', message: 'World!' },
     })
 
-    // Collect buffered events
-    const events = await client.collectEvents(2)
+    // Wait for events
+    const events = await eventsPromise
 
     expect(events).toHaveLength(2)
     expect(JSON.parse(events[0].data)).toEqual({ id: '1', message: 'Hello!' })
@@ -1034,15 +1039,21 @@ For testing long-lived SSE connections using real HTTP:
 ```ts
 import { SSEHttpClient } from 'opinionated-machine'
 
-// Connect to SSE endpoint
-const client = await SSEHttpClient.connect(server.baseUrl, '/api/stream', {
-  query: { userId: 'test' },
-  headers: { authorization: 'Bearer token' },
-})
+// Connect to SSE endpoint with awaitServerConnection (recommended)
+// This eliminates the race condition between client connect and server-side registration
+const { client, serverConnection } = await SSEHttpClient.connect(
+  server.baseUrl,
+  '/api/stream',
+  {
+    query: { userId: 'test' },
+    headers: { authorization: 'Bearer token' },
+    awaitServerConnection: { controller }, // Pass your SSE controller
+  },
+)
 
-// Access response info
+// serverConnection is ready to use immediately
 expect(client.response.ok).toBe(true)
-expect(client.response.headers.get('content-type')).toBe('text/event-stream')
+await controller.sendEvent(serverConnection.id, { event: 'test', data: {} })
 
 // Collect events by count with timeout
 const events = await client.collectEvents(3, 5000) // 3 events, 5s timeout
@@ -1063,19 +1074,21 @@ for await (const event of client.events()) {
 client.close()
 ```
 
-**Important: Race condition with server-side registration**
+**When to omit `awaitServerConnection`**
 
-`SSEHttpClient.connect()` resolves when HTTP response headers are received, but the server-side connection registration (`registerConnection()`) may not have completed yet due to async timing. When testing with `connectionSpy`, always use `waitForConnection()` to ensure the connection is fully registered:
+Omit `awaitServerConnection` only in these cases:
+- Testing against external SSE endpoints (not your own controller)
+- When `isTestMode: false` (connectionSpy not available)
+- Simple smoke tests that only verify response headers/status without sending server events
+
+**Consequence**: Without `awaitServerConnection`, `connect()` resolves as soon as HTTP headers are received. Server-side connection registration may not have completed yet, so you cannot reliably send events from the server immediately after `connect()` returns.
 
 ```ts
+// Example: smoke test that only checks connection works
 const client = await SSEHttpClient.connect(server.baseUrl, '/api/stream')
-
-// DON'T assume connection is registered after connect()
-// DO wait for server-side registration:
-const serverConn = await controller.connectionSpy.waitForConnection()
-
-// Now you can safely send events to this connection
-await controller.sendEvent(serverConn.id, { event: 'test', data: {} })
+expect(client.response.ok).toBe(true)
+expect(client.response.headers.get('content-type')).toContain('text/event-stream')
+client.close()
 ```
 
 #### SSEInjectClient

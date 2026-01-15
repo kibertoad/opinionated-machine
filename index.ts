@@ -83,7 +83,13 @@ export {
   type RegisterSSERoutesOptions,
 } from './lib/sse/sseRouteBuilder.ts'
 // SSE testing utilities
-export { SSEHttpClient, type SSEHttpConnectOptions } from './lib/testing/sseConnect.ts'
+export {
+  type HasConnectionSpy,
+  SSEHttpClient,
+  type SSEHttpConnectOptions,
+  type SSEHttpConnectWithSpyOptions,
+  type SSEHttpConnectWithSpyResult,
+} from './lib/testing/sseConnect.ts'
 export { buildUrl, injectPayloadSSE, injectSSE } from './lib/testing/sseInjectHelpers.ts'
 export { SSEInjectClient, SSEInjectConnection } from './lib/testing/sseTestClient.ts'
 export { SSETestServer } from './lib/testing/sseTestServer.ts'

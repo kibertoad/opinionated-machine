@@ -59,44 +59,35 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
     async () => {
       const controller = getController()
 
-      // Connect using our helper - returns when headers received (connection established)
-      const clientConnection = await SSEHttpClient.connect(
+      // Connect with awaitServerConnection to eliminate race condition
+      const { client, serverConnection } = await SSEHttpClient.connect(
         server.baseUrl,
         '/api/notifications/stream',
         {
           query: { userId: 'test-user' },
+          awaitServerConnection: { controller },
         },
       )
 
-      // Headers received = connection established
-      expect(clientConnection.response.ok).toBe(true)
-      expect(clientConnection.response.headers.get('content-type')).toContain('text/event-stream')
+      expect(client.response.ok).toBe(true)
+      expect(client.response.headers.get('content-type')).toContain('text/event-stream')
+      expect(controller.connectionSpy.isConnected(serverConnection.id)).toBe(true)
 
       // Start collecting events in the background
-      const eventsPromise = clientConnection.collectEvents(3)
-
-      // Wait for the connection to be registered on the server side.
-      // Note: SSEHttpClient.connect() resolves when response headers are received,
-      // but server-side connection registration may not have completed yet due to
-      // async timing. waitForConnection() handles this race condition.
-      const serverConnection = await controller.connectionSpy.waitForConnection()
-      const connectionId = serverConnection.id
-
-      // Verify connection is active
-      expect(controller.connectionSpy.isConnected(connectionId)).toBe(true)
+      const eventsPromise = client.collectEvents(3)
 
       // Send multiple events from server
-      await controller.testSendEvent(connectionId, {
+      await controller.testSendEvent(serverConnection.id, {
         event: 'notification',
         data: { id: '1', message: 'First event' },
       })
 
-      await controller.testSendEvent(connectionId, {
+      await controller.testSendEvent(serverConnection.id, {
         event: 'notification',
         data: { id: '2', message: 'Second event' },
       })
 
-      await controller.testSendEvent(connectionId, {
+      await controller.testSendEvent(serverConnection.id, {
         event: 'notification',
         data: { id: '3', message: 'Third event' },
       })
@@ -109,25 +100,24 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
       expect(JSON.parse(events[1]!.data)).toEqual({ id: '2', message: 'Second event' })
       expect(JSON.parse(events[2]!.data)).toEqual({ id: '3', message: 'Third event' })
 
-      // Signal handler can complete, then close client connection
-      controller.completeHandler(connectionId)
-      clientConnection.close()
+      controller.completeHandler(serverConnection.id)
+      client.close()
     },
   )
 
   it('handles interleaved events with delays', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const clientConnection = await SSEHttpClient.connect(
+    const { client, serverConnection } = await SSEHttpClient.connect(
       server.baseUrl,
       '/api/notifications/stream',
       {
         query: { userId: 'delayed-user' },
+        awaitServerConnection: { controller },
       },
     )
 
-    const eventsPromise = clientConnection.collectEvents(3)
-    const serverConnection = await controller.connectionSpy.waitForConnection()
+    const eventsPromise = client.collectEvents(3)
 
     // Send events with delays between them
     await controller.testSendEvent(serverConnection.id, {
@@ -158,7 +148,7 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
     ])
 
     controller.completeHandler(serverConnection.id)
-    clientConnection.close()
+    client.close()
   })
 
   it('supports multiple concurrent connections', { timeout: 10000 }, async () => {
@@ -332,21 +322,24 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
   it('server can close connection', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'will-be-closed' },
-    })
-
-    const serverConn = await controller.connectionSpy.waitForConnection()
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'will-be-closed' },
+        awaitServerConnection: { controller },
+      },
+    )
 
     // Send an event first
-    await controller.testSendEvent(serverConn.id, {
+    await controller.testSendEvent(serverConnection.id, {
       event: 'notification',
       data: { id: '1', message: 'Before close' },
     })
 
     // Server initiates close
-    controller.completeHandler(serverConn.id)
-    const closed = controller.testCloseConnection(serverConn.id)
+    controller.completeHandler(serverConnection.id)
+    const closed = controller.testCloseConnection(serverConnection.id)
     expect(closed).toBe(true)
 
     // Connection should be removed
@@ -410,11 +403,14 @@ describe('SSE HTTP E2E (error handling)', () => {
   it('handles client disconnect during event sending', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'disconnect-test' },
-    })
-
-    const serverConn = await controller.connectionSpy.waitForConnection()
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'disconnect-test' },
+        awaitServerConnection: { controller },
+      },
+    )
 
     // Client disconnects abruptly
     client.close()
@@ -423,7 +419,7 @@ describe('SSE HTTP E2E (error handling)', () => {
     await delay(100)
 
     // Sending should now fail or handle gracefully
-    const result = await controller.testSendEvent(serverConn.id, {
+    const result = await controller.testSendEvent(serverConnection.id, {
       event: 'notification',
       data: { id: '1', message: 'After disconnect' },
     })
@@ -431,7 +427,7 @@ describe('SSE HTTP E2E (error handling)', () => {
     // Should return false since connection is dead
     expect(result).toBe(false)
 
-    controller.completeHandler(serverConn.id)
+    controller.completeHandler(serverConnection.id)
   })
 })
 
@@ -467,195 +463,48 @@ describe('SSE HTTP E2E (serialization)', () => {
     return server.resources.context.diContainer.cradle.testSSEController
   }
 
-  it('serializes nested objects correctly', { timeout: 10000 }, async () => {
+  it('serializes various JSON data types correctly', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'serialization-test' },
-    })
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'serialization-test' },
+        awaitServerConnection: { controller },
+      },
+    )
 
-    const eventsPromise = client.collectEvents(1)
-    const serverConn = await controller.connectionSpy.waitForConnection()
-
-    const complexData = {
-      id: 'nested-1',
-      message: 'Complex object',
+    // Test data covering: nested objects, arrays, special characters, null, numbers, booleans
+    const testData = {
+      id: 'comprehensive-1',
+      message: 'Special: "quotes", \'apostrophes\', newlines\nand\ttabs, unicode: 日本語 🎉',
       metadata: {
-        nested: {
-          deeply: {
-            value: 42,
-            array: [1, 2, 3],
-          },
-        },
+        nested: { deeply: { value: 42, array: [1, 2, 3] } },
         tags: ['a', 'b', 'c'],
       },
-    }
-
-    await controller.testSendEvent(serverConn.id, {
-      event: 'notification',
-      data: complexData,
-    })
-
-    const events = await eventsPromise
-    const received = JSON.parse(events[0]!.data)
-
-    expect(received).toEqual(complexData)
-
-    controller.completeHandler(serverConn.id)
-    client.close()
-  })
-
-  it('handles special characters in data', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'special-chars' },
-    })
-
-    const eventsPromise = client.collectEvents(1)
-    const serverConn = await controller.connectionSpy.waitForConnection()
-
-    const specialData = {
-      id: 'special-1',
-      message: 'Special: "quotes", \'apostrophes\', newlines\nand\ttabs, unicode: 日本語 🎉',
-    }
-
-    await controller.testSendEvent(serverConn.id, {
-      event: 'notification',
-      data: specialData,
-    })
-
-    const events = await eventsPromise
-    const received = JSON.parse(events[0]!.data)
-
-    expect(received).toEqual(specialData)
-
-    controller.completeHandler(serverConn.id)
-    client.close()
-  })
-
-  it('handles arrays at top level', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'array-test' },
-    })
-
-    const eventsPromise = client.collectEvents(1)
-    const serverConn = await controller.connectionSpy.waitForConnection()
-
-    // The contract expects { id, message }, but we can test array handling
-    // by putting array data inside the expected structure
-    const arrayData = {
-      id: 'array-1',
-      message: JSON.stringify([{ item: 1 }, { item: 2 }, { item: 3, nested: [4, 5, 6] }]),
-    }
-
-    await controller.testSendEvent(serverConn.id, {
-      event: 'notification',
-      data: arrayData,
-    })
-
-    const events = await eventsPromise
-    const received = JSON.parse(events[0]!.data)
-
-    expect(received).toEqual(arrayData)
-
-    controller.completeHandler(serverConn.id)
-    client.close()
-  })
-
-  it('handles null and undefined values', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'null-test' },
-    })
-
-    const eventsPromise = client.collectEvents(1)
-    const serverConn = await controller.connectionSpy.waitForConnection()
-
-    const nullData = {
-      id: 'null-1',
-      message: 'test',
       optionalField: null,
-    }
-
-    await controller.testSendEvent(serverConn.id, {
-      event: 'notification',
-      data: nullData,
-    })
-
-    const events = await eventsPromise
-    const received = JSON.parse(events[0]!.data)
-
-    expect(received).toEqual(nullData)
-
-    controller.completeHandler(serverConn.id)
-    client.close()
-  })
-
-  it('handles numeric values correctly', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'numeric-test' },
-    })
-
-    const eventsPromise = client.collectEvents(1)
-    const serverConn = await controller.connectionSpy.waitForConnection()
-
-    const numericData = {
-      id: 'numeric-1',
-      message: 'Numbers test',
       integer: 42,
       float: Math.PI,
       negative: -100,
       scientific: 1.5e10,
-    }
-
-    await controller.testSendEvent(serverConn.id, {
-      event: 'notification',
-      data: numericData,
-    })
-
-    const events = await eventsPromise
-    const received = JSON.parse(events[0]!.data)
-
-    expect(received).toEqual(numericData)
-
-    controller.completeHandler(serverConn.id)
-    client.close()
-  })
-
-  it('handles boolean values correctly', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'boolean-test' },
-    })
-
-    const eventsPromise = client.collectEvents(1)
-    const serverConn = await controller.connectionSpy.waitForConnection()
-
-    const booleanData = {
-      id: 'boolean-1',
-      message: 'Boolean test',
       isActive: true,
       isDeleted: false,
     }
 
-    await controller.testSendEvent(serverConn.id, {
+    const eventsPromise = client.collectEvents(1)
+
+    await controller.testSendEvent(serverConnection.id, {
       event: 'notification',
-      data: booleanData,
+      data: testData,
     })
 
     const events = await eventsPromise
     const received = JSON.parse(events[0]!.data)
 
-    expect(received).toEqual(booleanData)
+    expect(received).toEqual(testData)
 
-    controller.completeHandler(serverConn.id)
+    controller.completeHandler(serverConnection.id)
     client.close()
   })
 })
@@ -695,14 +544,18 @@ describe('SSE HTTP E2E (event metadata)', () => {
   it('sends event with custom ID', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'event-id-test' },
-    })
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'event-id-test' },
+        awaitServerConnection: { controller },
+      },
+    )
 
     const eventsPromise = client.collectEvents(1)
-    const serverConn = await controller.connectionSpy.waitForConnection()
 
-    await controller.testSendEvent(serverConn.id, {
+    await controller.testSendEvent(serverConnection.id, {
       event: 'notification',
       data: { id: '1', message: 'With custom ID' },
       id: 'custom-event-id-123',
@@ -711,32 +564,36 @@ describe('SSE HTTP E2E (event metadata)', () => {
     const events = await eventsPromise
     expect(events[0]!.id).toBe('custom-event-id-123')
 
-    controller.completeHandler(serverConn.id)
+    controller.completeHandler(serverConnection.id)
     client.close()
   })
 
   it('sends events with different event types', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'event-types-test' },
-    })
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'event-types-test' },
+        awaitServerConnection: { controller },
+      },
+    )
 
     const eventsPromise = client.collectEvents(3)
-    const serverConn = await controller.connectionSpy.waitForConnection()
 
     // Send events with different event types
-    await controller.testSendEvent(serverConn.id, {
+    await controller.testSendEvent(serverConnection.id, {
       event: 'notification',
       data: { id: '1', message: 'Notification' },
     })
 
-    await controller.testSendEvent(serverConn.id, {
+    await controller.testSendEvent(serverConnection.id, {
       event: 'alert',
       data: { id: '2', message: 'Alert' },
     })
 
-    await controller.testSendEvent(serverConn.id, {
+    await controller.testSendEvent(serverConnection.id, {
       event: 'system',
       data: { id: '3', message: 'System' },
     })
@@ -746,22 +603,26 @@ describe('SSE HTTP E2E (event metadata)', () => {
     expect(events[1]!.event).toBe('alert')
     expect(events[2]!.event).toBe('system')
 
-    controller.completeHandler(serverConn.id)
+    controller.completeHandler(serverConnection.id)
     client.close()
   })
 
   it('sends event without explicit event type (uses message)', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'no-event-type' },
-    })
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'no-event-type' },
+        awaitServerConnection: { controller },
+      },
+    )
 
     const eventsPromise = client.collectEvents(1)
-    const serverConn = await controller.connectionSpy.waitForConnection()
 
     // Send without event type
-    await controller.testSendEvent(serverConn.id, {
+    await controller.testSendEvent(serverConnection.id, {
       data: { id: '1', message: 'No event type' },
     })
 
@@ -770,7 +631,7 @@ describe('SSE HTTP E2E (event metadata)', () => {
     expect(events[0]!.event).toBeUndefined()
     expect(JSON.parse(events[0]!.data).message).toBe('No event type')
 
-    controller.completeHandler(serverConn.id)
+    controller.completeHandler(serverConnection.id)
     client.close()
   })
 })
@@ -807,89 +668,66 @@ describe('SSE HTTP E2E (connection lifecycle)', () => {
     return server.resources.context.diContainer.cradle.testSSEController
   }
 
-  it('tracks connection events in spy', { timeout: 10000 }, async () => {
+  it('tracks connection events and isConnected status in spy', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'lifecycle-test' },
-    })
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'lifecycle-test' },
+        awaitServerConnection: { controller },
+      },
+    )
 
-    const serverConn = await controller.connectionSpy.waitForConnection()
-
-    // Check connection event was recorded
+    // Check connection event was recorded and isConnected returns true
     const events = controller.connectionSpy.getEvents()
     const connectEvent = events.find(
-      (e) => e.type === 'connect' && e.connectionId === serverConn.id,
+      (e) => e.type === 'connect' && e.connectionId === serverConnection.id,
     )
     expect(connectEvent).toBeDefined()
     expect(connectEvent!.connection).toBeDefined()
+    expect(controller.connectionSpy.isConnected(serverConnection.id)).toBe(true)
 
-    controller.completeHandler(serverConn.id)
-    controller.testCloseConnection(serverConn.id)
+    controller.completeHandler(serverConnection.id)
+    controller.testCloseConnection(serverConnection.id)
     client.close()
 
-    await controller.connectionSpy.waitForDisconnection(serverConn.id)
+    await controller.connectionSpy.waitForDisconnection(serverConnection.id)
 
+    // Check disconnect event was recorded and isConnected returns false
     const allEvents = controller.connectionSpy.getEvents()
     const disconnectEvent = allEvents.find(
-      (e) => e.type === 'disconnect' && e.connectionId === serverConn.id,
+      (e) => e.type === 'disconnect' && e.connectionId === serverConnection.id,
     )
     expect(disconnectEvent).toBeDefined()
+    expect(controller.connectionSpy.isConnected(serverConnection.id)).toBe(false)
   })
 
-  it('isConnected returns correct status', { timeout: 10000 }, async () => {
+  it('connection has context and metadata', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'connected-test' },
-    })
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'context-user-123' },
+        awaitServerConnection: { controller },
+      },
+    )
 
-    const serverConn = await controller.connectionSpy.waitForConnection()
+    // Check metadata
+    expect(serverConnection.id).toBeDefined()
+    expect(typeof serverConnection.id).toBe('string')
+    expect(serverConnection.connectedAt).toBeInstanceOf(Date)
+    expect(serverConnection.request).toBeDefined()
+    expect(serverConnection.reply).toBeDefined()
 
-    expect(controller.connectionSpy.isConnected(serverConn.id)).toBe(true)
+    // Check context (handler sets context.userId from query param)
+    expect(serverConnection.context).toBeDefined()
+    expect((serverConnection.context as { userId?: string }).userId).toBe('context-user-123')
 
-    controller.completeHandler(serverConn.id)
-    controller.testCloseConnection(serverConn.id)
-    client.close()
-
-    await controller.connectionSpy.waitForDisconnection(serverConn.id)
-
-    expect(controller.connectionSpy.isConnected(serverConn.id)).toBe(false)
-  })
-
-  it('connection context is preserved', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'context-user-123' },
-    })
-
-    const serverConn = await controller.connectionSpy.waitForConnection()
-
-    // The handler sets context.userId from query param
-    expect(serverConn.context).toBeDefined()
-    expect((serverConn.context as { userId?: string }).userId).toBe('context-user-123')
-
-    controller.completeHandler(serverConn.id)
-    client.close()
-  })
-
-  it('connection has metadata', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'metadata-test' },
-    })
-
-    const serverConn = await controller.connectionSpy.waitForConnection()
-
-    expect(serverConn.id).toBeDefined()
-    expect(typeof serverConn.id).toBe('string')
-    expect(serverConn.connectedAt).toBeInstanceOf(Date)
-    expect(serverConn.request).toBeDefined()
-    expect(serverConn.reply).toBeDefined()
-
-    controller.completeHandler(serverConn.id)
+    controller.completeHandler(serverConnection.id)
     client.close()
   })
 })
@@ -938,19 +776,22 @@ describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
   it('waitForDisconnection times out when connection stays open', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'timeout-test' },
-    })
-
-    const serverConn = await controller.connectionSpy.waitForConnection()
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'timeout-test' },
+        awaitServerConnection: { controller },
+      },
+    )
 
     // Wait for disconnection but don't close the connection - should timeout
     await expect(
-      controller.connectionSpy.waitForDisconnection(serverConn.id, { timeout: 100 }),
+      controller.connectionSpy.waitForDisconnection(serverConnection.id, { timeout: 100 }),
     ).rejects.toThrow('Timeout waiting for disconnection after 100ms')
 
     // Clean up
-    controller.completeHandler(serverConn.id)
+    controller.completeHandler(serverConnection.id)
     client.close()
   })
 
@@ -975,14 +816,17 @@ describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
   it('clear() cancels pending disconnection waiters', { timeout: 10000 }, async () => {
     const controller = getController()
 
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-      query: { userId: 'clear-test' },
-    })
-
-    const serverConn = await controller.connectionSpy.waitForConnection()
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'clear-test' },
+        awaitServerConnection: { controller },
+      },
+    )
 
     // Start waiting for disconnection
-    const waitPromise = controller.connectionSpy.waitForDisconnection(serverConn.id, {
+    const waitPromise = controller.connectionSpy.waitForDisconnection(serverConnection.id, {
       timeout: 5000,
     })
 
@@ -994,7 +838,7 @@ describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
 
     await expect(waitPromise).rejects.toThrow('ConnectionSpy was cleared')
 
-    controller.completeHandler(serverConn.id)
+    controller.completeHandler(serverConnection.id)
     client.close()
   })
 
@@ -1004,22 +848,25 @@ describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
     async () => {
       const controller = getController()
 
-      const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-        query: { userId: 'already-disconnected' },
-      })
-
-      const serverConn = await controller.connectionSpy.waitForConnection()
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/notifications/stream',
+        {
+          query: { userId: 'already-disconnected' },
+          awaitServerConnection: { controller },
+        },
+      )
 
       // Close the connection first
-      controller.completeHandler(serverConn.id)
-      controller.testCloseConnection(serverConn.id)
+      controller.completeHandler(serverConnection.id)
+      controller.testCloseConnection(serverConnection.id)
       client.close()
 
       // Wait for the disconnect to be processed
       await delay(100)
 
       // Now wait for disconnection - should resolve immediately since already disconnected
-      await controller.connectionSpy.waitForDisconnection(serverConn.id, { timeout: 100 })
+      await controller.connectionSpy.waitForDisconnection(serverConnection.id, { timeout: 100 })
       // If we get here without timeout, the test passes
     },
   )
@@ -1030,6 +877,7 @@ describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
     async () => {
       const controller = getController()
 
+      // This test specifically tests waitForConnection behavior, so we use manual connection
       const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
         query: { userId: 'already-connected' },
       })
@@ -1129,6 +977,57 @@ describe('SSE HTTP E2E (path parameters)', () => {
     const events = await client.collectEvents(1)
     expect(JSON.parse(events[0]!.data).content).toBe('Welcome to channel my-channel')
 
+    client.close()
+  })
+})
+
+describe('SSE HTTP E2E (awaitServerConnection option)', () => {
+  let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+  let context: DIContext<TestSSEModuleDependencies, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  function getController(): TestSSEController {
+    return server.resources.context.diContainer.cradle.testSSEController
+  }
+
+  it('supports custom timeout for awaitServerConnection', { timeout: 10000 }, async () => {
+    const controller = getController()
+
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/notifications/stream',
+      {
+        query: { userId: 'timeout-test' },
+        awaitServerConnection: { controller, timeout: 2000 },
+      },
+    )
+
+    expect(serverConnection.id).toBeDefined()
+
+    controller.completeHandler(serverConnection.id)
     client.close()
   })
 })
