@@ -695,7 +695,7 @@ public buildSSERoutes() {
 | `onConnect` | Called after client connects (SSE handshake complete) |
 | `onDisconnect` | Called when client disconnects |
 | `onReconnect` | Handle Last-Event-ID reconnection, return events to replay |
-| `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors are logged to `console.error` |
+| `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
 
 ### Graceful Shutdown
 
