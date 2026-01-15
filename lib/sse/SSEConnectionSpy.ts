@@ -52,8 +52,10 @@ export class SSEConnectionSpy {
     if (waiterIndex !== -1) {
       const waiter = this.disconnectionWaiters[waiterIndex]
       this.disconnectionWaiters.splice(waiterIndex, 1)
-      clearTimeout(waiter.timeoutId)
-      waiter.resolve()
+      if (waiter) {
+        clearTimeout(waiter.timeoutId)
+        waiter.resolve()
+      }
     }
   }
 

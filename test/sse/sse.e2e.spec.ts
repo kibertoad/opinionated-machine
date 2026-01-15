@@ -256,15 +256,19 @@ describe('SSE E2E (long-lived connections)', () => {
 
     const connections = controller.testGetConnections()
     // Set context to identify VIP connection
-    const vipConn = connections.find((c) => c.context?.userId === 'vip-user')!
-    const regularConn = connections.find((c) => c.context?.userId === 'regular-user')!
+    const vipConn = connections.find(
+      (c) => (c.context as { userId?: string })?.userId === 'vip-user',
+    )!
+    const regularConn = connections.find(
+      (c) => (c.context as { userId?: string })?.userId === 'regular-user',
+    )!
 
     const vipEventsPromise = vipClient.collectEvents(1, 2000)
 
     // Broadcast only to VIP users
     const sentCount = await controller.testBroadcastIf(
       { event: 'notification', data: { id: 'vip', message: 'VIP only!' } },
-      (conn) => conn.context?.userId?.startsWith('vip') ?? false,
+      (conn) => (conn.context as { userId?: string })?.userId?.startsWith('vip') ?? false,
     )
 
     expect(sentCount).toBe(1)
@@ -1066,12 +1070,10 @@ describe('SSE E2E (connection lifecycle)', () => {
     expect(connectEvent).toBeDefined()
     expect(connectEvent!.connection).toBeDefined()
 
-    // Close connection
     controller.completeHandler(serverConn.id)
     controller.testCloseConnection(serverConn.id)
     client.close()
 
-    // Wait for disconnect to register
     await controller.connectionSpy.waitForDisconnection(serverConn.id)
 
     const allEvents = controller.connectionSpy.getEvents()
@@ -1092,12 +1094,10 @@ describe('SSE E2E (connection lifecycle)', () => {
 
     expect(controller.connectionSpy.isConnected(serverConn.id)).toBe(true)
 
-    // Close connection
     controller.completeHandler(serverConn.id)
     controller.testCloseConnection(serverConn.id)
     client.close()
 
-    // Wait for disconnect
     await controller.connectionSpy.waitForDisconnection(serverConn.id)
 
     expect(controller.connectionSpy.isConnected(serverConn.id)).toBe(false)
@@ -1114,7 +1114,7 @@ describe('SSE E2E (connection lifecycle)', () => {
 
     // The handler sets context.userId from query param
     expect(serverConn.context).toBeDefined()
-    expect(serverConn.context.userId).toBe('context-user-123')
+    expect((serverConn.context as { userId?: string }).userId).toBe('context-user-123')
 
     controller.completeHandler(serverConn.id)
     client.close()

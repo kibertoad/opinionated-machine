@@ -1,4 +1,5 @@
-import type { FastifyInstance } from 'fastify'
+import FastifySSEPlugin from '@fastify/sse'
+import fastify, { type FastifyInstance } from 'fastify'
 import type { z } from 'zod'
 import type { SSEMessage } from '../sse/AbstractSSEController.ts'
 import type { AnySSERouteDefinition, SSERouteDefinition } from '../sse/sseContracts.ts'
@@ -843,13 +844,6 @@ export async function createSSETestServer<T = undefined>(
   registerRoutes: (app: FastifyInstance) => void | Promise<void>,
   options?: CreateSSETestServerOptions<T>,
 ): Promise<SSETestServer<T>> {
-  // Dynamic import to avoid bundling fastify and @fastify/sse in production
-  const [{ default: fastify }, FastifySSEPluginModule] = await Promise.all([
-    import('fastify'),
-    import('@fastify/sse'),
-  ])
-  const FastifySSEPlugin = FastifySSEPluginModule.default
-
   // Create Fastify app
   const app = fastify()
 
