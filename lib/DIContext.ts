@@ -1,3 +1,4 @@
+import type { RouteType } from '@lokalise/fastify-api-contracts'
 import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance, RouteOptions } from 'fastify'
@@ -157,7 +158,9 @@ export class DIContext<
       const controller: AbstractController<any> = controllerResolver.resolve(this.diContainer)
       const routes = controller.buildRoutes()
       for (const route of Object.values(routes)) {
-        app.route(route)
+        // Cast needed: GET/DELETE routes have body:undefined, POST/PATCH have body:unknown
+        // The union is incompatible with app.route() due to handler contravariance
+        app.route(route as RouteType)
       }
     }
   }

@@ -79,7 +79,7 @@ export class TestController extends AbstractController<typeof TestController.con
   private createItem = buildFastifyPayloadRoute(
     TestController.contracts.createItem,
     async (_, reply) => {
-      await reply.status(200).send()
+      await reply.status(200).send({ success: true })
     },
   )
 
