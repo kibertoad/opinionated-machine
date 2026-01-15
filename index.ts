@@ -5,6 +5,18 @@ export {
   type UnionToIntersection,
 } from './lib/AbstractModule.js'
 export {
+  AbstractSSEController,
+  type BuildSSERoutesReturnType,
+  type SSEConnection,
+  type SSEConnectionEvent,
+  SSEConnectionSpy,
+  type SSEControllerConfig,
+  type SSEHandlerConfig,
+  type SSEMessage,
+  type SSERouteHandler,
+  type SSERouteOptions,
+} from './lib/sse/AbstractSSEController.ts'
+export {
   AbstractTestContextFactory,
   type CreateTestContextParams,
 } from './lib/AbstractTestContextFactory.js'
@@ -30,6 +42,7 @@ export type {
   PeriodicJobOptions,
 } from './lib/resolverFunctions.js'
 export {
+  asClassWithConfig,
   asControllerClass,
   asEnqueuedJobQueueManagerFunction,
   asEnqueuedJobWorkerClass,
@@ -41,6 +54,42 @@ export {
   asServiceClass,
   asSingletonClass,
   asSingletonFunction,
+  asSSEControllerClass,
   asUseCaseClass,
   type EnqueuedJobQueueManager,
+  type SSEControllerModuleOptions,
 } from './lib/resolverFunctions.js'
+export {
+  type AnySSERouteDefinition,
+  buildPayloadSSERoute,
+  buildSSERoute,
+  type PayloadSSERouteConfig,
+  type SSEMethod,
+  type SSERouteConfig,
+  type SSERouteDefinition,
+} from './lib/sse/sseContracts.ts'
+export {
+  buildFastifySSERoute,
+  type RegisterSSERoutesOptions,
+} from './lib/sse/sseRouteBuilder.ts'
+export {
+  type CreateSSETestServerOptions,
+  connectSSE,
+  createMockSSEMessage,
+  createSSETestClient,
+  createSSETestServer,
+  type InjectPayloadSSEOptions,
+  type InjectSSEOptions,
+  type InjectSSEResult,
+  injectPayloadSSE,
+  injectSSE,
+  type ParsedSSEEvent,
+  parseSSEEvents,
+  type SSEClientConnection,
+  type SSEConnectOptions,
+  type SSEResponse,
+  type SSETestClient,
+  type SSETestConnection,
+  type SSETestServer,
+  waitFor,
+} from './lib/testing/sseTestUtils.js'

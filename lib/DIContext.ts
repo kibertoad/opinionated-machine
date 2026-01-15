@@ -1,10 +1,13 @@
 import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, RouteOptions } from 'fastify'
 import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
+import type { AbstractSSEController } from './sse/AbstractSSEController.ts'
 import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configUtils.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
+import type { AnySSERouteDefinition } from './sse/sseContracts.ts'
+import { buildFastifySSERoute, type RegisterSSERoutesOptions } from './sse/sseRouteBuilder.ts'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
   modules: readonly AbstractModule<unknown, ExternalDependencies>[]
@@ -19,6 +22,12 @@ export type DependencyInjectionOptions = {
   enqueuedJobWorkersEnabled?: false | typeof ENABLE_ALL | string[]
   messageQueueConsumersEnabled?: false | typeof ENABLE_ALL | string[]
   periodicJobsEnabled?: false | typeof ENABLE_ALL | string[]
+  /**
+   * Enable test mode features like SSE connection spying.
+   * Only set to true in test environments.
+   * @default false
+   */
+  isTestMode?: boolean
 }
 
 export class DIContext<
@@ -31,6 +40,8 @@ export class DIContext<
   public readonly diContainer: AwilixContainer<Dependencies>
   // biome-ignore lint/suspicious/noExplicitAny: all controllers are controllers
   private readonly controllerResolvers: Resolver<any>[]
+  // SSE controller dependency names (resolved from container to preserve singletons)
+  private readonly sseControllerNames: string[]
   private readonly appConfig: Config
 
   constructor(
@@ -52,6 +63,7 @@ export class DIContext<
         strictBooleanEnforced: true,
       })
     this.controllerResolvers = []
+    this.sseControllerNames = []
   }
 
   private registerModule(
@@ -75,6 +87,12 @@ export class DIContext<
       this.controllerResolvers.push(
         ...(Object.values(module.resolveControllers()) as Resolver<unknown>[]),
       )
+
+      // Collect SSE controller names (resolved from container to preserve singletons)
+      const sseControllers = module.resolveSSEControllers()
+      if (sseControllers && Object.keys(sseControllers).length > 0) {
+        this.sseControllerNames.push(...Object.keys(sseControllers))
+      }
     }
   }
 
@@ -141,6 +159,96 @@ export class DIContext<
       for (const route of Object.values(routes)) {
         app.route(route)
       }
+    }
+  }
+
+  /**
+   * Check if any SSE controllers are registered.
+   * Use this to conditionally call registerSSERoutes().
+   */
+  hasSSEControllers(): boolean {
+    return this.sseControllerNames.length > 0
+  }
+
+  /**
+   * Register SSE routes with the Fastify app.
+   *
+   * Must be called separately from registerRoutes().
+   * Requires @fastify/sse plugin to be registered on the app.
+   *
+   * @param app - Fastify instance with @fastify/sse registered
+   * @param options - Optional configuration for SSE routes
+   *
+   * @example
+   * ```typescript
+   * // Register @fastify/sse plugin first
+   * await app.register(fastifySSE, { heartbeatInterval: 30000 })
+   *
+   * // Then register SSE routes
+   * context.registerSSERoutes(app)
+   * ```
+   */
+  registerSSERoutes(
+    // biome-ignore lint/suspicious/noExplicitAny: Fastify instance types are complex
+    app: FastifyInstance<any, any, any, any>,
+    options?: RegisterSSERoutesOptions,
+  ): void {
+    if (!this.hasSSEControllers()) {
+      return
+    }
+
+    for (const controllerName of this.sseControllerNames) {
+      // Resolve from container to use the singleton instance
+      const sseController: AbstractSSEController<Record<string, AnySSERouteDefinition>> =
+        this.diContainer.resolve(controllerName)
+      const sseRoutes = sseController.buildSSERoutes()
+
+      for (const routeConfig of Object.values(sseRoutes)) {
+        const route = buildFastifySSERoute(sseController, routeConfig)
+        this.applySSERouteOptions(route, options)
+        app.route(route)
+      }
+    }
+  }
+
+  private applySSERouteOptions(route: RouteOptions, options?: RegisterSSERoutesOptions): void {
+    if (options?.preHandler) {
+      this.applyPreHandlers(route, options.preHandler)
+    }
+    if (options?.rateLimit) {
+      this.applyRateLimit(route, options.rateLimit)
+    }
+  }
+
+  private applyPreHandlers(
+    route: RouteOptions,
+    globalPreHandler: RouteOptions['preHandler'],
+  ): void {
+    const existingPreHandler = route.preHandler
+    if (!existingPreHandler) {
+      route.preHandler = globalPreHandler
+      return
+    }
+    // biome-ignore lint/suspicious/noExplicitAny: preHandler types are complex
+    const handlers: any[] = Array.isArray(existingPreHandler)
+      ? existingPreHandler
+      : [existingPreHandler]
+    // biome-ignore lint/suspicious/noExplicitAny: preHandler types are complex
+    const globalHandlers: any[] = Array.isArray(globalPreHandler)
+      ? globalPreHandler
+      : [globalPreHandler]
+    route.preHandler = [...globalHandlers, ...handlers]
+  }
+
+  private applyRateLimit(
+    route: RouteOptions,
+    rateLimit: NonNullable<RegisterSSERoutesOptions['rateLimit']>,
+  ): void {
+    // biome-ignore lint/suspicious/noExplicitAny: config types vary by plugins
+    const routeWithConfig = route as RouteOptions & { config?: any }
+    routeWithConfig.config = {
+      ...(routeWithConfig.config || {}),
+      rateLimit,
     }
   }
 
