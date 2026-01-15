@@ -524,6 +524,7 @@ class ChatSSEController extends AbstractSSEController<Contracts> {
         })
       }
 
+      // Gracefully end the stream - all sent data is flushed before connection closes
       this.closeConnection(connection.id)
     },
   )
@@ -741,7 +742,7 @@ private handleChatCompletion = buildSSEHandler(chatCompletionContract, async (re
     data: { totalTokens: words.length },
   })
 
-  // Close connection when done
+  // Gracefully end the stream - all sent data is flushed before connection closes
   this.closeConnection(connection.id)
 })
 ```
