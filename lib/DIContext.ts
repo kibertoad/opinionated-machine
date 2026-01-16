@@ -25,8 +25,8 @@ export type DependencyInjectionOptions = {
   messageQueueConsumersEnabled?: false | typeof ENABLE_ALL | string[]
   periodicJobsEnabled?: false | typeof ENABLE_ALL | string[]
   /**
-   * Enable test mode features like SSE connection spying.
-   * Only set to true in test environments.
+   * Enable SSE test mode features like connection spying.
+   * Only relevant for SSE controllers. Set to true in test environments.
    * @default false
    */
   isTestMode?: boolean

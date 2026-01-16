@@ -152,9 +152,12 @@ export class SSEConnectionSpy {
     return this.activeConnections.has(connectionId)
   }
 
-  /** Get all connection events in order */
-  getEvents(): SSEConnectionEvent[] {
-    return [...this.events]
+  /** Get all connection events in order, optionally filtered by connectionId */
+  getEvents(connectionId?: string): SSEConnectionEvent[] {
+    if (connectionId === undefined) {
+      return [...this.events]
+    }
+    return this.events.filter((e) => e.connectionId === connectionId)
   }
 
   /** Clear all events and cancel pending waiters */
