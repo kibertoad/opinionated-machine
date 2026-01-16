@@ -94,12 +94,13 @@ export class SSEConnectionSpy {
     const timeout = options?.timeout ?? 5000
     const predicate = options?.predicate
 
-    // Check if a matching unclaimed connection already exists
+    // Check if a matching unclaimed connection already exists (must still be active)
     const connectEvent = this.events.find(
       (e) =>
         e.type === 'connect' &&
         e.connection &&
         !this.claimedConnections.has(e.connection.id) &&
+        this.activeConnections.has(e.connection.id) &&
         (!predicate || predicate(e.connection)),
     )
     if (connectEvent?.connection) {
@@ -135,15 +136,20 @@ export class SSEConnectionSpy {
 
     // Not disconnected yet, create a waiter
     return new Promise<void>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        const index = this.disconnectionWaiters.findIndex((w) => w.connectionId === connectionId)
-        if (index !== -1) {
-          this.disconnectionWaiters.splice(index, 1)
-        }
-        reject(new Error(`Timeout waiting for disconnection after ${timeout}ms`))
-      }, timeout)
+      const waiter: DisconnectionWaiter = {
+        connectionId,
+        resolve,
+        reject,
+        timeoutId: setTimeout(() => {
+          const index = this.disconnectionWaiters.indexOf(waiter)
+          if (index !== -1) {
+            this.disconnectionWaiters.splice(index, 1)
+          }
+          reject(new Error(`Timeout waiting for disconnection after ${timeout}ms`))
+        }, timeout),
+      }
 
-      this.disconnectionWaiters.push({ connectionId, resolve, reject, timeoutId })
+      this.disconnectionWaiters.push(waiter)
     })
   }
 
