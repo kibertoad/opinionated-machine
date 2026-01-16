@@ -23,24 +23,8 @@ export {
   isPeriodicJobEnabled,
   resolveJobQueuesEnabled,
 } from './lib/diConfigUtils.js'
-export type {
-  EnqueuedJobWorkerModuleOptions,
-  JobQueueModuleOptions,
-  MessageQueueConsumerModuleOptions,
-  PeriodicJobOptions,
-} from './lib/resolverFunctions.js'
-export {
-  asControllerClass,
-  asEnqueuedJobQueueManagerFunction,
-  asEnqueuedJobWorkerClass,
-  asJobQueueClass,
-  asMessageQueueHandlerClass,
-  asPeriodicJobClass,
-  asPgBossProcessorClass,
-  asRepositoryClass,
-  asServiceClass,
-  asSingletonClass,
-  asSingletonFunction,
-  asUseCaseClass,
-  type EnqueuedJobQueueManager,
-} from './lib/resolverFunctions.js'
+export * from './lib/resolverFunctions.js'
+// SSE
+export * from './lib/sse/index.js'
+// SSE testing utilities
+export * from './lib/testing/index.js'

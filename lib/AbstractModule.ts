@@ -19,4 +19,21 @@ export abstract class AbstractModule<ModuleDependencies, ExternalDependencies = 
   ): MandatoryNameAndRegistrationPair<ModuleDependencies>
 
   public abstract resolveControllers(): MandatoryNameAndRegistrationPair<unknown>
+
+  /**
+   * Override to register SSE controllers.
+   * Returns empty object by default - no changes needed for modules without SSE.
+   *
+   * @example
+   * ```typescript
+   * public resolveSSEControllers() {
+   *   return {
+   *     notificationsSSEController: asSSEControllerClass(NotificationsSSEController),
+   *   }
+   * }
+   * ```
+   */
+  public resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+    return {}
+  }
 }

@@ -32,6 +32,28 @@ export function asSingletonClass<T = object>(
   })
 }
 
+/**
+ * Register a class with an additional config parameter passed to the constructor.
+ * Uses asFunction wrapper internally to pass the config as a second parameter.
+ * Requires PROXY injection mode.
+ *
+ * @example
+ * ```typescript
+ * myService: asClassWithConfig(MyService, { enableFeature: true }),
+ * ```
+ */
+export function asClassWithConfig<T = object, Config = unknown>(
+  Type: Constructor<T>,
+  config: Config,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  // biome-ignore lint/suspicious/noExplicitAny: Dynamic constructor invocation with cradle proxy
+  return asFunction((cradle: any) => new Type(cradle, config), {
+    ...opts,
+    lifetime: opts?.lifetime ?? 'SINGLETON',
+  })
+}
+
 export function asSingletonFunction<T>(
   fn: FunctionReturning<T>,
   opts?: BuildResolverOptions<T>,
@@ -81,6 +103,45 @@ export function asControllerClass<T = object>(
 ): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type, {
     public: false,
+    ...opts,
+    lifetime: 'SINGLETON',
+  })
+}
+
+export type SSEControllerModuleOptions = {
+  diOptions: DependencyInjectionOptions
+}
+
+/**
+ * Register an SSE controller class with the DI container.
+ *
+ * SSE controllers handle Server-Sent Events connections and require
+ * graceful shutdown to close all active connections.
+ *
+ * When `diOptions.isTestMode` is true, connection spying is enabled
+ * allowing tests to await connections via `controller.connectionSpy`.
+ *
+ * @example
+ * ```typescript
+ * // Without test mode
+ * notificationsSSEController: asSSEControllerClass(NotificationsSSEController),
+ *
+ * // With test mode (enables connection spy)
+ * notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions }),
+ * ```
+ */
+export function asSSEControllerClass<T = object>(
+  Type: Constructor<T>,
+  sseOptions?: SSEControllerModuleOptions,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  const enableConnectionSpy = sseOptions?.diOptions.isTestMode ?? false
+  const sseConfig = enableConnectionSpy ? { enableConnectionSpy: true } : undefined
+
+  return asClassWithConfig(Type, sseConfig, {
+    public: false,
+    asyncDispose: 'closeAllConnections',
+    asyncDisposePriority: 5, // Close SSE connections early in shutdown
     ...opts,
     lifetime: 'SINGLETON',
   })
