@@ -28,6 +28,30 @@
  * const payload = JSON.parse(event.data)
  * ```
  */
+/**
+ * Parse a single SSE line and update the event state.
+ * Returns true if a complete event was found (empty line with data).
+ */
+function parseSSELine(
+  line: string,
+  currentEvent: Partial<ParsedSSEEvent>,
+  dataLines: string[],
+): boolean {
+  if (line.startsWith('id:')) {
+    currentEvent.id = line.slice(3).trim()
+  } else if (line.startsWith('event:')) {
+    currentEvent.event = line.slice(6).trim()
+  } else if (line.startsWith('data:')) {
+    dataLines.push(line.slice(5).trim())
+  } else if (line.startsWith('retry:')) {
+    currentEvent.retry = Number.parseInt(line.slice(6).trim(), 10)
+  } else if (line === '' && dataLines.length > 0) {
+    return true // Event complete
+  }
+  // Comment lines (starting with :) are implicitly ignored
+  return false
+}
+
 export type ParsedSSEEvent = {
   /**
    * Event ID for client reconnection via Last-Event-ID header.
@@ -132,16 +156,7 @@ export function parseSSEEvents(text: string): ParsedSSEEvent[] {
   let dataLines: string[] = []
 
   for (const line of lines) {
-    if (line.startsWith('id:')) {
-      currentEvent.id = line.slice(3).trim()
-    } else if (line.startsWith('event:')) {
-      currentEvent.event = line.slice(6).trim()
-    } else if (line.startsWith('data:')) {
-      dataLines.push(line.slice(5).trim())
-    } else if (line.startsWith('retry:')) {
-      currentEvent.retry = Number.parseInt(line.slice(6).trim(), 10)
-    } else if (line === '' && dataLines.length > 0) {
-      // Empty line marks end of event
+    if (parseSSELine(line, currentEvent, dataLines)) {
       events.push({
         ...currentEvent,
         data: dataLines.join('\n'),
@@ -149,7 +164,6 @@ export function parseSSEEvents(text: string): ParsedSSEEvent[] {
       currentEvent = {}
       dataLines = []
     }
-    // Skip comment lines (starting with :)
   }
 
   // Handle case where stream doesn't end with double newline
@@ -236,16 +250,7 @@ export function parseSSEBuffer(buffer: string): ParseSSEBufferResult {
   for (const line of lines) {
     currentPosition += line.length + 1 // +1 for the \n
 
-    if (line.startsWith('id:')) {
-      currentEvent.id = line.slice(3).trim()
-    } else if (line.startsWith('event:')) {
-      currentEvent.event = line.slice(6).trim()
-    } else if (line.startsWith('data:')) {
-      dataLines.push(line.slice(5).trim())
-    } else if (line.startsWith('retry:')) {
-      currentEvent.retry = Number.parseInt(line.slice(6).trim(), 10)
-    } else if (line === '' && dataLines.length > 0) {
-      // Complete event found
+    if (parseSSELine(line, currentEvent, dataLines)) {
       events.push({
         ...currentEvent,
         data: dataLines.join('\n'),

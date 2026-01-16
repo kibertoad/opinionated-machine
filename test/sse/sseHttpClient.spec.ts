@@ -203,4 +203,241 @@ describe('SSEHttpClient', () => {
       },
     )
   })
+
+  describe('events() with AbortSignal', () => {
+    let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+    let context: DIContext<TestSSEModuleDependencies, object>
+
+    beforeEach(async () => {
+      const container = createContainer({ injectionMode: 'PROXY' })
+      context = new DIContext<TestSSEModuleDependencies, object>(
+        container,
+        { isTestMode: true },
+        {},
+      )
+      context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+      server = await SSETestServer.create(
+        (app) => {
+          context.registerSSERoutes(app)
+        },
+        {
+          configureApp: (app) => {
+            app.setValidatorCompiler(validatorCompiler)
+            app.setSerializerCompiler(serializerCompiler)
+          },
+          setup: () => ({ context }),
+        },
+      )
+    })
+
+    afterEach(async () => {
+      await server.resources.context.destroy()
+      await server.close()
+    })
+
+    function getController(): TestSSEController {
+      return server.resources.context.diContainer.cradle.testSSEController
+    }
+
+    it('stops generator when AbortSignal fires', async () => {
+      const controller = getController()
+
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/notifications/stream',
+        {
+          query: { userId: 'abort-signal-test' },
+          awaitServerConnection: { controller },
+        },
+      )
+
+      const abortController = new AbortController()
+      const collected: string[] = []
+
+      // Start consuming events with abort signal
+      const consumePromise = (async () => {
+        for await (const event of client.events(abortController.signal)) {
+          collected.push(event.event ?? 'message')
+          if (collected.length === 2) {
+            // Abort after receiving 2 events
+            abortController.abort()
+          }
+        }
+      })()
+
+      // Send 5 events
+      for (let i = 1; i <= 5; i++) {
+        await controller.testSendEvent(serverConnection.id, {
+          event: `event-${i}`,
+          data: { id: String(i) },
+        })
+        await delay(10) // Small delay between events
+      }
+
+      await consumePromise
+
+      // Should have stopped after 2 events due to abort
+      expect(collected).toHaveLength(2)
+      expect(collected).toEqual(['event-1', 'event-2'])
+
+      controller.completeHandler(serverConnection.id)
+      client.close()
+    })
+
+    it('handles already-aborted signal', async () => {
+      const controller = getController()
+
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/notifications/stream',
+        {
+          query: { userId: 'pre-aborted-test' },
+          awaitServerConnection: { controller },
+        },
+      )
+
+      // Create an already-aborted signal
+      const abortController = new AbortController()
+      abortController.abort()
+
+      const collected: string[] = []
+      for await (const event of client.events(abortController.signal)) {
+        collected.push(event.event ?? 'message')
+      }
+
+      // Should exit immediately without collecting any events
+      expect(collected).toHaveLength(0)
+
+      controller.completeHandler(serverConnection.id)
+      client.close()
+    })
+  })
+
+  describe('resource cleanup', () => {
+    let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+    let context: DIContext<TestSSEModuleDependencies, object>
+
+    beforeEach(async () => {
+      const container = createContainer({ injectionMode: 'PROXY' })
+      context = new DIContext<TestSSEModuleDependencies, object>(
+        container,
+        { isTestMode: true },
+        {},
+      )
+      context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+      server = await SSETestServer.create(
+        (app) => {
+          context.registerSSERoutes(app)
+        },
+        {
+          configureApp: (app) => {
+            app.setValidatorCompiler(validatorCompiler)
+            app.setSerializerCompiler(serializerCompiler)
+          },
+          setup: () => ({ context }),
+        },
+      )
+    })
+
+    afterEach(async () => {
+      await server.resources.context.destroy()
+      await server.close()
+    })
+
+    function getController(): TestSSEController {
+      return server.resources.context.diContainer.cradle.testSSEController
+    }
+
+    it('close() after collectEvents timeout does not cause unhandled rejection', async () => {
+      const controller = getController()
+
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/notifications/stream',
+        {
+          query: { userId: 'cleanup-timeout-test' },
+          awaitServerConnection: { controller },
+        },
+      )
+
+      // Timeout while waiting for events (read is pending)
+      await expect(client.collectEvents(1, 50)).rejects.toThrow('Timeout collecting events')
+
+      // This should not cause unhandled rejection
+      controller.completeHandler(serverConnection.id)
+      client.close()
+
+      // Give time for any potential unhandled rejections to surface
+      await delay(50)
+    })
+
+    it('close() after early break from collectEvents does not cause unhandled rejection', async () => {
+      const controller = getController()
+
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/notifications/stream',
+        {
+          query: { userId: 'cleanup-break-test' },
+          awaitServerConnection: { controller },
+        },
+      )
+
+      // Start collecting, will break early when count is reached
+      const eventsPromise = client.collectEvents(2, 5000)
+
+      // Send 5 events but we only want 2
+      for (let i = 1; i <= 5; i++) {
+        await controller.testSendEvent(serverConnection.id, {
+          event: `event-${i}`,
+          data: { id: String(i) },
+        })
+      }
+
+      const events = await eventsPromise
+      expect(events).toHaveLength(2)
+
+      // This should not cause unhandled rejection
+      controller.completeHandler(serverConnection.id)
+      client.close()
+
+      // Give time for any potential unhandled rejections to surface
+      await delay(50)
+    })
+
+    it('multiple sequential collectEvents calls work correctly', async () => {
+      const controller = getController()
+
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/notifications/stream',
+        {
+          query: { userId: 'sequential-collect-test' },
+          awaitServerConnection: { controller },
+        },
+      )
+
+      // First collect
+      const firstPromise = client.collectEvents(2, 5000)
+      await controller.testSendEvent(serverConnection.id, { event: 'a', data: { v: 1 } })
+      await controller.testSendEvent(serverConnection.id, { event: 'b', data: { v: 2 } })
+      const firstEvents = await firstPromise
+      expect(firstEvents).toHaveLength(2)
+
+      // Second collect (reusing same client)
+      const secondPromise = client.collectEvents(2, 5000)
+      await controller.testSendEvent(serverConnection.id, { event: 'c', data: { v: 3 } })
+      await controller.testSendEvent(serverConnection.id, { event: 'd', data: { v: 4 } })
+      const secondEvents = await secondPromise
+      expect(secondEvents).toHaveLength(2)
+
+      expect(firstEvents.map((e) => e.event)).toEqual(['a', 'b'])
+      expect(secondEvents.map((e) => e.event)).toEqual(['c', 'd'])
+
+      controller.completeHandler(serverConnection.id)
+      client.close()
+    })
+  })
 })

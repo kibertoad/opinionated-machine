@@ -42,7 +42,7 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [SSE Parsing Utilities](#sse-parsing-utilities)
     - [parseSSEEvents](#parsesseevents)
     - [parseSSEBuffer](#parsessebuffer)
-    - [ParsedSSEEvent Type](#parsedssevent-type)
+    - [ParsedSSEEvent Type](#parsedsseevent-type)
   - [Testing SSE Controllers](#testing-sse-controllers)
   - [SSEConnectionSpy API](#sseconnectionspy-api)
   - [Connection Monitoring](#connection-monitoring)
@@ -1116,6 +1116,58 @@ for await (const event of client.events()) {
 
 // Cleanup
 client.close()
+```
+
+**`collectEvents(countOrPredicate, timeout?)`**
+
+Collects events until a count is reached or a predicate returns true.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `countOrPredicate` | `number \| (event) => boolean` | Number of events to collect, or predicate that returns `true` when collection should stop |
+| `timeout` | `number` | Maximum time to wait in milliseconds (default: 5000) |
+
+Returns `Promise<ParsedSSEEvent[]>`. Throws an error if the timeout is reached before the condition is met.
+
+```ts
+// Collect exactly 3 events
+const events = await client.collectEvents(3)
+
+// Collect with custom timeout
+const events = await client.collectEvents(5, 10000) // 10s timeout
+
+// Collect until a specific event type (the matching event IS included)
+const events = await client.collectEvents((event) => event.event === 'done')
+
+// Collect until condition with timeout
+const events = await client.collectEvents(
+  (event) => JSON.parse(event.data).status === 'complete',
+  30000,
+)
+```
+
+**`events(signal?)`**
+
+Async generator that yields events as they arrive. Accepts an optional `AbortSignal` for cancellation.
+
+```ts
+// Basic iteration
+for await (const event of client.events()) {
+  console.log(event.event, event.data)
+  if (event.event === 'done') break
+}
+
+// With abort signal for timeout control
+const controller = new AbortController()
+const timeoutId = setTimeout(() => controller.abort(), 5000)
+
+try {
+  for await (const event of client.events(controller.signal)) {
+    console.log(event)
+  }
+} finally {
+  clearTimeout(timeoutId)
+}
 ```
 
 **When to omit `awaitServerConnection`**

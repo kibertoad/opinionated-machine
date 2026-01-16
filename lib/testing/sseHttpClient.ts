@@ -197,7 +197,9 @@ export class SSEHttpClient {
    * Async generator that yields parsed SSE events as they arrive.
    *
    * Use this for full control over event processing. The generator
-   * completes when the server closes the connection.
+   * completes when the server closes the connection or the abort signal fires.
+   *
+   * @param signal - Optional AbortSignal to stop the generator early
    *
    * @example
    * ```typescript
@@ -210,26 +212,82 @@ export class SSEHttpClient {
    *   }
    * }
    * ```
+   *
+   * @example
+   * ```typescript
+   * // With abort signal for timeout control
+   * const controller = new AbortController()
+   * setTimeout(() => controller.abort(), 5000)
+   *
+   * for await (const event of client.events(controller.signal)) {
+   *   console.log(event)
+   * }
+   * ```
    */
-  async *events(): AsyncGenerator<ParsedSSEEvent, void, unknown> {
+  async *events(signal?: AbortSignal): AsyncGenerator<ParsedSSEEvent, void, unknown> {
     while (!this.closed) {
-      const { done, value } = await this.reader.read()
-      if (done) {
+      if (signal?.aborted) {
+        return
+      }
+
+      const readResult = await this.readWithAbort(signal)
+      if (readResult === 'aborted') {
+        return
+      }
+
+      if (readResult.done) {
         this.closed = true
         break
       }
 
-      this.buffer += this.decoder.decode(value, { stream: true })
-
-      // Parse complete events from buffer and get remaining buffer
+      this.buffer += this.decoder.decode(readResult.value, { stream: true })
       const parseResult = parseSSEBuffer(this.buffer)
       this.buffer = parseResult.remaining
 
-      // Yield each parsed event
       for (const event of parseResult.events) {
+        if (signal?.aborted) {
+          return
+        }
         yield event
       }
     }
+  }
+
+  /**
+   * Read from the stream with abort signal support.
+   * Returns 'aborted' if the signal fires before read completes.
+   */
+  private async readWithAbort(signal?: AbortSignal) {
+    const readPromise = this.reader.read()
+
+    if (!signal) {
+      return readPromise
+    }
+
+    let raceSettled = false
+
+    const abortPromise = new Promise<'aborted'>((resolve) => {
+      const onAbort = () => {
+        if (!raceSettled) {
+          resolve('aborted')
+        }
+      }
+      if (signal.aborted) {
+        onAbort()
+      } else {
+        signal.addEventListener('abort', onAbort, { once: true })
+      }
+    })
+
+    const result = await Promise.race([readPromise, abortPromise])
+    raceSettled = true
+
+    if (result === 'aborted') {
+      // Prevent unhandled rejection when connection closes
+      readPromise.catch(() => {})
+    }
+
+    return result
   }
 
   /**
@@ -259,40 +317,41 @@ export class SSEHttpClient {
     timeout = 5000,
   ): Promise<ParsedSSEEvent[]> {
     const collected: ParsedSSEEvent[] = []
-    const startTime = Date.now()
     const isCount = typeof countOrPredicate === 'number'
-    const iterator = this.events()
+    const abortController = new AbortController()
+    const iterator = this.events(abortController.signal)
+    let timedOut = false
 
-    while (true) {
-      const remainingTime = timeout - (Date.now() - startTime)
-      if (remainingTime <= 0) {
-        throw new Error(`Timeout collecting events (got ${collected.length})`)
+    const timeoutId = setTimeout(() => {
+      timedOut = true
+      abortController.abort(new Error(`Timeout collecting events (got ${collected.length})`))
+    }, timeout)
+
+    try {
+      for await (const event of iterator) {
+        collected.push(event)
+
+        if (isCount && collected.length >= countOrPredicate) {
+          break
+        }
+        if (!isCount && countOrPredicate(event)) {
+          break
+        }
       }
 
-      // Race between the next event and timeout
-      const timeoutPromise = new Promise<{ timeout: true }>((resolve) =>
-        setTimeout(() => resolve({ timeout: true }), remainingTime),
-      )
-      const nextPromise = iterator.next().then((result) => ({ ...result, timeout: false as const }))
-
-      const result = await Promise.race([nextPromise, timeoutPromise])
-
-      if (result.timeout) {
-        throw new Error(`Timeout collecting events (got ${collected.length})`)
+      // Check if loop exited due to timeout (generator returns cleanly on abort)
+      if (timedOut) {
+        throw abortController.signal.reason
       }
-
-      if (result.done) {
-        break
+    } catch (err) {
+      // Re-throw abort errors with our timeout message
+      if (timedOut && abortController.signal.aborted) {
+        throw abortController.signal.reason
       }
-
-      collected.push(result.value)
-
-      if (isCount && collected.length >= countOrPredicate) {
-        break
-      }
-      if (!isCount && countOrPredicate(result.value)) {
-        break
-      }
+      throw err
+    } finally {
+      clearTimeout(timeoutId)
+      abortController.abort() // Signal generator to stop on early break
     }
 
     return collected
@@ -306,6 +365,10 @@ export class SSEHttpClient {
    */
   close(): void {
     this.closed = true
+    // Cancel the reader first to prevent unhandled rejections from pending reads
+    this.reader.cancel().catch(() => {
+      // Expected: may already be closed or errored
+    })
     this.abortController.abort()
   }
 }
