@@ -968,6 +968,52 @@ describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
       expect(controller.connectionSpy.isConnected(serverConnection.id)).toBe(false)
     },
   )
+
+  it(
+    'multiple waitForDisconnection calls for same connectionId all resolve',
+    { timeout: 10000 },
+    async () => {
+      const controller = getController()
+
+      // Establish a connection
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/notifications/stream',
+        {
+          query: { userId: 'multi-waiter-test' },
+          awaitServerConnection: { controller },
+        },
+      )
+
+      // Start multiple waiters for the same connectionId BEFORE disconnecting
+      const disconnectionPromise1 = controller.connectionSpy.waitForDisconnection(
+        serverConnection.id,
+        { timeout: 5000 },
+      )
+      const disconnectionPromise2 = controller.connectionSpy.waitForDisconnection(
+        serverConnection.id,
+        { timeout: 5000 },
+      )
+      const disconnectionPromise3 = controller.connectionSpy.waitForDisconnection(
+        serverConnection.id,
+        { timeout: 5000 },
+      )
+
+      // Give time for waiters to be registered
+      await delay(10)
+
+      // Now close the connection
+      controller.completeHandler(serverConnection.id)
+      controller.testCloseConnection(serverConnection.id)
+      client.close()
+
+      // ALL waiters should resolve when disconnection is detected
+      await Promise.all([disconnectionPromise1, disconnectionPromise2, disconnectionPromise3])
+
+      // If we get here without timeout, all disconnection waiters were properly resolved
+      expect(controller.connectionSpy.isConnected(serverConnection.id)).toBe(false)
+    },
+  )
 })
 
 describe('SSE HTTP E2E (authentication)', () => {

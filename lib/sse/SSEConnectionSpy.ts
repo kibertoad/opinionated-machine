@@ -55,16 +55,15 @@ export class SSEConnectionSpy {
     this.events.push({ type: 'disconnect', connectionId })
     this.activeConnections.delete(connectionId)
 
-    // Resolve pending disconnection waiters for this connection
-    const waiterIndex = this.disconnectionWaiters.findIndex((w) => w.connectionId === connectionId)
-    if (waiterIndex !== -1) {
-      const waiter = this.disconnectionWaiters[waiterIndex]
-      this.disconnectionWaiters.splice(waiterIndex, 1)
-      if (waiter) {
-        clearTimeout(waiter.timeoutId)
-        waiter.resolve()
-      }
+    // Resolve all pending disconnection waiters for this connection
+    const matchingWaiters = this.disconnectionWaiters.filter((w) => w.connectionId === connectionId)
+    for (const waiter of matchingWaiters) {
+      clearTimeout(waiter.timeoutId)
+      waiter.resolve()
     }
+    this.disconnectionWaiters = this.disconnectionWaiters.filter(
+      (w) => w.connectionId !== connectionId,
+    )
   }
 
   /**
