@@ -90,10 +90,15 @@ export class DIContext<
         ...(Object.values(module.resolveControllers()) as Resolver<unknown>[]),
       )
 
-      // Collect SSE controller names (resolved from container to preserve singletons)
-      const sseControllers = module.resolveSSEControllers()
+      // Collect SSE controllers and register them in the DI container
+      const sseControllers = module.resolveSSEControllers(this.options)
       if (sseControllers && Object.keys(sseControllers).length > 0) {
         this.sseControllerNames.push(...Object.keys(sseControllers))
+        // Register SSE controllers in the DI container (same pattern as regular dependencies)
+        for (const key in sseControllers) {
+          // @ts-expect-error we can't really ensure type-safety here
+          targetDiConfig[key] = sseControllers[key]
+        }
       }
     }
   }

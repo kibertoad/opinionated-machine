@@ -24,16 +24,23 @@ export abstract class AbstractModule<ModuleDependencies, ExternalDependencies = 
    * Override to register SSE controllers.
    * Returns empty object by default - no changes needed for modules without SSE.
    *
+   * SSE controllers registered here are automatically added to the DI container,
+   * so you don't need to also register them in resolveDependencies().
+   *
+   * @param diOptions - DI options (use for test mode detection with asSSEControllerClass)
+   *
    * @example
    * ```typescript
-   * public resolveSSEControllers() {
+   * public resolveSSEControllers(diOptions: DependencyInjectionOptions) {
    *   return {
-   *     notificationsSSEController: asSSEControllerClass(NotificationsSSEController),
+   *     notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions }),
    *   }
    * }
    * ```
    */
-  public resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  public resolveSSEControllers(
+    _diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {}
   }
 }

@@ -569,22 +569,21 @@ export class SimpleSSEController extends AbstractSSEController<Contracts> {
 
 ### Registering SSE Controllers
 
-Use `asSSEControllerClass` in your module and implement `resolveSSEControllers`:
+Use `asSSEControllerClass` in your module's `resolveSSEControllers` method. SSE controllers are automatically registered in the DI container, so you don't need to also include them in `resolveDependencies`:
 
 ```ts
-import { AbstractModule, asSSEControllerClass, asServiceClass } from 'opinionated-machine'
+import { AbstractModule, asSSEControllerClass, asServiceClass, type DependencyInjectionOptions } from 'opinionated-machine'
 
 export class NotificationsModule extends AbstractModule<Dependencies> {
-  resolveDependencies(diOptions: DependencyInjectionOptions) {
+  resolveDependencies() {
     return {
       notificationService: asServiceClass(NotificationService),
-      notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions }),
     }
   }
 
-  resolveSSEControllers() {
+  resolveSSEControllers(diOptions: DependencyInjectionOptions) {
     return {
-      notificationsSSEController: asSSEControllerClass(NotificationsSSEController),
+      notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions }),
     }
   }
 }

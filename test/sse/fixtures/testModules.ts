@@ -25,16 +25,12 @@ import { EventService, TestNotificationService } from './testServices.js'
  */
 export type StreamModuleDependencies = {
   eventService: EventService
-  streamController: StreamController
 }
 
 export class StreamModule extends AbstractModule<StreamModuleDependencies> {
-  resolveDependencies(
-    _diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<StreamModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<StreamModuleDependencies> {
     return {
       eventService: asServiceClass(EventService),
-      streamController: asSSEControllerClass(StreamController),
     }
   }
 
@@ -42,9 +38,11 @@ export class StreamModule extends AbstractModule<StreamModuleDependencies> {
     return {}
   }
 
-  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveSSEControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      streamController: asSSEControllerClass(StreamController),
+      streamController: asSSEControllerClass(StreamController, { diOptions }),
     }
   }
 }
@@ -54,16 +52,12 @@ export class StreamModule extends AbstractModule<StreamModuleDependencies> {
  */
 export type TestSSEModuleDependencies = {
   notificationService: TestNotificationService
-  testSSEController: TestSSEController
 }
 
 export class TestSSEModule extends AbstractModule<TestSSEModuleDependencies> {
-  resolveDependencies(
-    diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<TestSSEModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestSSEModuleDependencies> {
     return {
       notificationService: asServiceClass(TestNotificationService),
-      testSSEController: asSSEControllerClass(TestSSEController, { diOptions }),
     }
   }
 
@@ -71,9 +65,11 @@ export class TestSSEModule extends AbstractModule<TestSSEModuleDependencies> {
     return {}
   }
 
-  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveSSEControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      testSSEController: asSSEControllerClass(TestSSEController),
+      testSSEController: asSSEControllerClass(TestSSEController, { diOptions }),
     }
   }
 }
@@ -81,29 +77,25 @@ export class TestSSEModule extends AbstractModule<TestSSEModuleDependencies> {
 /**
  * Module with POST SSE controllers (OpenAI-style and large content streaming)
  */
-export type TestPostSSEModuleDependencies = {
-  testPostSSEController: TestPostSSEController
-  testLargeContentSSEController: TestLargeContentSSEController
-}
+export type TestPostSSEModuleDependencies = Record<string, never>
 
 export class TestPostSSEModule extends AbstractModule<TestPostSSEModuleDependencies> {
-  resolveDependencies(
-    _diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<TestPostSSEModuleDependencies> {
-    return {
-      testPostSSEController: asSSEControllerClass(TestPostSSEController),
-      testLargeContentSSEController: asSSEControllerClass(TestLargeContentSSEController),
-    }
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestPostSSEModuleDependencies> {
+    return {}
   }
 
   resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {}
   }
 
-  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveSSEControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      testPostSSEController: asSSEControllerClass(TestPostSSEController),
-      testLargeContentSSEController: asSSEControllerClass(TestLargeContentSSEController),
+      testPostSSEController: asSSEControllerClass(TestPostSSEController, { diOptions }),
+      testLargeContentSSEController: asSSEControllerClass(TestLargeContentSSEController, {
+        diOptions,
+      }),
     }
   }
 }
@@ -132,26 +124,22 @@ export class NoSSEModule extends AbstractModule<NoSSEModuleDependencies> {
 /**
  * Module with authenticated SSE controller
  */
-export type TestAuthSSEModuleDependencies = {
-  testAuthSSEController: TestAuthSSEController
-}
+export type TestAuthSSEModuleDependencies = Record<string, never>
 
 export class TestAuthSSEModule extends AbstractModule<TestAuthSSEModuleDependencies> {
-  resolveDependencies(
-    diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<TestAuthSSEModuleDependencies> {
-    return {
-      testAuthSSEController: asSSEControllerClass(TestAuthSSEController, { diOptions }),
-    }
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestAuthSSEModuleDependencies> {
+    return {}
   }
 
   resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {}
   }
 
-  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveSSEControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      testAuthSSEController: asSSEControllerClass(TestAuthSSEController),
+      testAuthSSEController: asSSEControllerClass(TestAuthSSEController, { diOptions }),
     }
   }
 }
@@ -159,26 +147,22 @@ export class TestAuthSSEModule extends AbstractModule<TestAuthSSEModuleDependenc
 /**
  * Module with channel SSE controller (path params)
  */
-export type TestChannelSSEModuleDependencies = {
-  testChannelSSEController: TestChannelSSEController
-}
+export type TestChannelSSEModuleDependencies = Record<string, never>
 
 export class TestChannelSSEModule extends AbstractModule<TestChannelSSEModuleDependencies> {
-  resolveDependencies(
-    diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<TestChannelSSEModuleDependencies> {
-    return {
-      testChannelSSEController: asSSEControllerClass(TestChannelSSEController, { diOptions }),
-    }
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestChannelSSEModuleDependencies> {
+    return {}
   }
 
   resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {}
   }
 
-  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveSSEControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      testChannelSSEController: asSSEControllerClass(TestChannelSSEController),
+      testChannelSSEController: asSSEControllerClass(TestChannelSSEController, { diOptions }),
     }
   }
 }
@@ -186,31 +170,25 @@ export class TestChannelSSEModule extends AbstractModule<TestChannelSSEModuleDep
 /**
  * Module with reconnect SSE controllers (Last-Event-ID, both sync and async replay)
  */
-export type TestReconnectSSEModuleDependencies = {
-  testReconnectSSEController: TestReconnectSSEController
-  testAsyncReconnectSSEController: TestAsyncReconnectSSEController
-}
+export type TestReconnectSSEModuleDependencies = Record<string, never>
 
 export class TestReconnectSSEModule extends AbstractModule<TestReconnectSSEModuleDependencies> {
-  resolveDependencies(
-    diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<TestReconnectSSEModuleDependencies> {
-    return {
-      testReconnectSSEController: asSSEControllerClass(TestReconnectSSEController, { diOptions }),
-      testAsyncReconnectSSEController: asSSEControllerClass(TestAsyncReconnectSSEController, {
-        diOptions,
-      }),
-    }
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestReconnectSSEModuleDependencies> {
+    return {}
   }
 
   resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {}
   }
 
-  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveSSEControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      testReconnectSSEController: asSSEControllerClass(TestReconnectSSEController),
-      testAsyncReconnectSSEController: asSSEControllerClass(TestAsyncReconnectSSEController),
+      testReconnectSSEController: asSSEControllerClass(TestReconnectSSEController, { diOptions }),
+      testAsyncReconnectSSEController: asSSEControllerClass(TestAsyncReconnectSSEController, {
+        diOptions,
+      }),
     }
   }
 }
@@ -220,7 +198,6 @@ export class TestReconnectSSEModule extends AbstractModule<TestReconnectSSEModul
  */
 export type TestLoggerSSEModuleDependencies = {
   logger: SSELogger
-  testLoggerSSEController: TestLoggerSSEController
 }
 
 export class TestLoggerSSEModule extends AbstractModule<TestLoggerSSEModuleDependencies> {
@@ -231,13 +208,10 @@ export class TestLoggerSSEModule extends AbstractModule<TestLoggerSSEModuleDepen
     this.mockLogger = mockLogger
   }
 
-  resolveDependencies(
-    diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<TestLoggerSSEModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestLoggerSSEModuleDependencies> {
     const logger = this.mockLogger
     return {
       logger: asSingletonFunction(() => logger),
-      testLoggerSSEController: asSSEControllerClass(TestLoggerSSEController, { diOptions }),
     }
   }
 
@@ -245,9 +219,11 @@ export class TestLoggerSSEModule extends AbstractModule<TestLoggerSSEModuleDepen
     return {}
   }
 
-  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveSSEControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      testLoggerSSEController: asSSEControllerClass(TestLoggerSSEController),
+      testLoggerSSEController: asSSEControllerClass(TestLoggerSSEController, { diOptions }),
     }
   }
 }
