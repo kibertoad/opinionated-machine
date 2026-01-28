@@ -86,18 +86,18 @@ export class DIContext<
     }
 
     if (isPrimaryModule && resolveControllers) {
-      this.controllerResolvers.push(
-        ...(Object.values(module.resolveControllers()) as Resolver<unknown>[]),
-      )
+      const controllers = module.resolveControllers(this.options)
 
-      // Collect SSE controllers and register them in the DI container
-      const sseControllers = module.resolveSSEControllers(this.options)
-      if (sseControllers && Object.keys(sseControllers).length > 0) {
-        this.sseControllerNames.push(...Object.keys(sseControllers))
-        // Register SSE controllers in the DI container (same pattern as regular dependencies)
-        for (const key in sseControllers) {
+      for (const [name, resolver] of Object.entries(controllers)) {
+        // @ts-expect-error isSSEController is a custom property on the resolver
+        if (resolver.isSSEController) {
+          // SSE controller: register in DI container and track name for route registration
+          this.sseControllerNames.push(name)
           // @ts-expect-error we can't really ensure type-safety here
-          targetDiConfig[key] = sseControllers[key]
+          targetDiConfig[name] = resolver
+        } else {
+          // REST controller: add resolver for route registration
+          this.controllerResolvers.push(resolver as Resolver<unknown>)
         }
       }
     }

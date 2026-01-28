@@ -34,11 +34,7 @@ export class StreamModule extends AbstractModule<StreamModuleDependencies> {
     }
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
-    return {}
-  }
-
-  override resolveSSEControllers(
+  override resolveControllers(
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
@@ -61,11 +57,7 @@ export class TestSSEModule extends AbstractModule<TestSSEModuleDependencies> {
     }
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
-    return {}
-  }
-
-  override resolveSSEControllers(
+  override resolveControllers(
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
@@ -84,11 +76,7 @@ export class TestPostSSEModule extends AbstractModule<TestPostSSEModuleDependenc
     return {}
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
-    return {}
-  }
-
-  override resolveSSEControllers(
+  override resolveControllers(
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
@@ -114,11 +102,7 @@ export class NoSSEModule extends AbstractModule<NoSSEModuleDependencies> {
     }
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
-    return {}
-  }
-
-  // Uses default resolveSSEControllers() which returns {}
+  // Uses default resolveControllers() which returns {}
 }
 
 /**
@@ -131,11 +115,7 @@ export class TestAuthSSEModule extends AbstractModule<TestAuthSSEModuleDependenc
     return {}
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
-    return {}
-  }
-
-  override resolveSSEControllers(
+  override resolveControllers(
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
@@ -154,11 +134,7 @@ export class TestChannelSSEModule extends AbstractModule<TestChannelSSEModuleDep
     return {}
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
-    return {}
-  }
-
-  override resolveSSEControllers(
+  override resolveControllers(
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
@@ -177,11 +153,7 @@ export class TestReconnectSSEModule extends AbstractModule<TestReconnectSSEModul
     return {}
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
-    return {}
-  }
-
-  override resolveSSEControllers(
+  override resolveControllers(
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
@@ -215,11 +187,7 @@ export class TestLoggerSSEModule extends AbstractModule<TestLoggerSSEModuleDepen
     }
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
-    return {}
-  }
-
-  override resolveSSEControllers(
+  override resolveControllers(
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
