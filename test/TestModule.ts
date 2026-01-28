@@ -145,7 +145,9 @@ export class TestModule extends AbstractModule<TestModuleDependencies> {
     }
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveControllers(
+    _diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testController: asControllerClass(TestController),
     }
