@@ -11,7 +11,6 @@ import {
 } from './diConfigUtils.js'
 
 declare module 'awilix' {
-  // biome-ignore lint/correctness/noUnusedVariables: expected by the signature
   interface ResolverOptions<T> {
     public?: boolean // if module is used as secondary, only public dependencies will be exposed. default is false
     isSSEController?: boolean // marks resolver as an SSE controller for special handling

@@ -16,6 +16,7 @@ import {
   largeContentStreamContract,
   reconnectStreamContract,
 } from './fixtures/testContracts.js'
+import type { TestSSEController } from './fixtures/testControllers.js'
 import {
   TestAuthSSEModule,
   TestChannelSSEModule,
@@ -480,7 +481,7 @@ describe('SSE Inject E2E (controller without spy)', () => {
     )
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    const controller = context.diContainer.cradle.testSSEController
+    const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
 
     expect(() => controller.connectionSpy).toThrow(
       'Connection spy is not enabled. Pass { enableConnectionSpy: true } to the constructor.',

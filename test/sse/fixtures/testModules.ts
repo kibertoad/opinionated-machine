@@ -50,6 +50,11 @@ export type TestSSEModuleDependencies = {
   notificationService: TestNotificationService
 }
 
+// Controllers are registered via resolveControllers(), available in DI container
+export type TestSSEModuleControllers = {
+  testSSEController: TestSSEController
+}
+
 export class TestSSEModule extends AbstractModule<TestSSEModuleDependencies> {
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestSSEModuleDependencies> {
     return {
