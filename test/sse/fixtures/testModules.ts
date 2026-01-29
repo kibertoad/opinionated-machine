@@ -14,6 +14,7 @@ import {
   TestChannelSSEController,
   TestLargeContentSSEController,
   TestLoggerSSEController,
+  TestOpenAIStyleSSEController,
   TestPostSSEController,
   TestReconnectSSEController,
   TestSSEController,
@@ -197,6 +198,27 @@ export class TestLoggerSSEModule extends AbstractModule<TestLoggerSSEModuleDepen
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testLoggerSSEController: asSSEControllerClass(TestLoggerSSEController, { diOptions }),
+    }
+  }
+}
+
+/**
+ * Module with OpenAI-style SSE controller for testing string terminators
+ */
+export type TestOpenAIStyleSSEModuleDependencies = Record<string, never>
+
+export class TestOpenAIStyleSSEModule extends AbstractModule<TestOpenAIStyleSSEModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestOpenAIStyleSSEModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testOpenAIStyleSSEController: asSSEControllerClass(TestOpenAIStyleSSEController, {
+        diOptions,
+      }),
     }
   }
 }
