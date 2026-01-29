@@ -533,47 +533,51 @@ describe('SSE Inject E2E (OpenAI-style streaming with string terminator)', () =>
     await server.close()
   })
 
-  it('streams JSON chunks followed by string terminator like OpenAI', { timeout: 10000 }, async () => {
-    const { closed } = injectPayloadSSE(server.app, openaiStyleStreamContract, {
-      body: { prompt: 'Hello World', stream: true as const },
-    })
+  it(
+    'streams JSON chunks followed by string terminator like OpenAI',
+    { timeout: 10000 },
+    async () => {
+      const { closed } = injectPayloadSSE(server.app, openaiStyleStreamContract, {
+        body: { prompt: 'Hello World', stream: true as const },
+      })
 
-    const response = await closed
+      const response = await closed
 
-    expect(response.statusCode).toBe(200)
-    expect(response.headers['content-type']).toContain('text/event-stream')
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['content-type']).toContain('text/event-stream')
 
-    const events = parseSSEEvents(response.body)
+      const events = parseSSEEvents(response.body)
 
-    // Should have chunk events for each word plus a done event
-    const chunkEvents = events.filter((e) => e.event === 'chunk')
-    const doneEvents = events.filter((e) => e.event === 'done')
+      // Should have chunk events for each word plus a done event
+      const chunkEvents = events.filter((e) => e.event === 'chunk')
+      const doneEvents = events.filter((e) => e.event === 'done')
 
-    expect(chunkEvents).toHaveLength(2) // "Hello" and "World"
-    expect(doneEvents).toHaveLength(1)
+      expect(chunkEvents).toHaveLength(2) // "Hello" and "World"
+      expect(doneEvents).toHaveLength(1)
 
-    // Verify JSON chunks parse correctly as objects
-    const chunk1 = JSON.parse(chunkEvents[0]!.data)
-    const chunk2 = JSON.parse(chunkEvents[1]!.data)
+      // Verify JSON chunks parse correctly as objects
+      const chunk1 = JSON.parse(chunkEvents[0]!.data)
+      const chunk2 = JSON.parse(chunkEvents[1]!.data)
 
-    expect(chunk1).toEqual({
-      choices: [{ delta: { content: 'Hello' } }],
-    })
-    expect(chunk2).toEqual({
-      choices: [{ delta: { content: 'World' } }],
-    })
+      expect(chunk1).toEqual({
+        choices: [{ delta: { content: 'Hello' } }],
+      })
+      expect(chunk2).toEqual({
+        choices: [{ delta: { content: 'World' } }],
+      })
 
-    // Verify the done event contains a string (not necessarily "[DONE]" literal,
-    // since @fastify/sse JSON-serializes the data, we get the quoted string)
-    // The key point is that string data works fine in SSE events
-    const doneData = doneEvents[0]!.data
-    expect(typeof doneData).toBe('string')
+      // Verify the done event contains a string (not necessarily "[DONE]" literal,
+      // since @fastify/sse JSON-serializes the data, we get the quoted string)
+      // The key point is that string data works fine in SSE events
+      const doneData = doneEvents[0]!.data
+      expect(typeof doneData).toBe('string')
 
-    // The string "[DONE]" when JSON-serialized becomes "\"[DONE]\""
-    // When we JSON.parse it, we get back "[DONE]"
-    const parsedDone = JSON.parse(doneData)
-    expect(parsedDone).toBe('[DONE]')
-  })
+      // The string "[DONE]" when JSON-serialized becomes "\"[DONE]\""
+      // When we JSON.parse it, we get back "[DONE]"
+      const parsedDone = JSON.parse(doneData)
+      expect(parsedDone).toBe('[DONE]')
+    },
+  )
 
   it('handles longer prompts with multiple chunks', { timeout: 10000 }, async () => {
     const prompt = 'The quick brown fox jumps over the lazy dog'

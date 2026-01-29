@@ -160,7 +160,7 @@ export abstract class AbstractSSEController<
 
     try {
       const reply = connection.reply as SSEReply
-      // @fastify/sse handles JSON serialization internally, so pass data as-is
+      // @fastify/sse serializes data (JSON by default, customizable via plugin config)
       await reply.sse.send({
         data: message.data,
         event: message.event,
