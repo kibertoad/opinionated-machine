@@ -165,3 +165,40 @@ export const loggerTestStreamContract = buildSSERoute({
     message: z.object({ text: z.string() }),
   },
 })
+
+/**
+ * POST SSE route for OpenAI-style streaming with string terminator.
+ * Demonstrates that JSON encoding is not mandatory - plain strings work too.
+ *
+ * OpenAI's streaming API sends JSON chunks and terminates with a plain "[DONE]" string:
+ * ```
+ * data: {"choices":[{"delta":{"content":"Hello"}}]}
+ * data: {"choices":[{"delta":{"content":" World"}}]}
+ * data: [DONE]
+ * ```
+ */
+export const openaiStyleStreamContract = buildPayloadSSERoute({
+  method: 'POST',
+  path: '/api/openai-style/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  body: z.object({
+    prompt: z.string(),
+    stream: z.literal(true),
+  }),
+  events: {
+    // JSON object events (typical streaming chunks)
+    chunk: z.object({
+      choices: z.array(
+        z.object({
+          delta: z.object({
+            content: z.string(),
+          }),
+        }),
+      ),
+    }),
+    // Plain string terminator - not JSON encoded
+    done: z.string(),
+  },
+})
