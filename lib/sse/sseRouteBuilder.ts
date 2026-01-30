@@ -52,6 +52,19 @@ async function handleReconnection(
 }
 
 /**
+ * Check if a value is an Error-like object (cross-realm safe).
+ * Uses duck typing instead of instanceof for reliability across realms.
+ */
+function isErrorLike(err: unknown): err is { message: string } {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'message' in err &&
+    typeof (err as { message: unknown }).message === 'string'
+  )
+}
+
+/**
  * Send error event to client and close connection gracefully.
  */
 async function handleHandlerError(
@@ -64,7 +77,7 @@ async function handleHandlerError(
   try {
     await sseReply.sse.send({
       event: 'error',
-      data: { message: err instanceof Error ? err.message : 'Internal server error' },
+      data: { message: isErrorLike(err) ? err.message : 'Internal server error' },
     })
   } catch {
     // Connection might already be closed, ignore
