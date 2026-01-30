@@ -177,7 +177,7 @@ export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
       // Create type-safe event sender for the handler
       // This provides compile-time checking that event names and data match the contract
       const send: SSEEventSender<Contract['events']> = (eventName, data, sendOptions) => {
-        return controller.sendEventInternal(connectionId, {
+        return controller._sendEventRaw(connectionId, {
           event: eventName,
           data,
           id: sendOptions?.id,

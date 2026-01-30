@@ -1,10 +1,13 @@
 import type { SSEReplyInterface } from '@fastify/sse'
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
+import type { z } from 'zod'
 import { SSEConnectionSpy } from './SSEConnectionSpy.ts'
 import type { AnySSERouteDefinition } from './sseContracts.ts'
 import type {
+  AllContractEventNames,
   BuildSSERoutesReturnType,
+  ExtractEventSchema,
   SSEConnection,
   SSEControllerConfig,
   SSEMessage,
@@ -14,7 +17,10 @@ import type {
 export type { SSEConnectionEvent } from './SSEConnectionSpy.ts'
 export { SSEConnectionSpy } from './SSEConnectionSpy.ts'
 export type {
+  AllContractEventNames,
+  AllContractEvents,
   BuildSSERoutesReturnType,
+  ExtractEventSchema,
   InferSSERequest,
   SSEConnection,
   SSEControllerConfig,
@@ -151,6 +157,10 @@ export abstract class AbstractSSEController<
   /**
    * Send an event to a specific connection.
    *
+   * This is a private method used internally by broadcast methods and sendEventInternal.
+   * Handlers should use the type-safe `send` function passed as a parameter instead
+   * of calling this method directly.
+   *
    * Event data is validated against the Zod schema defined in the contract's `events` field
    * if the connection has event schemas attached (which happens automatically when routes
    * are built using buildFastifySSERoute).
@@ -160,7 +170,7 @@ export abstract class AbstractSSEController<
    * @returns true if sent successfully, false if connection not found or closed
    * @throws Error if event data fails validation against the contract schema
    */
-  protected async sendEvent<T>(connectionId: string, message: SSEMessage<T>): Promise<boolean> {
+  private async sendEvent<T>(connectionId: string, message: SSEMessage<T>): Promise<boolean> {
     const connection = this.connections.get(connectionId)
     if (!connection) {
       return false
@@ -200,11 +210,50 @@ export abstract class AbstractSSEController<
   }
 
   /**
-   * Internal method for sending events from the route builder's typed sender.
-   * This is called by the type-safe `send` function passed to handlers.
+   * Raw internal method for the route builder to send events.
+   * This is used by the route builder to create the typed `send` function.
+   * External code should use `sendEventInternal` instead for type safety.
    * @internal
    */
-  public sendEventInternal<T>(connectionId: string, message: SSEMessage<T>): Promise<boolean> {
+  public _sendEventRaw<T>(connectionId: string, message: SSEMessage<T>): Promise<boolean> {
+    return this.sendEvent(connectionId, message)
+  }
+
+  /**
+   * Send an event to a connection with type-safe event names and data.
+   *
+   * This method provides autocomplete and type checking for event names and data
+   * that match any event defined in the controller's contracts. Use this for
+   * external event sources (subscriptions, timers, message queues) when you
+   * don't have access to the handler's `send` function.
+   *
+   * For best type safety in handlers, use the `send` parameter instead.
+   * For external sources, you can also store the `send` function for per-route typing.
+   *
+   * @example
+   * ```typescript
+   * // External event source (subscription callback)
+   * this.messageQueue.onMessage((msg) => {
+   *   this.sendEventInternal(connectionId, {
+   *     event: 'notification',  // autocomplete shows all valid events
+   *     data: { id: msg.id, message: msg.text }  // typed based on event
+   *   })
+   * })
+   * ```
+   *
+   * @param connectionId - The connection to send to
+   * @param message - The event message with typed event name and data
+   * @returns true if sent successfully, false if connection not found
+   */
+  public sendEventInternal<EventName extends AllContractEventNames<APIContracts>>(
+    connectionId: string,
+    message: {
+      event: EventName
+      data: z.input<ExtractEventSchema<APIContracts, EventName>>
+      id?: string
+      retry?: number
+    },
+  ): Promise<boolean> {
     return this.sendEvent(connectionId, message)
   }
 

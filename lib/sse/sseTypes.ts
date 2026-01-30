@@ -9,6 +9,46 @@ import type { AnySSERouteDefinition } from './sseContracts.ts'
 export type SSEEventSchemas = Record<string, z.ZodTypeAny>
 
 /**
+ * Extract all event names from all contracts as a union of string literals.
+ *
+ * @example
+ * ```typescript
+ * type Contracts = {
+ *   notifications: { events: { alert: z.ZodObject<...> } }
+ *   chat: { events: { message: z.ZodObject<...>, done: z.ZodObject<...> } }
+ * }
+ * // AllContractEventNames<Contracts> = 'alert' | 'message' | 'done'
+ * ```
+ */
+export type AllContractEventNames<Contracts extends Record<string, AnySSERouteDefinition>> =
+  Contracts[keyof Contracts]['events'] extends infer E
+    ? E extends SSEEventSchemas
+      ? keyof E & string
+      : never
+    : never
+
+/**
+ * Extract the schema for a specific event name across all contracts.
+ * Returns the Zod schema for the event, or never if not found.
+ */
+export type ExtractEventSchema<
+  Contracts extends Record<string, AnySSERouteDefinition>,
+  EventName extends string,
+> = {
+  [K in keyof Contracts]: EventName extends keyof Contracts[K]['events']
+    ? Contracts[K]['events'][EventName]
+    : never
+}[keyof Contracts]
+
+/**
+ * Flatten all events from all contracts into a single record.
+ * Used for type-safe event sending across all controller routes.
+ */
+export type AllContractEvents<Contracts extends Record<string, AnySSERouteDefinition>> = {
+  [EventName in AllContractEventNames<Contracts>]: ExtractEventSchema<Contracts, EventName>
+}
+
+/**
  * Minimal logger interface for SSE route error handling.
  * Compatible with CommonLogger from @lokalise/node-core and pino loggers.
  */
