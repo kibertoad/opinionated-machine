@@ -9,10 +9,24 @@ import type { SSEEventSchemas, SSERouteHandler } from './sseTypes.ts'
 export type SSEMethod = 'GET' | 'POST' | 'PUT' | 'PATCH'
 
 /**
+ * Path resolver type - receives typed params, returns path string.
+ * This provides type-safe path construction where TypeScript enforces
+ * that all required path parameters are provided.
+ *
+ * @example
+ * ```typescript
+ * // TypeScript ensures params.channelId exists and is string
+ * const resolver: SSEPathResolver<{ channelId: string }> = (params) =>
+ *   `/api/channels/${params.channelId}/stream`
+ * ```
+ */
+export type SSEPathResolver<Params> = (params: Params) => string
+
+/**
  * Definition for an SSE route with type-safe contracts.
  *
  * @template Method - HTTP method (GET, POST, PUT, PATCH)
- * @template Path - URL path pattern
+ * @template Path - URL path pattern (deprecated: use pathResolver instead)
  * @template Params - Path parameters schema
  * @template Query - Query string parameters schema
  * @template RequestHeaders - Request headers schema
@@ -29,7 +43,16 @@ export type SSERouteDefinition<
   Events extends SSEEventSchemas = SSEEventSchemas,
 > = {
   method: Method
-  path: Path
+  /**
+   * Static path string (deprecated: use pathResolver for type-safe path construction)
+   * @deprecated Use pathResolver instead for better type safety
+   */
+  path?: Path
+  /**
+   * Type-safe path resolver function.
+   * Receives typed params and returns the URL path string.
+   */
+  pathResolver?: SSEPathResolver<z.infer<Params>>
   params: Params
   query: Query
   requestHeaders: RequestHeaders
@@ -39,17 +62,21 @@ export type SSERouteDefinition<
 }
 
 /**
- * Type representing any SSE route definition (for use in generic constraints)
+ * Type representing any SSE route definition (for use in generic constraints).
+ * Uses a manually defined type to avoid pathResolver type incompatibilities.
  */
-export type AnySSERouteDefinition = SSERouteDefinition<
-  SSEMethod,
-  string,
-  z.ZodTypeAny,
-  z.ZodTypeAny,
-  z.ZodTypeAny,
-  z.ZodTypeAny | undefined,
-  SSEEventSchemas
->
+export type AnySSERouteDefinition = {
+  method: SSEMethod
+  path?: string
+  // biome-ignore lint/suspicious/noExplicitAny: Required for compatibility with all param types
+  pathResolver?: SSEPathResolver<any>
+  params: z.ZodTypeAny
+  query: z.ZodTypeAny
+  requestHeaders: z.ZodTypeAny
+  body: z.ZodTypeAny | undefined
+  events: SSEEventSchemas
+  isSSE: true
+}
 
 /**
  * Configuration for building a GET SSE route
@@ -61,7 +88,16 @@ export type SSERouteConfig<
   RequestHeaders extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
 > = {
-  path: Path
+  /**
+   * Static path string (deprecated: use pathResolver for type-safe path construction)
+   * @deprecated Use pathResolver instead for better type safety
+   */
+  path?: Path
+  /**
+   * Type-safe path resolver function.
+   * Receives typed params and returns the URL path string.
+   */
+  pathResolver?: SSEPathResolver<z.infer<Params>>
   params: Params
   query: Query
   requestHeaders: RequestHeaders
@@ -80,7 +116,16 @@ export type PayloadSSERouteConfig<
   Events extends SSEEventSchemas,
 > = {
   method?: 'POST' | 'PUT' | 'PATCH'
-  path: Path
+  /**
+   * Static path string (deprecated: use pathResolver for type-safe path construction)
+   * @deprecated Use pathResolver instead for better type safety
+   */
+  path?: Path
+  /**
+   * Type-safe path resolver function.
+   * Receives typed params and returns the URL path string.
+   */
+  pathResolver?: SSEPathResolver<z.infer<Params>>
   params: Params
   query: Query
   requestHeaders: RequestHeaders
@@ -119,6 +164,7 @@ export function buildSSERoute<
   return {
     method: 'GET',
     path: config.path,
+    pathResolver: config.pathResolver,
     params: config.params,
     query: config.query,
     requestHeaders: config.requestHeaders,
@@ -167,6 +213,7 @@ export function buildPayloadSSERoute<
   return {
     method: config.method ?? 'POST',
     path: config.path,
+    pathResolver: config.pathResolver,
     params: config.params,
     query: config.query,
     requestHeaders: config.requestHeaders,

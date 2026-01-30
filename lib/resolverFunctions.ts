@@ -14,6 +14,7 @@ declare module 'awilix' {
   interface ResolverOptions<T> {
     public?: boolean // if module is used as secondary, only public dependencies will be exposed. default is false
     isSSEController?: boolean // marks resolver as an SSE controller for special handling
+    isDualModeController?: boolean // marks resolver as a dual-mode controller for special handling
   }
 }
 
@@ -143,6 +144,47 @@ export function asSSEControllerClass<T = object>(
     isSSEController: true,
     asyncDispose: 'closeAllConnections',
     asyncDisposePriority: 5, // Close SSE connections early in shutdown
+    ...opts,
+    lifetime: 'SINGLETON',
+  })
+}
+
+export type DualModeControllerModuleOptions = {
+  diOptions: DependencyInjectionOptions
+}
+
+/**
+ * Register a dual-mode controller class with the DI container.
+ *
+ * Dual-mode controllers handle both SSE streaming and JSON responses on the
+ * same route path, automatically branching based on the `Accept` header.
+ * They require graceful shutdown to close all active SSE connections.
+ *
+ * When `diOptions.isTestMode` is true, connection spying is enabled
+ * allowing tests to await connections via `controller.connectionSpy`.
+ *
+ * @example
+ * ```typescript
+ * // Without test mode
+ * chatController: asDualModeControllerClass(ChatController),
+ *
+ * // With test mode (enables connection spy)
+ * chatController: asDualModeControllerClass(ChatController, { diOptions }),
+ * ```
+ */
+export function asDualModeControllerClass<T = object>(
+  Type: Constructor<T>,
+  dualModeOptions?: DualModeControllerModuleOptions,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  const enableConnectionSpy = dualModeOptions?.diOptions.isTestMode ?? false
+  const config = enableConnectionSpy ? { enableConnectionSpy: true } : undefined
+
+  return asClassWithConfig(Type, config, {
+    public: false,
+    isDualModeController: true,
+    asyncDispose: 'closeAllConnections',
+    asyncDisposePriority: 5, // Close connections early in shutdown
     ...opts,
     lifetime: 'SINGLETON',
   })

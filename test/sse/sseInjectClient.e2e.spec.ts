@@ -54,7 +54,7 @@ describe('SSEInjectClient E2E', () => {
     })
 
     it('streams response chunks for POST request', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.path, {
+      const conn = await client.connectWithBody(chatCompletionContract.path!, {
         message: 'Hello World Test',
         stream: true as const,
       })
@@ -75,7 +75,7 @@ describe('SSEInjectClient E2E', () => {
     })
 
     it('parses streamed content correctly', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.path, {
+      const conn = await client.connectWithBody(chatCompletionContract.path!, {
         message: 'One Two',
         stream: true as const,
       })
@@ -89,7 +89,7 @@ describe('SSEInjectClient E2E', () => {
     })
 
     it('waitForEvent finds specific event type', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.path, {
+      const conn = await client.connectWithBody(chatCompletionContract.path!, {
         message: 'Test',
         stream: true as const,
       })
@@ -99,7 +99,7 @@ describe('SSEInjectClient E2E', () => {
     })
 
     it('waitForEvents returns requested count', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.path, {
+      const conn = await client.connectWithBody(chatCompletionContract.path!, {
         message: 'A B C D',
         stream: true as const,
       })
@@ -236,7 +236,7 @@ describe('SSEInjectClient E2E', () => {
     })
 
     it('isClosed returns true (inject responses are always complete)', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.path, {
+      const conn = await client.connectWithBody(chatCompletionContract.path!, {
         message: 'Test',
         stream: true as const,
       })
@@ -245,7 +245,7 @@ describe('SSEInjectClient E2E', () => {
     })
 
     it('close is a no-op for inject connections', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.path, {
+      const conn = await client.connectWithBody(chatCompletionContract.path!, {
         message: 'Test',
         stream: true as const,
       })
@@ -256,7 +256,7 @@ describe('SSEInjectClient E2E', () => {
     })
 
     it('getReceivedEvents returns a copy', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.path, {
+      const conn = await client.connectWithBody(chatCompletionContract.path!, {
         message: 'Test',
         stream: true as const,
       })

@@ -1,24 +1,43 @@
 import type { FastifyInstance } from 'fastify'
 import type { z } from 'zod'
-import type { SSERouteDefinition } from '../sse/sseContracts.ts'
+import type { SSEPathResolver, SSERouteDefinition } from '../sse/sseContracts.ts'
 import type { InjectPayloadSSEOptions, InjectSSEOptions, InjectSSEResult } from './sseTestTypes.ts'
 
 /**
- * Build URL from contract path and params.
+ * Contract type that has either path or pathResolver.
  * @internal
  */
-export function buildUrl<Contract extends { path: string }>(
+type ContractWithPath = {
+  path?: string
+  pathResolver?: SSEPathResolver<unknown>
+}
+
+/**
+ * Build URL from contract path/pathResolver and params.
+ * Supports both legacy `path` property and new `pathResolver` function.
+ * @internal
+ */
+export function buildUrl<Contract extends ContractWithPath>(
   contract: Contract,
   params?: Record<string, string>,
   query?: Record<string, unknown>,
 ): string {
-  let url = contract.path
+  let url: string
 
-  // Substitute path params
-  if (params) {
-    for (const [key, value] of Object.entries(params)) {
-      url = url.replace(`:${key}`, encodeURIComponent(String(value)))
+  // Support both pathResolver (new) and path (legacy)
+  if (contract.pathResolver) {
+    // pathResolver expects actual params, not placeholders
+    url = contract.pathResolver(params ?? {})
+  } else if (contract.path) {
+    url = contract.path
+    // Substitute path params for legacy path strings
+    if (params) {
+      for (const [key, value] of Object.entries(params)) {
+        url = url.replace(`:${key}`, encodeURIComponent(String(value)))
+      }
     }
+  } else {
+    throw new Error('Contract must have either path or pathResolver defined')
   }
 
   // Add query string

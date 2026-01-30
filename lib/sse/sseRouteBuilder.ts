@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { SSEReplyInterface } from '@fastify/sse'
 import type { FastifyReply, RouteOptions } from 'fastify'
+import type { z } from 'zod'
 import type { AbstractSSEController } from './AbstractSSEController.ts'
-import type { AnySSERouteDefinition } from './sseContracts.ts'
+import type { AnySSERouteDefinition, SSEPathResolver } from './sseContracts.ts'
 import type { SSEConnection, SSEEventSender, SSEHandlerConfig, SSEMessage } from './sseTypes.ts'
 
 /**
@@ -93,6 +94,31 @@ async function handleHandlerError(
 }
 
 /**
+ * Extract Fastify path template from pathResolver.
+ *
+ * This function creates placeholder params with ':paramName' values and calls
+ * the pathResolver to generate a Fastify-compatible path template.
+ *
+ * @example
+ * ```typescript
+ * // pathResolver: (p) => `/channels/${p.channelId}/stream`
+ * // paramsSchema: z.object({ channelId: z.string() })
+ * // Result: '/channels/:channelId/stream'
+ * ```
+ */
+export function extractSSEPathTemplate<Params>(
+  pathResolver: SSEPathResolver<Params>,
+  paramsSchema: z.ZodObject<z.ZodRawShape>,
+): string {
+  // Create placeholder params object with ':paramName' values
+  const placeholderParams: Record<string, string> = {}
+  for (const key of Object.keys(paramsSchema.shape)) {
+    placeholderParams[key] = `:${key}`
+  }
+  return pathResolver(placeholderParams as unknown as Params)
+}
+
+/**
  * Build a Fastify route configuration for an SSE endpoint.
  *
  * This function creates a route that integrates with @fastify/sse
@@ -108,9 +134,18 @@ export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
 ): RouteOptions {
   const { contract, handler, options } = config
 
+  // Support both pathResolver (new) and static path (deprecated but supported for backward compat)
+  const url = contract.pathResolver
+    ? extractSSEPathTemplate(contract.pathResolver, contract.params as z.ZodObject<z.ZodRawShape>)
+    : contract.path
+
+  if (!url) {
+    throw new Error('SSE contract must have either path or pathResolver defined')
+  }
+
   const routeOptions: RouteOptions = {
     method: contract.method,
-    url: contract.path,
+    url,
     sse: true,
     schema: {
       params: contract.params,
