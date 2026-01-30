@@ -476,17 +476,17 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
   }
 
   // Handler with automatic type inference from contract
-  // The `send` parameter provides type-safe event sending
+  // connection.send provides type-safe event sending
   private handleStream = buildSSEHandler(
     notificationsContract,
-    async (request, connection, send) => {
+    async (request, connection) => {
       // request.query is typed from contract: { userId?: string }
       const userId = request.query.userId ?? 'anonymous'
       connection.context = { userId }
 
       // For external triggers (subscriptions, timers, message queues), use sendEventInternal.
-      // The `send` parameter is only available within this handler's scope - external callbacks
-      // like subscription handlers execute later, outside this function, so they can't access `send`.
+      // connection.send is only available within this handler's scope - external callbacks
+      // like subscription handlers execute later, outside this function, so they can't access connection.
       // sendEventInternal is a controller method, so it's accessible from any callback.
       // It provides autocomplete for all event names defined in the controller's contracts.
       this.notificationService.subscribe(userId, async (notification) => {
@@ -496,9 +496,9 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
         })
       })
 
-      // For direct sending within the handler, use the `send` parameter.
+      // For direct sending within the handler, use the connection's send method.
       // It provides stricter per-route typing (only events from this specific contract).
-      await send('notification', { id: 'welcome', message: 'Connected!' })
+      await connection.send('notification', { id: 'welcome', message: 'Connected!' })
     },
   )
 
@@ -536,17 +536,17 @@ class ChatSSEController extends AbstractSSEController<Contracts> {
   }
 
   // Handler with automatic type inference from contract
-  // The `send` parameter is the preferred way to send events - fully typed per-route
+  // connection.send is fully typed per-route
   private handleChatCompletion = buildSSEHandler(
     chatCompletionContract,
-    async (request, connection, send) => {
+    async (request, connection) => {
       // request.body is typed as { message: string; stream: true }
       // request.query, request.params, request.headers all typed from contract
       const words = request.body.message.split(' ')
 
       for (const word of words) {
-        // send() provides compile-time type checking for event names and data
-        await send('chunk', { content: word })
+        // connection.send() provides compile-time type checking for event names and data
+        await connection.send('chunk', { content: word })
       }
 
       // Gracefully end the stream - all sent data is flushed before connection closes
@@ -568,16 +568,15 @@ class ChatSSEController extends AbstractSSEController<Contracts> {
 You can also use `InferSSERequest<Contract>` for manual type annotation when needed:
 
 ```ts
-import { type InferSSERequest, type SSEConnection, type SSEEventSender } from 'opinionated-machine'
+import { type InferSSERequest, type SSEConnection } from 'opinionated-machine'
 
 private handleStream = async (
   request: InferSSERequest<typeof chatCompletionContract>,
-  connection: SSEConnection,
-  send: SSEEventSender<typeof chatCompletionContract['events']>,
+  connection: SSEConnection<typeof chatCompletionContract['events']>,
 ) => {
   // request.body, request.params, etc. all typed from contract
-  // send() is typed based on contract events
-  await send('chunk', { content: 'hello' })
+  // connection.send() is typed based on contract events
+  await connection.send('chunk', { content: 'hello' })
 }
 ```
 
@@ -777,34 +776,31 @@ public buildSSERoutes() {
 - Use `sendEventInternal()` for external triggers (typed with union of all contract events)
 
 ```ts
-private handleStream = buildSSEHandler(streamContract, async (request, connection, send) => {
-  // External callbacks (subscriptions, timers) can't access `send` - it's only in this scope.
+private handleStream = buildSSEHandler(streamContract, async (request, connection) => {
+  // External callbacks (subscriptions, timers) can't access `connection` - it's only in this scope.
   // Use sendEventInternal instead - it's a controller method accessible from any callback.
   this.service.subscribe(connection.id, (data) => {
     this.sendEventInternal(connection.id, { event: 'update', data })
   })
-
-  // Alternative: store the `send` function for stricter per-route typing
-  this.senders.set(connection.id, send)
   // Handler returns, connection stays open
 })
 ```
 
 **Request-response streaming** (AI completions):
 - Handler sends all events and closes connection
-- Use `send` parameter for type-safe event sending
+- Use `connection.send` for type-safe event sending
 
 ```ts
-private handleChatCompletion = buildSSEHandler(chatCompletionContract, async (request, connection, send) => {
+private handleChatCompletion = buildSSEHandler(chatCompletionContract, async (request, connection) => {
   // request.body is typed from contract
   const words = request.body.message.split(' ')
 
   for (const word of words) {
-    // send() provides compile-time type checking for event names and data
-    await send('chunk', { content: word })
+    // connection.send() provides compile-time type checking for event names and data
+    await connection.send('chunk', { content: word })
   }
 
-  await send('done', { totalTokens: words.length })
+  await connection.send('done', { totalTokens: words.length })
 
   // Gracefully end the stream - all sent data is flushed before connection closes
   this.closeConnection(connection.id)

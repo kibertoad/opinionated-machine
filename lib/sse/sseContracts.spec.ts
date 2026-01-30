@@ -76,52 +76,52 @@ describe('sseContracts', () => {
     })
 
     it('allows valid event names and payloads', () => {
-      const handler = buildSSEHandler(testContract, async (_request, _connection, send) => {
-        await send('chunk', { content: 'hello' })
-        await send('done', { totalTokens: 42 })
+      const handler = buildSSEHandler(testContract, async (_request, connection) => {
+        await connection.send('chunk', { content: 'hello' })
+        await connection.send('done', { totalTokens: 42 })
       })
 
       expect(handler).toBeDefined()
     })
 
     it('rejects invalid event name at compile time', () => {
-      buildSSEHandler(testContract, async (_request, _connection, send) => {
+      buildSSEHandler(testContract, async (_request, connection) => {
         // @ts-expect-error - 'invalid' is not a valid event name
-        await send('invalid', { content: 'test' })
+        await connection.send('invalid', { content: 'test' })
       })
 
       expect(true).toBe(true)
     })
 
     it('rejects wrong payload at compile time', () => {
-      buildSSEHandler(testContract, async (_request, _connection, send) => {
+      buildSSEHandler(testContract, async (_request, connection) => {
         // @ts-expect-error - chunk expects { content: string }, not { totalTokens: number }
-        await send('chunk', { totalTokens: 42 })
+        await connection.send('chunk', { totalTokens: 42 })
       })
 
       expect(true).toBe(true)
     })
 
     it('rejects missing required field at compile time', () => {
-      buildSSEHandler(testContract, async (_request, _connection, send) => {
+      buildSSEHandler(testContract, async (_request, connection) => {
         // @ts-expect-error - done requires totalTokens field
-        await send('done', {})
+        await connection.send('done', {})
       })
 
       expect(true).toBe(true)
     })
 
     it('rejects wrong field type at compile time', () => {
-      buildSSEHandler(testContract, async (_request, _connection, send) => {
+      buildSSEHandler(testContract, async (_request, connection) => {
         // @ts-expect-error - totalTokens should be number, not string
-        await send('done', { totalTokens: 'not a number' })
+        await connection.send('done', { totalTokens: 'not a number' })
       })
 
       expect(true).toBe(true)
     })
 
     it('types request body from contract', () => {
-      buildSSEHandler(testContract, (request, _connection, _send) => {
+      buildSSEHandler(testContract, (request, _connection) => {
         const message: string = request.body.message
         const count: number = request.body.count
 
@@ -136,7 +136,7 @@ describe('sseContracts', () => {
     })
 
     it('types request params from contract', () => {
-      buildSSEHandler(testContract, (request, _connection, _send) => {
+      buildSSEHandler(testContract, (request, _connection) => {
         const id: string = request.params.id
 
         // @ts-expect-error - nonExistent does not exist on params

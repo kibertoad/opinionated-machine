@@ -121,13 +121,25 @@ export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
     handler: async (request, reply) => {
       const connectionId = randomUUID()
 
-      // Create connection wrapper with event schemas for validation
-      const connection: SSEConnection = {
+      // Create type-safe event sender for the handler
+      // This provides compile-time checking that event names and data match the contract
+      const send: SSEEventSender<Contract['events']> = (eventName, data, sendOptions) => {
+        return controller._sendEventRaw(connectionId, {
+          event: eventName,
+          data,
+          id: sendOptions?.id,
+          retry: sendOptions?.retry,
+        })
+      }
+
+      // Create connection wrapper with event schemas for validation and typed send
+      const connection = {
         id: connectionId,
         request,
         reply,
         context: {},
         connectedAt: new Date(),
+        send,
         eventSchemas: contract.events,
       }
 
@@ -174,23 +186,12 @@ export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
         options?.logger?.error({ err }, 'Error in SSE onConnect handler')
       }
 
-      // Create type-safe event sender for the handler
-      // This provides compile-time checking that event names and data match the contract
-      const send: SSEEventSender<Contract['events']> = (eventName, data, sendOptions) => {
-        return controller._sendEventRaw(connectionId, {
-          event: eventName,
-          data,
-          id: sendOptions?.id,
-          retry: sendOptions?.retry,
-        })
-      }
-
-      // Call user handler with typed event sender
+      // Call user handler with connection (which has typed send method)
       // Errors (including validation errors) are caught, sent as error events, and re-thrown
       // so the app's error handler can process them (for logging, monitoring, etc.)
       try {
         // biome-ignore lint/suspicious/noExplicitAny: Handler types are validated by SSEHandlerConfig
-        await handler(request as any, connection, send)
+        await handler(request as any, connection as any)
       } catch (err) {
         await handleHandlerError(sseReply, controller, connectionId, err)
 

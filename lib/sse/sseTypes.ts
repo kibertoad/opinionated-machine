@@ -76,11 +76,12 @@ export type SSELogger = {
 export type SSEPreHandler = (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>
 
 /**
- * Represents an active SSE connection with typed context.
+ * Represents an active SSE connection with typed event sending.
  *
+ * @template Events - Event schemas for type-safe sending
  * @template Context - Custom context data stored per connection
  */
-export type SSEConnection<Context = unknown> = {
+export type SSEConnection<Events extends SSEEventSchemas = SSEEventSchemas, Context = unknown> = {
   /** Unique identifier for this connection */
   id: string
   /** The original Fastify request */
@@ -91,6 +92,11 @@ export type SSEConnection<Context = unknown> = {
   context: Context
   /** Timestamp when the connection was established */
   connectedAt: Date
+  /**
+   * Type-safe event sender for this connection.
+   * Event names and data are validated against the contract's event schemas.
+   */
+  send: SSEEventSender<Events>
   /**
    * Zod schemas for validating event data.
    * Map of event name to Zod schema. Used by sendEvent for runtime validation.
@@ -163,7 +169,7 @@ export type SSEEventSender<Events extends SSEEventSchemas> = <
 /**
  * Type-safe handler for SSE routes with typed event sending.
  *
- * The `send` parameter provides compile-time type checking for event names
+ * The `connection.send` method provides compile-time type checking for event names
  * and their payloads based on the contract's event schemas.
  *
  * @template Params - Path parameters type
@@ -176,9 +182,9 @@ export type SSEEventSender<Events extends SSEEventSchemas> = <
  * @example
  * ```typescript
  * const handler: SSERouteHandler<{}, {}, {}, { message: string }, typeof contract.events> =
- *   async (request, connection, send) => {
- *     await send('chunk', { content: request.body.message })
- *     await send('done', { totalTokens: 1 })
+ *   async (request, connection) => {
+ *     await connection.send('chunk', { content: request.body.message })
+ *     await connection.send('done', { totalTokens: 1 })
  *   }
  * ```
  */
@@ -191,8 +197,7 @@ export type SSERouteHandler<
   Context = unknown,
 > = (
   request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
-  connection: SSEConnection<Context>,
-  send: SSEEventSender<Events>,
+  connection: SSEConnection<Events, Context>,
 ) => void | Promise<void>
 
 /**
@@ -242,7 +247,7 @@ export type SSERouteOptions = {
 export type SSEHandlerConfig<Contract extends AnySSERouteDefinition> = {
   /** The SSE route contract */
   contract: Contract
-  /** Handler called when connection is established (with type-safe event sender) */
+  /** Handler called when connection is established (connection has type-safe send method) */
   handler: SSERouteHandler<
     z.infer<Contract['params']>,
     z.infer<Contract['query']>,

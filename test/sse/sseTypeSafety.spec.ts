@@ -54,19 +54,16 @@ describe('SSE Controller Type Safety', () => {
         }
 
         // Handler using buildSSEHandler for type inference
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (request, _connection, send) => {
-            // Valid: correct event names and payloads
-            await send('chunk', { content: 'Hello', index: 0 })
-            await send('chunk', { content: ' world', index: 1 })
-            await send('done', { totalTokens: 10, model: request.body.model })
+        private handleChat = buildSSEHandler(chatStreamContract, async (request, connection) => {
+          // Valid: correct event names and payloads
+          await connection.send('chunk', { content: 'Hello', index: 0 })
+          await connection.send('chunk', { content: ' world', index: 1 })
+          await connection.send('done', { totalTokens: 10, model: request.body.model })
 
-            // Request body is typed
-            const messages = request.body.messages
-            expect(messages).toBeDefined()
-          },
-        )
+          // Request body is typed
+          const messages = request.body.messages
+          expect(messages).toBeDefined()
+        })
       }
 
       const controller = new ChatSSEController({})
@@ -86,13 +83,10 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (_request, _connection, send) => {
-            // @ts-expect-error - 'message' is not a valid event name, should be 'chunk', 'done', or 'error'
-            await send('message', { text: 'hello' })
-          },
-        )
+        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
+          // @ts-expect-error - 'message' is not a valid event name, should be 'chunk', 'done', or 'error'
+          await connection.send('message', { text: 'hello' })
+        })
       }
 
       expect(InvalidEventController).toBeDefined()
@@ -111,13 +105,10 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (_request, _connection, send) => {
-            // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not { text: string }
-            await send('chunk', { text: 'hello' })
-          },
-        )
+        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
+          // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not { text: string }
+          await connection.send('chunk', { text: 'hello' })
+        })
       }
 
       expect(WrongPayloadController).toBeDefined()
@@ -136,13 +127,10 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (_request, _connection, send) => {
-            // @ts-expect-error - 'done' event requires both 'totalTokens' and 'model', missing 'model'
-            await send('done', { totalTokens: 10 })
-          },
-        )
+        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
+          // @ts-expect-error - 'done' event requires both 'totalTokens' and 'model', missing 'model'
+          await connection.send('done', { totalTokens: 10 })
+        })
       }
 
       expect(MissingFieldController).toBeDefined()
@@ -161,13 +149,10 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (_request, _connection, send) => {
-            // @ts-expect-error - 'index' should be number, not string
-            await send('chunk', { content: 'hello', index: 'one' })
-          },
-        )
+        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
+          // @ts-expect-error - 'index' should be number, not string
+          await connection.send('chunk', { content: 'hello', index: 'one' })
+        })
       }
 
       expect(WrongTypeController).toBeDefined()
@@ -186,19 +171,16 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (_request, _connection, send) => {
-            // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not 'done' payload { totalTokens: number, model: string }
-            await send('chunk', { totalTokens: 10, model: 'gpt-4' })
+        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
+          // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not 'done' payload { totalTokens: number, model: string }
+          await connection.send('chunk', { totalTokens: 10, model: 'gpt-4' })
 
-            // @ts-expect-error - 'done' event expects { totalTokens: number, model: string }, not 'chunk' payload { content: string, index: number }
-            await send('done', { content: 'hello', index: 0 })
+          // @ts-expect-error - 'done' event expects { totalTokens: number, model: string }, not 'chunk' payload { content: string, index: number }
+          await connection.send('done', { content: 'hello', index: 0 })
 
-            // @ts-expect-error - 'error' event expects { code: number, message: string }, not 'chunk' payload
-            await send('error', { content: 'hello', index: 0 })
-          },
-        )
+          // @ts-expect-error - 'error' event expects { code: number, message: string }, not 'chunk' payload
+          await connection.send('error', { content: 'hello', index: 0 })
+        })
       }
 
       expect(MismatchedPayloadController).toBeDefined()
@@ -217,7 +199,7 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(chatStreamContract, (request, _connection, _send) => {
+        private handleChat = buildSSEHandler(chatStreamContract, (request, _connection) => {
           // These should be typed
           const model: string = request.body.model
           const messages: Array<{ role: string; content: string }> = request.body.messages
@@ -246,7 +228,7 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(chatStreamContract, (request, _connection, _send) => {
+        private handleChat = buildSSEHandler(chatStreamContract, (request, _connection) => {
           // Authorization header is typed as string (required by contract schema)
           const auth: string = request.headers.authorization
 

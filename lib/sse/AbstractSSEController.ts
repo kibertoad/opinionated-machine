@@ -158,8 +158,8 @@ export abstract class AbstractSSEController<
    * Send an event to a specific connection.
    *
    * This is a private method used internally by broadcast methods and sendEventInternal.
-   * Handlers should use the type-safe `send` function passed as a parameter instead
-   * of calling this method directly.
+   * Handlers should use the type-safe `connection.send` method instead of calling
+   * this method directly.
    *
    * Event data is validated against the Zod schema defined in the contract's `events` field
    * if the connection has event schemas attached (which happens automatically when routes
