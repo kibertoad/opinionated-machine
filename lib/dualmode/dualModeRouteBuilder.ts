@@ -26,19 +26,23 @@ export function determineMode(
   if (!accept) return defaultMode
 
   // Split by comma and parse each media type with quality value
-  const mediaTypes = accept.split(',').map((part) => {
-    const [mediaType, ...params] = part.trim().split(';')
-    let quality = 1.0
+  const mediaTypes = accept
+    .split(',')
+    .map((part) => {
+      const [mediaType, ...params] = part.trim().split(';')
+      let quality = 1.0
 
-    for (const param of params) {
-      const [key, value] = param.trim().split('=')
-      if (key === 'q' && value) {
-        quality = Number.parseFloat(value)
+      for (const param of params) {
+        const [key, value] = param.trim().split('=')
+        if (key === 'q' && value) {
+          quality = Number.parseFloat(value)
+        }
       }
-    }
 
-    return { mediaType: (mediaType ?? '').trim().toLowerCase(), quality }
-  })
+      return { mediaType: (mediaType ?? '').trim().toLowerCase(), quality }
+    })
+    // Filter out rejected types (quality <= 0)
+    .filter((entry) => entry.quality > 0)
 
   // Sort by quality (highest first)
   mediaTypes.sort((a, b) => b.quality - a.quality)

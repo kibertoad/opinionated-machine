@@ -1299,7 +1299,7 @@ Dual-mode controllers handle both SSE streaming and JSON responses on the same r
 ### Overview
 
 | Accept Header | Response Mode |
-|---------------|---------------|
+| ------------- | ------------- |
 | `text/event-stream` | SSE streaming |
 | `application/json` | JSON response |
 | `*/*` or missing | JSON (default, configurable) |
@@ -1399,8 +1399,10 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
           },
           // SSE mode - stream response chunks
           sse: async (ctx) => {
+            let totalTokens = 0
             for await (const chunk of this.aiService.stream(ctx.request.body.message)) {
               await ctx.connection.send('chunk', { delta: chunk.text })
+              totalTokens += chunk.tokenCount ?? 0
             }
             await ctx.connection.send('done', { usage: { total: totalTokens } })
             this.closeConnection(ctx.connection.id)
@@ -1428,7 +1430,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 **Handler Context:**
 
 | Mode | Context Properties |
-|------|-------------------|
+| ---- | ------------------ |
 | `json` | `ctx.mode`, `ctx.request`, `ctx.reply` |
 | `sse` | `ctx.mode`, `ctx.connection`, `ctx.request` |
 
