@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { SSERouteHandler } from './sseTypes.ts'
+import type { SSEEventSchemas, SSERouteHandler } from './sseTypes.ts'
 
 /**
  * Supported HTTP methods for SSE routes.
@@ -26,7 +26,7 @@ export type SSERouteDefinition<
   Query extends z.ZodTypeAny = z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny = z.ZodTypeAny,
   Body extends z.ZodTypeAny | undefined = undefined,
-  Events extends Record<string, z.ZodTypeAny> = Record<string, z.ZodTypeAny>,
+  Events extends SSEEventSchemas = SSEEventSchemas,
 > = {
   method: Method
   path: Path
@@ -48,7 +48,7 @@ export type AnySSERouteDefinition = SSERouteDefinition<
   z.ZodTypeAny,
   z.ZodTypeAny,
   z.ZodTypeAny | undefined,
-  Record<string, z.ZodTypeAny>
+  SSEEventSchemas
 >
 
 /**
@@ -59,7 +59,7 @@ export type SSERouteConfig<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
-  Events extends Record<string, z.ZodTypeAny>,
+  Events extends SSEEventSchemas,
 > = {
   path: Path
   params: Params
@@ -77,7 +77,7 @@ export type PayloadSSERouteConfig<
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Body extends z.ZodTypeAny,
-  Events extends Record<string, z.ZodTypeAny>,
+  Events extends SSEEventSchemas,
 > = {
   method?: 'POST' | 'PUT' | 'PATCH'
   path: Path
@@ -112,7 +112,7 @@ export function buildSSERoute<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
-  Events extends Record<string, z.ZodTypeAny>,
+  Events extends SSEEventSchemas,
 >(
   config: SSERouteConfig<Path, Params, Query, RequestHeaders, Events>,
 ): SSERouteDefinition<'GET', Path, Params, Query, RequestHeaders, undefined, Events> {
@@ -160,7 +160,7 @@ export function buildPayloadSSERoute<
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Body extends z.ZodTypeAny,
-  Events extends Record<string, z.ZodTypeAny>,
+  Events extends SSEEventSchemas,
 >(
   config: PayloadSSERouteConfig<Path, Params, Query, RequestHeaders, Body, Events>,
 ): SSERouteDefinition<'POST' | 'PUT' | 'PATCH', Path, Params, Query, RequestHeaders, Body, Events> {

@@ -5,6 +5,7 @@ export {
   type SSEConnection,
   type SSEConnectionEvent,
   type SSEControllerConfig,
+  type SSEEventSchemas,
   type SSEHandlerConfig,
   type SSELogger,
   type SSEMessage,

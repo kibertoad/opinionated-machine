@@ -3,6 +3,12 @@ import type { z } from 'zod'
 import type { AnySSERouteDefinition } from './sseContracts.ts'
 
 /**
+ * Type constraint for SSE event schemas.
+ * Maps event names to their Zod schemas for validation.
+ */
+export type SSEEventSchemas = Record<string, z.ZodTypeAny>
+
+/**
  * Minimal logger interface for SSE route error handling.
  * Compatible with CommonLogger from @lokalise/node-core and pino loggers.
  */
@@ -50,7 +56,7 @@ export type SSEConnection<Context = unknown> = {
    * Map of event name to Zod schema. Used by sendEvent for runtime validation.
    * @internal
    */
-  eventSchemas?: Record<string, z.ZodTypeAny>
+  eventSchemas?: SSEEventSchemas
 }
 
 /**
@@ -106,7 +112,7 @@ export type SSEMessage<T = unknown> = {
  * send('invalid', { })                 // TS Error: 'invalid' is not a valid event name
  * ```
  */
-export type SSEEventSender<Events extends Record<string, z.ZodTypeAny>> = <
+export type SSEEventSender<Events extends SSEEventSchemas> = <
   EventName extends keyof Events & string,
 >(
   eventName: EventName,
@@ -141,7 +147,7 @@ export type SSERouteHandler<
   Query = unknown,
   Headers = unknown,
   Body = unknown,
-  Events extends Record<string, z.ZodTypeAny> = Record<string, z.ZodTypeAny>,
+  Events extends SSEEventSchemas = SSEEventSchemas,
   Context = unknown,
 > = (
   request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,

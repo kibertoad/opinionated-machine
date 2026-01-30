@@ -415,6 +415,19 @@ export const chatCompletionContract = buildPayloadSSERoute({
 })
 ```
 
+For reusable event schema definitions, you can use the `SSEEventSchemas` type:
+
+```ts
+import { type SSEEventSchemas } from 'opinionated-machine'
+
+// Define reusable event schemas for multiple contracts
+const streamingEvents = {
+  chunk: z.object({ content: z.string() }),
+  done: z.object({ totalTokens: z.number() }),
+  error: z.object({ code: z.number(), message: z.string() }),
+} satisfies SSEEventSchemas
+```
+
 ### Creating SSE Controllers
 
 SSE controllers extend `AbstractSSEController` and must implement a two-parameter constructor. Use `buildSSEHandler` for automatic type inference of request parameters:

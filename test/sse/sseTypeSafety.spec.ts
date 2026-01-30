@@ -172,6 +172,37 @@ describe('SSE Controller Type Safety', () => {
       expect(WrongTypeController).toBeDefined()
     })
 
+    it('catches mismatched event payload between different event types', () => {
+      class MismatchedPayloadController extends AbstractSSEController<ChatStreamContracts> {
+        public static contracts = { chatStream: chatStreamContract } as const
+
+        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+          return {
+            chatStream: {
+              contract: MismatchedPayloadController.contracts.chatStream,
+              handler: this.handleChat,
+            },
+          }
+        }
+
+        private handleChat = buildSSEHandler(
+          chatStreamContract,
+          async (_request, _connection, send) => {
+            // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not 'done' payload { totalTokens: number, model: string }
+            await send('chunk', { totalTokens: 10, model: 'gpt-4' })
+
+            // @ts-expect-error - 'done' event expects { totalTokens: number, model: string }, not 'chunk' payload { content: string, index: number }
+            await send('done', { content: 'hello', index: 0 })
+
+            // @ts-expect-error - 'error' event expects { code: number, message: string }, not 'chunk' payload
+            await send('error', { content: 'hello', index: 0 })
+          },
+        )
+      }
+
+      expect(MismatchedPayloadController).toBeDefined()
+    })
+
     it('provides typed request body in handler', () => {
       class TypedRequestController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const

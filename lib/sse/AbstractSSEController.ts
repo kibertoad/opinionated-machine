@@ -18,6 +18,7 @@ export type {
   InferSSERequest,
   SSEConnection,
   SSEControllerConfig,
+  SSEEventSchemas,
   SSEEventSender,
   SSEHandlerConfig,
   SSELogger,
