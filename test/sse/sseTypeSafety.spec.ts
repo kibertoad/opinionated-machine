@@ -5,6 +5,7 @@ import {
   type BuildSSERoutesReturnType,
   buildPayloadSSERoute,
   buildSSEHandler,
+  buildSSERoute,
 } from '../../index.js'
 
 /**
@@ -53,19 +54,16 @@ describe('SSE Controller Type Safety', () => {
         }
 
         // Handler using buildSSEHandler for type inference
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (request, _connection, send) => {
-            // Valid: correct event names and payloads
-            await send('chunk', { content: 'Hello', index: 0 })
-            await send('chunk', { content: ' world', index: 1 })
-            await send('done', { totalTokens: 10, model: request.body.model })
+        private handleChat = buildSSEHandler(chatStreamContract, async (request, connection) => {
+          // Valid: correct event names and payloads
+          await connection.send('chunk', { content: 'Hello', index: 0 })
+          await connection.send('chunk', { content: ' world', index: 1 })
+          await connection.send('done', { totalTokens: 10, model: request.body.model })
 
-            // Request body is typed
-            const messages = request.body.messages
-            expect(messages).toBeDefined()
-          },
-        )
+          // Request body is typed
+          const messages = request.body.messages
+          expect(messages).toBeDefined()
+        })
       }
 
       const controller = new ChatSSEController({})
@@ -85,13 +83,10 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (_request, _connection, send) => {
-            // @ts-expect-error - 'message' is not a valid event name, should be 'chunk', 'done', or 'error'
-            await send('message', { text: 'hello' })
-          },
-        )
+        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
+          // @ts-expect-error - 'message' is not a valid event name, should be 'chunk', 'done', or 'error'
+          await connection.send('message', { text: 'hello' })
+        })
       }
 
       expect(InvalidEventController).toBeDefined()
@@ -110,13 +105,10 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (_request, _connection, send) => {
-            // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not { text: string }
-            await send('chunk', { text: 'hello' })
-          },
-        )
+        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
+          // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not { text: string }
+          await connection.send('chunk', { text: 'hello' })
+        })
       }
 
       expect(WrongPayloadController).toBeDefined()
@@ -135,13 +127,10 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (_request, _connection, send) => {
-            // @ts-expect-error - 'done' event requires both 'totalTokens' and 'model', missing 'model'
-            await send('done', { totalTokens: 10 })
-          },
-        )
+        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
+          // @ts-expect-error - 'done' event requires both 'totalTokens' and 'model', missing 'model'
+          await connection.send('done', { totalTokens: 10 })
+        })
       }
 
       expect(MissingFieldController).toBeDefined()
@@ -160,13 +149,10 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (_request, _connection, send) => {
-            // @ts-expect-error - 'index' should be number, not string
-            await send('chunk', { content: 'hello', index: 'one' })
-          },
-        )
+        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
+          // @ts-expect-error - 'index' should be number, not string
+          await connection.send('chunk', { content: 'hello', index: 'one' })
+        })
       }
 
       expect(WrongTypeController).toBeDefined()
@@ -185,19 +171,16 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(
-          chatStreamContract,
-          async (_request, _connection, send) => {
-            // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not 'done' payload { totalTokens: number, model: string }
-            await send('chunk', { totalTokens: 10, model: 'gpt-4' })
+        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
+          // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not 'done' payload { totalTokens: number, model: string }
+          await connection.send('chunk', { totalTokens: 10, model: 'gpt-4' })
 
-            // @ts-expect-error - 'done' event expects { totalTokens: number, model: string }, not 'chunk' payload { content: string, index: number }
-            await send('done', { content: 'hello', index: 0 })
+          // @ts-expect-error - 'done' event expects { totalTokens: number, model: string }, not 'chunk' payload { content: string, index: number }
+          await connection.send('done', { content: 'hello', index: 0 })
 
-            // @ts-expect-error - 'error' event expects { code: number, message: string }, not 'chunk' payload
-            await send('error', { content: 'hello', index: 0 })
-          },
-        )
+          // @ts-expect-error - 'error' event expects { code: number, message: string }, not 'chunk' payload
+          await connection.send('error', { content: 'hello', index: 0 })
+        })
       }
 
       expect(MismatchedPayloadController).toBeDefined()
@@ -216,7 +199,7 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(chatStreamContract, (request, _connection, _send) => {
+        private handleChat = buildSSEHandler(chatStreamContract, (request, _connection) => {
           // These should be typed
           const model: string = request.body.model
           const messages: Array<{ role: string; content: string }> = request.body.messages
@@ -245,7 +228,7 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(chatStreamContract, (request, _connection, _send) => {
+        private handleChat = buildSSEHandler(chatStreamContract, (request, _connection) => {
           // Authorization header is typed as string (required by contract schema)
           const auth: string = request.headers.authorization
 
@@ -256,6 +239,177 @@ describe('SSE Controller Type Safety', () => {
       }
 
       expect(TypedHeadersController).toBeDefined()
+    })
+  })
+
+  describe('sendEventInternal type safety', () => {
+    it('allows correctly typed events via sendEventInternal', () => {
+      class ExternalTriggerController extends AbstractSSEController<ChatStreamContracts> {
+        public static contracts = { chatStream: chatStreamContract } as const
+
+        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+          return {
+            chatStream: {
+              contract: ExternalTriggerController.contracts.chatStream,
+              handler: buildSSEHandler(chatStreamContract, async () => {}),
+            },
+          }
+        }
+
+        // Simulating external event source (e.g., message queue callback)
+        async handleExternalMessage(connectionId: string, content: string, index: number) {
+          // Valid: sendEventInternal accepts events from any contract
+          await this.sendEventInternal(connectionId, {
+            event: 'chunk',
+            data: { content, index },
+          })
+        }
+
+        async sendCompletion(connectionId: string, totalTokens: number, model: string) {
+          // Valid: different event type from same controller
+          await this.sendEventInternal(connectionId, {
+            event: 'done',
+            data: { totalTokens, model },
+          })
+        }
+      }
+
+      const controller = new ExternalTriggerController({})
+      expect(controller.handleExternalMessage).toBeDefined()
+      expect(controller.sendCompletion).toBeDefined()
+    })
+
+    it('catches invalid event name in sendEventInternal', () => {
+      class InvalidExternalController extends AbstractSSEController<ChatStreamContracts> {
+        public static contracts = { chatStream: chatStreamContract } as const
+
+        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+          return {
+            chatStream: {
+              contract: InvalidExternalController.contracts.chatStream,
+              handler: buildSSEHandler(chatStreamContract, async () => {}),
+            },
+          }
+        }
+
+        async invalidEvent(connectionId: string) {
+          // @ts-expect-error - 'invalid' is not a valid event name
+          await this.sendEventInternal(connectionId, { event: 'invalid', data: { foo: 'bar' } })
+        }
+      }
+
+      expect(InvalidExternalController).toBeDefined()
+    })
+
+    it('catches wrong payload in sendEventInternal', () => {
+      class WrongPayloadExternalController extends AbstractSSEController<ChatStreamContracts> {
+        public static contracts = { chatStream: chatStreamContract } as const
+
+        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+          return {
+            chatStream: {
+              contract: WrongPayloadExternalController.contracts.chatStream,
+              handler: buildSSEHandler(chatStreamContract, async () => {}),
+            },
+          }
+        }
+
+        async wrongPayload(connectionId: string) {
+          // @ts-expect-error - 'chunk' expects { content: string, index: number }, not { text: string }
+          await this.sendEventInternal(connectionId, { event: 'chunk', data: { text: 'wrong' } })
+        }
+      }
+
+      expect(WrongPayloadExternalController).toBeDefined()
+    })
+
+    it('catches missing required fields in sendEventInternal', () => {
+      class MissingFieldExternalController extends AbstractSSEController<ChatStreamContracts> {
+        public static contracts = { chatStream: chatStreamContract } as const
+
+        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+          return {
+            chatStream: {
+              contract: MissingFieldExternalController.contracts.chatStream,
+              handler: buildSSEHandler(chatStreamContract, async () => {}),
+            },
+          }
+        }
+
+        async missingField(connectionId: string) {
+          // @ts-expect-error - 'done' requires both 'totalTokens' and 'model'
+          await this.sendEventInternal(connectionId, { event: 'done', data: { totalTokens: 10 } })
+        }
+      }
+
+      expect(MissingFieldExternalController).toBeDefined()
+    })
+
+    it('provides autocomplete for event names from all contracts', () => {
+      // This test demonstrates that a controller with multiple contracts
+      // gets autocomplete for all events across all routes
+      const notificationContract = buildSSERoute({
+        path: '/api/notifications' as const,
+        params: z.object({}),
+        query: z.object({}),
+        requestHeaders: z.object({}),
+        events: {
+          alert: z.object({ severity: z.enum(['info', 'warning', 'error']), message: z.string() }),
+          dismiss: z.object({ alertId: z.string() }),
+        },
+      })
+
+      type MultiContracts = {
+        chatStream: typeof chatStreamContract
+        notifications: typeof notificationContract
+      }
+
+      class MultiContractController extends AbstractSSEController<MultiContracts> {
+        public static contracts = {
+          chatStream: chatStreamContract,
+          notifications: notificationContract,
+        } as const
+
+        public buildSSERoutes(): BuildSSERoutesReturnType<MultiContracts> {
+          return {
+            chatStream: {
+              contract: MultiContractController.contracts.chatStream,
+              handler: buildSSEHandler(chatStreamContract, async () => {}),
+            },
+            notifications: {
+              contract: MultiContractController.contracts.notifications,
+              handler: buildSSEHandler(notificationContract, async () => {}),
+            },
+          }
+        }
+
+        // Can send events from chatStream contract
+        async sendChunk(connectionId: string) {
+          await this.sendEventInternal(connectionId, {
+            event: 'chunk',
+            data: { content: 'hello', index: 0 },
+          })
+        }
+
+        // Can also send events from notifications contract
+        async sendAlert(connectionId: string) {
+          await this.sendEventInternal(connectionId, {
+            event: 'alert',
+            data: { severity: 'warning', message: 'Low battery' },
+          })
+        }
+
+        // Invalid: mixing event name from one contract with data from another
+        async invalidMix(connectionId: string) {
+          // @ts-expect-error - 'alert' expects { severity, message }, not chunk data
+          // biome-ignore format: keep on single line for @ts-expect-error to work
+          await this.sendEventInternal(connectionId, { event: 'alert', data: { content: 'hello', index: 0 } })
+        }
+      }
+
+      const controller = new MultiContractController({})
+      expect(controller.sendChunk).toBeDefined()
+      expect(controller.sendAlert).toBeDefined()
     })
   })
 })

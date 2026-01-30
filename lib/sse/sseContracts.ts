@@ -180,10 +180,9 @@ export function buildPayloadSSERoute<
  * Type-inference helper for SSE handlers with type-safe event sending.
  *
  * Similar to `buildFastifyPayloadRoute`, this function provides automatic
- * type inference for the request, connection, and event sender parameters
- * based on the contract.
+ * type inference for the request and connection parameters based on the contract.
  *
- * The `send` parameter provides compile-time type checking:
+ * The `connection.send` method provides compile-time type checking:
  * - Event names must match those defined in `contract.events`
  * - Event data must match the Zod schema for that event
  *
@@ -200,12 +199,12 @@ export function buildPayloadSSERoute<
  * class MyController extends AbstractSSEController<{ stream: typeof contract }> {
  *   private handleStream = buildSSEHandler(
  *     contract,
- *     async (request, connection, send) => {
- *       // send is typed - only 'chunk' and 'done' are valid event names
- *       await send('chunk', { content: 'hello' })  // OK
- *       await send('done', { totalTokens: 1 })     // OK
- *       // await send('chunk', { totalTokens: 1 }) // TS Error: wrong payload
- *       // await send('invalid', {})               // TS Error: invalid event name
+ *     async (request, connection) => {
+ *       // connection.send is typed - only 'chunk' and 'done' are valid event names
+ *       await connection.send('chunk', { content: 'hello' })  // OK
+ *       await connection.send('done', { totalTokens: 1 })     // OK
+ *       // await connection.send('chunk', { totalTokens: 1 }) // TS Error: wrong payload
+ *       // await connection.send('invalid', {})               // TS Error: invalid event name
  *     },
  *   )
  *
