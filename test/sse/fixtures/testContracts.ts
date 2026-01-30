@@ -165,3 +165,35 @@ export const loggerTestStreamContract = buildSSERoute({
     message: z.object({ text: z.string() }),
   },
 })
+
+/**
+ * POST SSE route for testing event validation with strict schemas.
+ * The handler sends the provided eventData as an event, allowing tests
+ * to verify validation behavior with different payloads.
+ */
+export const validationTestStreamContract = buildPayloadSSERoute({
+  method: 'POST',
+  path: '/api/validation-test/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  body: z.object({
+    // The event data to send - passed through to sendEvent
+    eventData: z.object({
+      id: z.string(),
+      count: z.number(),
+      status: z.string(),
+    }),
+  }),
+  events: {
+    // Strict schema that eventData must match
+    validatedEvent: z.object({
+      id: z.string().uuid(),
+      count: z.number().int().positive(),
+      status: z.enum(['active', 'inactive']),
+    }),
+    error: z.object({
+      message: z.string(),
+    }),
+  },
+})

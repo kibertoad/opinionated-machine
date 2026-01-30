@@ -17,6 +17,7 @@ export type {
   InferSSERequest,
   SSEConnection,
   SSEControllerConfig,
+  SSEEventSender,
   SSEHandlerConfig,
   SSELogger,
   SSEMessage,
@@ -148,14 +149,32 @@ export abstract class AbstractSSEController<
   /**
    * Send an event to a specific connection.
    *
+   * Event data is validated against the Zod schema defined in the contract's `events` field
+   * if the connection has event schemas attached (which happens automatically when routes
+   * are built using buildFastifySSERoute).
+   *
    * @param connectionId - The connection to send to
    * @param message - The SSE message to send
    * @returns true if sent successfully, false if connection not found or closed
+   * @throws Error if event data fails validation against the contract schema
    */
   protected async sendEvent<T>(connectionId: string, message: SSEMessage<T>): Promise<boolean> {
     const connection = this.connections.get(connectionId)
     if (!connection) {
       return false
+    }
+
+    // Validate event data against schema if available
+    if (message.event && connection.eventSchemas) {
+      const schema = connection.eventSchemas[message.event]
+      if (schema) {
+        const result = schema.safeParse(message.data)
+        if (!result.success) {
+          throw new Error(
+            `SSE event validation failed for event "${message.event}": ${result.error.message}`,
+          )
+        }
+      }
     }
 
     try {
@@ -175,6 +194,15 @@ export abstract class AbstractSSEController<
       this.unregisterConnection(connectionId)
       return false
     }
+  }
+
+  /**
+   * Internal method for sending events from the route builder's typed sender.
+   * This is called by the type-safe `send` function passed to handlers.
+   * @internal
+   */
+  public sendEventInternal<T>(connectionId: string, message: SSEMessage<T>): Promise<boolean> {
+    return this.sendEvent(connectionId, message)
   }
 
   /**

@@ -2,7 +2,15 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DIContext, SSEHttpClient, type SSELogger, SSETestServer } from '../../index.js'
+import {
+  DIContext,
+  injectPayloadSSE,
+  parseSSEEvents,
+  SSEHttpClient,
+  type SSELogger,
+  SSETestServer,
+} from '../../index.js'
+import { validationTestStreamContract } from './fixtures/testContracts.js'
 import type { TestSSEController } from './fixtures/testControllers.js'
 import {
   TestAuthSSEModule,
@@ -12,6 +20,8 @@ import {
   TestPostSSEModule,
   TestSSEModule,
   type TestSSEModuleDependencies,
+  TestValidationSSEModule,
+  type TestValidationSSEModuleDependencies,
 } from './fixtures/testModules.js'
 
 /**
@@ -1438,4 +1448,162 @@ describe('SSE HTTP E2E (logger error handling)', () => {
       expect(errorArg.err.message).toBe('Test error in onDisconnect')
     },
   )
+})
+
+/**
+ * SSE Event Validation E2E tests using Fastify inject.
+ *
+ * These tests verify that Zod schemas defined in contracts are used
+ * for runtime validation of event data before sending.
+ */
+describe('SSE Inject E2E (event validation)', () => {
+  let server: SSETestServer<{ context: DIContext<TestValidationSSEModuleDependencies, object> }>
+  let context: DIContext<TestValidationSSEModuleDependencies, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<TestValidationSSEModuleDependencies, object>(
+      container,
+      { isTestMode: true },
+      {},
+    )
+    context.registerDependencies({ modules: [new TestValidationSSEModule()] }, undefined)
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it('sends valid events that match the schema', { timeout: 10000 }, async () => {
+    const { closed } = injectPayloadSSE(server.app, validationTestStreamContract, {
+      body: {
+        eventData: {
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          count: 42,
+          status: 'active',
+        },
+      },
+    })
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('text/event-stream')
+
+    const events = parseSSEEvents(response.body)
+    const validatedEvents = events.filter((e) => e.event === 'validatedEvent')
+
+    expect(validatedEvents).toHaveLength(1)
+    expect(JSON.parse(validatedEvents[0]!.data)).toEqual({
+      id: '550e8400-e29b-41d4-a716-446655440000',
+      count: 42,
+      status: 'active',
+    })
+  })
+
+  it('returns error event when event data has invalid UUID', { timeout: 10000 }, async () => {
+    const { closed } = injectPayloadSSE(server.app, validationTestStreamContract, {
+      body: {
+        eventData: {
+          id: 'not-a-uuid', // Invalid: not a UUID
+          count: 42,
+          status: 'active',
+        },
+      },
+    })
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+
+    const events = parseSSEEvents(response.body)
+    const errorEvents = events.filter((e) => e.event === 'error')
+
+    expect(errorEvents).toHaveLength(1)
+    expect(JSON.parse(errorEvents[0]!.data).message).toContain('SSE event validation failed')
+  })
+
+  it('returns error event when count is not positive', { timeout: 10000 }, async () => {
+    const { closed } = injectPayloadSSE(server.app, validationTestStreamContract, {
+      body: {
+        eventData: {
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          count: -5, // Invalid: not positive
+          status: 'active',
+        },
+      },
+    })
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+
+    const events = parseSSEEvents(response.body)
+    const errorEvents = events.filter((e) => e.event === 'error')
+
+    expect(errorEvents).toHaveLength(1)
+    expect(JSON.parse(errorEvents[0]!.data).message).toContain('SSE event validation failed')
+  })
+
+  it('returns error event when status is not in enum', { timeout: 10000 }, async () => {
+    const { closed } = injectPayloadSSE(server.app, validationTestStreamContract, {
+      body: {
+        eventData: {
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          count: 42,
+          status: 'unknown', // Invalid: not in enum ['active', 'inactive']
+        },
+      },
+    })
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+
+    const events = parseSSEEvents(response.body)
+    const errorEvents = events.filter((e) => e.event === 'error')
+
+    expect(errorEvents).toHaveLength(1)
+    expect(JSON.parse(errorEvents[0]!.data).message).toContain('SSE event validation failed')
+  })
+
+  it('validates with inactive status (valid enum value)', { timeout: 10000 }, async () => {
+    const { closed } = injectPayloadSSE(server.app, validationTestStreamContract, {
+      body: {
+        eventData: {
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          count: 1,
+          status: 'inactive', // Valid: in enum
+        },
+      },
+    })
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+
+    const events = parseSSEEvents(response.body)
+    const validatedEvents = events.filter((e) => e.event === 'validatedEvent')
+
+    expect(validatedEvents).toHaveLength(1)
+    expect(JSON.parse(validatedEvents[0]!.data)).toEqual({
+      id: '550e8400-e29b-41d4-a716-446655440000',
+      count: 1,
+      status: 'inactive',
+    })
+  })
 })

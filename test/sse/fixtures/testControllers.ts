@@ -16,6 +16,7 @@ import {
   notificationsStreamContract,
   reconnectStreamContract,
   streamContract,
+  validationTestStreamContract,
 } from './testContracts.js'
 import type { EventService, TestNotificationService } from './testServices.js'
 
@@ -547,4 +548,44 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
     })
     // Don't close connection - let client close to trigger onDisconnect
   })
+}
+
+/**
+ * Test SSE controller for event validation testing.
+ * Uses POST requests where the body contains the event data to send.
+ * This allows end-to-end testing of validation by varying the request payload.
+ *
+ * The handler simply attempts to send the event - if validation fails,
+ * the framework automatically sends an error event and closes the connection.
+ */
+export type TestValidationSSEContracts = {
+  validationTestStream: typeof validationTestStreamContract
+}
+
+export class TestValidationSSEController extends AbstractSSEController<TestValidationSSEContracts> {
+  public static contracts = {
+    validationTestStream: validationTestStreamContract,
+  } as const
+
+  public buildSSERoutes(): BuildSSERoutesReturnType<TestValidationSSEContracts> {
+    return {
+      validationTestStream: {
+        contract: TestValidationSSEController.contracts.validationTestStream,
+        handler: this.handleStream,
+      },
+    }
+  }
+
+  private handleStream = buildSSEHandler(
+    validationTestStreamContract,
+    async (request, connection) => {
+      // Send the event - if validation fails, error propagates to the framework
+      // which sends an error event and closes the connection automatically
+      await this.sendEvent(connection.id, {
+        event: 'validatedEvent',
+        data: request.body.eventData,
+      })
+      this.closeConnection(connection.id)
+    },
+  )
 }
