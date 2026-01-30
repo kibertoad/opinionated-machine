@@ -1,4 +1,5 @@
 import type { SSEReplyInterface } from '@fastify/sse'
+import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import { SSEConnectionSpy } from './SSEConnectionSpy.ts'
 import type { AnySSERouteDefinition } from './sseContracts.ts'
@@ -170,9 +171,10 @@ export abstract class AbstractSSEController<
       if (schema) {
         const result = schema.safeParse(message.data)
         if (!result.success) {
-          throw new Error(
-            `SSE event validation failed for event "${message.event}": ${result.error.message}`,
-          )
+          throw new InternalError({
+            message: `SSE event validation failed for event "${message.event}": ${result.error.message}`,
+            errorCode: 'RESPONSE_VALIDATION_FAILED',
+          })
         }
       }
     }
