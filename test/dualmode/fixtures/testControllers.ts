@@ -2,7 +2,6 @@ import {
   AbstractDualModeController,
   type BuildDualModeRoutesReturnType,
   buildDualModeHandler,
-  type DualModeControllerConfig,
 } from '../../../index.js'
 import {
   authenticatedDualModeContract,
@@ -29,7 +28,7 @@ export class TestChatDualModeController extends AbstractDualModeController<TestC
       chatCompletion: {
         contract: TestChatDualModeController.contracts.chatCompletion,
         handlers: buildDualModeHandler(chatCompletionContract, {
-          json: async (ctx) => {
+          json: (ctx) => {
             const words = ctx.request.body.message.split(' ')
             return {
               reply: `Echo: ${ctx.request.body.message}`,
@@ -67,12 +66,10 @@ export class TestConversationDualModeController extends AbstractDualModeControll
       conversationCompletion: {
         contract: TestConversationDualModeController.contracts.conversationCompletion,
         handlers: buildDualModeHandler(conversationCompletionContract, {
-          json: async (ctx) => {
-            return {
-              reply: `Response for conversation ${ctx.request.params.conversationId}: ${ctx.request.body.message}`,
-              conversationId: ctx.request.params.conversationId,
-            }
-          },
+          json: (ctx) => ({
+            reply: `Response for conversation ${ctx.request.params.conversationId}: ${ctx.request.body.message}`,
+            conversationId: ctx.request.params.conversationId,
+          }),
           sse: async (ctx) => {
             const words = ctx.request.body.message.split(' ')
             for (const word of words) {
@@ -125,7 +122,7 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
       jobStatus: {
         contract: TestJobStatusDualModeController.contracts.jobStatus,
         handlers: buildDualModeHandler(jobStatusContract, {
-          json: async (ctx) => {
+          json: (ctx) => {
             const state = this.jobStates.get(ctx.request.params.jobId)
             if (!state) {
               return {

@@ -1,45 +1,13 @@
-import { randomUUID } from 'node:crypto'
-import type { SSEReplyInterface } from '@fastify/sse'
 import { InternalError } from '@lokalise/node-core'
-import type { FastifyReply, RouteOptions } from 'fastify'
+import type { RouteOptions } from 'fastify'
 import type { z } from 'zod'
-import type { SSEConnection, SSEEventSender, SSEMessage } from '../sse/sseTypes.ts'
+import { extractPathTemplate, handleSSEError, setupSSEConnection } from '../sse/sseRouteUtils.ts'
 import type { AbstractDualModeController } from './AbstractDualModeController.ts'
-import type { AnyDualModeRouteDefinition, PathResolver } from './dualModeContracts.ts'
-import type {
-  DualModeHandlerConfig,
-  DualModeType,
-} from './dualModeTypes.ts'
+import type { AnyDualModeRouteDefinition } from './dualModeContracts.ts'
+import type { DualModeHandlerConfig, DualModeType } from './dualModeTypes.ts'
 
-/**
- * FastifyReply extended with SSE capabilities from @fastify/sse.
- */
-type SSEReply = FastifyReply & { sse: SSEReplyInterface }
-
-/**
- * Extract Fastify path template from pathResolver.
- *
- * This function creates placeholder params with ':paramName' values and calls
- * the pathResolver to generate a Fastify-compatible path template.
- *
- * @example
- * ```typescript
- * // pathResolver: (p) => `/users/${p.userId}/posts/${p.postId}`
- * // paramsSchema: z.object({ userId: z.string(), postId: z.string() })
- * // Result: '/users/:userId/posts/:postId'
- * ```
- */
-export function extractPathTemplate<Params>(
-  pathResolver: PathResolver<Params>,
-  paramsSchema: z.ZodObject<z.ZodRawShape>,
-): string {
-  // Create placeholder params object with ':paramName' values
-  const placeholderParams: Record<string, string> = {}
-  for (const key of Object.keys(paramsSchema.shape)) {
-    placeholderParams[key] = `:${key}`
-  }
-  return pathResolver(placeholderParams as unknown as Params)
-}
+// Re-export for convenience
+export { extractPathTemplate }
 
 /**
  * Determine response mode from Accept header.
@@ -69,7 +37,7 @@ export function determineMode(
       }
     }
 
-    return { mediaType: mediaType!.trim().toLowerCase(), quality }
+    return { mediaType: (mediaType ?? '').trim().toLowerCase(), quality }
   })
 
   // Sort by quality (highest first)
@@ -91,88 +59,6 @@ export function determineMode(
   }
 
   return defaultMode
-}
-
-/**
- * Check if a value is an Error-like object (cross-realm safe).
- * Uses duck typing instead of instanceof for reliability across realms.
- */
-function isErrorLike(err: unknown): err is { message: string } {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'message' in err &&
-    typeof (err as { message: unknown }).message === 'string'
-  )
-}
-
-/**
- * Send error event to client and close connection gracefully.
- */
-async function handleSSEHandlerError(
-  sseReply: SSEReply,
-  controller: AbstractDualModeController<Record<string, AnyDualModeRouteDefinition>>,
-  connectionId: string,
-  err: unknown,
-): Promise<void> {
-  // Send error event to client (bypasses validation since this is framework-level)
-  try {
-    await sseReply.sse.send({
-      event: 'error',
-      data: { message: isErrorLike(err) ? err.message : 'Internal server error' },
-    })
-  } catch {
-    // Connection might already be closed, ignore
-  }
-
-  // Close the connection gracefully
-  try {
-    sseReply.sse.close()
-  } catch {
-    // Connection may already be closed
-  }
-  controller.unregisterConnection(connectionId)
-}
-
-/**
- * Send replay events from either sync or async iterables.
- */
-async function sendReplayEvents(
-  sseReply: SSEReply,
-  replayEvents: Iterable<SSEMessage> | AsyncIterable<SSEMessage>,
-): Promise<void> {
-  // biome-ignore lint/suspicious/noExplicitAny: checking for iterator symbols
-  const iterable = replayEvents as any
-  if (typeof iterable[Symbol.asyncIterator] === 'function') {
-    for await (const event of replayEvents as AsyncIterable<SSEMessage>) {
-      await sseReply.sse.send(event)
-    }
-  } else if (typeof iterable[Symbol.iterator] === 'function') {
-    for (const event of replayEvents as Iterable<SSEMessage>) {
-      await sseReply.sse.send(event)
-    }
-  }
-}
-
-/**
- * Handle Last-Event-ID reconnection by replaying missed events.
- */
-async function handleReconnection(
-  sseReply: SSEReply,
-  connection: SSEConnection,
-  lastEventId: string,
-  options: DualModeHandlerConfig<AnyDualModeRouteDefinition>['options'],
-): Promise<void> {
-  if (!options?.onReconnect) return
-
-  try {
-    const replayEvents = await options.onReconnect(connection, lastEventId)
-    if (replayEvents) {
-      await sendReplayEvents(sseReply, replayEvents)
-    }
-  } catch (err) {
-    options?.logger?.error({ err, lastEventId }, 'Error in dual-mode SSE onReconnect handler')
-  }
 }
 
 /**
@@ -236,67 +122,15 @@ export function buildFastifyDualModeRoute<Contract extends AnyDualModeRouteDefin
         return reply.type('application/json').send(response)
       }
 
-      // SSE mode - setup connection and stream events
-      const connectionId = randomUUID()
-
-      // Create type-safe event sender for the handler
-      const send: SSEEventSender<Contract['events']> = (eventName, data, sendOptions) => {
-        return controller._sendEventRaw(connectionId, {
-          event: eventName,
-          data,
-          id: sendOptions?.id,
-          retry: sendOptions?.retry,
-        })
-      }
-
-      // Create connection wrapper with event schemas for validation and typed send
-      const connection = {
-        id: connectionId,
+      // SSE mode - setup connection and stream events using shared utility
+      const { connectionId, connection, connectionClosed, sseReply } = await setupSSEConnection(
+        controller,
         request,
         reply,
-        context: {},
-        connectedAt: new Date(),
-        send,
-        eventSchemas: contract.events,
-      }
-
-      // Create a promise that will resolve when the client disconnects
-      const connectionClosed = new Promise<void>((resolve) => {
-        request.socket.on('close', async () => {
-          try {
-            await options?.onDisconnect?.(connection)
-          } catch (err) {
-            options?.logger?.error({ err }, 'Error in dual-mode SSE onDisconnect handler')
-          } finally {
-            controller.unregisterConnection(connectionId)
-            resolve()
-          }
-        })
-      })
-
-      // Register connection with controller
-      controller.registerConnection(connection)
-
-      // Tell @fastify/sse to keep the connection open after handler returns
-      const sseReply = reply as SSEReply
-      sseReply.sse.keepAlive()
-
-      // Send headers and flush them to establish the stream
-      sseReply.sse.sendHeaders()
-      reply.raw.flushHeaders()
-
-      // Handle reconnection with Last-Event-ID
-      const lastEventId = request.headers['last-event-id']
-      if (lastEventId) {
-        await handleReconnection(sseReply, connection, lastEventId as string, options)
-      }
-
-      // Notify connection established
-      try {
-        await options?.onConnect?.(connection)
-      } catch (err) {
-        options?.logger?.error({ err }, 'Error in dual-mode SSE onConnect handler')
-      }
+        contract.events,
+        options,
+        'dual-mode SSE',
+      )
 
       // Call user handler with SSE context
       try {
@@ -306,7 +140,7 @@ export function buildFastifyDualModeRoute<Contract extends AnyDualModeRouteDefin
           request: request as Parameters<typeof handlers.sse>[0]['request'],
         })
       } catch (err) {
-        await handleSSEHandlerError(sseReply, controller, connectionId, err)
+        await handleSSEError(sseReply, controller, connectionId, err)
         throw err
       }
 

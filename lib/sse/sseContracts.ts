@@ -26,7 +26,6 @@ export type SSEPathResolver<Params> = (params: Params) => string
  * Definition for an SSE route with type-safe contracts.
  *
  * @template Method - HTTP method (GET, POST, PUT, PATCH)
- * @template Path - URL path pattern (deprecated: use pathResolver instead)
  * @template Params - Path parameters schema
  * @template Query - Query string parameters schema
  * @template RequestHeaders - Request headers schema
@@ -35,7 +34,6 @@ export type SSEPathResolver<Params> = (params: Params) => string
  */
 export type SSERouteDefinition<
   Method extends SSEMethod = SSEMethod,
-  Path extends string = string,
   Params extends z.ZodTypeAny = z.ZodTypeAny,
   Query extends z.ZodTypeAny = z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny = z.ZodTypeAny,
@@ -44,15 +42,10 @@ export type SSERouteDefinition<
 > = {
   method: Method
   /**
-   * Static path string (deprecated: use pathResolver for type-safe path construction)
-   * @deprecated Use pathResolver instead for better type safety
-   */
-  path?: Path
-  /**
    * Type-safe path resolver function.
    * Receives typed params and returns the URL path string.
    */
-  pathResolver?: SSEPathResolver<z.infer<Params>>
+  pathResolver: SSEPathResolver<z.infer<Params>>
   params: Params
   query: Query
   requestHeaders: RequestHeaders
@@ -67,9 +60,8 @@ export type SSERouteDefinition<
  */
 export type AnySSERouteDefinition = {
   method: SSEMethod
-  path?: string
   // biome-ignore lint/suspicious/noExplicitAny: Required for compatibility with all param types
-  pathResolver?: SSEPathResolver<any>
+  pathResolver: SSEPathResolver<any>
   params: z.ZodTypeAny
   query: z.ZodTypeAny
   requestHeaders: z.ZodTypeAny
@@ -82,22 +74,16 @@ export type AnySSERouteDefinition = {
  * Configuration for building a GET SSE route
  */
 export type SSERouteConfig<
-  Path extends string,
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
 > = {
   /**
-   * Static path string (deprecated: use pathResolver for type-safe path construction)
-   * @deprecated Use pathResolver instead for better type safety
-   */
-  path?: Path
-  /**
    * Type-safe path resolver function.
    * Receives typed params and returns the URL path string.
    */
-  pathResolver?: SSEPathResolver<z.infer<Params>>
+  pathResolver: SSEPathResolver<z.infer<Params>>
   params: Params
   query: Query
   requestHeaders: RequestHeaders
@@ -108,7 +94,6 @@ export type SSERouteConfig<
  * Configuration for building a POST/PUT/PATCH SSE route with request body
  */
 export type PayloadSSERouteConfig<
-  Path extends string,
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
@@ -117,15 +102,10 @@ export type PayloadSSERouteConfig<
 > = {
   method?: 'POST' | 'PUT' | 'PATCH'
   /**
-   * Static path string (deprecated: use pathResolver for type-safe path construction)
-   * @deprecated Use pathResolver instead for better type safety
-   */
-  path?: Path
-  /**
    * Type-safe path resolver function.
    * Receives typed params and returns the URL path string.
    */
-  pathResolver?: SSEPathResolver<z.infer<Params>>
+  pathResolver: SSEPathResolver<z.infer<Params>>
   params: Params
   query: Query
   requestHeaders: RequestHeaders
@@ -142,7 +122,7 @@ export type PayloadSSERouteConfig<
  * @example
  * ```typescript
  * const notificationsStream = buildSSERoute({
- *   path: '/api/notifications/stream',
+ *   pathResolver: () => '/api/notifications/stream',
  *   params: z.object({}),
  *   query: z.object({ userId: z.string().uuid() }),
  *   requestHeaders: z.object({ authorization: z.string() }),
@@ -153,17 +133,15 @@ export type PayloadSSERouteConfig<
  * ```
  */
 export function buildSSERoute<
-  Path extends string,
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
 >(
-  config: SSERouteConfig<Path, Params, Query, RequestHeaders, Events>,
-): SSERouteDefinition<'GET', Path, Params, Query, RequestHeaders, undefined, Events> {
+  config: SSERouteConfig<Params, Query, RequestHeaders, Events>,
+): SSERouteDefinition<'GET', Params, Query, RequestHeaders, undefined, Events> {
   return {
     method: 'GET',
-    path: config.path,
     pathResolver: config.pathResolver,
     params: config.params,
     query: config.query,
@@ -184,7 +162,7 @@ export function buildSSERoute<
  * ```typescript
  * const chatCompletionStream = buildPayloadSSERoute({
  *   method: 'POST',
- *   path: '/api/ai/chat/completions',
+ *   pathResolver: () => '/api/ai/chat/completions',
  *   params: z.object({}),
  *   query: z.object({}),
  *   requestHeaders: z.object({ authorization: z.string() }),
@@ -201,18 +179,16 @@ export function buildSSERoute<
  * ```
  */
 export function buildPayloadSSERoute<
-  Path extends string,
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Body extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
 >(
-  config: PayloadSSERouteConfig<Path, Params, Query, RequestHeaders, Body, Events>,
-): SSERouteDefinition<'POST' | 'PUT' | 'PATCH', Path, Params, Query, RequestHeaders, Body, Events> {
+  config: PayloadSSERouteConfig<Params, Query, RequestHeaders, Body, Events>,
+): SSERouteDefinition<'POST' | 'PUT' | 'PATCH', Params, Query, RequestHeaders, Body, Events> {
   return {
     method: config.method ?? 'POST',
-    path: config.path,
     pathResolver: config.pathResolver,
     params: config.params,
     query: config.query,

@@ -398,13 +398,26 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildSSERoute` for GET-based SSE streams or `buildPayloadSSERoute` for POST/PUT/PATCH streams:
+Use `buildSSERoute` for GET-based SSE streams or `buildPayloadSSERoute` for POST/PUT/PATCH streams.
+
+**Path options:** You can use either `path` (static string) or `pathResolver` (type-safe function). `pathResolver` is recommended for routes with path parameters:
 
 ```ts
 import { z } from 'zod'
 import { buildSSERoute, buildPayloadSSERoute } from 'opinionated-machine'
 
-// GET-based SSE stream (e.g., notifications)
+// GET-based SSE stream with pathResolver (recommended for path params)
+export const channelStreamContract = buildSSERoute({
+  pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
+  params: z.object({ channelId: z.string() }),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    message: z.object({ content: z.string() }),
+  },
+})
+
+// GET-based SSE stream with static path (simpler for no path params)
 export const notificationsContract = buildSSERoute({
   path: '/api/notifications/stream',
   params: z.object({}),

@@ -5,7 +5,7 @@ import { buildPayloadSSERoute, buildSSERoute } from '../../../index.js'
  * Simple GET SSE route for integration tests
  */
 export const streamContract = buildSSERoute({
-  path: '/api/stream',
+  pathResolver: () => '/api/stream',
   params: z.object({}),
   query: z.object({ userId: z.string().optional() }),
   requestHeaders: z.object({}),
@@ -16,7 +16,7 @@ export const streamContract = buildSSERoute({
  * GET SSE route for notifications stream
  */
 export const notificationsStreamContract = buildSSERoute({
-  path: '/api/notifications/stream',
+  pathResolver: () => '/api/notifications/stream',
   params: z.object({}),
   query: z.object({
     userId: z.string().optional(),
@@ -35,7 +35,7 @@ export const notificationsStreamContract = buildSSERoute({
  */
 export const chatCompletionContract = buildPayloadSSERoute({
   method: 'POST',
-  path: '/api/chat/completions',
+  pathResolver: () => '/api/chat/completions',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
@@ -57,7 +57,7 @@ export const chatCompletionContract = buildPayloadSSERoute({
  * GET SSE route with authentication header
  */
 export const authenticatedStreamContract = buildSSERoute({
-  path: '/api/protected/stream',
+  pathResolver: () => '/api/protected/stream',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({
@@ -74,7 +74,7 @@ export const authenticatedStreamContract = buildSSERoute({
  * GET SSE route with path params
  */
 export const channelStreamContract = buildSSERoute({
-  path: '/api/channels/:channelId/stream',
+  pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
   params: z.object({
     channelId: z.string(),
   }),
@@ -95,7 +95,7 @@ export const channelStreamContract = buildSSERoute({
  * GET SSE route for testing Last-Event-ID reconnection (sync replay)
  */
 export const reconnectStreamContract = buildSSERoute({
-  path: '/api/reconnect/stream',
+  pathResolver: () => '/api/reconnect/stream',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({
@@ -113,7 +113,7 @@ export const reconnectStreamContract = buildSSERoute({
  * GET SSE route for testing Last-Event-ID reconnection (async replay)
  */
 export const asyncReconnectStreamContract = buildSSERoute({
-  path: '/api/async-reconnect/stream',
+  pathResolver: () => '/api/async-reconnect/stream',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({
@@ -133,7 +133,7 @@ export const asyncReconnectStreamContract = buildSSERoute({
  */
 export const largeContentStreamContract = buildPayloadSSERoute({
   method: 'POST',
-  path: '/api/large-content/stream',
+  pathResolver: () => '/api/large-content/stream',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
@@ -157,7 +157,7 @@ export const largeContentStreamContract = buildPayloadSSERoute({
  * GET SSE route for testing logger error handling
  */
 export const loggerTestStreamContract = buildSSERoute({
-  path: '/api/logger-test/stream',
+  pathResolver: () => '/api/logger-test/stream',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
@@ -173,7 +173,7 @@ export const loggerTestStreamContract = buildSSERoute({
  */
 export const validationTestStreamContract = buildPayloadSSERoute({
   method: 'POST',
-  path: '/api/validation-test/stream',
+  pathResolver: () => '/api/validation-test/stream',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
@@ -211,7 +211,7 @@ export const validationTestStreamContract = buildPayloadSSERoute({
  */
 export const openaiStyleStreamContract = buildPayloadSSERoute({
   method: 'POST',
-  path: '/api/openai-style/stream',
+  pathResolver: () => '/api/openai-style/stream',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),

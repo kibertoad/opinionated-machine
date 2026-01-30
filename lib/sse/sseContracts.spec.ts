@@ -5,7 +5,7 @@ import { buildPayloadSSERoute, buildSSEHandler, buildSSERoute } from './sseContr
 describe('sseContracts', () => {
   describe('buildPayloadSSERoute', () => {
     const baseConfig = {
-      path: '/api/test' as const,
+      pathResolver: () => '/api/test',
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
@@ -19,7 +19,7 @@ describe('sseContracts', () => {
       const route = buildPayloadSSERoute(baseConfig)
 
       expect(route.method).toBe('POST')
-      expect(route.path).toBe('/api/test')
+      expect(route.pathResolver({})).toBe('/api/test')
       expect(route.isSSE).toBe(true)
     })
 
@@ -45,7 +45,7 @@ describe('sseContracts', () => {
   describe('buildSSERoute', () => {
     it('creates GET SSE route', () => {
       const route = buildSSERoute({
-        path: '/api/stream' as const,
+        pathResolver: () => '/api/stream',
         params: z.object({}),
         query: z.object({ userId: z.string() }),
         requestHeaders: z.object({}),
@@ -55,7 +55,7 @@ describe('sseContracts', () => {
       })
 
       expect(route.method).toBe('GET')
-      expect(route.path).toBe('/api/stream')
+      expect(route.pathResolver({})).toBe('/api/stream')
       expect(route.isSSE).toBe(true)
       expect(route.body).toBeUndefined()
     })
@@ -64,7 +64,7 @@ describe('sseContracts', () => {
   describe('buildSSEHandler type checking', () => {
     const testContract = buildPayloadSSERoute({
       method: 'POST',
-      path: '/api/test/stream' as const,
+      pathResolver: (params) => `/api/test/${params.id}/stream`,
       params: z.object({ id: z.string() }),
       query: z.object({ filter: z.string().optional() }),
       requestHeaders: z.object({ authorization: z.string() }),

@@ -4,51 +4,41 @@ import type { SSEPathResolver, SSERouteDefinition } from '../sse/sseContracts.ts
 import type { InjectPayloadSSEOptions, InjectSSEOptions, InjectSSEResult } from './sseTestTypes.ts'
 
 /**
- * Contract type that has either path or pathResolver.
+ * Contract type with pathResolver.
  * @internal
  */
-type ContractWithPath = {
-  path?: string
-  pathResolver?: SSEPathResolver<unknown>
+type ContractWithPathResolver = {
+  pathResolver: SSEPathResolver<unknown>
 }
 
 /**
- * Build URL from contract path/pathResolver and params.
- * Supports both legacy `path` property and new `pathResolver` function.
+ * Build query string from query params object.
  * @internal
  */
-export function buildUrl<Contract extends ContractWithPath>(
+function buildQueryString(query: Record<string, unknown>): string {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null) {
+      searchParams.append(key, String(value))
+    }
+  }
+  return searchParams.toString()
+}
+
+/**
+ * Build URL from contract pathResolver and params.
+ * @internal
+ */
+function buildUrl<Contract extends ContractWithPathResolver>(
   contract: Contract,
   params?: Record<string, string>,
   query?: Record<string, unknown>,
 ): string {
-  let url: string
+  let url = contract.pathResolver(params ?? {})
 
-  // Support both pathResolver (new) and path (legacy)
-  if (contract.pathResolver) {
-    // pathResolver expects actual params, not placeholders
-    url = contract.pathResolver(params ?? {})
-  } else if (contract.path) {
-    url = contract.path
-    // Substitute path params for legacy path strings
-    if (params) {
-      for (const [key, value] of Object.entries(params)) {
-        url = url.replace(`:${key}`, encodeURIComponent(String(value)))
-      }
-    }
-  } else {
-    throw new Error('Contract must have either path or pathResolver defined')
-  }
-
-  // Add query string
+  // Append query string if present
   if (query && Object.keys(query).length > 0) {
-    const searchParams = new URLSearchParams()
-    for (const [key, value] of Object.entries(query)) {
-      if (value !== undefined && value !== null) {
-        searchParams.append(key, String(value))
-      }
-    }
-    const queryString = searchParams.toString()
+    const queryString = buildQueryString(query)
     if (queryString) {
       url = `${url}?${queryString}`
     }
@@ -79,7 +69,6 @@ export function buildUrl<Contract extends ContractWithPath>(
 export function injectSSE<
   Contract extends SSERouteDefinition<
     'GET',
-    string,
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,
@@ -147,7 +136,6 @@ export function injectSSE<
 export function injectPayloadSSE<
   Contract extends SSERouteDefinition<
     'POST' | 'PUT' | 'PATCH',
-    string,
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,

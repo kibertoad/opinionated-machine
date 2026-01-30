@@ -1,10 +1,6 @@
 import type { FastifyReply, FastifyRequest, RouteOptions } from 'fastify'
 import type { z } from 'zod'
-import type {
-  SSEConnection,
-  SSEEventSchemas,
-  SSERouteOptions,
-} from '../sse/sseTypes.ts'
+import type { SSEConnection, SSEEventSchemas, SSERouteOptions } from '../sse/sseTypes.ts'
 import type { AnyDualModeRouteDefinition } from './dualModeContracts.ts'
 
 /**

@@ -1,18 +1,7 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {
-  DIContext,
-  parseSSEEvents,
-  SSEHttpClient,
-  SSEInjectClient,
-  SSETestServer,
-} from '../../index.js'
-import {
-  chatCompletionContract,
-  conversationCompletionContract,
-  jobStatusContract,
-} from './fixtures/testContracts.js'
+import { DIContext, SSEHttpClient, SSEInjectClient, SSETestServer } from '../../index.js'
 import type {
   TestChatDualModeController,
   TestJobStatusDualModeController,
@@ -474,10 +463,7 @@ describe('Dual-Mode Real HTTP Client', () => {
     controller.setJobState(jobId, { status: 'completed', progress: 100, result: 'Done!' })
 
     // Connect without awaitServerConnection since the handler closes immediately
-    const client = await SSEHttpClient.connect(
-      server.baseUrl,
-      `/api/jobs/${jobId}/status`,
-    )
+    const client = await SSEHttpClient.connect(server.baseUrl, `/api/jobs/${jobId}/status`)
 
     expect(client.response.ok).toBe(true)
     expect(client.response.headers.get('content-type')).toContain('text/event-stream')
