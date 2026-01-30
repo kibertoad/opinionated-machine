@@ -116,7 +116,7 @@ export type SSEEventSender<Events extends SSEEventSchemas> = <
   EventName extends keyof Events & string,
 >(
   eventName: EventName,
-  data: z.infer<Events[EventName]>,
+  data: z.input<Events[EventName]>,
   options?: { id?: string; retry?: number },
 ) => Promise<boolean>
 

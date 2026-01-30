@@ -415,9 +415,10 @@ export const chatCompletionContract = buildPayloadSSERoute({
 })
 ```
 
-For reusable event schema definitions, you can use the `SSEEventSchemas` type:
+For reusable event schema definitions, you can use the `SSEEventSchemas` type (requires TypeScript 4.9+ for `satisfies`):
 
 ```ts
+import { z } from 'zod'
 import { type SSEEventSchemas } from 'opinionated-machine'
 
 // Define reusable event schemas for multiple contracts
