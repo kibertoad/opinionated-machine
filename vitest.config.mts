@@ -6,6 +6,11 @@ export default defineConfig({
     watch: false,
     environment: 'node',
     reporters: ['verbose'],
+    typecheck: {
+      enabled: true,
+      checker: 'tsc',
+      include: ['lib/**/*.spec.ts', 'test/**/*.spec.ts'],
+    },
     coverage: {
       provider: 'v8',
       include: ['lib/**/*.ts'],

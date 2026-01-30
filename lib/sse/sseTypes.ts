@@ -3,6 +3,12 @@ import type { z } from 'zod'
 import type { AnySSERouteDefinition } from './sseContracts.ts'
 
 /**
+ * Type constraint for SSE event schemas.
+ * Maps event names to their Zod schemas for validation.
+ */
+export type SSEEventSchemas = Record<string, z.ZodTypeAny>
+
+/**
  * Minimal logger interface for SSE route error handling.
  * Compatible with CommonLogger from @lokalise/node-core and pino loggers.
  */
@@ -45,6 +51,12 @@ export type SSEConnection<Context = unknown> = {
   context: Context
   /** Timestamp when the connection was established */
   connectedAt: Date
+  /**
+   * Zod schemas for validating event data.
+   * Map of event name to Zod schema. Used by sendEvent for runtime validation.
+   * @internal
+   */
+  eventSchemas?: SSEEventSchemas
 }
 
 /**
@@ -81,23 +93,66 @@ export type SSEMessage<T = unknown> = {
 }
 
 /**
- * Handler called when an SSE connection is established.
+ * Type-safe event sender for SSE connections.
+ *
+ * This type provides compile-time type checking for event names and their
+ * corresponding data payloads based on the contract's event schemas.
+ *
+ * @template Events - Map of event name to Zod schema (from contract.events)
+ *
+ * @example
+ * ```typescript
+ * // Given a contract with events:
+ * // events: { chunk: z.object({ content: z.string() }), done: z.object({ tokens: z.number() }) }
+ *
+ * // The sender will be typed as:
+ * send('chunk', { content: 'hello' })  // OK
+ * send('done', { tokens: 5 })          // OK
+ * send('chunk', { tokens: 5 })         // TS Error: wrong payload for 'chunk'
+ * send('invalid', { })                 // TS Error: 'invalid' is not a valid event name
+ * ```
+ */
+export type SSEEventSender<Events extends SSEEventSchemas> = <
+  EventName extends keyof Events & string,
+>(
+  eventName: EventName,
+  data: z.input<Events[EventName]>,
+  options?: { id?: string; retry?: number },
+) => Promise<boolean>
+
+/**
+ * Type-safe handler for SSE routes with typed event sending.
+ *
+ * The `send` parameter provides compile-time type checking for event names
+ * and their payloads based on the contract's event schemas.
  *
  * @template Params - Path parameters type
  * @template Query - Query string parameters type
  * @template Headers - Request headers type
  * @template Body - Request body type (for POST/PUT/PATCH)
+ * @template Events - Event schemas from the contract
  * @template Context - Connection context type
+ *
+ * @example
+ * ```typescript
+ * const handler: SSERouteHandler<{}, {}, {}, { message: string }, typeof contract.events> =
+ *   async (request, connection, send) => {
+ *     await send('chunk', { content: request.body.message })
+ *     await send('done', { totalTokens: 1 })
+ *   }
+ * ```
  */
 export type SSERouteHandler<
   Params = unknown,
   Query = unknown,
   Headers = unknown,
   Body = unknown,
+  Events extends SSEEventSchemas = SSEEventSchemas,
   Context = unknown,
 > = (
   request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
   connection: SSEConnection<Context>,
+  send: SSEEventSender<Events>,
 ) => void | Promise<void>
 
 /**
@@ -147,12 +202,13 @@ export type SSERouteOptions = {
 export type SSEHandlerConfig<Contract extends AnySSERouteDefinition> = {
   /** The SSE route contract */
   contract: Contract
-  /** Handler called when connection is established */
+  /** Handler called when connection is established (with type-safe event sender) */
   handler: SSERouteHandler<
     z.infer<Contract['params']>,
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
     Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+    Contract['events'],
     unknown
   >
   /** Optional route configuration */

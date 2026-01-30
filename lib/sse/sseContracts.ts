@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { SSERouteHandler } from './sseTypes.ts'
+import type { SSEEventSchemas, SSERouteHandler } from './sseTypes.ts'
 
 /**
  * Supported HTTP methods for SSE routes.
@@ -26,7 +26,7 @@ export type SSERouteDefinition<
   Query extends z.ZodTypeAny = z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny = z.ZodTypeAny,
   Body extends z.ZodTypeAny | undefined = undefined,
-  Events extends Record<string, z.ZodTypeAny> = Record<string, z.ZodTypeAny>,
+  Events extends SSEEventSchemas = SSEEventSchemas,
 > = {
   method: Method
   path: Path
@@ -48,7 +48,7 @@ export type AnySSERouteDefinition = SSERouteDefinition<
   z.ZodTypeAny,
   z.ZodTypeAny,
   z.ZodTypeAny | undefined,
-  Record<string, z.ZodTypeAny>
+  SSEEventSchemas
 >
 
 /**
@@ -59,7 +59,7 @@ export type SSERouteConfig<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
-  Events extends Record<string, z.ZodTypeAny>,
+  Events extends SSEEventSchemas,
 > = {
   path: Path
   params: Params
@@ -77,7 +77,7 @@ export type PayloadSSERouteConfig<
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Body extends z.ZodTypeAny,
-  Events extends Record<string, z.ZodTypeAny>,
+  Events extends SSEEventSchemas,
 > = {
   method?: 'POST' | 'PUT' | 'PATCH'
   path: Path
@@ -112,7 +112,7 @@ export function buildSSERoute<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
-  Events extends Record<string, z.ZodTypeAny>,
+  Events extends SSEEventSchemas,
 >(
   config: SSERouteConfig<Path, Params, Query, RequestHeaders, Events>,
 ): SSERouteDefinition<'GET', Path, Params, Query, RequestHeaders, undefined, Events> {
@@ -160,7 +160,7 @@ export function buildPayloadSSERoute<
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Body extends z.ZodTypeAny,
-  Events extends Record<string, z.ZodTypeAny>,
+  Events extends SSEEventSchemas,
 >(
   config: PayloadSSERouteConfig<Path, Params, Query, RequestHeaders, Body, Events>,
 ): SSERouteDefinition<'POST' | 'PUT' | 'PATCH', Path, Params, Query, RequestHeaders, Body, Events> {
@@ -177,27 +177,42 @@ export function buildPayloadSSERoute<
 }
 
 /**
- * Type-inference helper for SSE handlers.
+ * Type-inference helper for SSE handlers with type-safe event sending.
  *
  * Similar to `buildFastifyPayloadRoute`, this function provides automatic
- * type inference for the request and connection parameters based on the contract.
+ * type inference for the request, connection, and event sender parameters
+ * based on the contract.
+ *
+ * The `send` parameter provides compile-time type checking:
+ * - Event names must match those defined in `contract.events`
+ * - Event data must match the Zod schema for that event
  *
  * @example
  * ```typescript
- * class MyController extends AbstractSSEController<{ stream: typeof streamContract }> {
+ * const contract = buildPayloadSSERoute({
+ *   // ...
+ *   events: {
+ *     chunk: z.object({ content: z.string() }),
+ *     done: z.object({ totalTokens: z.number() }),
+ *   },
+ * })
+ *
+ * class MyController extends AbstractSSEController<{ stream: typeof contract }> {
  *   private handleStream = buildSSEHandler(
- *     streamContract,
- *     async (request, connection) => {
- *       // request.body is typed from contract
- *       // request.query is typed from contract
- *       const { message } = request.body
+ *     contract,
+ *     async (request, connection, send) => {
+ *       // send is typed - only 'chunk' and 'done' are valid event names
+ *       await send('chunk', { content: 'hello' })  // OK
+ *       await send('done', { totalTokens: 1 })     // OK
+ *       // await send('chunk', { totalTokens: 1 }) // TS Error: wrong payload
+ *       // await send('invalid', {})               // TS Error: invalid event name
  *     },
  *   )
  *
  *   buildSSERoutes() {
  *     return {
  *       stream: {
- *         contract: streamContract,
+ *         contract,
  *         handler: this.handleStream,
  *       },
  *     }
@@ -211,7 +226,8 @@ export function buildSSEHandler<Contract extends AnySSERouteDefinition>(
     z.infer<Contract['params']>,
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
-    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+    Contract['events']
   >,
 ): typeof handler {
   return handler

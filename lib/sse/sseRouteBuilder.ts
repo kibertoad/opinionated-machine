@@ -3,7 +3,7 @@ import type { SSEReplyInterface } from '@fastify/sse'
 import type { FastifyReply, RouteOptions } from 'fastify'
 import type { AbstractSSEController } from './AbstractSSEController.ts'
 import type { AnySSERouteDefinition } from './sseContracts.ts'
-import type { SSEConnection, SSEHandlerConfig, SSEMessage } from './sseTypes.ts'
+import type { SSEConnection, SSEEventSender, SSEHandlerConfig, SSEMessage } from './sseTypes.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
@@ -28,6 +28,68 @@ async function sendReplayEvents(
       await sseReply.sse.send(event)
     }
   }
+}
+
+/**
+ * Handle Last-Event-ID reconnection by replaying missed events.
+ */
+async function handleReconnection(
+  sseReply: SSEReply,
+  connection: SSEConnection,
+  lastEventId: string,
+  options: SSEHandlerConfig<AnySSERouteDefinition>['options'],
+): Promise<void> {
+  if (!options?.onReconnect) return
+
+  try {
+    const replayEvents = await options.onReconnect(connection, lastEventId)
+    if (replayEvents) {
+      await sendReplayEvents(sseReply, replayEvents)
+    }
+  } catch (err) {
+    options?.logger?.error({ err, lastEventId }, 'Error in SSE onReconnect handler')
+  }
+}
+
+/**
+ * Check if a value is an Error-like object (cross-realm safe).
+ * Uses duck typing instead of instanceof for reliability across realms.
+ */
+function isErrorLike(err: unknown): err is { message: string } {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'message' in err &&
+    typeof (err as { message: unknown }).message === 'string'
+  )
+}
+
+/**
+ * Send error event to client and close connection gracefully.
+ */
+async function handleHandlerError(
+  sseReply: SSEReply,
+  controller: AbstractSSEController<Record<string, AnySSERouteDefinition>>,
+  connectionId: string,
+  err: unknown,
+): Promise<void> {
+  // Send error event to client (bypasses validation since this is framework-level)
+  try {
+    await sseReply.sse.send({
+      event: 'error',
+      data: { message: isErrorLike(err) ? err.message : 'Internal server error' },
+    })
+  } catch {
+    // Connection might already be closed, ignore
+  }
+
+  // Close the connection gracefully
+  try {
+    sseReply.sse.close()
+  } catch {
+    // Connection may already be closed
+  }
+  controller.unregisterConnection(connectionId)
 }
 
 /**
@@ -59,13 +121,14 @@ export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
     handler: async (request, reply) => {
       const connectionId = randomUUID()
 
-      // Create connection wrapper
+      // Create connection wrapper with event schemas for validation
       const connection: SSEConnection = {
         id: connectionId,
         request,
         reply,
         context: {},
         connectedAt: new Date(),
+        eventSchemas: contract.events,
       }
 
       // Create a promise that will resolve when the client disconnects
@@ -93,23 +156,15 @@ export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
       const sseReply = reply as SSEReply
       sseReply.sse.keepAlive()
 
-      // Send headers + an SSE comment to establish the stream
-      // Without sending initial data, the client may not receive headers properly
+      // Send headers and flush them to establish the stream
+      // flushHeaders() ensures headers are sent immediately without waiting for body data
       sseReply.sse.sendHeaders()
-      // SSE comments (lines starting with :) are ignored by clients but establish the stream
-      reply.raw.write(': connected\n\n')
+      reply.raw.flushHeaders()
 
       // Handle reconnection with Last-Event-ID
       const lastEventId = request.headers['last-event-id']
-      if (lastEventId && options?.onReconnect) {
-        try {
-          const replayEvents = await options.onReconnect(connection, lastEventId as string)
-          if (replayEvents) {
-            await sendReplayEvents(sseReply, replayEvents)
-          }
-        } catch (err) {
-          options?.logger?.error({ err, lastEventId }, 'Error in SSE onReconnect handler')
-        }
+      if (lastEventId) {
+        await handleReconnection(sseReply, connection, lastEventId as string, options)
       }
 
       // Notify connection established
@@ -119,9 +174,31 @@ export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
         options?.logger?.error({ err }, 'Error in SSE onConnect handler')
       }
 
-      // Call user handler for setup (subscriptions, initial data, etc.)
-      // biome-ignore lint/suspicious/noExplicitAny: Handler types are validated by SSEHandlerConfig
-      await handler(request as any, connection)
+      // Create type-safe event sender for the handler
+      // This provides compile-time checking that event names and data match the contract
+      const send: SSEEventSender<Contract['events']> = (eventName, data, sendOptions) => {
+        return controller.sendEventInternal(connectionId, {
+          event: eventName,
+          data,
+          id: sendOptions?.id,
+          retry: sendOptions?.retry,
+        })
+      }
+
+      // Call user handler with typed event sender
+      // Errors (including validation errors) are caught, sent as error events, and re-thrown
+      // so the app's error handler can process them (for logging, monitoring, etc.)
+      try {
+        // biome-ignore lint/suspicious/noExplicitAny: Handler types are validated by SSEHandlerConfig
+        await handler(request as any, connection, send)
+      } catch (err) {
+        await handleHandlerError(sseReply, controller, connectionId, err)
+
+        // Re-throw to let Fastify's error handler process it (for logging, onError hooks, etc.)
+        // Note: Since headers are already sent, Fastify can't change the response status,
+        // but error hooks will still fire for monitoring/logging purposes
+        throw err
+      }
 
       // Block the handler until the connection closes
       // This prevents Fastify from ending the response prematurely

@@ -18,6 +18,7 @@ import {
   TestPostSSEController,
   TestReconnectSSEController,
   TestSSEController,
+  TestValidationSSEController,
 } from './testControllers.js'
 import { EventService, TestNotificationService } from './testServices.js'
 
@@ -219,6 +220,31 @@ export class TestOpenAIStyleSSEModule extends AbstractModule<TestOpenAIStyleSSEM
       testOpenAIStyleSSEController: asSSEControllerClass(TestOpenAIStyleSSEController, {
         diOptions,
       }),
+    }
+  }
+}
+
+/**
+ * Module with validation test SSE controller for testing event validation
+ */
+export type TestValidationSSEModuleDependencies = {
+  testValidationSSEController: TestValidationSSEController
+}
+
+export class TestValidationSSEModule extends AbstractModule<TestValidationSSEModuleDependencies> {
+  resolveDependencies(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<TestValidationSSEModuleDependencies> {
+    return {
+      testValidationSSEController: asSSEControllerClass(TestValidationSSEController, { diOptions }),
+    }
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testValidationSSEController: asSSEControllerClass(TestValidationSSEController, { diOptions }),
     }
   }
 }
