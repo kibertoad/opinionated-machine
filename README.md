@@ -398,15 +398,13 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildSSERoute` for GET-based SSE streams or `buildPayloadSSERoute` for POST/PUT/PATCH streams.
-
-**Path options:** You can use either `path` (static string) or `pathResolver` (type-safe function). `pathResolver` is recommended for routes with path parameters:
+Use `buildSSERoute` for GET-based SSE streams or `buildPayloadSSERoute` for POST/PUT/PATCH streams. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
 import { buildSSERoute, buildPayloadSSERoute } from 'opinionated-machine'
 
-// GET-based SSE stream with pathResolver (recommended for path params)
+// GET-based SSE stream with path params
 export const channelStreamContract = buildSSERoute({
   pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
   params: z.object({ channelId: z.string() }),
@@ -417,9 +415,9 @@ export const channelStreamContract = buildSSERoute({
   },
 })
 
-// GET-based SSE stream with static path (simpler for no path params)
+// GET-based SSE stream without path params
 export const notificationsContract = buildSSERoute({
-  path: '/api/notifications/stream',
+  pathResolver: () => '/api/notifications/stream',
   params: z.object({}),
   query: z.object({ userId: z.string().optional() }),
   requestHeaders: z.object({}),
@@ -434,7 +432,7 @@ export const notificationsContract = buildSSERoute({
 // POST-based SSE stream (e.g., AI chat completions)
 export const chatCompletionContract = buildPayloadSSERoute({
   method: 'POST',
-  path: '/api/chat/completions',
+  pathResolver: () => '/api/chat/completions',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
