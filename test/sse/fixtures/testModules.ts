@@ -240,13 +240,11 @@ export class TestValidationSSEModule extends AbstractModule<TestValidationSSEMod
     }
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
-    return {}
-  }
-
-  override resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      testValidationSSEController: asSSEControllerClass(TestValidationSSEController),
+      testValidationSSEController: asSSEControllerClass(TestValidationSSEController, { diOptions }),
     }
   }
 }
