@@ -7,8 +7,11 @@ import {
   authenticatedDualModeContract,
   chatCompletionContract,
   conversationCompletionContract,
+  defaultMethodContract,
   defaultModeTestContract,
+  errorTestContract,
   jobStatusContract,
+  jsonValidationContract,
 } from './testContracts.js'
 
 /**
@@ -237,6 +240,104 @@ export class TestDefaultModeDualModeController extends AbstractDualModeControlle
         options: {
           defaultMode: 'sse', // Set SSE as default mode
         },
+      },
+    }
+  }
+}
+
+/**
+ * Controller for testing error handling in SSE mode.
+ */
+export type TestErrorContracts = {
+  errorTest: typeof errorTestContract
+}
+
+export class TestErrorDualModeController extends AbstractDualModeController<TestErrorContracts> {
+  public static contracts = {
+    errorTest: errorTestContract,
+  } as const
+
+  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<TestErrorContracts> {
+    return {
+      errorTest: {
+        contract: TestErrorDualModeController.contracts.errorTest,
+        handlers: buildDualModeHandler(errorTestContract, {
+          json: (ctx) => ({
+            success: !ctx.request.body.shouldThrow,
+          }),
+          sse: async (ctx) => {
+            if (ctx.request.body.shouldThrow) {
+              throw new Error('Test error in SSE handler')
+            }
+            await ctx.connection.send('result', { success: true })
+            this.closeConnection(ctx.connection.id)
+          },
+        }),
+      },
+    }
+  }
+}
+
+/**
+ * Controller for testing default method behavior (method omitted in contract).
+ */
+export type TestDefaultMethodContracts = {
+  defaultMethodTest: typeof defaultMethodContract
+}
+
+export class TestDefaultMethodDualModeController extends AbstractDualModeController<TestDefaultMethodContracts> {
+  public static contracts = {
+    defaultMethodTest: defaultMethodContract,
+  } as const
+
+  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<TestDefaultMethodContracts> {
+    return {
+      defaultMethodTest: {
+        contract: TestDefaultMethodDualModeController.contracts.defaultMethodTest,
+        handlers: buildDualModeHandler(defaultMethodContract, {
+          json: (ctx) => ({
+            result: `Processed: ${ctx.request.body.value}`,
+          }),
+          sse: async (ctx) => {
+            await ctx.connection.send('data', { value: ctx.request.body.value })
+            this.closeConnection(ctx.connection.id)
+          },
+        }),
+      },
+    }
+  }
+}
+
+/**
+ * Controller for testing JSON response validation failure.
+ * When returnInvalid is true, returns data that doesn't match the jsonResponse schema.
+ */
+export type TestJsonValidationContracts = {
+  jsonValidationTest: typeof jsonValidationContract
+}
+
+export class TestJsonValidationDualModeController extends AbstractDualModeController<TestJsonValidationContracts> {
+  public static contracts = {
+    jsonValidationTest: jsonValidationContract,
+  } as const
+
+  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<TestJsonValidationContracts> {
+    return {
+      jsonValidationTest: {
+        contract: TestJsonValidationDualModeController.contracts.jsonValidationTest,
+        handlers: buildDualModeHandler(jsonValidationContract, {
+          json: (ctx): { requiredField: string; count: number } => {
+            if (ctx.request.body.returnInvalid) {
+              // @ts-expect-error Intentionally returning invalid data to test validation failure
+              return { wrongField: 'invalid', count: -5 }
+            }
+            return { requiredField: 'valid', count: 42 }
+          },
+          sse: async (ctx) => {
+            await ctx.connection.send('result', { success: true })
+            this.closeConnection(ctx.connection.id)
+          },
+        }),
       },
     }
   }

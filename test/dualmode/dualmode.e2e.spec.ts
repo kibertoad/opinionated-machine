@@ -2,6 +2,7 @@ import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DIContext, SSEHttpClient, SSEInjectClient, SSETestServer } from '../../index.js'
+import { defaultMethodContract } from './fixtures/testContracts.js'
 import type {
   TestChatDualModeController,
   TestJobStatusDualModeController,
@@ -10,8 +11,11 @@ import {
   TestAuthenticatedDualModeModule,
   TestChatDualModeModule,
   TestConversationDualModeModule,
+  TestDefaultMethodDualModeModule,
   TestDefaultModeDualModeModule,
+  TestErrorDualModeModule,
   TestJobStatusDualModeModule,
+  TestJsonValidationDualModeModule,
 } from './fixtures/testModules.js'
 
 /**
@@ -147,6 +151,22 @@ describe('Dual-Mode Accept Header Routing', () => {
       payload: { message: 'Test' },
     })
     expect(jsonResponse.headers['content-type']).toContain('application/json')
+  })
+
+  it('falls back to default for unsupported Accept header', { timeout: 10000 }, async () => {
+    // Accept: text/html is not supported, should fall back to JSON (default)
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/api/chat/completions',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'text/html',
+      },
+      payload: { message: 'Test' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('application/json')
   })
 })
 
@@ -427,6 +447,62 @@ describe('Dual-Mode Default Mode Override', () => {
   })
 })
 
+describe('Dual-Mode SSE Error Handling', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+  let injectClient: SSEInjectClient
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestErrorDualModeModule()] }, undefined)
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerDualModeRoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+    injectClient = new SSEInjectClient(server.app)
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it('sends error event when SSE handler throws', { timeout: 10000 }, async () => {
+    const conn = await injectClient.connectWithBody('/api/error-test', { shouldThrow: true })
+
+    // Should still get 200 since headers are sent before error
+    expect(conn.getStatusCode()).toBe(200)
+
+    const events = conn.getReceivedEvents()
+    const errorEvent = events.find((e) => e.event === 'error')
+
+    expect(errorEvent).toBeDefined()
+    expect(JSON.parse(errorEvent!.data).message).toBe('Test error in SSE handler')
+  })
+
+  it('works normally when no error', { timeout: 10000 }, async () => {
+    const conn = await injectClient.connectWithBody('/api/error-test', { shouldThrow: false })
+
+    expect(conn.getStatusCode()).toBe(200)
+
+    const events = conn.getReceivedEvents()
+    const resultEvent = events.find((e) => e.event === 'result')
+
+    expect(resultEvent).toBeDefined()
+    expect(JSON.parse(resultEvent!.data).success).toBe(true)
+  })
+})
+
 describe('Dual-Mode Real HTTP Client', () => {
   let server: SSETestServer<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
@@ -479,6 +555,224 @@ describe('Dual-Mode Real HTTP Client', () => {
     expect(JSON.parse(doneEvents[0]!.data).result).toBe('Done!')
 
     client.close()
+  })
+})
+
+describe('Dual-Mode Default Method', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestDefaultMethodDualModeModule()] }, undefined)
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerDualModeRoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it('uses POST as default when method is not specified', { timeout: 10000 }, async () => {
+    // Verify the contract has POST method (default)
+    expect(defaultMethodContract.method).toBe('POST')
+
+    // Test the endpoint works with POST
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/api/default-method-test',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      payload: { value: 'test-value' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const body = JSON.parse(response.body)
+    expect(body.result).toBe('Processed: test-value')
+  })
+
+  it('rejects GET on POST-defaulted endpoint', { timeout: 10000 }, async () => {
+    const response = await server.app.inject({
+      method: 'GET',
+      url: '/api/default-method-test',
+      headers: {
+        accept: 'application/json',
+      },
+    })
+
+    // Should return 404 since GET is not registered
+    expect(response.statusCode).toBe(404)
+  })
+})
+
+describe('Dual-Mode JSON Response Validation', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestJsonValidationDualModeModule()] }, undefined)
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerDualModeRoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it('returns 500 when JSON response validation fails', { timeout: 10000 }, async () => {
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/api/json-validation-test',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      payload: { returnInvalid: true },
+    })
+
+    // Should return 500 with error about validation failure
+    expect(response.statusCode).toBe(500)
+    const body = JSON.parse(response.body)
+    expect(body.message).toContain('JSON response validation failed')
+  })
+
+  it('returns 200 when JSON response is valid', { timeout: 10000 }, async () => {
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/api/json-validation-test',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      payload: { returnInvalid: false },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const body = JSON.parse(response.body)
+    expect(body.requiredField).toBe('valid')
+    expect(body.count).toBe(42)
+  })
+})
+
+describe('Dual-Mode Controller Methods', () => {
+  it('buildSSERoutes returns empty object', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
+
+    const controller: TestChatDualModeController = context.diContainer.resolve(
+      'testChatDualModeController',
+    )
+
+    // buildSSERoutes should return empty object for dual-mode controllers
+    const sseRoutes = controller.buildSSERoutes()
+    expect(sseRoutes).toEqual({})
+
+    await context.destroy()
+  })
+
+  it('sendDualModeEventInternal sends event to connection', { timeout: 10000 }, async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
+
+    const server = await SSETestServer.create(
+      (app) => {
+        context.registerDualModeRoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    const controller: TestChatDualModeController = context.diContainer.resolve(
+      'testChatDualModeController',
+    )
+
+    const injectClient = new SSEInjectClient(server.app)
+
+    // Start an SSE connection (don't await yet - connection closes quickly)
+    const connectionPromise = injectClient.connectWithBody('/api/chat/completions', {
+      message: 'test',
+    })
+
+    // Wait for connection using connectionSpy
+    const connection = await controller.connectionSpy.waitForConnection({ timeout: 2000 })
+
+    // Use sendDualModeEventInternal to send a typed event
+    const result = await controller.sendDualModeEventInternal(connection.id, {
+      event: 'chunk',
+      data: { delta: 'extra-chunk' },
+    })
+
+    expect(result).toBe(true)
+
+    // Clean up
+    const conn = await connectionPromise
+    expect(conn.getStatusCode()).toBe(200)
+
+    // Verify the extra event was received
+    const events = conn.getReceivedEvents()
+    const extraChunk = events.find(
+      (e) => e.event === 'chunk' && e.data === JSON.stringify({ delta: 'extra-chunk' }),
+    )
+    expect(extraChunk).toBeDefined()
+
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it('sendDualModeEventInternal returns false for non-existent connection', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
+
+    const controller: TestChatDualModeController = context.diContainer.resolve(
+      'testChatDualModeController',
+    )
+
+    // Try to send to a non-existent connection
+    const result = await controller.sendDualModeEventInternal('non-existent-id', {
+      event: 'chunk',
+      data: { delta: 'test' },
+    })
+
+    expect(result).toBe(false)
+
+    await context.destroy()
   })
 })
 

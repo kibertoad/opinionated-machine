@@ -154,7 +154,7 @@ export const largeContentStreamContract = buildPayloadSSERoute({
 })
 
 /**
- * GET SSE route for testing logger error handling
+ * GET SSE route for testing logger error handling in onDisconnect
  */
 export const loggerTestStreamContract = buildSSERoute({
   pathResolver: () => '/api/logger-test/stream',
@@ -163,6 +163,34 @@ export const loggerTestStreamContract = buildSSERoute({
   requestHeaders: z.object({}),
   events: {
     message: z.object({ text: z.string() }),
+  },
+})
+
+/**
+ * GET SSE route for testing logger error handling in onConnect
+ */
+export const onConnectErrorStreamContract = buildSSERoute({
+  pathResolver: () => '/api/on-connect-error/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    message: z.object({ text: z.string() }),
+  },
+})
+
+/**
+ * GET SSE route for testing logger error handling in onReconnect
+ */
+export const onReconnectErrorStreamContract = buildSSERoute({
+  pathResolver: () => '/api/on-reconnect-error/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({
+    'last-event-id': z.string().optional(),
+  }),
+  events: {
+    event: z.object({ id: z.string(), data: z.string() }),
   },
 })
 

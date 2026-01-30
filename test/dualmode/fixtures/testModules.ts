@@ -8,8 +8,11 @@ import {
   TestAuthenticatedDualModeController,
   TestChatDualModeController,
   TestConversationDualModeController,
+  TestDefaultMethodDualModeController,
   TestDefaultModeDualModeController,
+  TestErrorDualModeController,
   TestJobStatusDualModeController,
+  TestJsonValidationDualModeController,
 } from './testControllers.js'
 
 /**
@@ -114,6 +117,73 @@ export class TestDefaultModeDualModeModule extends AbstractModule<TestDefaultMod
     return {
       testDefaultModeDualModeController: asDualModeControllerClass(
         TestDefaultModeDualModeController,
+        { diOptions },
+      ),
+    }
+  }
+}
+
+/**
+ * Module with error test dual-mode controller.
+ */
+export type TestErrorDualModeModuleDependencies = Record<string, never>
+
+export class TestErrorDualModeModule extends AbstractModule<TestErrorDualModeModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestErrorDualModeModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testErrorDualModeController: asDualModeControllerClass(TestErrorDualModeController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with default method test dual-mode controller.
+ * Tests the case where method is not specified in buildPayloadDualModeRoute.
+ */
+export type TestDefaultMethodDualModeModuleDependencies = Record<string, never>
+
+export class TestDefaultMethodDualModeModule extends AbstractModule<TestDefaultMethodDualModeModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestDefaultMethodDualModeModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testDefaultMethodDualModeController: asDualModeControllerClass(
+        TestDefaultMethodDualModeController,
+        { diOptions },
+      ),
+    }
+  }
+}
+
+/**
+ * Module with JSON validation test dual-mode controller.
+ * Tests JSON response validation failure.
+ */
+export type TestJsonValidationDualModeModuleDependencies = Record<string, never>
+
+export class TestJsonValidationDualModeModule extends AbstractModule<TestJsonValidationDualModeModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestJsonValidationDualModeModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testJsonValidationDualModeController: asDualModeControllerClass(
+        TestJsonValidationDualModeController,
         { diOptions },
       ),
     }

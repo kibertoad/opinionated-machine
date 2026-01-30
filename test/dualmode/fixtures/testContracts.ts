@@ -100,3 +100,56 @@ export const defaultModeTestContract = buildPayloadDualModeRoute({
     output: z.object({ value: z.string() }),
   },
 })
+
+/**
+ * POST dual-mode route for testing error handling in SSE mode.
+ */
+export const errorTestContract = buildPayloadDualModeRoute({
+  method: 'POST',
+  pathResolver: () => '/api/error-test',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  body: z.object({ shouldThrow: z.boolean() }),
+  jsonResponse: z.object({ success: z.boolean() }),
+  events: {
+    result: z.object({ success: z.boolean() }),
+  },
+})
+
+/**
+ * POST dual-mode route WITHOUT explicit method - tests the default POST behavior.
+ * This covers the `config.method ?? 'POST'` branch in buildPayloadDualModeRoute.
+ */
+export const defaultMethodContract = buildPayloadDualModeRoute({
+  // method is intentionally omitted to test default behavior
+  pathResolver: () => '/api/default-method-test',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  body: z.object({ value: z.string() }),
+  jsonResponse: z.object({ result: z.string() }),
+  events: {
+    data: z.object({ value: z.string() }),
+  },
+})
+
+/**
+ * POST dual-mode route for testing JSON response validation failure.
+ * The jsonResponse schema is strict, but the handler will return mismatched data.
+ */
+export const jsonValidationContract = buildPayloadDualModeRoute({
+  method: 'POST',
+  pathResolver: () => '/api/json-validation-test',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  body: z.object({ returnInvalid: z.boolean() }),
+  jsonResponse: z.object({
+    requiredField: z.string(),
+    count: z.number().int().positive(),
+  }),
+  events: {
+    result: z.object({ success: z.boolean() }),
+  },
+})

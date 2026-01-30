@@ -14,6 +14,8 @@ import {
   largeContentStreamContract,
   loggerTestStreamContract,
   notificationsStreamContract,
+  onConnectErrorStreamContract,
+  onReconnectErrorStreamContract,
   openaiStyleStreamContract,
   reconnectStreamContract,
   streamContract,
@@ -625,6 +627,102 @@ export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpen
       // This demonstrates that JSON encoding is NOT mandatory for SSE data
       await connection.send('done', '[DONE]')
 
+      this.closeConnection(connection.id)
+    },
+  )
+}
+
+/**
+ * Test SSE controller for logger error handling in onReconnect.
+ * The onReconnect handler throws an error to test that:
+ * 1. The logger is called with the error
+ * 2. The connection still works despite the error
+ */
+export type TestOnReconnectErrorSSEContracts = {
+  onReconnectErrorStream: typeof onReconnectErrorStreamContract
+}
+
+export class TestOnReconnectErrorSSEController extends AbstractSSEController<TestOnReconnectErrorSSEContracts> {
+  public static contracts = {
+    onReconnectErrorStream: onReconnectErrorStreamContract,
+  } as const
+
+  private readonly logger: SSELogger
+
+  constructor(deps: { logger: SSELogger }, sseConfig?: SSEControllerConfig) {
+    super(deps, sseConfig)
+    this.logger = deps.logger
+  }
+
+  public buildSSERoutes(): BuildSSERoutesReturnType<TestOnReconnectErrorSSEContracts> {
+    return {
+      onReconnectErrorStream: {
+        contract: TestOnReconnectErrorSSEController.contracts.onReconnectErrorStream,
+        handler: this.handleStream,
+        options: {
+          logger: this.logger,
+          onReconnect: () => {
+            // Intentionally throw to test error handling
+            throw new Error('Test error in onReconnect')
+          },
+        },
+      },
+    }
+  }
+
+  private handleStream = buildSSEHandler(
+    onReconnectErrorStreamContract,
+    async (_request, connection) => {
+      // Send message to verify connection still works after onReconnect error
+      await connection.send('event', { id: 'new', data: 'Hello after onReconnect error' })
+      this.closeConnection(connection.id)
+    },
+  )
+}
+
+/**
+ * Test SSE controller for logger error handling in onConnect.
+ * The onConnect handler throws an error to test that:
+ * 1. The logger is called with the error
+ * 2. The connection still works despite the error
+ */
+export type TestOnConnectErrorSSEContracts = {
+  onConnectErrorStream: typeof onConnectErrorStreamContract
+}
+
+export class TestOnConnectErrorSSEController extends AbstractSSEController<TestOnConnectErrorSSEContracts> {
+  public static contracts = {
+    onConnectErrorStream: onConnectErrorStreamContract,
+  } as const
+
+  private readonly logger: SSELogger
+
+  constructor(deps: { logger: SSELogger }, sseConfig?: SSEControllerConfig) {
+    super(deps, sseConfig)
+    this.logger = deps.logger
+  }
+
+  public buildSSERoutes(): BuildSSERoutesReturnType<TestOnConnectErrorSSEContracts> {
+    return {
+      onConnectErrorStream: {
+        contract: TestOnConnectErrorSSEController.contracts.onConnectErrorStream,
+        handler: this.handleStream,
+        options: {
+          logger: this.logger,
+          onConnect: () => {
+            // Intentionally throw to test error handling
+            throw new Error('Test error in onConnect')
+          },
+        },
+      },
+    }
+  }
+
+  private handleStream = buildSSEHandler(
+    onConnectErrorStreamContract,
+    async (_request, connection) => {
+      // Send message to verify connection still works after onConnect error
+      await connection.send('message', { text: 'Hello after onConnect error' })
       this.closeConnection(connection.id)
     },
   )
