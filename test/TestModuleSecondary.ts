@@ -31,7 +31,9 @@ export class TestModuleSecondary extends AbstractModule<TestModuleSecondaryDepen
     }
   }
 
-  resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveControllers(
+    _diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {}
   }
 }

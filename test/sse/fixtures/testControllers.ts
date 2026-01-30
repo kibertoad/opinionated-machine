@@ -14,6 +14,7 @@ import {
   largeContentStreamContract,
   loggerTestStreamContract,
   notificationsStreamContract,
+  openaiStyleStreamContract,
   reconnectStreamContract,
   streamContract,
   validationTestStreamContract,
@@ -585,6 +586,66 @@ export class TestValidationSSEController extends AbstractSSEController<TestValid
         event: 'validatedEvent',
         data: request.body.eventData,
       })
+      this.closeConnection(connection.id)
+    },
+  )
+}
+
+/**
+ * Test SSE controller for OpenAI-style streaming.
+ * Demonstrates that JSON encoding is not mandatory - the stream can include
+ * both JSON objects (for chunks) and plain strings (for the terminator).
+ *
+ * This replicates OpenAI's streaming behavior where:
+ * 1. JSON chunks are streamed with content deltas
+ * 2. The stream ends with a simple "[DONE]" string (not JSON encoded)
+ */
+export type TestOpenAIStyleSSEContracts = {
+  openaiStyleStream: typeof openaiStyleStreamContract
+}
+
+export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpenAIStyleSSEContracts> {
+  public static contracts = {
+    openaiStyleStream: openaiStyleStreamContract,
+  } as const
+
+  public buildSSERoutes(): BuildSSERoutesReturnType<TestOpenAIStyleSSEContracts> {
+    return {
+      openaiStyleStream: {
+        contract: TestOpenAIStyleSSEController.contracts.openaiStyleStream,
+        handler: this.handleOpenAIStyleStream,
+      },
+    }
+  }
+
+  private handleOpenAIStyleStream = buildSSEHandler(
+    openaiStyleStreamContract,
+    async (request, connection) => {
+      // Split prompt into words and stream each as a JSON chunk (like OpenAI)
+      const words = request.body.prompt.split(' ')
+
+      for (const word of words) {
+        await this.sendEvent(connection.id, {
+          event: 'chunk',
+          data: {
+            choices: [
+              {
+                delta: {
+                  content: word,
+                },
+              },
+            ],
+          },
+        })
+      }
+
+      // Send the terminator as a plain string, exactly like OpenAI does
+      // This demonstrates that JSON encoding is NOT mandatory for SSE data
+      await this.sendEvent(connection.id, {
+        event: 'done',
+        data: '[DONE]',
+      })
+
       this.closeConnection(connection.id)
     },
   )

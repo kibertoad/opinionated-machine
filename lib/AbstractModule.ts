@@ -18,22 +18,31 @@ export abstract class AbstractModule<ModuleDependencies, ExternalDependencies = 
     externalDependencies: ExternalDependencies,
   ): MandatoryNameAndRegistrationPair<ModuleDependencies>
 
-  public abstract resolveControllers(): MandatoryNameAndRegistrationPair<unknown>
-
   /**
-   * Override to register SSE controllers.
-   * Returns empty object by default - no changes needed for modules without SSE.
+   * Override to register REST and SSE controllers.
+   * Returns empty object by default - no changes needed for modules without controllers.
+   *
+   * Controllers registered here are automatically added to the DI container.
+   * SSE controllers (created with asSSEControllerClass) are automatically detected
+   * and registered for SSE route handling.
+   *
+   * @param diOptions - DI options (use for test mode detection with asSSEControllerClass)
    *
    * @example
    * ```typescript
-   * public resolveSSEControllers() {
+   * public resolveControllers(diOptions: DependencyInjectionOptions) {
    *   return {
-   *     notificationsSSEController: asSSEControllerClass(NotificationsSSEController),
+   *     // REST controller
+   *     usersController: asControllerClass(UsersController),
+   *     // SSE controller (automatically detected via isSSEController flag)
+   *     notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions }),
    *   }
    * }
    * ```
    */
-  public resolveSSEControllers(): MandatoryNameAndRegistrationPair<unknown> {
+  public resolveControllers(
+    _diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
     return {}
   }
 }

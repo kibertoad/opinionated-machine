@@ -63,7 +63,7 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
   })
 
   function getController(): TestSSEController {
-    return server.resources.context.diContainer.cradle.testSSEController
+    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
   }
 
   it(
@@ -395,7 +395,7 @@ describe('SSE HTTP E2E (error handling)', () => {
   })
 
   function getController(): TestSSEController {
-    return server.resources.context.diContainer.cradle.testSSEController
+    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
   }
 
   it('handles sending to non-existent connection gracefully', { timeout: 10000 }, async () => {
@@ -477,7 +477,7 @@ describe('SSE HTTP E2E (serialization)', () => {
   })
 
   function getController(): TestSSEController {
-    return server.resources.context.diContainer.cradle.testSSEController
+    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
   }
 
   it('serializes various JSON data types correctly', { timeout: 10000 }, async () => {
@@ -555,7 +555,7 @@ describe('SSE HTTP E2E (event metadata)', () => {
   })
 
   function getController(): TestSSEController {
-    return server.resources.context.diContainer.cradle.testSSEController
+    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
   }
 
   it('sends event with custom ID', { timeout: 10000 }, async () => {
@@ -682,7 +682,7 @@ describe('SSE HTTP E2E (connection lifecycle)', () => {
   })
 
   function getController(): TestSSEController {
-    return server.resources.context.diContainer.cradle.testSSEController
+    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
   }
 
   it('tracks connection events and isConnected status in spy', { timeout: 10000 }, async () => {
@@ -778,7 +778,7 @@ describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
   })
 
   function getController(): TestSSEController {
-    return server.resources.context.diContainer.cradle.testSSEController
+    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
   }
 
   it('waitForConnection times out when no connection arrives', { timeout: 10000 }, async () => {
@@ -1140,7 +1140,7 @@ describe('SSE HTTP E2E (awaitServerConnection option)', () => {
   })
 
   function getController(): TestSSEController {
-    return server.resources.context.diContainer.cradle.testSSEController
+    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
   }
 
   it('supports custom timeout for awaitServerConnection', { timeout: 10000 }, async () => {
@@ -1285,7 +1285,7 @@ describe('SSE HTTP E2E (server closes connection)', () => {
   })
 
   function getController(): TestSSEController {
-    return server.resources.context.diContainer.cradle.testSSEController
+    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
   }
 
   it(

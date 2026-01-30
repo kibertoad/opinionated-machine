@@ -108,7 +108,8 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
     }
 
     // controllers will be automatically registered on fastify app
-    resolveControllers() {
+    // both REST and SSE controllers go here - SSE controllers are auto-detected
+    resolveControllers(diOptions: DependencyInjectionOptions) {
         return {
             controller: asControllerClass(MyController),
         }
@@ -277,21 +278,23 @@ userRepository: asRepositoryClass(UserRepository)
 ```
 
 #### `asControllerClass(Type, opts?)`
-For controller classes. Marks the dependency as **private**. Use in `resolveControllers()`.
+For REST controller classes. Marks the dependency as **private**. Use in `resolveControllers()`.
 
 ```ts
 userController: asControllerClass(UserController)
 ```
 
 #### `asSSEControllerClass(Type, sseOptions?, opts?)`
-For SSE controller classes. Marks the dependency as **private**. Automatically configures `closeAllConnections` as the async dispose method for graceful shutdown. When `sseOptions.diOptions.isTestMode` is true, enables the connection spy for testing.
+For SSE controller classes. Marks the dependency as **private** with `isSSEController: true` for auto-detection. Automatically configures `closeAllConnections` as the async dispose method for graceful shutdown. When `sseOptions.diOptions.isTestMode` is true, enables the connection spy for testing. Use in `resolveControllers()` alongside REST controllers.
 
 ```ts
-// Without test mode
-notificationsSSEController: asSSEControllerClass(NotificationsSSEController)
-
-// With test mode (enables connectionSpy)
-notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions })
+// In resolveControllers()
+resolveControllers(diOptions: DependencyInjectionOptions) {
+  return {
+    userController: asControllerClass(UserController),
+    notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions }),
+  }
+}
 ```
 
 ### Message Queue Resolvers
@@ -569,22 +572,24 @@ export class SimpleSSEController extends AbstractSSEController<Contracts> {
 
 ### Registering SSE Controllers
 
-Use `asSSEControllerClass` in your module and implement `resolveSSEControllers`:
+Use `asSSEControllerClass` in your module's `resolveControllers` method alongside REST controllers. SSE controllers are automatically detected via the `isSSEController` flag and registered in the DI container:
 
 ```ts
-import { AbstractModule, asSSEControllerClass, asServiceClass } from 'opinionated-machine'
+import { AbstractModule, asControllerClass, asSSEControllerClass, asServiceClass, type DependencyInjectionOptions } from 'opinionated-machine'
 
 export class NotificationsModule extends AbstractModule<Dependencies> {
-  resolveDependencies(diOptions: DependencyInjectionOptions) {
+  resolveDependencies() {
     return {
       notificationService: asServiceClass(NotificationService),
-      notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions }),
     }
   }
 
-  resolveSSEControllers() {
+  resolveControllers(diOptions: DependencyInjectionOptions) {
     return {
-      notificationsSSEController: asSSEControllerClass(NotificationsSSEController),
+      // REST controller
+      usersController: asControllerClass(UsersController),
+      // SSE controller (automatically detected and registered for SSE routes)
+      notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions }),
     }
   }
 }

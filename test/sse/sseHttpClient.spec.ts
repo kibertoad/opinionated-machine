@@ -43,7 +43,7 @@ describe('SSEHttpClient', () => {
     })
 
     function getController(): TestSSEController {
-      return server.resources.context.diContainer.cradle.testSSEController
+      return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
     }
 
     it(
@@ -144,7 +144,7 @@ describe('SSEHttpClient', () => {
     })
 
     function getController(): TestSSEController {
-      return server.resources.context.diContainer.cradle.testSSEController
+      return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
     }
 
     it(
@@ -237,7 +237,7 @@ describe('SSEHttpClient', () => {
     })
 
     function getController(): TestSSEController {
-      return server.resources.context.diContainer.cradle.testSSEController
+      return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
     }
 
     it('stops generator when AbortSignal fires', async () => {
@@ -347,7 +347,7 @@ describe('SSEHttpClient', () => {
     })
 
     function getController(): TestSSEController {
-      return server.resources.context.diContainer.cradle.testSSEController
+      return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
     }
 
     it('close() after collectEvents timeout does not cause unhandled rejection', async () => {
