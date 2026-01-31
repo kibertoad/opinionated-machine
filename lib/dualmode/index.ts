@@ -7,11 +7,9 @@ export {
 } from './AbstractDualModeController.js'
 export type {
   AnyDualModeContractDefinition,
-  DualModeContractConfig,
   DualModeContractDefinition,
   DualModeMethod,
   PathResolver,
-  PayloadDualModeContractConfig,
 } from './dualModeContracts.js'
 // Framework-agnostic types
 export type {

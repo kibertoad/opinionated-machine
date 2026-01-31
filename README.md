@@ -1308,7 +1308,13 @@ Dual-mode controllers extend `AbstractDualModeController` which inherits from `A
 
 ### Defining Dual-Mode Contracts
 
-Use `buildContract` with a `jsonResponse` schema to create dual-mode contracts. The contract type is automatically determined:
+Dual-mode contracts define endpoints that can return **either** a complete JSON response **or** stream SSE events, based on the client's `Accept` header. Use dual-mode when:
+
+- Clients may want immediate results (JSON) or real-time updates (SSE)
+- You're building OpenAI-style APIs where `stream: true` triggers SSE
+- You need polling fallback for clients that don't support SSE
+
+To create a dual-mode contract, include a `jsonResponse` schema in your `buildContract` call:
 - Has `jsonResponse` but no `body` → GET dual-mode route
 - Has both `jsonResponse` and `body` → POST/PUT/PATCH dual-mode route
 

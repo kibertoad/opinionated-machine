@@ -26,8 +26,6 @@ export {
 export { type SSEConnectionEvent, SSEConnectionSpy } from './SSEConnectionSpy.js'
 export type {
   AnySSEContractDefinition,
-  PayloadSSEContractConfig,
-  SSEContractConfig,
   SSEContractDefinition,
   SSEMethod,
   SSEPathResolver,
