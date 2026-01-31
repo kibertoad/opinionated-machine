@@ -1,7 +1,7 @@
 import { stringify } from 'fast-querystring'
+import type { SSEConnection } from '../sse/fastifySSETypes.ts'
 import type { SSEConnectionSpy } from '../sse/SSEConnectionSpy.ts'
 import { type ParsedSSEEvent, parseSSEBuffer } from '../sse/sseParser.ts'
-import type { SSEConnection } from '../sse/sseTypes.ts'
 
 /**
  * Interface for objects that have a connectionSpy (e.g., SSE controllers in test mode).

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { z } from 'zod'
-import type { AnySSERouteDefinition } from '../sse/sseContracts.ts'
+import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { ParsedSSEEvent } from '../sse/sseParser.ts'
 
 /**
@@ -62,7 +62,7 @@ export type SSEConnectOptions = {
 /**
  * Options for injectSSE (GET SSE routes).
  */
-export type InjectSSEOptions<Contract extends AnySSERouteDefinition> = {
+export type InjectSSEOptions<Contract extends AnySSEContractDefinition> = {
   params?: z.infer<Contract['params']>
   query?: z.infer<Contract['query']>
   headers?: z.infer<Contract['requestHeaders']>
@@ -71,7 +71,7 @@ export type InjectSSEOptions<Contract extends AnySSERouteDefinition> = {
 /**
  * Options for injectPayloadSSE (POST/PUT/PATCH SSE routes).
  */
-export type InjectPayloadSSEOptions<Contract extends AnySSERouteDefinition> = {
+export type InjectPayloadSSEOptions<Contract extends AnySSEContractDefinition> = {
   params?: z.infer<Contract['params']>
   query?: z.infer<Contract['query']>
   headers?: z.infer<Contract['requestHeaders']>

@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
 import {
   AbstractSSEController,
-  type BuildSSERoutesReturnType,
-  buildPayloadSSERoute,
-  buildSSEHandler,
-  buildSSERoute,
+  type BuildFastifySSERoutesReturnType,
+  buildFastifySSEHandler,
+  buildPayloadSSEContract,
+  buildSSEContract,
 } from '../../index.js'
 
 /**
@@ -16,7 +16,7 @@ import {
  */
 
 // Define a realistic contract like users would
-const chatStreamContract = buildPayloadSSERoute({
+const chatStreamContract = buildPayloadSSEContract({
   method: 'POST',
   pathResolver: () => '/api/chat/stream',
   params: z.object({}),
@@ -44,7 +44,7 @@ describe('SSE Controller Type Safety', () => {
       class ChatSSEController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: ChatSSEController.contracts.chatStream,
@@ -53,17 +53,20 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        // Handler using buildSSEHandler for type inference
-        private handleChat = buildSSEHandler(chatStreamContract, async (request, connection) => {
-          // Valid: correct event names and payloads
-          await connection.send('chunk', { content: 'Hello', index: 0 })
-          await connection.send('chunk', { content: ' world', index: 1 })
-          await connection.send('done', { totalTokens: 10, model: request.body.model })
+        // Handler using buildFastifySSEHandler for type inference
+        private handleChat = buildFastifySSEHandler(
+          chatStreamContract,
+          async (request, connection) => {
+            // Valid: correct event names and payloads
+            await connection.send('chunk', { content: 'Hello', index: 0 })
+            await connection.send('chunk', { content: ' world', index: 1 })
+            await connection.send('done', { totalTokens: 10, model: request.body.model })
 
-          // Request body is typed
-          const messages = request.body.messages
-          expect(messages).toBeDefined()
-        })
+            // Request body is typed
+            const messages = request.body.messages
+            expect(messages).toBeDefined()
+          },
+        )
       }
 
       const controller = new ChatSSEController({})
@@ -74,7 +77,7 @@ describe('SSE Controller Type Safety', () => {
       class InvalidEventController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: InvalidEventController.contracts.chatStream,
@@ -83,10 +86,13 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
-          // @ts-expect-error - 'message' is not a valid event name, should be 'chunk', 'done', or 'error'
-          await connection.send('message', { text: 'hello' })
-        })
+        private handleChat = buildFastifySSEHandler(
+          chatStreamContract,
+          async (_request, connection) => {
+            // @ts-expect-error - 'message' is not a valid event name, should be 'chunk', 'done', or 'error'
+            await connection.send('message', { text: 'hello' })
+          },
+        )
       }
 
       expect(InvalidEventController).toBeDefined()
@@ -96,7 +102,7 @@ describe('SSE Controller Type Safety', () => {
       class WrongPayloadController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: WrongPayloadController.contracts.chatStream,
@@ -105,10 +111,13 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
-          // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not { text: string }
-          await connection.send('chunk', { text: 'hello' })
-        })
+        private handleChat = buildFastifySSEHandler(
+          chatStreamContract,
+          async (_request, connection) => {
+            // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not { text: string }
+            await connection.send('chunk', { text: 'hello' })
+          },
+        )
       }
 
       expect(WrongPayloadController).toBeDefined()
@@ -118,7 +127,7 @@ describe('SSE Controller Type Safety', () => {
       class MissingFieldController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: MissingFieldController.contracts.chatStream,
@@ -127,10 +136,13 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
-          // @ts-expect-error - 'done' event requires both 'totalTokens' and 'model', missing 'model'
-          await connection.send('done', { totalTokens: 10 })
-        })
+        private handleChat = buildFastifySSEHandler(
+          chatStreamContract,
+          async (_request, connection) => {
+            // @ts-expect-error - 'done' event requires both 'totalTokens' and 'model', missing 'model'
+            await connection.send('done', { totalTokens: 10 })
+          },
+        )
       }
 
       expect(MissingFieldController).toBeDefined()
@@ -140,7 +152,7 @@ describe('SSE Controller Type Safety', () => {
       class WrongTypeController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: WrongTypeController.contracts.chatStream,
@@ -149,10 +161,13 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
-          // @ts-expect-error - 'index' should be number, not string
-          await connection.send('chunk', { content: 'hello', index: 'one' })
-        })
+        private handleChat = buildFastifySSEHandler(
+          chatStreamContract,
+          async (_request, connection) => {
+            // @ts-expect-error - 'index' should be number, not string
+            await connection.send('chunk', { content: 'hello', index: 'one' })
+          },
+        )
       }
 
       expect(WrongTypeController).toBeDefined()
@@ -162,7 +177,7 @@ describe('SSE Controller Type Safety', () => {
       class MismatchedPayloadController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: MismatchedPayloadController.contracts.chatStream,
@@ -171,16 +186,19 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(chatStreamContract, async (_request, connection) => {
-          // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not 'done' payload { totalTokens: number, model: string }
-          await connection.send('chunk', { totalTokens: 10, model: 'gpt-4' })
+        private handleChat = buildFastifySSEHandler(
+          chatStreamContract,
+          async (_request, connection) => {
+            // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not 'done' payload { totalTokens: number, model: string }
+            await connection.send('chunk', { totalTokens: 10, model: 'gpt-4' })
 
-          // @ts-expect-error - 'done' event expects { totalTokens: number, model: string }, not 'chunk' payload { content: string, index: number }
-          await connection.send('done', { content: 'hello', index: 0 })
+            // @ts-expect-error - 'done' event expects { totalTokens: number, model: string }, not 'chunk' payload { content: string, index: number }
+            await connection.send('done', { content: 'hello', index: 0 })
 
-          // @ts-expect-error - 'error' event expects { code: number, message: string }, not 'chunk' payload
-          await connection.send('error', { content: 'hello', index: 0 })
-        })
+            // @ts-expect-error - 'error' event expects { code: number, message: string }, not 'chunk' payload
+            await connection.send('error', { content: 'hello', index: 0 })
+          },
+        )
       }
 
       expect(MismatchedPayloadController).toBeDefined()
@@ -190,7 +208,7 @@ describe('SSE Controller Type Safety', () => {
       class TypedRequestController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: TypedRequestController.contracts.chatStream,
@@ -199,7 +217,7 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(chatStreamContract, (request, _connection) => {
+        private handleChat = buildFastifySSEHandler(chatStreamContract, (request, _connection) => {
           // These should be typed
           const model: string = request.body.model
           const messages: Array<{ role: string; content: string }> = request.body.messages
@@ -219,7 +237,7 @@ describe('SSE Controller Type Safety', () => {
       class TypedHeadersController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: TypedHeadersController.contracts.chatStream,
@@ -228,7 +246,7 @@ describe('SSE Controller Type Safety', () => {
           }
         }
 
-        private handleChat = buildSSEHandler(chatStreamContract, (request, _connection) => {
+        private handleChat = buildFastifySSEHandler(chatStreamContract, (request, _connection) => {
           // Authorization header is typed as string (required by contract schema)
           const auth: string = request.headers.authorization
 
@@ -247,11 +265,11 @@ describe('SSE Controller Type Safety', () => {
       class ExternalTriggerController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: ExternalTriggerController.contracts.chatStream,
-              handler: buildSSEHandler(chatStreamContract, async () => {}),
+              handler: buildFastifySSEHandler(chatStreamContract, async () => {}),
             },
           }
         }
@@ -283,11 +301,11 @@ describe('SSE Controller Type Safety', () => {
       class InvalidExternalController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: InvalidExternalController.contracts.chatStream,
-              handler: buildSSEHandler(chatStreamContract, async () => {}),
+              handler: buildFastifySSEHandler(chatStreamContract, async () => {}),
             },
           }
         }
@@ -305,11 +323,11 @@ describe('SSE Controller Type Safety', () => {
       class WrongPayloadExternalController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: WrongPayloadExternalController.contracts.chatStream,
-              handler: buildSSEHandler(chatStreamContract, async () => {}),
+              handler: buildFastifySSEHandler(chatStreamContract, async () => {}),
             },
           }
         }
@@ -327,11 +345,11 @@ describe('SSE Controller Type Safety', () => {
       class MissingFieldExternalController extends AbstractSSEController<ChatStreamContracts> {
         public static contracts = { chatStream: chatStreamContract } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<ChatStreamContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<ChatStreamContracts> {
           return {
             chatStream: {
               contract: MissingFieldExternalController.contracts.chatStream,
-              handler: buildSSEHandler(chatStreamContract, async () => {}),
+              handler: buildFastifySSEHandler(chatStreamContract, async () => {}),
             },
           }
         }
@@ -348,7 +366,7 @@ describe('SSE Controller Type Safety', () => {
     it('provides autocomplete for event names from all contracts', () => {
       // This test demonstrates that a controller with multiple contracts
       // gets autocomplete for all events across all routes
-      const notificationContract = buildSSERoute({
+      const notificationContract = buildSSEContract({
         pathResolver: () => '/api/notifications',
         params: z.object({}),
         query: z.object({}),
@@ -370,15 +388,15 @@ describe('SSE Controller Type Safety', () => {
           notifications: notificationContract,
         } as const
 
-        public buildSSERoutes(): BuildSSERoutesReturnType<MultiContracts> {
+        public buildSSERoutes(): BuildFastifySSERoutesReturnType<MultiContracts> {
           return {
             chatStream: {
               contract: MultiContractController.contracts.chatStream,
-              handler: buildSSEHandler(chatStreamContract, async () => {}),
+              handler: buildFastifySSEHandler(chatStreamContract, async () => {}),
             },
             notifications: {
               contract: MultiContractController.contracts.notifications,
-              handler: buildSSEHandler(notificationContract, async () => {}),
+              handler: buildFastifySSEHandler(notificationContract, async () => {}),
             },
           }
         }

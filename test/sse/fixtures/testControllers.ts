@@ -1,7 +1,7 @@
 import {
   AbstractSSEController,
-  type BuildSSERoutesReturnType,
-  buildSSEHandler,
+  type BuildFastifySSERoutesReturnType,
+  buildFastifySSEHandler,
   type SSEConnection,
   type SSEControllerConfig,
   type SSELogger,
@@ -39,7 +39,7 @@ export class StreamController extends AbstractSSEController<{
     this.eventService = deps.eventService
   }
 
-  buildSSERoutes(): BuildSSERoutesReturnType<{ stream: typeof streamContract }> {
+  buildSSERoutes(): BuildFastifySSERoutesReturnType<{ stream: typeof streamContract }> {
     return {
       stream: {
         contract: StreamController.contracts.stream,
@@ -57,7 +57,7 @@ export class StreamController extends AbstractSSEController<{
     }
   }
 
-  private handleStream = buildSSEHandler(streamContract, (request, connection) => {
+  private handleStream = buildFastifySSEHandler(streamContract, (request, connection) => {
     const userId = request.query.userId ?? 'anonymous'
     connection.context = { userId }
 
@@ -103,7 +103,7 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
     this._notificationService = deps.notificationService
   }
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestSSEContracts> {
     return {
       notificationsStream: {
         contract: TestSSEController.contracts.notificationsStream,
@@ -116,7 +116,7 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
     }
   }
 
-  private handleStream = buildSSEHandler(
+  private handleStream = buildFastifySSEHandler(
     notificationsStreamContract,
     async (request, connection) => {
       const userId = request.query.userId ?? 'default'
@@ -197,7 +197,7 @@ export class TestPostSSEController extends AbstractSSEController<TestPostSSECont
     chatCompletion: chatCompletionContract,
   } as const
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestPostSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestPostSSEContracts> {
     return {
       chatCompletion: {
         contract: TestPostSSEController.contracts.chatCompletion,
@@ -206,7 +206,7 @@ export class TestPostSSEController extends AbstractSSEController<TestPostSSECont
     }
   }
 
-  private handleChatCompletion = buildSSEHandler(
+  private handleChatCompletion = buildFastifySSEHandler(
     chatCompletionContract,
     async (request, connection) => {
       // Simulate streaming response
@@ -232,7 +232,7 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
     authenticatedStream: authenticatedStreamContract,
   } as const
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestAuthSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestAuthSSEContracts> {
     return {
       authenticatedStream: {
         contract: TestAuthSSEController.contracts.authenticatedStream,
@@ -250,7 +250,7 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
     }
   }
 
-  private handleAuthenticatedStream = buildSSEHandler(
+  private handleAuthenticatedStream = buildFastifySSEHandler(
     authenticatedStreamContract,
     async (_request, connection) => {
       await connection.send('data', { value: 'authenticated data' })
@@ -271,7 +271,7 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
     channelStream: channelStreamContract,
   } as const
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestChannelSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestChannelSSEContracts> {
     return {
       channelStream: {
         contract: TestChannelSSEController.contracts.channelStream,
@@ -280,7 +280,7 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
     }
   }
 
-  private handleChannelStream = buildSSEHandler(
+  private handleChannelStream = buildFastifySSEHandler(
     channelStreamContract,
     async (request, connection) => {
       connection.context = { channelId: request.params.channelId }
@@ -321,7 +321,7 @@ export class TestReconnectSSEController extends AbstractSSEController<TestReconn
     ]
   }
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestReconnectSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestReconnectSSEContracts> {
     return {
       reconnectStream: {
         contract: TestReconnectSSEController.contracts.reconnectStream,
@@ -333,7 +333,7 @@ export class TestReconnectSSEController extends AbstractSSEController<TestReconn
     }
   }
 
-  private handleReconnectStream = buildSSEHandler(
+  private handleReconnectStream = buildFastifySSEHandler(
     reconnectStreamContract,
     async (_request, connection) => {
       // Send a new event after connection
@@ -389,7 +389,7 @@ export class TestAsyncReconnectSSEController extends AbstractSSEController<TestA
     ]
   }
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestAsyncReconnectSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestAsyncReconnectSSEContracts> {
     return {
       asyncReconnectStream: {
         contract: TestAsyncReconnectSSEController.contracts.asyncReconnectStream,
@@ -401,7 +401,7 @@ export class TestAsyncReconnectSSEController extends AbstractSSEController<TestA
     }
   }
 
-  private handleReconnectStream = buildSSEHandler(
+  private handleReconnectStream = buildFastifySSEHandler(
     asyncReconnectStreamContract,
     async (_request, connection) => {
       // Send a new event after connection
@@ -452,7 +452,7 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
     largeContentStream: largeContentStreamContract,
   } as const
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestLargeContentSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestLargeContentSSEContracts> {
     return {
       largeContentStream: {
         contract: TestLargeContentSSEController.contracts.largeContentStream,
@@ -461,7 +461,7 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
     }
   }
 
-  private handleLargeContentStream = buildSSEHandler(
+  private handleLargeContentStream = buildFastifySSEHandler(
     largeContentStreamContract,
     async (request, connection) => {
       const { chunkCount, chunkSize } = request.body
@@ -512,7 +512,7 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
     this.logger = deps.logger
   }
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestLoggerSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestLoggerSSEContracts> {
     return {
       loggerTestStream: {
         contract: TestLoggerSSEController.contracts.loggerTestStream,
@@ -528,10 +528,13 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
     }
   }
 
-  private handleStream = buildSSEHandler(loggerTestStreamContract, async (_request, connection) => {
-    await connection.send('message', { text: 'Hello from logger test' })
-    // Don't close connection - let client close to trigger onDisconnect
-  })
+  private handleStream = buildFastifySSEHandler(
+    loggerTestStreamContract,
+    async (_request, connection) => {
+      await connection.send('message', { text: 'Hello from logger test' })
+      // Don't close connection - let client close to trigger onDisconnect
+    },
+  )
 }
 
 /**
@@ -551,7 +554,7 @@ export class TestValidationSSEController extends AbstractSSEController<TestValid
     validationTestStream: validationTestStreamContract,
   } as const
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestValidationSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestValidationSSEContracts> {
     return {
       validationTestStream: {
         contract: TestValidationSSEController.contracts.validationTestStream,
@@ -560,7 +563,7 @@ export class TestValidationSSEController extends AbstractSSEController<TestValid
     }
   }
 
-  private handleStream = buildSSEHandler(
+  private handleStream = buildFastifySSEHandler(
     validationTestStreamContract,
     async (request, connection) => {
       // Send the event - if validation fails, error propagates to the framework
@@ -596,7 +599,7 @@ export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpen
     openaiStyleStream: openaiStyleStreamContract,
   } as const
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestOpenAIStyleSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestOpenAIStyleSSEContracts> {
     return {
       openaiStyleStream: {
         contract: TestOpenAIStyleSSEController.contracts.openaiStyleStream,
@@ -605,7 +608,7 @@ export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpen
     }
   }
 
-  private handleOpenAIStyleStream = buildSSEHandler(
+  private handleOpenAIStyleStream = buildFastifySSEHandler(
     openaiStyleStreamContract,
     async (request, connection) => {
       // Split prompt into words and stream each as a JSON chunk (like OpenAI)
@@ -654,7 +657,7 @@ export class TestOnReconnectErrorSSEController extends AbstractSSEController<Tes
     this.logger = deps.logger
   }
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestOnReconnectErrorSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestOnReconnectErrorSSEContracts> {
     return {
       onReconnectErrorStream: {
         contract: TestOnReconnectErrorSSEController.contracts.onReconnectErrorStream,
@@ -670,7 +673,7 @@ export class TestOnReconnectErrorSSEController extends AbstractSSEController<Tes
     }
   }
 
-  private handleStream = buildSSEHandler(
+  private handleStream = buildFastifySSEHandler(
     onReconnectErrorStreamContract,
     async (_request, connection) => {
       // Send message to verify connection still works after onReconnect error
@@ -702,7 +705,7 @@ export class TestOnConnectErrorSSEController extends AbstractSSEController<TestO
     this.logger = deps.logger
   }
 
-  public buildSSERoutes(): BuildSSERoutesReturnType<TestOnConnectErrorSSEContracts> {
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestOnConnectErrorSSEContracts> {
     return {
       onConnectErrorStream: {
         contract: TestOnConnectErrorSSEController.contracts.onConnectErrorStream,
@@ -718,7 +721,7 @@ export class TestOnConnectErrorSSEController extends AbstractSSEController<TestO
     }
   }
 
-  private handleStream = buildSSEHandler(
+  private handleStream = buildFastifySSEHandler(
     onConnectErrorStreamContract,
     async (_request, connection) => {
       // Send message to verify connection still works after onConnect error

@@ -1,9 +1,9 @@
 import type { RouteOptions } from 'fastify'
 import type { z } from 'zod'
 import type { AbstractSSEController } from './AbstractSSEController.ts'
-import type { AnySSERouteDefinition } from './sseContracts.ts'
-import { extractPathTemplate, handleSSEError, setupSSEConnection } from './sseRouteUtils.ts'
-import type { SSEHandlerConfig } from './sseTypes.ts'
+import { extractPathTemplate, handleSSEError, setupSSEConnection } from './fastifySSERouteUtils.ts'
+import type { FastifySSEHandlerConfig, FastifySSEPreHandler } from './fastifySSETypes.ts'
+import type { AnySSEContractDefinition } from './sseContracts.ts'
 
 /**
  * Build a Fastify route configuration for an SSE endpoint.
@@ -15,9 +15,9 @@ import type { SSEHandlerConfig } from './sseTypes.ts'
  * @param config - The SSE handler configuration
  * @returns Fastify route options
  */
-export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
-  controller: AbstractSSEController<Record<string, AnySSERouteDefinition>>,
-  config: SSEHandlerConfig<Contract>,
+export function buildFastifySSERoute<Contract extends AnySSEContractDefinition>(
+  controller: AbstractSSEController<Record<string, AnySSEContractDefinition>>,
+  config: FastifySSEHandlerConfig<Contract>,
 ): RouteOptions {
   const { contract, handler, options } = config
 
@@ -51,7 +51,7 @@ export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
       // Errors (including validation errors) are caught, sent as error events, and re-thrown
       // so the app's error handler can process them (for logging, monitoring, etc.)
       try {
-        // biome-ignore lint/suspicious/noExplicitAny: Handler types are validated by SSEHandlerConfig
+        // biome-ignore lint/suspicious/noExplicitAny: Handler types are validated by FastifySSEHandlerConfig
         await handler(request as any, connection as any)
       } catch (err) {
         await handleSSEError(sseReply, controller, connectionId, err)
@@ -93,8 +93,11 @@ export type RegisterSSERoutesOptions = {
   /**
    * Global preHandler hooks applied to all SSE routes.
    * Use for authentication that should apply to all SSE endpoints.
+   *
+   * IMPORTANT: Must return a Promise for SSE compatibility.
+   * Synchronous handlers will cause connection issues.
    */
-  preHandler?: RouteOptions['preHandler']
+  preHandler?: FastifySSEPreHandler
   /**
    * Rate limit configuration (requires @fastify/rate-limit to be registered).
    * If @fastify/rate-limit is not registered, this config is ignored.

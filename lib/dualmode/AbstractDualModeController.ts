@@ -1,15 +1,17 @@
 import type { z } from 'zod'
 import { AbstractSSEController } from '../sse/AbstractSSEController.ts'
-import type { AnySSERouteDefinition } from '../sse/sseContracts.ts'
-import type { BuildSSERoutesReturnType, SSEControllerConfig } from '../sse/sseTypes.ts'
-import type { AnyDualModeRouteDefinition } from './dualModeContracts.ts'
-import type { BuildDualModeRoutesReturnType, DualModeControllerConfig } from './dualModeTypes.ts'
+import type { BuildFastifySSERoutesReturnType } from '../sse/fastifySSETypes.ts'
+import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
+import type { SSEControllerConfig } from '../sse/sseTypes.ts'
+import type { AnyDualModeContractDefinition } from './dualModeContracts.ts'
+import type { DualModeControllerConfig } from './dualModeTypes.ts'
+import type { BuildFastifyDualModeRoutesReturnType } from './fastifyDualModeTypes.ts'
 
 /**
  * Extract all event names from dual-mode contracts as a union of string literals.
  */
 export type AllDualModeContractEventNames<
-  Contracts extends Record<string, AnyDualModeRouteDefinition>,
+  Contracts extends Record<string, AnyDualModeContractDefinition>,
 > = Contracts[keyof Contracts]['events'] extends infer E
   ? E extends Record<string, z.ZodTypeAny>
     ? keyof E & string
@@ -20,7 +22,7 @@ export type AllDualModeContractEventNames<
  * Extract the schema for a specific event name across all dual-mode contracts.
  */
 export type ExtractDualModeEventSchema<
-  Contracts extends Record<string, AnyDualModeRouteDefinition>,
+  Contracts extends Record<string, AnyDualModeContractDefinition>,
   EventName extends string,
 > = {
   [K in keyof Contracts]: EventName extends keyof Contracts[K]['events']
@@ -43,7 +45,7 @@ export type ExtractDualModeEventSchema<
  * ```typescript
  * class ChatController extends AbstractDualModeController<typeof contracts> {
  *   public static contracts = {
- *     chatCompletion: buildPayloadDualModeRoute({ ... }),
+ *     chatCompletion: buildPayloadDualModeContract({ ... }),
  *   } as const
  *
  *   constructor(deps: Dependencies, config?: DualModeControllerConfig) {
@@ -73,8 +75,8 @@ export type ExtractDualModeEventSchema<
  * ```
  */
 export abstract class AbstractDualModeController<
-  APIContracts extends Record<string, AnyDualModeRouteDefinition>,
-> extends AbstractSSEController<Record<string, AnySSERouteDefinition>> {
+  APIContracts extends Record<string, AnyDualModeContractDefinition>,
+> extends AbstractSSEController<Record<string, AnySSEContractDefinition>> {
   /**
    * Dual-mode controllers must override this constructor and call super with their
    * dependencies object and the dual-mode config.
@@ -91,14 +93,16 @@ export abstract class AbstractDualModeController<
    * Build and return dual-mode route configurations.
    * Must be implemented by concrete controllers.
    */
-  public abstract buildDualModeRoutes(): BuildDualModeRoutesReturnType<APIContracts>
+  public abstract buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<APIContracts>
 
   /**
    * SSE routes are not used directly - dual-mode uses buildDualModeRoutes() instead.
    * This returns an empty object to satisfy the AbstractSSEController contract.
    */
-  public buildSSERoutes(): BuildSSERoutesReturnType<Record<string, AnySSERouteDefinition>> {
-    return {} as BuildSSERoutesReturnType<Record<string, AnySSERouteDefinition>>
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<
+    Record<string, AnySSEContractDefinition>
+  > {
+    return {} as BuildFastifySSERoutesReturnType<Record<string, AnySSEContractDefinition>>
   }
 
   /**

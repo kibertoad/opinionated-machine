@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { SSEEventSchemas, SSERouteHandler } from './sseTypes.ts'
+import type { SSEEventSchemas } from './sseTypes.ts'
 
 /**
  * Supported HTTP methods for SSE routes.
@@ -32,7 +32,7 @@ export type SSEPathResolver<Params> = (params: Params) => string
  * @template Body - Request body schema (for POST/PUT/PATCH)
  * @template Events - Map of event name to event data schema
  */
-export type SSERouteDefinition<
+export type SSEContractDefinition<
   Method extends SSEMethod = SSEMethod,
   Params extends z.ZodTypeAny = z.ZodTypeAny,
   Query extends z.ZodTypeAny = z.ZodTypeAny,
@@ -58,7 +58,7 @@ export type SSERouteDefinition<
  * Type representing any SSE route definition (for use in generic constraints).
  * Uses a manually defined type to avoid pathResolver type incompatibilities.
  */
-export type AnySSERouteDefinition = {
+export type AnySSEContractDefinition = {
   method: SSEMethod
   // biome-ignore lint/suspicious/noExplicitAny: Required for compatibility with all param types
   pathResolver: SSEPathResolver<any>
@@ -73,7 +73,7 @@ export type AnySSERouteDefinition = {
 /**
  * Configuration for building a GET SSE route
  */
-export type SSERouteConfig<
+export type SSEContractConfig<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
@@ -93,7 +93,7 @@ export type SSERouteConfig<
 /**
  * Configuration for building a POST/PUT/PATCH SSE route with request body
  */
-export type PayloadSSERouteConfig<
+export type PayloadSSEContractConfig<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
@@ -121,7 +121,7 @@ export type PayloadSSERouteConfig<
  *
  * @example
  * ```typescript
- * const notificationsStream = buildSSERoute({
+ * const notificationsStream = buildSSEContract({
  *   pathResolver: () => '/api/notifications/stream',
  *   params: z.object({}),
  *   query: z.object({ userId: z.string().uuid() }),
@@ -132,14 +132,14 @@ export type PayloadSSERouteConfig<
  * })
  * ```
  */
-export function buildSSERoute<
+export function buildSSEContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
 >(
-  config: SSERouteConfig<Params, Query, RequestHeaders, Events>,
-): SSERouteDefinition<'GET', Params, Query, RequestHeaders, undefined, Events> {
+  config: SSEContractConfig<Params, Query, RequestHeaders, Events>,
+): SSEContractDefinition<'GET', Params, Query, RequestHeaders, undefined, Events> {
   return {
     method: 'GET',
     pathResolver: config.pathResolver,
@@ -160,7 +160,7 @@ export function buildSSERoute<
  *
  * @example
  * ```typescript
- * const chatCompletionStream = buildPayloadSSERoute({
+ * const chatCompletionStream = buildPayloadSSEContract({
  *   method: 'POST',
  *   pathResolver: () => '/api/ai/chat/completions',
  *   params: z.object({}),
@@ -178,15 +178,15 @@ export function buildSSERoute<
  * })
  * ```
  */
-export function buildPayloadSSERoute<
+export function buildPayloadSSEContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Body extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
 >(
-  config: PayloadSSERouteConfig<Params, Query, RequestHeaders, Body, Events>,
-): SSERouteDefinition<'POST' | 'PUT' | 'PATCH', Params, Query, RequestHeaders, Body, Events> {
+  config: PayloadSSEContractConfig<Params, Query, RequestHeaders, Body, Events>,
+): SSEContractDefinition<'POST' | 'PUT' | 'PATCH', Params, Query, RequestHeaders, Body, Events> {
   return {
     method: config.method ?? 'POST',
     pathResolver: config.pathResolver,
@@ -197,60 +197,4 @@ export function buildPayloadSSERoute<
     events: config.events,
     isSSE: true,
   }
-}
-
-/**
- * Type-inference helper for SSE handlers with type-safe event sending.
- *
- * Similar to `buildFastifyPayloadRoute`, this function provides automatic
- * type inference for the request and connection parameters based on the contract.
- *
- * The `connection.send` method provides compile-time type checking:
- * - Event names must match those defined in `contract.events`
- * - Event data must match the Zod schema for that event
- *
- * @example
- * ```typescript
- * const contract = buildPayloadSSERoute({
- *   // ...
- *   events: {
- *     chunk: z.object({ content: z.string() }),
- *     done: z.object({ totalTokens: z.number() }),
- *   },
- * })
- *
- * class MyController extends AbstractSSEController<{ stream: typeof contract }> {
- *   private handleStream = buildSSEHandler(
- *     contract,
- *     async (request, connection) => {
- *       // connection.send is typed - only 'chunk' and 'done' are valid event names
- *       await connection.send('chunk', { content: 'hello' })  // OK
- *       await connection.send('done', { totalTokens: 1 })     // OK
- *       // await connection.send('chunk', { totalTokens: 1 }) // TS Error: wrong payload
- *       // await connection.send('invalid', {})               // TS Error: invalid event name
- *     },
- *   )
- *
- *   buildSSERoutes() {
- *     return {
- *       stream: {
- *         contract,
- *         handler: this.handleStream,
- *       },
- *     }
- *   }
- * }
- * ```
- */
-export function buildSSEHandler<Contract extends AnySSERouteDefinition>(
-  _contract: Contract,
-  handler: SSERouteHandler<
-    z.infer<Contract['params']>,
-    z.infer<Contract['query']>,
-    z.infer<Contract['requestHeaders']>,
-    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-    Contract['events']
-  >,
-): typeof handler {
-  return handler
 }

@@ -398,14 +398,14 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildSSERoute` for GET-based SSE streams or `buildPayloadSSERoute` for POST/PUT/PATCH streams. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
+Use `buildSSEContract` for GET-based SSE streams or `buildPayloadSSEContract` for POST/PUT/PATCH streams. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
-import { buildSSERoute, buildPayloadSSERoute } from 'opinionated-machine'
+import { buildSSEContract, buildPayloadSSEContract } from 'opinionated-machine'
 
 // GET-based SSE stream with path params
-export const channelStreamContract = buildSSERoute({
+export const channelStreamContract = buildSSEContract({
   pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
   params: z.object({ channelId: z.string() }),
   query: z.object({}),
@@ -416,7 +416,7 @@ export const channelStreamContract = buildSSERoute({
 })
 
 // GET-based SSE stream without path params
-export const notificationsContract = buildSSERoute({
+export const notificationsContract = buildSSEContract({
   pathResolver: () => '/api/notifications/stream',
   params: z.object({}),
   query: z.object({ userId: z.string().optional() }),
@@ -430,7 +430,7 @@ export const notificationsContract = buildSSERoute({
 })
 
 // POST-based SSE stream (e.g., AI chat completions)
-export const chatCompletionContract = buildPayloadSSERoute({
+export const chatCompletionContract = buildPayloadSSEContract({
   method: 'POST',
   pathResolver: () => '/api/chat/completions',
   params: z.object({}),
@@ -1308,14 +1308,14 @@ Dual-mode controllers extend `AbstractDualModeController` which inherits from `A
 
 ### Defining Dual-Mode Contracts
 
-Use `buildDualModeRoute` for GET routes or `buildPayloadDualModeRoute` for POST/PUT/PATCH routes. The key difference from SSE contracts is the addition of `jsonResponse` schema:
+Use `buildDualModeContract` for GET routes or `buildPayloadDualModeContract` for POST/PUT/PATCH routes. The key difference from SSE contracts is the addition of `jsonResponse` schema:
 
 ```ts
 import { z } from 'zod'
-import { buildDualModeRoute, buildPayloadDualModeRoute } from 'opinionated-machine'
+import { buildDualModeContract, buildPayloadDualModeContract } from 'opinionated-machine'
 
 // GET dual-mode route (polling or streaming job status)
-export const jobStatusContract = buildDualModeRoute({
+export const jobStatusContract = buildDualModeContract({
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
@@ -1332,7 +1332,7 @@ export const jobStatusContract = buildDualModeRoute({
 })
 
 // POST dual-mode route (OpenAI-style chat completion)
-export const chatCompletionContract = buildPayloadDualModeRoute({
+export const chatCompletionContract = buildPayloadDualModeContract({
   method: 'POST',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
   params: z.object({ chatId: z.string().uuid() }),
@@ -1360,7 +1360,7 @@ Dual-mode controllers use `buildDualModeHandler` to define both JSON and SSE han
 import {
   AbstractDualModeController,
   buildDualModeHandler,
-  type BuildDualModeRoutesReturnType,
+  type BuildFastifyDualModeRoutesReturnType,
   type DualModeControllerConfig,
 } from 'opinionated-machine'
 
@@ -1384,7 +1384,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
     this.aiService = deps.aiService
   }
 
-  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<Contracts> {
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<Contracts> {
     return {
       chatCompletion: {
         contract: ChatDualModeController.contracts.chatCompletion,

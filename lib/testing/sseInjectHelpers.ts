@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { z } from 'zod'
-import type { SSEPathResolver, SSERouteDefinition } from '../sse/sseContracts.ts'
+import type { SSEContractDefinition, SSEPathResolver } from '../sse/sseContracts.ts'
 import type { InjectPayloadSSEOptions, InjectSSEOptions, InjectSSEResult } from './sseTestTypes.ts'
 
 /**
@@ -67,7 +67,7 @@ function buildUrl<Contract extends ContractWithPathResolver>(
  * ```
  */
 export function injectSSE<
-  Contract extends SSERouteDefinition<
+  Contract extends SSEContractDefinition<
     'GET',
     z.ZodTypeAny,
     z.ZodTypeAny,
@@ -134,7 +134,7 @@ export function injectSSE<
  * ```
  */
 export function injectPayloadSSE<
-  Contract extends SSERouteDefinition<
+  Contract extends SSEContractDefinition<
     'POST' | 'PUT' | 'PATCH',
     z.ZodTypeAny,
     z.ZodTypeAny,
