@@ -30,8 +30,9 @@ export type PathResolver<Params> = (params: Params) => string
  * @template Query - Query string parameters schema
  * @template RequestHeaders - Request headers schema
  * @template Body - Request body schema (for POST/PUT/PATCH)
- * @template JsonResponse - JSON response schema (for Accept: application/json)
+ * @template SyncResponse - Sync response schema (for Accept: application/json)
  * @template Events - SSE event schemas (for Accept: text/event-stream)
+ * @template ResponseHeaders - Response headers schema (for JSON mode)
  */
 export type DualModeContractDefinition<
   Method extends DualModeMethod = DualModeMethod,
@@ -39,8 +40,9 @@ export type DualModeContractDefinition<
   Query extends z.ZodTypeAny = z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny = z.ZodTypeAny,
   Body extends z.ZodTypeAny | undefined = undefined,
-  JsonResponse extends z.ZodTypeAny = z.ZodTypeAny,
+  SyncResponse extends z.ZodTypeAny = z.ZodTypeAny,
   Events extends SSEEventSchemas = SSEEventSchemas,
+  ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
 > = {
   method: Method
   pathResolver: PathResolver<z.infer<Params>>
@@ -48,7 +50,8 @@ export type DualModeContractDefinition<
   query: Query
   requestHeaders: RequestHeaders
   body: Body
-  jsonResponse: JsonResponse
+  syncResponse: SyncResponse
+  responseHeaders?: ResponseHeaders
   events: Events
   isDualMode: true
 }
@@ -65,7 +68,8 @@ export type AnyDualModeContractDefinition = {
   query: z.ZodTypeAny
   requestHeaders: z.ZodTypeAny
   body: z.ZodTypeAny | undefined
-  jsonResponse: z.ZodTypeAny
+  syncResponse: z.ZodTypeAny
+  responseHeaders?: z.ZodTypeAny
   events: SSEEventSchemas
   isDualMode: true
 }

@@ -1,5 +1,6 @@
 import { InternalError } from '@lokalise/node-core'
-import type { RouteOptions } from 'fastify'
+import type { FastifyReply, RouteOptions } from 'fastify'
+import type { z } from 'zod'
 import { ZodObject } from 'zod'
 import {
   extractPathTemplate,
@@ -71,6 +72,118 @@ export function determineMode(
 }
 
 /**
+ * Validate response body against the syncResponse schema.
+ */
+function validateResponseBody(contract: AnyDualModeContractDefinition, response: unknown): void {
+  if (!contract.syncResponse) return
+
+  const result = contract.syncResponse.safeParse(response)
+  if (!result.success) {
+    throw new InternalError({
+      message: `JSON response validation failed: ${result.error.message}`,
+      errorCode: 'RESPONSE_VALIDATION_FAILED',
+    })
+  }
+}
+
+/**
+ * Validate response headers against the responseHeaders schema.
+ */
+function validateResponseHeaders(
+  responseHeadersSchema: z.ZodTypeAny | undefined,
+  reply: FastifyReply,
+): void {
+  if (!responseHeadersSchema) return
+  if (!('shape' in responseHeadersSchema)) return
+
+  const schemaKeys = Object.keys(
+    (responseHeadersSchema as { shape: Record<string, unknown> }).shape,
+  )
+  const headersToValidate: Record<string, unknown> = {}
+  for (const key of schemaKeys) {
+    const headerValue = reply.getHeader(key)
+    if (headerValue !== undefined) {
+      headersToValidate[key] = headerValue
+    }
+  }
+
+  const result = responseHeadersSchema.safeParse(headersToValidate)
+  if (!result.success) {
+    throw new InternalError({
+      message: `Response headers validation failed: ${result.error.message}`,
+      errorCode: 'RESPONSE_HEADERS_VALIDATION_FAILED',
+    })
+  }
+}
+
+/**
+ * Handle JSON mode request.
+ */
+async function handleJsonMode<Contract extends AnyDualModeContractDefinition>(
+  contract: Contract,
+  handlers: FastifyDualModeHandlerConfig<Contract>['handlers'],
+  // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
+  request: any,
+  reply: FastifyReply,
+) {
+  const response = await handlers.json({
+    mode: 'json',
+    request,
+    reply,
+  })
+
+  validateResponseBody(contract, response)
+
+  // Explicitly set content-type to override SSE default (from sse: true option)
+  reply.type('application/json')
+
+  validateResponseHeaders(contract.responseHeaders, reply)
+
+  return reply.send(response)
+}
+
+/**
+ * Handle SSE mode request.
+ */
+async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
+  controller: AbstractDualModeController<Record<string, AnyDualModeContractDefinition>>,
+  contract: Contract,
+  handlers: FastifyDualModeHandlerConfig<Contract>['handlers'],
+  // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
+  request: any,
+  reply: FastifyReply,
+  options: FastifyDualModeHandlerConfig<Contract>['options'],
+) {
+  const { connectionId, connection, connectionClosed, sseReply } = await setupSSEConnection(
+    controller,
+    request,
+    reply,
+    contract.events,
+    options,
+    'dual-mode SSE',
+  )
+
+  try {
+    await handlers.sse({
+      mode: 'sse',
+      connection: connection as Parameters<typeof handlers.sse>[0]['connection'],
+      request,
+    })
+  } catch (err) {
+    await handleSSEError(sseReply, controller, connectionId, err)
+    // Re-throw the error intentionally to let Fastify's error handler and onError hooks
+    // run for logging/monitoring purposes. Although headers are already sent at this point
+    // (so the HTTP status code cannot be changed), propagating the error ensures that
+    // application-level error tracking, metrics, and logging infrastructure can observe
+    // and record the failure.
+    throw err
+  }
+
+  // Block the handler until the connection closes
+  await connectionClosed
+}
+
+/**
  * Build a Fastify route configuration for a dual-mode endpoint.
  *
  * This function creates a route that handles both JSON and SSE responses
@@ -113,57 +226,10 @@ export function buildFastifyDualModeRoute<Contract extends AnyDualModeContractDe
       const mode = determineMode(request.headers.accept, defaultMode)
 
       if (mode === 'json') {
-        // JSON mode - call json handler and return response
-        const response = await handlers.json({
-          mode: 'json',
-          request: request as Parameters<typeof handlers.json>[0]['request'],
-          reply,
-        })
-
-        // Validate response against schema if available
-        if (contract.jsonResponse) {
-          const result = contract.jsonResponse.safeParse(response)
-          if (!result.success) {
-            throw new InternalError({
-              message: `JSON response validation failed: ${result.error.message}`,
-              errorCode: 'RESPONSE_VALIDATION_FAILED',
-            })
-          }
-        }
-
-        // Explicitly set content-type to override SSE default (from sse: true option)
-        return reply.type('application/json').send(response)
+        return await handleJsonMode(contract, handlers, request, reply)
       }
 
-      // SSE mode - setup connection and stream events using shared utility
-      const { connectionId, connection, connectionClosed, sseReply } = await setupSSEConnection(
-        controller,
-        request,
-        reply,
-        contract.events,
-        options,
-        'dual-mode SSE',
-      )
-
-      // Call user handler with SSE context
-      try {
-        await handlers.sse({
-          mode: 'sse',
-          connection: connection as Parameters<typeof handlers.sse>[0]['connection'],
-          request: request as Parameters<typeof handlers.sse>[0]['request'],
-        })
-      } catch (err) {
-        await handleSSEError(sseReply, controller, connectionId, err)
-        // Re-throw the error intentionally to let Fastify's error handler and onError hooks
-        // run for logging/monitoring purposes. Although headers are already sent at this point
-        // (so the HTTP status code cannot be changed), propagating the error ensures that
-        // application-level error tracking, metrics, and logging infrastructure can observe
-        // and record the failure.
-        throw err
-      }
-
-      // Block the handler until the connection closes
-      await connectionClosed
+      return await handleSSEMode(controller, contract, handlers, request, reply, options)
     },
   }
 

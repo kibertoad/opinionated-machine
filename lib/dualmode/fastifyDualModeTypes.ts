@@ -59,8 +59,8 @@ export type JsonModeHandler<
   Query = unknown,
   Headers = unknown,
   Body = unknown,
-  JsonResponse = unknown,
-> = (ctx: JsonModeContext<Params, Query, Headers, Body>) => JsonResponse | Promise<JsonResponse>
+  SyncResponse = unknown,
+> = (ctx: JsonModeContext<Params, Query, Headers, Body>) => SyncResponse | Promise<SyncResponse>
 
 /**
  * Handler function for SSE mode.
@@ -81,7 +81,7 @@ export type SSEModeHandler<
  * @template Query - Query string parameters type
  * @template Headers - Request headers type
  * @template Body - Request body type
- * @template JsonResponse - JSON response type
+ * @template SyncResponse - JSON response type
  * @template Events - SSE event schemas
  */
 export type DualModeHandlers<
@@ -89,10 +89,10 @@ export type DualModeHandlers<
   Query = unknown,
   Headers = unknown,
   Body = unknown,
-  JsonResponse = unknown,
+  SyncResponse = unknown,
   Events extends SSEEventSchemas = SSEEventSchemas,
 > = {
-  json: JsonModeHandler<Params, Query, Headers, Body, JsonResponse>
+  json: JsonModeHandler<Params, Query, Headers, Body, SyncResponse>
   sse: SSEModeHandler<Events, Params, Query, Headers, Body>
 }
 
@@ -122,7 +122,7 @@ export type FastifyDualModeHandlerConfig<Contract extends AnyDualModeContractDef
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
     Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-    z.infer<Contract['jsonResponse']>,
+    z.infer<Contract['syncResponse']>,
     Contract['events']
   >
   /** Optional route configuration */
@@ -166,7 +166,7 @@ export function buildDualModeHandler<Contract extends AnyDualModeContractDefinit
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
     Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-    z.infer<Contract['jsonResponse']>,
+    z.infer<Contract['syncResponse']>,
     Contract['events']
   >,
 ): typeof handlers {

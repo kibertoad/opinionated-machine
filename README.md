@@ -398,7 +398,7 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildContract` to define SSE routes. The contract type is automatically determined based on the presence of `body` and `jsonResponse` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
+Use `buildContract` to define SSE routes. The contract type is automatically determined based on the presence of `body` and `syncResponse` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
@@ -1314,21 +1314,21 @@ Dual-mode contracts define endpoints that can return **either** a complete JSON 
 - You're building OpenAI-style APIs where `stream: true` triggers SSE
 - You need polling fallback for clients that don't support SSE
 
-To create a dual-mode contract, include a `jsonResponse` schema in your `buildContract` call:
-- Has `jsonResponse` but no `body` → GET dual-mode route
-- Has both `jsonResponse` and `body` → POST/PUT/PATCH dual-mode route
+To create a dual-mode contract, include a `syncResponse` schema in your `buildContract` call:
+- Has `syncResponse` but no `body` → GET dual-mode route
+- Has both `syncResponse` and `body` → POST/PUT/PATCH dual-mode route
 
 ```ts
 import { z } from 'zod'
 import { buildContract } from 'opinionated-machine'
 
-// GET dual-mode route (polling or streaming job status) - has jsonResponse, no body
+// GET dual-mode route (polling or streaming job status) - has syncResponse, no body
 export const jobStatusContract = buildContract({
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
   requestHeaders: z.object({}),
-  jsonResponse: z.object({
+  syncResponse: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
@@ -1339,7 +1339,7 @@ export const jobStatusContract = buildContract({
   },
 })
 
-// POST dual-mode route (OpenAI-style chat completion) - has both jsonResponse and body
+// POST dual-mode route (OpenAI-style chat completion) - has both syncResponse and body
 export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
@@ -1347,7 +1347,7 @@ export const chatCompletionContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
   body: z.object({ message: z.string() }),
-  jsonResponse: z.object({
+  syncResponse: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
@@ -1359,6 +1359,47 @@ export const chatCompletionContract = buildContract({
 ```
 
 **Note**: Dual-mode contracts use `pathResolver` instead of static `path` for type-safe path construction. The `pathResolver` function receives typed params and returns the URL path.
+
+### Response Headers (JSON Mode)
+
+Dual-mode contracts support an optional `responseHeaders` schema to define and validate headers sent with JSON responses. This is useful for documenting expected headers (rate limits, pagination, cache control) and validating that your handlers set them correctly:
+
+```ts
+export const rateLimitedContract = buildContract({
+  method: 'POST',
+  pathResolver: () => '/api/rate-limited',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  body: z.object({ data: z.string() }),
+  syncResponse: z.object({ result: z.string() }),
+  // Define expected response headers
+  responseHeaders: z.object({
+    'x-ratelimit-limit': z.string(),
+    'x-ratelimit-remaining': z.string(),
+    'x-ratelimit-reset': z.string(),
+  }),
+  events: {
+    result: z.object({ success: z.boolean() }),
+  },
+})
+```
+
+In your handler, set headers using `ctx.reply.header()`:
+
+```ts
+handlers: {
+  json: async (ctx) => {
+    ctx.reply.header('x-ratelimit-limit', '100')
+    ctx.reply.header('x-ratelimit-remaining', '99')
+    ctx.reply.header('x-ratelimit-reset', '1640000000')
+    return { result: 'success' }
+  },
+  sse: async (ctx) => { /* ... */ },
+}
+```
+
+If the handler doesn't set the required headers, validation will fail with a `RESPONSE_HEADERS_VALIDATION_FAILED` error.
 
 ### Implementing Dual-Mode Controllers
 
@@ -1442,7 +1483,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 | `json` | `ctx.mode`, `ctx.request`, `ctx.reply` |
 | `sse` | `ctx.mode`, `ctx.connection`, `ctx.request` |
 
-The `json` handler must return a value matching `jsonResponse` schema. The `sse` handler uses `ctx.connection.send()` for type-safe event streaming.
+The `json` handler must return a value matching `syncResponse` schema. The `sse` handler uses `ctx.connection.send()` for type-safe event streaming.
 
 ### Registering Dual-Mode Controllers
 

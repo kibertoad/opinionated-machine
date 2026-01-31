@@ -310,7 +310,7 @@ export class TestDefaultMethodDualModeController extends AbstractDualModeControl
 
 /**
  * Controller for testing JSON response validation failure.
- * When returnInvalid is true, returns data that doesn't match the jsonResponse schema.
+ * When returnInvalid is true, returns data that doesn't match the syncResponse schema.
  */
 export type TestJsonValidationContracts = {
   jsonValidationTest: typeof jsonValidationContract

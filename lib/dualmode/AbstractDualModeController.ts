@@ -45,7 +45,7 @@ export type ExtractDualModeEventSchema<
  * ```typescript
  * class ChatController extends AbstractDualModeController<typeof contracts> {
  *   public static contracts = {
- *     chatCompletion: buildContract({ body: ..., jsonResponse: ..., ... }),
+ *     chatCompletion: buildContract({ body: ..., syncResponse: ..., ... }),
  *   } as const
  *
  *   constructor(deps: Dependencies, config?: DualModeControllerConfig) {
