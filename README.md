@@ -30,7 +30,7 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Prerequisites](#prerequisites)
   - [Defining SSE Contracts](#defining-sse-contracts)
   - [Creating SSE Controllers](#creating-sse-controllers)
-  - [Type-Safe SSE Handlers with buildHandler](#type-safe-sse-handlers-with-buildssehandler)
+  - [Type-Safe SSE Handlers with buildHandler](#type-safe-sse-handlers-with-buildhandler)
   - [SSE Controllers Without Dependencies](#sse-controllers-without-dependencies)
   - [Registering SSE Controllers](#registering-sse-controllers)
   - [Registering SSE Routes](#registering-sse-routes)
