@@ -42,15 +42,13 @@ function validateResponseHeaders(
   if (!responseHeadersSchema) return
   if (!('shape' in responseHeadersSchema)) return
 
+  // Build object with all schema keys (including missing ones) so Zod can validate required fields
   const schemaKeys = Object.keys(
     (responseHeadersSchema as { shape: Record<string, unknown> }).shape,
   )
   const headersToValidate: Record<string, unknown> = {}
   for (const key of schemaKeys) {
-    const headerValue = reply.getHeader(key)
-    if (headerValue !== undefined) {
-      headersToValidate[key] = headerValue
-    }
+    headersToValidate[key] = reply.getHeader(key)
   }
 
   const result = responseHeadersSchema.safeParse(headersToValidate)
@@ -196,10 +194,14 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
 ): RouteOptions {
   const { contract, handlers, options } = config
 
-  const url = extractPathTemplate(
-    contract.pathResolver,
-    contract.params as z.ZodObject<z.ZodRawShape>,
-  )
+  // Runtime guard: extractPathTemplate requires a ZodObject to access .shape for parameter names
+  if (!(contract.params instanceof ZodObject)) {
+    throw new InternalError({
+      message: `Route params schema must be a ZodObject for path template extraction, got ${contract.params.constructor.name}`,
+      errorCode: 'INVALID_PARAMS_SCHEMA',
+    })
+  }
+  const url = extractPathTemplate(contract.pathResolver, contract.params)
 
   const routeOptions: RouteOptions = {
     method: contract.method,
@@ -299,21 +301,25 @@ export function buildFastifyRoute<Contract extends AnySSEContractDefinition>(
  * @example
  * ```typescript
  * // SSE-only route
- * const sseRoute = buildFastifyRoute(sseController, {
+ * const sseRoute = buildFastifyRoute(notificationsController, {
  *   contract: notificationsContract,
- *   handler: async (request, connection) => {
- *     await connection.send('notification', { message: 'Hello!' })
+ *   handlers: {
+ *     sse: async (request, connection) => {
+ *       await connection.send('notification', { message: 'Hello!' })
+ *     },
  *   },
  * })
  *
  * // Dual-mode route
- * const dualModeRoute = buildFastifyRoute(dualModeController, {
+ * const dualModeRoute = buildFastifyRoute(chatController, {
  *   contract: chatCompletionContract,
  *   handlers: {
- *     json: async (ctx) => ({ reply: 'Hello', usage: { tokens: 1 } }),
- *     sse: async (ctx) => {
- *       await ctx.connection.send('chunk', { delta: 'Hello' })
- *       await ctx.connection.send('done', { usage: { total: 1 } })
+ *     json: async (request, reply) => {
+ *       return { reply: 'Hello', usage: { tokens: 1 } }
+ *     },
+ *     sse: async (request, connection) => {
+ *       await connection.send('chunk', { delta: 'Hello' })
+ *       await connection.send('done', { usage: { total: 1 } })
  *     },
  *   },
  * })
