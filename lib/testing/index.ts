@@ -6,7 +6,7 @@ export {
   type SSEHttpConnectWithSpyOptions,
 } from './sseHttpClient.js'
 export { SSEInjectClient, SSEInjectConnection } from './sseInjectClient.js'
-export { buildUrl, injectPayloadSSE, injectSSE } from './sseInjectHelpers.js'
+export { injectPayloadSSE, injectSSE } from './sseInjectHelpers.js'
 export { SSETestServer } from './sseTestServer.js'
 export type {
   CreateSSETestServerOptions,

@@ -7,6 +7,10 @@ import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
 import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configUtils.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
+import type { AbstractDualModeController } from './dualmode/AbstractDualModeController.js'
+import type { AnyDualModeRouteDefinition } from './dualmode/dualModeContracts.js'
+import { buildFastifyDualModeRoute } from './dualmode/dualModeRouteBuilder.js'
+import type { RegisterDualModeRoutesOptions } from './dualmode/dualModeTypes.js'
 import type { AbstractSSEController } from './sse/AbstractSSEController.js'
 import type { AnySSERouteDefinition } from './sse/sseContracts.js'
 import { buildFastifySSERoute, type RegisterSSERoutesOptions } from './sse/sseRouteBuilder.js'
@@ -44,6 +48,8 @@ export class DIContext<
   private readonly controllerResolvers: Resolver<any>[]
   // SSE controller dependency names (resolved from container to preserve singletons)
   private readonly sseControllerNames: string[]
+  // Dual-mode controller dependency names (resolved from container to preserve singletons)
+  private readonly dualModeControllerNames: string[]
   private readonly appConfig: Config
 
   constructor(
@@ -66,6 +72,7 @@ export class DIContext<
       })
     this.controllerResolvers = []
     this.sseControllerNames = []
+    this.dualModeControllerNames = []
   }
 
   private registerModule(
@@ -89,8 +96,14 @@ export class DIContext<
       const controllers = module.resolveControllers(this.options)
 
       for (const [name, resolver] of Object.entries(controllers)) {
-        // @ts-expect-error isSSEController is a custom property on the resolver
-        if (resolver.isSSEController) {
+        // @ts-expect-error isDualModeController is a custom property on the resolver
+        if (resolver.isDualModeController) {
+          // Dual-mode controller: register in DI container and track name for route registration
+          this.dualModeControllerNames.push(name)
+          // @ts-expect-error we can't really ensure type-safety here
+          targetDiConfig[name] = resolver
+          // @ts-expect-error isSSEController is a custom property on the resolver
+        } else if (resolver.isSSEController) {
           // SSE controller: register in DI container and track name for route registration
           this.sseControllerNames.push(name)
           // @ts-expect-error we can't really ensure type-safety here
@@ -180,6 +193,14 @@ export class DIContext<
   }
 
   /**
+   * Check if any dual-mode controllers are registered.
+   * Use this to conditionally call registerDualModeRoutes().
+   */
+  hasDualModeControllers(): boolean {
+    return this.dualModeControllerNames.length > 0
+  }
+
+  /**
    * Register SSE routes with the Fastify app.
    *
    * Must be called separately from registerRoutes().
@@ -217,6 +238,76 @@ export class DIContext<
         this.applySSERouteOptions(route, options)
         app.route(route)
       }
+    }
+  }
+
+  /**
+   * Register dual-mode routes with the Fastify app.
+   *
+   * Dual-mode routes handle both SSE streaming and JSON responses on the
+   * same path, automatically branching based on the `Accept` header.
+   *
+   * Must be called separately from registerRoutes() and registerSSERoutes().
+   * Requires @fastify/sse plugin to be registered on the app.
+   *
+   * @param app - Fastify instance with @fastify/sse registered
+   * @param options - Optional configuration for dual-mode routes
+   *
+   * @example
+   * ```typescript
+   * // Register @fastify/sse plugin first
+   * await app.register(fastifySSE, { heartbeatInterval: 30000 })
+   *
+   * // Then register dual-mode routes
+   * context.registerDualModeRoutes(app)
+   * ```
+   */
+  registerDualModeRoutes(
+    // biome-ignore lint/suspicious/noExplicitAny: Fastify instance types are complex
+    app: FastifyInstance<any, any, any, any>,
+    options?: RegisterDualModeRoutesOptions,
+  ): void {
+    if (!this.hasDualModeControllers()) {
+      return
+    }
+
+    for (const controllerName of this.dualModeControllerNames) {
+      // Resolve from container to use the singleton instance
+      const dualModeController: AbstractDualModeController<
+        Record<string, AnyDualModeRouteDefinition>
+      > = this.diContainer.resolve(controllerName)
+      const dualModeRoutes = dualModeController.buildDualModeRoutes()
+
+      for (const routeConfig of Object.values(dualModeRoutes)) {
+        const route = buildFastifyDualModeRoute(dualModeController, routeConfig)
+        this.applyDualModeRouteOptions(route, options)
+        app.route(route)
+      }
+    }
+  }
+
+  private applyDualModeRouteOptions(
+    route: RouteOptions,
+    options?: RegisterDualModeRoutesOptions,
+  ): void {
+    if (options?.preHandler) {
+      this.applyPreHandlers(route, options.preHandler)
+    }
+    if (options?.rateLimit) {
+      this.applyRateLimit(route, options.rateLimit)
+    }
+    // Apply SSE-specific options (heartbeatInterval, serializer) for SSE mode
+    if (options?.heartbeatInterval !== undefined || options?.serializer !== undefined) {
+      // biome-ignore lint/suspicious/noExplicitAny: config types vary by plugins
+      const routeWithConfig = route as RouteOptions & { config?: any }
+      routeWithConfig.config = merge(routeWithConfig.config || {}, {
+        sse: {
+          ...(options.heartbeatInterval !== undefined && {
+            heartbeatInterval: options.heartbeatInterval,
+          }),
+          ...(options.serializer !== undefined && { serializer: options.serializer }),
+        },
+      })
     }
   }
 

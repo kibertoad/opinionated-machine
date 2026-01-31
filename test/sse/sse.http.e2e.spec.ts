@@ -17,6 +17,10 @@ import {
   TestChannelSSEModule,
   TestLoggerSSEModule,
   type TestLoggerSSEModuleDependencies,
+  TestOnConnectErrorSSEModule,
+  type TestOnConnectErrorSSEModuleDependencies,
+  TestOnReconnectErrorSSEModule,
+  type TestOnReconnectErrorSSEModuleDependencies,
   TestPostSSEModule,
   TestSSEModule,
   type TestSSEModuleDependencies,
@@ -1446,6 +1450,159 @@ describe('SSE HTTP E2E (logger error handling)', () => {
         err: Error
       }
       expect(errorArg.err.message).toBe('Test error in onDisconnect')
+    },
+  )
+})
+
+describe('SSE HTTP E2E (onConnect error handling)', () => {
+  let server: SSETestServer<{ context: DIContext<TestOnConnectErrorSSEModuleDependencies, object> }>
+  let context: DIContext<TestOnConnectErrorSSEModuleDependencies, object>
+  let mockLogger: SSELogger
+
+  beforeEach(async () => {
+    // Create mock logger to capture error calls
+    mockLogger = {
+      error: vi.fn(),
+    }
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<TestOnConnectErrorSSEModuleDependencies, object>(
+      container,
+      { isTestMode: true },
+      {},
+    )
+    context.registerDependencies(
+      { modules: [new TestOnConnectErrorSSEModule(mockLogger)] },
+      undefined,
+    )
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it(
+    'logs error when onConnect throws and still processes events',
+    { timeout: 10000 },
+    async () => {
+      // Connect to the endpoint that throws in onConnect
+      const client = await SSEHttpClient.connect(server.baseUrl, '/api/on-connect-error/stream')
+
+      expect(client.response.ok).toBe(true)
+
+      // Collect the event sent by the handler (proves connection still works)
+      const events = await client.collectEvents(1)
+      expect(events).toHaveLength(1)
+      expect(JSON.parse(events[0]!.data)).toEqual({ text: 'Hello after onConnect error' })
+
+      // Verify the logger was called with the error
+      expect(mockLogger.error).toHaveBeenCalledTimes(1)
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        { err: expect.any(Error) },
+        'Error in SSE onConnect handler',
+      )
+
+      // Verify the error message is correct
+      const errorArg = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+        err: Error
+      }
+      expect(errorArg.err.message).toBe('Test error in onConnect')
+
+      client.close()
+    },
+  )
+})
+
+describe('SSE HTTP E2E (onReconnect error handling)', () => {
+  let server: SSETestServer<{
+    context: DIContext<TestOnReconnectErrorSSEModuleDependencies, object>
+  }>
+  let context: DIContext<TestOnReconnectErrorSSEModuleDependencies, object>
+  let mockLogger: SSELogger
+
+  beforeEach(async () => {
+    // Create mock logger to capture error calls
+    mockLogger = {
+      error: vi.fn(),
+    }
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<TestOnReconnectErrorSSEModuleDependencies, object>(
+      container,
+      { isTestMode: true },
+      {},
+    )
+    context.registerDependencies(
+      { modules: [new TestOnReconnectErrorSSEModule(mockLogger)] },
+      undefined,
+    )
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it(
+    'logs error when onReconnect throws and still processes events',
+    { timeout: 10000 },
+    async () => {
+      // Connect with Last-Event-ID to trigger onReconnect
+      const client = await SSEHttpClient.connect(server.baseUrl, '/api/on-reconnect-error/stream', {
+        headers: { 'last-event-id': '123' },
+      })
+
+      expect(client.response.ok).toBe(true)
+
+      // Collect the event sent by the handler (proves connection still works)
+      const events = await client.collectEvents(1)
+      expect(events).toHaveLength(1)
+      expect(JSON.parse(events[0]!.data)).toEqual({
+        id: 'new',
+        data: 'Hello after onReconnect error',
+      })
+
+      // Verify the logger was called with the error
+      expect(mockLogger.error).toHaveBeenCalledTimes(1)
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        { err: expect.any(Error), lastEventId: '123' },
+        'Error in SSE onReconnect handler',
+      )
+
+      // Verify the error message is correct
+      const errorArg = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+        err: Error
+      }
+      expect(errorArg.err.message).toBe('Test error in onReconnect')
+
+      client.close()
     },
   )
 })

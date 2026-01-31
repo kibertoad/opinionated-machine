@@ -14,6 +14,8 @@ import {
   TestChannelSSEController,
   TestLargeContentSSEController,
   TestLoggerSSEController,
+  TestOnConnectErrorSSEController,
+  TestOnReconnectErrorSSEController,
   TestOpenAIStyleSSEController,
   TestPostSSEController,
   TestReconnectSSEController,
@@ -199,6 +201,72 @@ export class TestLoggerSSEModule extends AbstractModule<TestLoggerSSEModuleDepen
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testLoggerSSEController: asSSEControllerClass(TestLoggerSSEController, { diOptions }),
+    }
+  }
+}
+
+/**
+ * Module with onConnect error test SSE controller for testing error handling in onConnect
+ */
+export type TestOnConnectErrorSSEModuleDependencies = {
+  logger: SSELogger
+}
+
+export class TestOnConnectErrorSSEModule extends AbstractModule<TestOnConnectErrorSSEModuleDependencies> {
+  private mockLogger: SSELogger
+
+  constructor(mockLogger: SSELogger) {
+    super()
+    this.mockLogger = mockLogger
+  }
+
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestOnConnectErrorSSEModuleDependencies> {
+    const logger = this.mockLogger
+    return {
+      logger: asSingletonFunction(() => logger),
+    }
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testOnConnectErrorSSEController: asSSEControllerClass(TestOnConnectErrorSSEController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with onReconnect error test SSE controller for testing error handling in onReconnect
+ */
+export type TestOnReconnectErrorSSEModuleDependencies = {
+  logger: SSELogger
+}
+
+export class TestOnReconnectErrorSSEModule extends AbstractModule<TestOnReconnectErrorSSEModuleDependencies> {
+  private mockLogger: SSELogger
+
+  constructor(mockLogger: SSELogger) {
+    super()
+    this.mockLogger = mockLogger
+  }
+
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestOnReconnectErrorSSEModuleDependencies> {
+    const logger = this.mockLogger
+    return {
+      logger: asSingletonFunction(() => logger),
+    }
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testOnReconnectErrorSSEController: asSSEControllerClass(TestOnReconnectErrorSSEController, {
+        diOptions,
+      }),
     }
   }
 }

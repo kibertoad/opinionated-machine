@@ -1,35 +1,44 @@
 import type { FastifyInstance } from 'fastify'
 import type { z } from 'zod'
-import type { SSERouteDefinition } from '../sse/sseContracts.ts'
+import type { SSEPathResolver, SSERouteDefinition } from '../sse/sseContracts.ts'
 import type { InjectPayloadSSEOptions, InjectSSEOptions, InjectSSEResult } from './sseTestTypes.ts'
 
 /**
- * Build URL from contract path and params.
+ * Contract type with pathResolver.
  * @internal
  */
-export function buildUrl<Contract extends { path: string }>(
+type ContractWithPathResolver = {
+  pathResolver: SSEPathResolver<unknown>
+}
+
+/**
+ * Build query string from query params object.
+ * @internal
+ */
+function buildQueryString(query: Record<string, unknown>): string {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null) {
+      searchParams.append(key, String(value))
+    }
+  }
+  return searchParams.toString()
+}
+
+/**
+ * Build URL from contract pathResolver and params.
+ * @internal
+ */
+function buildUrl<Contract extends ContractWithPathResolver>(
   contract: Contract,
   params?: Record<string, string>,
   query?: Record<string, unknown>,
 ): string {
-  let url = contract.path
+  let url = contract.pathResolver(params ?? {})
 
-  // Substitute path params
-  if (params) {
-    for (const [key, value] of Object.entries(params)) {
-      url = url.replace(`:${key}`, encodeURIComponent(String(value)))
-    }
-  }
-
-  // Add query string
+  // Append query string if present
   if (query && Object.keys(query).length > 0) {
-    const searchParams = new URLSearchParams()
-    for (const [key, value] of Object.entries(query)) {
-      if (value !== undefined && value !== null) {
-        searchParams.append(key, String(value))
-      }
-    }
-    const queryString = searchParams.toString()
+    const queryString = buildQueryString(query)
     if (queryString) {
       url = `${url}?${queryString}`
     }
@@ -60,7 +69,6 @@ export function buildUrl<Contract extends { path: string }>(
 export function injectSSE<
   Contract extends SSERouteDefinition<
     'GET',
-    string,
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,
@@ -128,7 +136,6 @@ export function injectSSE<
 export function injectPayloadSSE<
   Contract extends SSERouteDefinition<
     'POST' | 'PUT' | 'PATCH',
-    string,
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,

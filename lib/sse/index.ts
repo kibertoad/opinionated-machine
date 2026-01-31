@@ -25,6 +25,7 @@ export {
   buildSSERoute,
   type PayloadSSERouteConfig,
   type SSEMethod,
+  type SSEPathResolver,
   type SSERouteConfig,
   type SSERouteDefinition,
 } from './sseContracts.js'

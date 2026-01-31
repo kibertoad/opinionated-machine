@@ -17,6 +17,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [`asRepositoryClass`](#asrepositoryclasstype-opts)
     - [`asControllerClass`](#ascontrollerclasstype-opts)
     - [`asSSEControllerClass`](#asssecontrollerclasstype-sseoptions-opts)
+    - [`asDualModeControllerClass`](#asdualmodecontrollerclasstype-sseoptions-opts)
   - [Message Queue Resolvers](#message-queue-resolvers)
     - [`asMessageQueueHandlerClass`](#asmessagequeuehandlerclasstype-mqoptions-opts)
   - [Background Job Resolvers](#background-job-resolvers)
@@ -53,6 +54,13 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [SSEHttpClient](#ssehttpclient)
     - [SSEInjectClient](#sseinjectclient)
     - [Contract-Aware Inject Helpers](#contract-aware-inject-helpers)
+- [Dual-Mode Controllers (SSE + JSON)](#dual-mode-controllers-sse--json)
+  - [Overview](#overview)
+  - [Defining Dual-Mode Contracts](#defining-dual-mode-contracts)
+  - [Implementing Dual-Mode Controllers](#implementing-dual-mode-controllers)
+  - [Registering Dual-Mode Controllers](#registering-dual-mode-controllers)
+  - [Accept Header Routing](#accept-header-routing)
+  - [Testing Dual-Mode Controllers](#testing-dual-mode-controllers)
 
 ## Basic usage
 
@@ -297,6 +305,19 @@ resolveControllers(diOptions: DependencyInjectionOptions) {
 }
 ```
 
+#### `asDualModeControllerClass(Type, sseOptions?, opts?)`
+For dual-mode controller classes that handle both SSE and JSON responses on the same route. Marks the dependency as **private** with `isDualModeController: true` for auto-detection. Inherits all SSE controller features including connection management and graceful shutdown. When `sseOptions.diOptions.isTestMode` is true, enables the connection spy for testing SSE mode.
+
+```ts
+// In resolveControllers()
+resolveControllers(diOptions: DependencyInjectionOptions) {
+  return {
+    userController: asControllerClass(UserController),
+    chatController: asDualModeControllerClass(ChatDualModeController, { diOptions }),
+  }
+}
+```
+
 ### Message Queue Resolvers
 
 #### `asMessageQueueHandlerClass(Type, mqOptions, opts?)`
@@ -377,15 +398,26 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildSSERoute` for GET-based SSE streams or `buildPayloadSSERoute` for POST/PUT/PATCH streams:
+Use `buildSSERoute` for GET-based SSE streams or `buildPayloadSSERoute` for POST/PUT/PATCH streams. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
 import { buildSSERoute, buildPayloadSSERoute } from 'opinionated-machine'
 
-// GET-based SSE stream (e.g., notifications)
+// GET-based SSE stream with path params
+export const channelStreamContract = buildSSERoute({
+  pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
+  params: z.object({ channelId: z.string() }),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    message: z.object({ content: z.string() }),
+  },
+})
+
+// GET-based SSE stream without path params
 export const notificationsContract = buildSSERoute({
-  path: '/api/notifications/stream',
+  pathResolver: () => '/api/notifications/stream',
   params: z.object({}),
   query: z.object({ userId: z.string().optional() }),
   requestHeaders: z.object({}),
@@ -400,7 +432,7 @@ export const notificationsContract = buildSSERoute({
 // POST-based SSE stream (e.g., AI chat completions)
 export const chatCompletionContract = buildPayloadSSERoute({
   method: 'POST',
-  path: '/api/chat/completions',
+  pathResolver: () => '/api/chat/completions',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
@@ -1259,4 +1291,306 @@ const { closed } = injectPayloadSSE(app, chatCompletionContract, {
 const result = await closed
 const events = parseSSEEvents(result.body)
 ```
+
+## Dual-Mode Controllers (SSE + JSON)
+
+Dual-mode controllers handle both SSE streaming and JSON responses on the same route path, automatically branching based on the `Accept` header. This is ideal for APIs that support both real-time streaming and traditional request-response patterns.
+
+### Overview
+
+| Accept Header | Response Mode |
+| ------------- | ------------- |
+| `text/event-stream` | SSE streaming |
+| `application/json` | JSON response |
+| `*/*` or missing | JSON (default, configurable) |
+
+Dual-mode controllers extend `AbstractDualModeController` which inherits from `AbstractSSEController`, providing access to all SSE features (connection management, broadcasting, lifecycle hooks) while adding JSON response support.
+
+### Defining Dual-Mode Contracts
+
+Use `buildDualModeRoute` for GET routes or `buildPayloadDualModeRoute` for POST/PUT/PATCH routes. The key difference from SSE contracts is the addition of `jsonResponse` schema:
+
+```ts
+import { z } from 'zod'
+import { buildDualModeRoute, buildPayloadDualModeRoute } from 'opinionated-machine'
+
+// GET dual-mode route (polling or streaming job status)
+export const jobStatusContract = buildDualModeRoute({
+  pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
+  params: z.object({ jobId: z.string().uuid() }),
+  query: z.object({ verbose: z.string().optional() }),
+  requestHeaders: z.object({}),
+  jsonResponse: z.object({
+    status: z.enum(['pending', 'running', 'completed', 'failed']),
+    progress: z.number(),
+    result: z.string().optional(),
+  }),
+  events: {
+    progress: z.object({ percent: z.number(), message: z.string().optional() }),
+    done: z.object({ result: z.string() }),
+  },
+})
+
+// POST dual-mode route (OpenAI-style chat completion)
+export const chatCompletionContract = buildPayloadDualModeRoute({
+  method: 'POST',
+  pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
+  params: z.object({ chatId: z.string().uuid() }),
+  query: z.object({}),
+  requestHeaders: z.object({ authorization: z.string() }),
+  body: z.object({ message: z.string() }),
+  jsonResponse: z.object({
+    reply: z.string(),
+    usage: z.object({ tokens: z.number() }),
+  }),
+  events: {
+    chunk: z.object({ delta: z.string() }),
+    done: z.object({ usage: z.object({ total: z.number() }) }),
+  },
+})
+```
+
+**Note**: Dual-mode contracts use `pathResolver` instead of static `path` for type-safe path construction. The `pathResolver` function receives typed params and returns the URL path.
+
+### Implementing Dual-Mode Controllers
+
+Dual-mode controllers use `buildDualModeHandler` to define both JSON and SSE handlers:
+
+```ts
+import {
+  AbstractDualModeController,
+  buildDualModeHandler,
+  type BuildDualModeRoutesReturnType,
+  type DualModeControllerConfig,
+} from 'opinionated-machine'
+
+type Contracts = {
+  chatCompletion: typeof chatCompletionContract
+}
+
+type Dependencies = {
+  aiService: AIService
+}
+
+export class ChatDualModeController extends AbstractDualModeController<Contracts> {
+  public static contracts = {
+    chatCompletion: chatCompletionContract,
+  } as const
+
+  private readonly aiService: AIService
+
+  constructor(deps: Dependencies, config?: DualModeControllerConfig) {
+    super(deps, config)
+    this.aiService = deps.aiService
+  }
+
+  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<Contracts> {
+    return {
+      chatCompletion: {
+        contract: ChatDualModeController.contracts.chatCompletion,
+        handlers: buildDualModeHandler(chatCompletionContract, {
+          // JSON mode - return complete response
+          json: async (ctx) => {
+            const result = await this.aiService.complete(ctx.request.body.message)
+            return {
+              reply: result.text,
+              usage: { tokens: result.tokenCount },
+            }
+          },
+          // SSE mode - stream response chunks
+          sse: async (ctx) => {
+            let totalTokens = 0
+            for await (const chunk of this.aiService.stream(ctx.request.body.message)) {
+              await ctx.connection.send('chunk', { delta: chunk.text })
+              totalTokens += chunk.tokenCount ?? 0
+            }
+            await ctx.connection.send('done', { usage: { total: totalTokens } })
+            this.closeConnection(ctx.connection.id)
+          },
+        }),
+        options: {
+          // Optional: set SSE as default mode (instead of JSON)
+          defaultMode: 'sse',
+          // Optional: route-level authentication
+          preHandler: (request, reply) => {
+            if (!request.headers.authorization) {
+              return Promise.resolve(reply.code(401).send({ error: 'Unauthorized' }))
+            }
+          },
+          // Optional: SSE lifecycle hooks
+          onConnect: (conn) => console.log('Client connected:', conn.id),
+          onDisconnect: (conn) => console.log('Client disconnected:', conn.id),
+        },
+      },
+    }
+  }
+}
+```
+
+**Handler Context:**
+
+| Mode | Context Properties |
+| ---- | ------------------ |
+| `json` | `ctx.mode`, `ctx.request`, `ctx.reply` |
+| `sse` | `ctx.mode`, `ctx.connection`, `ctx.request` |
+
+The `json` handler must return a value matching `jsonResponse` schema. The `sse` handler uses `ctx.connection.send()` for type-safe event streaming.
+
+### Registering Dual-Mode Controllers
+
+Use `asDualModeControllerClass` in your module:
+
+```ts
+import {
+  AbstractModule,
+  asControllerClass,
+  asDualModeControllerClass,
+  asServiceClass,
+} from 'opinionated-machine'
+
+export class ChatModule extends AbstractModule<Dependencies> {
+  resolveDependencies() {
+    return {
+      aiService: asServiceClass(AIService),
+    }
+  }
+
+  resolveControllers(diOptions: DependencyInjectionOptions) {
+    return {
+      // REST controller
+      usersController: asControllerClass(UsersController),
+      // Dual-mode controller (auto-detected via isDualModeController flag)
+      chatController: asDualModeControllerClass(ChatDualModeController, { diOptions }),
+    }
+  }
+}
+```
+
+Register dual-mode routes after the `@fastify/sse` plugin:
+
+```ts
+const app = fastify()
+app.setValidatorCompiler(validatorCompiler)
+app.setSerializerCompiler(serializerCompiler)
+
+// Register @fastify/sse plugin
+await app.register(FastifySSEPlugin)
+
+// Register routes
+context.registerRoutes(app)           // REST routes
+context.registerSSERoutes(app)        // SSE-only routes
+context.registerDualModeRoutes(app)   // Dual-mode routes
+
+// Check if controllers exist before registration (optional)
+if (context.hasDualModeControllers()) {
+  context.registerDualModeRoutes(app)
+}
+
+await app.ready()
+```
+
+### Accept Header Routing
+
+The `Accept` header determines response mode:
+
+```bash
+# JSON mode (complete response)
+curl -X POST http://localhost:3000/api/chats/123/completions \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"message": "Hello world"}'
+
+# SSE mode (streaming response)
+curl -X POST http://localhost:3000/api/chats/123/completions \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"message": "Hello world"}'
+```
+
+**Quality values** are supported for content negotiation:
+
+```bash
+# Prefer JSON (higher quality value)
+curl -H "Accept: text/event-stream;q=0.5, application/json;q=1.0" ...
+
+# Prefer SSE (higher quality value)
+curl -H "Accept: application/json;q=0.5, text/event-stream;q=1.0" ...
+```
+
+### Testing Dual-Mode Controllers
+
+Test both JSON and SSE modes:
+
+```ts
+import { createContainer } from 'awilix'
+import { DIContext, SSETestServer, SSEInjectClient } from 'opinionated-machine'
+
+describe('ChatDualModeController', () => {
+  let server: SSETestServer
+  let injectClient: SSEInjectClient
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new ChatModule()] }, undefined)
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerDualModeRoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    injectClient = new SSEInjectClient(server.app)
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it('returns JSON for Accept: application/json', async () => {
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/api/chats/550e8400-e29b-41d4-a716-446655440000/completions',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+        authorization: 'Bearer token',
+      },
+      payload: { message: 'Hello' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('application/json')
+
+    const body = JSON.parse(response.body)
+    expect(body).toHaveProperty('reply')
+    expect(body).toHaveProperty('usage')
+  })
+
+  it('streams SSE for Accept: text/event-stream', async () => {
+    const conn = await injectClient.connectWithBody(
+      '/api/chats/550e8400-e29b-41d4-a716-446655440000/completions',
+      { message: 'Hello' },
+      { headers: { authorization: 'Bearer token' } },
+    )
+
+    expect(conn.getStatusCode()).toBe(200)
+    expect(conn.getHeaders()['content-type']).toContain('text/event-stream')
+
+    const events = conn.getReceivedEvents()
+    const chunks = events.filter((e) => e.event === 'chunk')
+    const doneEvents = events.filter((e) => e.event === 'done')
+
+    expect(chunks.length).toBeGreaterThan(0)
+    expect(doneEvents).toHaveLength(1)
+  })
+})
 

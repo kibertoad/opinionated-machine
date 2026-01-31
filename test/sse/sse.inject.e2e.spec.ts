@@ -340,6 +340,22 @@ describe('SSE Inject E2E (path parameters)', () => {
     expect(events).toHaveLength(1)
     expect(JSON.parse(events[0]!.data).content).toBe('Welcome to channel test-channel')
   })
+
+  it('filters out undefined and null query params', { timeout: 10000 }, async () => {
+    // Query params with undefined/null values should be filtered out
+    const { closed } = injectSSE(server.app, channelStreamContract, {
+      params: { channelId: 'filter-test' },
+      query: { since: undefined, other: null } as Record<string, unknown>,
+    })
+
+    const response = await closed
+
+    expect(response.statusCode).toBe(200)
+
+    const events = parseSSEEvents(response.body)
+    expect(events).toHaveLength(1)
+    expect(JSON.parse(events[0]!.data).content).toBe('Welcome to channel filter-test')
+  })
 })
 
 /**

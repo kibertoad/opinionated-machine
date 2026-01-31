@@ -18,7 +18,7 @@ import {
 // Define a realistic contract like users would
 const chatStreamContract = buildPayloadSSERoute({
   method: 'POST',
-  path: '/api/chat/stream' as const,
+  pathResolver: () => '/api/chat/stream',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
@@ -349,7 +349,7 @@ describe('SSE Controller Type Safety', () => {
       // This test demonstrates that a controller with multiple contracts
       // gets autocomplete for all events across all routes
       const notificationContract = buildSSERoute({
-        path: '/api/notifications' as const,
+        pathResolver: () => '/api/notifications',
         params: z.object({}),
         query: z.object({}),
         requestHeaders: z.object({}),
