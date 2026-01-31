@@ -2,7 +2,7 @@ import type { RouteOptions } from 'fastify'
 import type { z } from 'zod'
 import type { AbstractSSEController } from './AbstractSSEController.ts'
 import { extractPathTemplate, handleSSEError, setupSSEConnection } from './fastifySSERouteUtils.ts'
-import type { FastifySSEHandlerConfig } from './fastifySSETypes.ts'
+import type { FastifySSEHandlerConfig, FastifySSEPreHandler } from './fastifySSETypes.ts'
 import type { AnySSEContractDefinition } from './sseContracts.ts'
 
 /**
@@ -93,8 +93,11 @@ export type RegisterSSERoutesOptions = {
   /**
    * Global preHandler hooks applied to all SSE routes.
    * Use for authentication that should apply to all SSE endpoints.
+   *
+   * IMPORTANT: Must return a Promise for SSE compatibility.
+   * Synchronous handlers will cause connection issues.
    */
-  preHandler?: RouteOptions['preHandler']
+  preHandler?: FastifySSEPreHandler
   /**
    * Rate limit configuration (requires @fastify/rate-limit to be registered).
    * If @fastify/rate-limit is not registered, this config is ignored.

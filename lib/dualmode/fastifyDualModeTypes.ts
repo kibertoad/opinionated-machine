@@ -1,6 +1,10 @@
-import type { FastifyReply, FastifyRequest, RouteOptions } from 'fastify'
+import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
-import type { FastifySSERouteOptions, SSEConnection } from '../sse/fastifySSETypes.ts'
+import type {
+  FastifySSEPreHandler,
+  FastifySSERouteOptions,
+  SSEConnection,
+} from '../sse/fastifySSETypes.ts'
 import type { SSEEventSchemas } from '../sse/sseTypes.ts'
 import type { AnyDualModeContractDefinition } from './dualModeContracts.ts'
 import type { DualModeType } from './dualModeTypes.ts'
@@ -186,8 +190,11 @@ export type RegisterDualModeRoutesOptions = {
   /**
    * Global preHandler hooks applied to all dual-mode routes.
    * Use for authentication that should apply to all endpoints.
+   *
+   * IMPORTANT: Must return a Promise for SSE mode compatibility.
+   * Synchronous handlers will cause connection issues in SSE mode.
    */
-  preHandler?: RouteOptions['preHandler']
+  preHandler?: FastifySSEPreHandler
   /**
    * Rate limit configuration (requires @fastify/rate-limit to be registered).
    * If @fastify/rate-limit is not registered, this config is ignored.
