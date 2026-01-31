@@ -12,7 +12,6 @@ export {
   type FastifyDualModeRouteOptions,
   type FastifySSEHandlerConfig,
   type FastifySSEPreHandler,
-  type FastifySSERouteHandler,
   type FastifySSERouteOptions,
   type InferHandlers,
   type InferSSERequest,

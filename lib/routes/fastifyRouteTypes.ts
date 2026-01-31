@@ -70,40 +70,6 @@ export type FastifySSEPreHandler = (
 // ============================================================================
 
 /**
- * Type-safe handler for SSE routes with typed event sending.
- *
- * The `connection.send` method provides compile-time type checking for event names
- * and their payloads based on the contract's event schemas.
- *
- * @template Params - Path parameters type
- * @template Query - Query string parameters type
- * @template Headers - Request headers type
- * @template Body - Request body type (for POST/PUT/PATCH)
- * @template Events - Event schemas from the contract
- * @template Context - Connection context type
- *
- * @example
- * ```typescript
- * const handler: FastifySSERouteHandler<{}, {}, {}, { message: string }, typeof contract.events> =
- *   async (request, connection) => {
- *     await connection.send('chunk', { content: request.body.message })
- *     await connection.send('done', { totalTokens: 1 })
- *   }
- * ```
- */
-export type FastifySSERouteHandler<
-  Params = unknown,
-  Query = unknown,
-  Headers = unknown,
-  Body = unknown,
-  Events extends SSEEventSchemas = SSEEventSchemas,
-  Context = unknown,
-> = (
-  request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
-  connection: SSEConnection<Events, Context>,
-) => void | Promise<void>
-
-/**
  * Options for configuring an SSE route.
  */
 export type FastifySSERouteOptions = {
