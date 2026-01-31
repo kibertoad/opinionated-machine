@@ -32,7 +32,7 @@ export type SSEPathResolver<Params> = (params: Params) => string
  * @template Body - Request body schema (for POST/PUT/PATCH)
  * @template Events - Map of event name to event data schema
  */
-export type SSERouteDefinition<
+export type SSEContractDefinition<
   Method extends SSEMethod = SSEMethod,
   Params extends z.ZodTypeAny = z.ZodTypeAny,
   Query extends z.ZodTypeAny = z.ZodTypeAny,
@@ -58,7 +58,7 @@ export type SSERouteDefinition<
  * Type representing any SSE route definition (for use in generic constraints).
  * Uses a manually defined type to avoid pathResolver type incompatibilities.
  */
-export type AnySSERouteDefinition = {
+export type AnySSEContractDefinition = {
   method: SSEMethod
   // biome-ignore lint/suspicious/noExplicitAny: Required for compatibility with all param types
   pathResolver: SSEPathResolver<any>
@@ -73,7 +73,7 @@ export type AnySSERouteDefinition = {
 /**
  * Configuration for building a GET SSE route
  */
-export type SSERouteConfig<
+export type SSEContractConfig<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
@@ -93,7 +93,7 @@ export type SSERouteConfig<
 /**
  * Configuration for building a POST/PUT/PATCH SSE route with request body
  */
-export type PayloadSSERouteConfig<
+export type PayloadSSEContractConfig<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
@@ -121,7 +121,7 @@ export type PayloadSSERouteConfig<
  *
  * @example
  * ```typescript
- * const notificationsStream = buildSSERoute({
+ * const notificationsStream = buildSSEContract({
  *   pathResolver: () => '/api/notifications/stream',
  *   params: z.object({}),
  *   query: z.object({ userId: z.string().uuid() }),
@@ -132,14 +132,14 @@ export type PayloadSSERouteConfig<
  * })
  * ```
  */
-export function buildSSERoute<
+export function buildSSEContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
 >(
-  config: SSERouteConfig<Params, Query, RequestHeaders, Events>,
-): SSERouteDefinition<'GET', Params, Query, RequestHeaders, undefined, Events> {
+  config: SSEContractConfig<Params, Query, RequestHeaders, Events>,
+): SSEContractDefinition<'GET', Params, Query, RequestHeaders, undefined, Events> {
   return {
     method: 'GET',
     pathResolver: config.pathResolver,
@@ -160,7 +160,7 @@ export function buildSSERoute<
  *
  * @example
  * ```typescript
- * const chatCompletionStream = buildPayloadSSERoute({
+ * const chatCompletionStream = buildPayloadSSEContract({
  *   method: 'POST',
  *   pathResolver: () => '/api/ai/chat/completions',
  *   params: z.object({}),
@@ -178,15 +178,15 @@ export function buildSSERoute<
  * })
  * ```
  */
-export function buildPayloadSSERoute<
+export function buildPayloadSSEContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Body extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
 >(
-  config: PayloadSSERouteConfig<Params, Query, RequestHeaders, Body, Events>,
-): SSERouteDefinition<'POST' | 'PUT' | 'PATCH', Params, Query, RequestHeaders, Body, Events> {
+  config: PayloadSSEContractConfig<Params, Query, RequestHeaders, Body, Events>,
+): SSEContractDefinition<'POST' | 'PUT' | 'PATCH', Params, Query, RequestHeaders, Body, Events> {
   return {
     method: config.method ?? 'POST',
     pathResolver: config.pathResolver,
@@ -211,7 +211,7 @@ export function buildPayloadSSERoute<
  *
  * @example
  * ```typescript
- * const contract = buildPayloadSSERoute({
+ * const contract = buildPayloadSSEContract({
  *   // ...
  *   events: {
  *     chunk: z.object({ content: z.string() }),
@@ -242,7 +242,7 @@ export function buildPayloadSSERoute<
  * }
  * ```
  */
-export function buildSSEHandler<Contract extends AnySSERouteDefinition>(
+export function buildSSEHandler<Contract extends AnySSEContractDefinition>(
   _contract: Contract,
   handler: SSERouteHandler<
     z.infer<Contract['params']>,

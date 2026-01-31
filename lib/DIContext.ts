@@ -12,7 +12,7 @@ import type { AnyDualModeRouteDefinition } from './dualmode/dualModeContracts.js
 import { buildFastifyDualModeRoute } from './dualmode/dualModeRouteBuilder.js'
 import type { RegisterDualModeRoutesOptions } from './dualmode/dualModeTypes.js'
 import type { AbstractSSEController } from './sse/AbstractSSEController.js'
-import type { AnySSERouteDefinition } from './sse/sseContracts.js'
+import type { AnySSEContractDefinition } from './sse/sseContracts.js'
 import { buildFastifySSERoute, type RegisterSSERoutesOptions } from './sse/sseRouteBuilder.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
@@ -229,7 +229,7 @@ export class DIContext<
 
     for (const controllerName of this.sseControllerNames) {
       // Resolve from container to use the singleton instance
-      const sseController: AbstractSSEController<Record<string, AnySSERouteDefinition>> =
+      const sseController: AbstractSSEController<Record<string, AnySSEContractDefinition>> =
         this.diContainer.resolve(controllerName)
       const sseRoutes = sseController.buildSSERoutes()
 

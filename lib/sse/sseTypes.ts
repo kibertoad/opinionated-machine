@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
-import type { AnySSERouteDefinition } from './sseContracts.ts'
+import type { AnySSEContractDefinition } from './sseContracts.ts'
 
 /**
  * Type constraint for SSE event schemas.
@@ -20,7 +20,7 @@ export type SSEEventSchemas = Record<string, z.ZodTypeAny>
  * // AllContractEventNames<Contracts> = 'alert' | 'message' | 'done'
  * ```
  */
-export type AllContractEventNames<Contracts extends Record<string, AnySSERouteDefinition>> =
+export type AllContractEventNames<Contracts extends Record<string, AnySSEContractDefinition>> =
   Contracts[keyof Contracts]['events'] extends infer E
     ? E extends SSEEventSchemas
       ? keyof E & string
@@ -32,7 +32,7 @@ export type AllContractEventNames<Contracts extends Record<string, AnySSERouteDe
  * Returns the Zod schema for the event, or never if not found.
  */
 export type ExtractEventSchema<
-  Contracts extends Record<string, AnySSERouteDefinition>,
+  Contracts extends Record<string, AnySSEContractDefinition>,
   EventName extends string,
 > = {
   [K in keyof Contracts]: EventName extends keyof Contracts[K]['events']
@@ -44,7 +44,7 @@ export type ExtractEventSchema<
  * Flatten all events from all contracts into a single record.
  * Used for type-safe event sending across all controller routes.
  */
-export type AllContractEvents<Contracts extends Record<string, AnySSERouteDefinition>> = {
+export type AllContractEvents<Contracts extends Record<string, AnySSEContractDefinition>> = {
   [EventName in AllContractEventNames<Contracts>]: ExtractEventSchema<Contracts, EventName>
 }
 
@@ -244,7 +244,7 @@ export type SSERouteOptions = {
  *
  * @template Contract - The SSE route definition
  */
-export type SSEHandlerConfig<Contract extends AnySSERouteDefinition> = {
+export type SSEHandlerConfig<Contract extends AnySSEContractDefinition> = {
   /** The SSE route contract */
   contract: Contract
   /** Handler called when connection is established (connection has type-safe send method) */
@@ -263,7 +263,9 @@ export type SSEHandlerConfig<Contract extends AnySSERouteDefinition> = {
 /**
  * Maps SSE contracts to handler configurations for type checking.
  */
-export type BuildSSERoutesReturnType<APIContracts extends Record<string, AnySSERouteDefinition>> = {
+export type BuildSSERoutesReturnType<
+  APIContracts extends Record<string, AnySSEContractDefinition>,
+> = {
   [K in keyof APIContracts]: SSEHandlerConfig<APIContracts[K]>
 }
 
@@ -284,7 +286,7 @@ export type BuildSSERoutesReturnType<APIContracts extends Record<string, AnySSER
  * }
  * ```
  */
-export type InferSSERequest<Contract extends AnySSERouteDefinition> = FastifyRequest<{
+export type InferSSERequest<Contract extends AnySSEContractDefinition> = FastifyRequest<{
   Params: z.infer<Contract['params']>
   Querystring: z.infer<Contract['query']>
   Headers: z.infer<Contract['requestHeaders']>

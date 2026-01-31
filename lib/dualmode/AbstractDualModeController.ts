@@ -1,6 +1,6 @@
 import type { z } from 'zod'
 import { AbstractSSEController } from '../sse/AbstractSSEController.ts'
-import type { AnySSERouteDefinition } from '../sse/sseContracts.ts'
+import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { BuildSSERoutesReturnType, SSEControllerConfig } from '../sse/sseTypes.ts'
 import type { AnyDualModeRouteDefinition } from './dualModeContracts.ts'
 import type { BuildDualModeRoutesReturnType, DualModeControllerConfig } from './dualModeTypes.ts'
@@ -74,7 +74,7 @@ export type ExtractDualModeEventSchema<
  */
 export abstract class AbstractDualModeController<
   APIContracts extends Record<string, AnyDualModeRouteDefinition>,
-> extends AbstractSSEController<Record<string, AnySSERouteDefinition>> {
+> extends AbstractSSEController<Record<string, AnySSEContractDefinition>> {
   /**
    * Dual-mode controllers must override this constructor and call super with their
    * dependencies object and the dual-mode config.
@@ -97,8 +97,8 @@ export abstract class AbstractDualModeController<
    * SSE routes are not used directly - dual-mode uses buildDualModeRoutes() instead.
    * This returns an empty object to satisfy the AbstractSSEController contract.
    */
-  public buildSSERoutes(): BuildSSERoutesReturnType<Record<string, AnySSERouteDefinition>> {
-    return {} as BuildSSERoutesReturnType<Record<string, AnySSERouteDefinition>>
+  public buildSSERoutes(): BuildSSERoutesReturnType<Record<string, AnySSEContractDefinition>> {
+    return {} as BuildSSERoutesReturnType<Record<string, AnySSEContractDefinition>>
   }
 
   /**

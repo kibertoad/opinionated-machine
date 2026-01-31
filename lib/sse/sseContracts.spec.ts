@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
-import { buildPayloadSSERoute, buildSSEHandler, buildSSERoute } from './sseContracts.ts'
+import { buildPayloadSSEContract, buildSSEContract, buildSSEHandler } from './sseContracts.ts'
 
 describe('sseContracts', () => {
-  describe('buildPayloadSSERoute', () => {
+  describe('buildPayloadSSEContract', () => {
     const baseConfig = {
       pathResolver: () => '/api/test',
       params: z.object({}),
@@ -16,7 +16,7 @@ describe('sseContracts', () => {
     }
 
     it('defaults method to POST when not specified', () => {
-      const route = buildPayloadSSERoute(baseConfig)
+      const route = buildPayloadSSEContract(baseConfig)
 
       expect(route.method).toBe('POST')
       expect(route.pathResolver({})).toBe('/api/test')
@@ -24,7 +24,7 @@ describe('sseContracts', () => {
     })
 
     it('uses specified method when provided', () => {
-      const route = buildPayloadSSERoute({
+      const route = buildPayloadSSEContract({
         ...baseConfig,
         method: 'PUT',
       })
@@ -33,7 +33,7 @@ describe('sseContracts', () => {
     })
 
     it('supports PATCH method', () => {
-      const route = buildPayloadSSERoute({
+      const route = buildPayloadSSEContract({
         ...baseConfig,
         method: 'PATCH',
       })
@@ -42,9 +42,9 @@ describe('sseContracts', () => {
     })
   })
 
-  describe('buildSSERoute', () => {
+  describe('buildSSEContract', () => {
     it('creates GET SSE route', () => {
-      const route = buildSSERoute({
+      const route = buildSSEContract({
         pathResolver: () => '/api/stream',
         params: z.object({}),
         query: z.object({ userId: z.string() }),
@@ -62,7 +62,7 @@ describe('sseContracts', () => {
   })
 
   describe('buildSSEHandler type checking', () => {
-    const testContract = buildPayloadSSERoute({
+    const testContract = buildPayloadSSEContract({
       method: 'POST',
       pathResolver: (params) => `/api/test/${params.id}/stream`,
       params: z.object({ id: z.string() }),

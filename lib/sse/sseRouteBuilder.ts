@@ -1,7 +1,7 @@
 import type { RouteOptions } from 'fastify'
 import type { z } from 'zod'
 import type { AbstractSSEController } from './AbstractSSEController.ts'
-import type { AnySSERouteDefinition } from './sseContracts.ts'
+import type { AnySSEContractDefinition } from './sseContracts.ts'
 import { extractPathTemplate, handleSSEError, setupSSEConnection } from './sseRouteUtils.ts'
 import type { SSEHandlerConfig } from './sseTypes.ts'
 
@@ -15,8 +15,8 @@ import type { SSEHandlerConfig } from './sseTypes.ts'
  * @param config - The SSE handler configuration
  * @returns Fastify route options
  */
-export function buildFastifySSERoute<Contract extends AnySSERouteDefinition>(
-  controller: AbstractSSEController<Record<string, AnySSERouteDefinition>>,
+export function buildFastifySSERoute<Contract extends AnySSEContractDefinition>(
+  controller: AbstractSSEController<Record<string, AnySSEContractDefinition>>,
   config: SSEHandlerConfig<Contract>,
 ): RouteOptions {
   const { contract, handler, options } = config

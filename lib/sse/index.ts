@@ -19,15 +19,15 @@ export {
 } from './AbstractSSEController.js'
 export { SSEConnectionSpy } from './SSEConnectionSpy.js'
 export {
-  type AnySSERouteDefinition,
-  buildPayloadSSERoute,
+  type AnySSEContractDefinition,
+  buildPayloadSSEContract,
+  buildSSEContract,
   buildSSEHandler,
-  buildSSERoute,
-  type PayloadSSERouteConfig,
+  type PayloadSSEContractConfig,
+  type SSEContractConfig,
+  type SSEContractDefinition,
   type SSEMethod,
   type SSEPathResolver,
-  type SSERouteConfig,
-  type SSERouteDefinition,
 } from './sseContracts.js'
 export {
   type ParsedSSEEvent,

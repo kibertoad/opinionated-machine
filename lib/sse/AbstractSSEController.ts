@@ -3,7 +3,7 @@ import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import type { z } from 'zod'
 import { SSEConnectionSpy } from './SSEConnectionSpy.ts'
-import type { AnySSERouteDefinition } from './sseContracts.ts'
+import type { AnySSEContractDefinition } from './sseContracts.ts'
 import type {
   AllContractEventNames,
   BuildSSERoutesReturnType,
@@ -52,7 +52,7 @@ type SSEReply = FastifyReply & { sse: SSEReplyInterface }
  * ```typescript
  * class NotificationsSSEController extends AbstractSSEController<typeof contracts> {
  *   public static contracts = {
- *     notifications: buildSSERoute({ ... }),
+ *     notifications: buildSSEContract({ ... }),
  *   } as const
  *
  *   public buildSSERoutes() {
@@ -67,7 +67,7 @@ type SSEReply = FastifyReply & { sse: SSEReplyInterface }
  * ```
  */
 export abstract class AbstractSSEController<
-  APIContracts extends Record<string, AnySSERouteDefinition>,
+  APIContracts extends Record<string, AnySSEContractDefinition>,
 > {
   /** Map of connection ID to connection object */
   protected connections: Map<string, SSEConnection> = new Map()
