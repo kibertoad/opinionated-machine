@@ -7,7 +7,6 @@ export {
   buildHandler,
   type FastifySSEHandlerConfig,
   type FastifySSEPreHandler,
-  type FastifySSERouteHandler,
   type FastifySSERouteOptions,
   type InferSSERequest,
   type RegisterSSERoutesOptions,

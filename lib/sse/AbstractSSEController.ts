@@ -17,7 +17,6 @@ export type {
   BuildFastifySSERoutesReturnType,
   FastifySSEHandlerConfig,
   FastifySSEPreHandler,
-  FastifySSERouteHandler,
   FastifySSERouteOptions,
   InferSSERequest,
   SSEConnection,
