@@ -1453,7 +1453,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
         contract: ChatDualModeController.contracts.chatCompletion,
         handlers: buildHandler(chatCompletionContract, {
           // JSON mode - return complete response
-          json: async (request) => {
+          json: async (request, _reply) => {
             const result = await this.aiService.complete(request.body.message)
             return {
               reply: result.text,
