@@ -58,7 +58,7 @@ export type ExtractDualModeEventSchema<
  *     return {
  *       chatCompletion: {
  *         contract: ChatController.contracts.chatCompletion,
- *         handlers: buildDualModeHandler(ChatController.contracts.chatCompletion, {
+ *         handlers: buildHandler(ChatController.contracts.chatCompletion, {
  *           json: async (ctx) => {
  *             // Return complete JSON response
  *             return { reply: 'Hello', usage: { tokens: 5 } }

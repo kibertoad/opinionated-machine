@@ -3,8 +3,8 @@ export { buildContract } from '../contracts/index.js'
 // Re-export route types from routes module
 export {
   type BuildFastifyDualModeRoutesReturnType,
-  buildDualModeHandler,
   buildFastifyRoute,
+  buildHandler,
   type DualModeHandlers,
   determineMode,
   extractPathTemplate,

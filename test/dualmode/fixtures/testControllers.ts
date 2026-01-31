@@ -1,7 +1,7 @@
 import {
   AbstractDualModeController,
   type BuildFastifyDualModeRoutesReturnType,
-  buildDualModeHandler,
+  buildHandler,
 } from '../../../index.js'
 import {
   authenticatedDualModeContract,
@@ -30,7 +30,7 @@ export class TestChatDualModeController extends AbstractDualModeController<TestC
     return {
       chatCompletion: {
         contract: TestChatDualModeController.contracts.chatCompletion,
-        handlers: buildDualModeHandler(chatCompletionContract, {
+        handlers: buildHandler(chatCompletionContract, {
           json: (ctx) => {
             const words = ctx.request.body.message.split(' ')
             return {
@@ -68,7 +68,7 @@ export class TestConversationDualModeController extends AbstractDualModeControll
     return {
       conversationCompletion: {
         contract: TestConversationDualModeController.contracts.conversationCompletion,
-        handlers: buildDualModeHandler(conversationCompletionContract, {
+        handlers: buildHandler(conversationCompletionContract, {
           json: (ctx) => ({
             reply: `Response for conversation ${ctx.request.params.conversationId}: ${ctx.request.body.message}`,
             conversationId: ctx.request.params.conversationId,
@@ -124,7 +124,7 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
     return {
       jobStatus: {
         contract: TestJobStatusDualModeController.contracts.jobStatus,
-        handlers: buildDualModeHandler(jobStatusContract, {
+        handlers: buildHandler(jobStatusContract, {
           json: (ctx) => {
             const state = this.jobStates.get(ctx.request.params.jobId)
             if (!state) {
@@ -185,7 +185,7 @@ export class TestAuthenticatedDualModeController extends AbstractDualModeControl
     return {
       protectedAction: {
         contract: TestAuthenticatedDualModeController.contracts.protectedAction,
-        handlers: buildDualModeHandler(authenticatedDualModeContract, {
+        handlers: buildHandler(authenticatedDualModeContract, {
           json: async (ctx) => ({
             success: true,
             data: `Processed: ${ctx.request.body.data}`,
@@ -228,7 +228,7 @@ export class TestDefaultModeDualModeController extends AbstractDualModeControlle
     return {
       defaultModeTest: {
         contract: TestDefaultModeDualModeController.contracts.defaultModeTest,
-        handlers: buildDualModeHandler(defaultModeTestContract, {
+        handlers: buildHandler(defaultModeTestContract, {
           json: async (ctx) => ({
             output: `JSON: ${ctx.request.body.input}`,
           }),
@@ -261,7 +261,7 @@ export class TestErrorDualModeController extends AbstractDualModeController<Test
     return {
       errorTest: {
         contract: TestErrorDualModeController.contracts.errorTest,
-        handlers: buildDualModeHandler(errorTestContract, {
+        handlers: buildHandler(errorTestContract, {
           json: (ctx) => ({
             success: !ctx.request.body.shouldThrow,
           }),
@@ -294,7 +294,7 @@ export class TestDefaultMethodDualModeController extends AbstractDualModeControl
     return {
       defaultMethodTest: {
         contract: TestDefaultMethodDualModeController.contracts.defaultMethodTest,
-        handlers: buildDualModeHandler(defaultMethodContract, {
+        handlers: buildHandler(defaultMethodContract, {
           json: (ctx) => ({
             result: `Processed: ${ctx.request.body.value}`,
           }),
@@ -325,7 +325,7 @@ export class TestJsonValidationDualModeController extends AbstractDualModeContro
     return {
       jsonValidationTest: {
         contract: TestJsonValidationDualModeController.contracts.jsonValidationTest,
-        handlers: buildDualModeHandler(jsonValidationContract, {
+        handlers: buildHandler(jsonValidationContract, {
           json: (ctx): { requiredField: string; count: number } => {
             if (ctx.request.body.returnInvalid) {
               // @ts-expect-error Intentionally returning invalid data to test validation failure

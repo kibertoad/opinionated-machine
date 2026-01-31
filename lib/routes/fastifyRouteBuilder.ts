@@ -201,7 +201,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
   controller: AbstractSSEController<Record<string, AnySSEContractDefinition>>,
   config: FastifySSEHandlerConfig<Contract>,
 ): RouteOptions {
-  const { contract, handler, options } = config
+  const { contract, handlers, options } = config
 
   const url = extractPathTemplate(
     contract.pathResolver,
@@ -229,12 +229,17 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         'SSE',
       )
 
-      // Call user handler with connection (which has typed send method)
+      // Call user handler with SSE context (matching dual-mode pattern)
       // Errors (including validation errors) are caught, sent as error events, and re-thrown
       // so the app's error handler can process them (for logging, monitoring, etc.)
       try {
-        // biome-ignore lint/suspicious/noExplicitAny: Handler types are validated by FastifySSEHandlerConfig
-        await handler(request as any, connection as any)
+        await handlers.sse({
+          mode: 'sse',
+          // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
+          request: request as any,
+          // biome-ignore lint/suspicious/noExplicitAny: Connection types are validated by FastifySSEHandlerConfig
+          connection: connection as any,
+        })
       } catch (err) {
         await handleSSEError(sseReply, controller, connectionId, err)
 
@@ -338,16 +343,17 @@ export function buildFastifyRoute(
     | FastifyDualModeHandlerConfig<AnyDualModeContractDefinition>
     | FastifySSEHandlerConfig<AnySSEContractDefinition>,
 ): RouteOptions {
-  // Discriminate by contract type using the isDualMode flag
-  if ('handlers' in config) {
-    // Dual-mode config has 'handlers' object
+  // Discriminate by checking for dual-mode handlers (has both 'json' and 'sse')
+  // SSE-only handlers have only 'sse'
+  if ('handlers' in config && 'json' in config.handlers) {
+    // Dual-mode config has handlers with both json and sse
     return buildDualModeRouteInternal(
       controller as AbstractDualModeController<Record<string, AnyDualModeContractDefinition>>,
       config as FastifyDualModeHandlerConfig<AnyDualModeContractDefinition>,
     )
   }
 
-  // SSE config has 'handler' function
+  // SSE-only config has handlers with just sse
   return buildSSERouteInternal(
     controller as AbstractSSEController<Record<string, AnySSEContractDefinition>>,
     config as FastifySSEHandlerConfig<AnySSEContractDefinition>,

@@ -4,7 +4,7 @@ export { buildContract } from '../contracts/index.js'
 export {
   type BuildFastifySSERoutesReturnType,
   buildFastifyRoute,
-  buildFastifySSEHandler,
+  buildHandler,
   type FastifySSEHandlerConfig,
   type FastifySSEPreHandler,
   type FastifySSERouteHandler,
@@ -12,6 +12,7 @@ export {
   type InferSSERequest,
   type RegisterSSERoutesOptions,
   type SSEConnection,
+  type SSEOnlyHandlers,
 } from '../routes/index.js'
 export {
   AbstractSSEController,

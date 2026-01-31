@@ -1403,12 +1403,12 @@ If the handler doesn't set the required headers, validation will fail with a `RE
 
 ### Implementing Dual-Mode Controllers
 
-Dual-mode controllers use `buildDualModeHandler` to define both JSON and SSE handlers:
+Dual-mode controllers use `buildHandler` to define both JSON and SSE handlers:
 
 ```ts
 import {
   AbstractDualModeController,
-  buildDualModeHandler,
+  buildHandler,
   type BuildFastifyDualModeRoutesReturnType,
   type DualModeControllerConfig,
 } from 'opinionated-machine'
@@ -1437,7 +1437,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
     return {
       chatCompletion: {
         contract: ChatDualModeController.contracts.chatCompletion,
-        handlers: buildDualModeHandler(chatCompletionContract, {
+        handlers: buildHandler(chatCompletionContract, {
           // JSON mode - return complete response
           json: async (ctx) => {
             const result = await this.aiService.complete(ctx.request.body.message)

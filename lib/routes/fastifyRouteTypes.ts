@@ -150,14 +150,13 @@ export type FastifySSERouteOptions = {
 export type FastifySSEHandlerConfig<Contract extends AnySSEContractDefinition> = {
   /** The SSE route contract */
   contract: Contract
-  /** Handler called when connection is established (connection has type-safe send method) */
-  handler: FastifySSERouteHandler<
+  /** Handlers object containing the SSE handler */
+  handlers: SSEOnlyHandlers<
+    Contract['events'],
     z.infer<Contract['params']>,
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
-    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-    Contract['events'],
-    unknown
+    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
   >
   /** Optional route configuration */
   options?: FastifySSERouteOptions
@@ -195,62 +194,6 @@ export type InferSSERequest<Contract extends AnySSEContractDefinition> = Fastify
   Headers: z.infer<Contract['requestHeaders']>
   Body: Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
 }>
-
-/**
- * Type-inference helper for Fastify SSE handlers with type-safe event sending.
- *
- * Similar to `buildFastifyPayloadRoute`, this function provides automatic
- * type inference for the request and connection parameters based on the contract.
- *
- * The `connection.send` method provides compile-time type checking:
- * - Event names must match those defined in `contract.events`
- * - Event data must match the Zod schema for that event
- *
- * @example
- * ```typescript
- * const contract = buildPayloadSSEContract({
- *   // ...
- *   events: {
- *     chunk: z.object({ content: z.string() }),
- *     done: z.object({ totalTokens: z.number() }),
- *   },
- * })
- *
- * class MyController extends AbstractSSEController<{ stream: typeof contract }> {
- *   private handleStream = buildFastifySSEHandler(
- *     contract,
- *     async (request, connection) => {
- *       // connection.send is typed - only 'chunk' and 'done' are valid event names
- *       await connection.send('chunk', { content: 'hello' })  // OK
- *       await connection.send('done', { totalTokens: 1 })     // OK
- *       // await connection.send('chunk', { totalTokens: 1 }) // TS Error: wrong payload
- *       // await connection.send('invalid', {})               // TS Error: invalid event name
- *     },
- *   )
- *
- *   buildSSERoutes() {
- *     return {
- *       stream: {
- *         contract,
- *         handler: this.handleStream,
- *       },
- *     }
- *   }
- * }
- * ```
- */
-export function buildFastifySSEHandler<Contract extends AnySSEContractDefinition>(
-  _contract: Contract,
-  handler: FastifySSERouteHandler<
-    z.infer<Contract['params']>,
-    z.infer<Contract['query']>,
-    z.infer<Contract['requestHeaders']>,
-    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-    Contract['events']
-  >,
-): typeof handler {
-  return handler
-}
 
 // ============================================================================
 // Dual-Mode Handler Types
@@ -385,38 +328,100 @@ export type BuildFastifyDualModeRoutesReturnType<
   [K in keyof APIContracts]: FastifyDualModeHandlerConfig<APIContracts[K]>
 }
 
+// ============================================================================
+// Unified Handler Builder
+// ============================================================================
+
 /**
- * Type-inference helper for dual-mode handlers.
+ * SSE-only handler object - just the SSE handler.
+ */
+export type SSEOnlyHandlers<
+  Events extends SSEEventSchemas = SSEEventSchemas,
+  Params = unknown,
+  Query = unknown,
+  Headers = unknown,
+  Body = unknown,
+> = {
+  sse: SSEModeHandler<Events, Params, Query, Headers, Body>
+}
+
+/**
+ * Infer the handler type based on contract type.
+ * - SSE-only contracts: `{ sse: handler }`
+ * - Dual-mode contracts: `{ json: handler, sse: handler }`
+ */
+export type InferHandlers<Contract> = Contract extends AnyDualModeContractDefinition
+  ? DualModeHandlers<
+      z.infer<Contract['params']>,
+      z.infer<Contract['query']>,
+      z.infer<Contract['requestHeaders']>,
+      Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+      z.infer<Contract['syncResponse']>,
+      Contract['events']
+    >
+  : Contract extends AnySSEContractDefinition
+    ? SSEOnlyHandlers<
+        Contract['events'],
+        z.infer<Contract['params']>,
+        z.infer<Contract['query']>,
+        z.infer<Contract['requestHeaders']>,
+        Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+      >
+    : never
+
+/**
+ * Helper type to infer the correct handlers type based on contract.
+ */
+type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinition
+  ? DualModeHandlers<
+      z.infer<Contract['params']>,
+      z.infer<Contract['query']>,
+      z.infer<Contract['requestHeaders']>,
+      Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+      z.infer<Contract['syncResponse']>,
+      Contract['events']
+    >
+  : Contract extends AnySSEContractDefinition
+    ? SSEOnlyHandlers<
+        Contract['events'],
+        z.infer<Contract['params']>,
+        z.infer<Contract['query']>,
+        z.infer<Contract['requestHeaders']>,
+        Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+      >
+    : never
+
+/**
+ * Unified handler builder for both SSE-only and dual-mode contracts.
  *
- * Similar to `buildFastifySSEHandler`, this function provides automatic type inference
- * for the request parameters and handler contexts based on the contract.
+ * This function provides automatic type inference based on the contract type:
+ * - **SSE-only contracts**: Provide `{ sse: handler }`
+ * - **Dual-mode contracts**: Provide `{ json: handler, sse: handler }`
  *
  * @example
  * ```typescript
- * const handlers = buildDualModeHandler(chatCompletionContract, {
+ * // SSE-only contract
+ * const sseHandlers = buildHandler(notificationsContract, {
+ *   sse: async (ctx) => {
+ *     await ctx.connection.send('notification', { id: '1', message: 'Hello' })
+ *   },
+ * })
+ *
+ * // Dual-mode contract
+ * const dualModeHandlers = buildHandler(chatCompletionContract, {
  *   json: async (ctx) => {
- *     // ctx.request.body is typed from contract
  *     return { reply: 'Hello', usage: { tokens: 5 } }
  *   },
  *   sse: async (ctx) => {
- *     // ctx.connection.send is typed based on contract events
  *     await ctx.connection.send('chunk', { delta: 'Hello' })
  *     await ctx.connection.send('done', { usage: { total: 5 } })
  *   },
  * })
  * ```
  */
-export function buildDualModeHandler<Contract extends AnyDualModeContractDefinition>(
-  _contract: Contract,
-  handlers: DualModeHandlers<
-    z.infer<Contract['params']>,
-    z.infer<Contract['query']>,
-    z.infer<Contract['requestHeaders']>,
-    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-    z.infer<Contract['syncResponse']>,
-    Contract['events']
-  >,
-): typeof handlers {
+export function buildHandler<
+  Contract extends AnyDualModeContractDefinition | AnySSEContractDefinition,
+>(_contract: Contract, handlers: HandlersForContract<Contract>): typeof handlers {
   return handlers
 }
 

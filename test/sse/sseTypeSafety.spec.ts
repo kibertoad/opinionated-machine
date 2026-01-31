@@ -6,8 +6,7 @@ import {
   type BuildFastifyDualModeRoutesReturnType,
   type BuildFastifySSERoutesReturnType,
   buildContract,
-  buildDualModeHandler,
-  buildFastifySSEHandler,
+  buildHandler,
 } from '../../index.js'
 
 /**
@@ -50,25 +49,24 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: ChatSSEController.contracts.chatStream,
-              handler: this.handleChat,
+              handlers: this.chatHandlers,
             },
           }
         }
 
-        // Handler using buildFastifySSEHandler for type inference
-        private handleChat = buildFastifySSEHandler(
-          chatStreamContract,
-          async (request, connection) => {
+        // Handler using buildHandler for type inference
+        private chatHandlers = buildHandler(chatStreamContract, {
+          sse: async (ctx) => {
             // Valid: correct event names and payloads
-            await connection.send('chunk', { content: 'Hello', index: 0 })
-            await connection.send('chunk', { content: ' world', index: 1 })
-            await connection.send('done', { totalTokens: 10, model: request.body.model })
+            await ctx.connection.send('chunk', { content: 'Hello', index: 0 })
+            await ctx.connection.send('chunk', { content: ' world', index: 1 })
+            await ctx.connection.send('done', { totalTokens: 10, model: ctx.request.body.model })
 
             // Request body is typed
-            const messages = request.body.messages
+            const messages = ctx.request.body.messages
             expect(messages).toBeDefined()
           },
-        )
+        })
       }
 
       const controller = new ChatSSEController({})
@@ -83,18 +81,17 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: InvalidEventController.contracts.chatStream,
-              handler: this.handleChat,
+              handlers: this.chatHandlers,
             },
           }
         }
 
-        private handleChat = buildFastifySSEHandler(
-          chatStreamContract,
-          async (_request, connection) => {
+        private chatHandlers = buildHandler(chatStreamContract, {
+          sse: async (ctx) => {
             // @ts-expect-error - 'message' is not a valid event name, should be 'chunk', 'done', or 'error'
-            await connection.send('message', { text: 'hello' })
+            await ctx.connection.send('message', { text: 'hello' })
           },
-        )
+        })
       }
 
       expect(InvalidEventController).toBeDefined()
@@ -108,18 +105,17 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: WrongPayloadController.contracts.chatStream,
-              handler: this.handleChat,
+              handlers: this.chatHandlers,
             },
           }
         }
 
-        private handleChat = buildFastifySSEHandler(
-          chatStreamContract,
-          async (_request, connection) => {
+        private chatHandlers = buildHandler(chatStreamContract, {
+          sse: async (ctx) => {
             // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not { text: string }
-            await connection.send('chunk', { text: 'hello' })
+            await ctx.connection.send('chunk', { text: 'hello' })
           },
-        )
+        })
       }
 
       expect(WrongPayloadController).toBeDefined()
@@ -133,18 +129,17 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: MissingFieldController.contracts.chatStream,
-              handler: this.handleChat,
+              handlers: this.chatHandlers,
             },
           }
         }
 
-        private handleChat = buildFastifySSEHandler(
-          chatStreamContract,
-          async (_request, connection) => {
+        private chatHandlers = buildHandler(chatStreamContract, {
+          sse: async (ctx) => {
             // @ts-expect-error - 'done' event requires both 'totalTokens' and 'model', missing 'model'
-            await connection.send('done', { totalTokens: 10 })
+            await ctx.connection.send('done', { totalTokens: 10 })
           },
-        )
+        })
       }
 
       expect(MissingFieldController).toBeDefined()
@@ -158,18 +153,17 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: WrongTypeController.contracts.chatStream,
-              handler: this.handleChat,
+              handlers: this.chatHandlers,
             },
           }
         }
 
-        private handleChat = buildFastifySSEHandler(
-          chatStreamContract,
-          async (_request, connection) => {
+        private chatHandlers = buildHandler(chatStreamContract, {
+          sse: async (ctx) => {
             // @ts-expect-error - 'index' should be number, not string
-            await connection.send('chunk', { content: 'hello', index: 'one' })
+            await ctx.connection.send('chunk', { content: 'hello', index: 'one' })
           },
-        )
+        })
       }
 
       expect(WrongTypeController).toBeDefined()
@@ -183,24 +177,23 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: MismatchedPayloadController.contracts.chatStream,
-              handler: this.handleChat,
+              handlers: this.chatHandlers,
             },
           }
         }
 
-        private handleChat = buildFastifySSEHandler(
-          chatStreamContract,
-          async (_request, connection) => {
+        private chatHandlers = buildHandler(chatStreamContract, {
+          sse: async (ctx) => {
             // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not 'done' payload { totalTokens: number, model: string }
-            await connection.send('chunk', { totalTokens: 10, model: 'gpt-4' })
+            await ctx.connection.send('chunk', { totalTokens: 10, model: 'gpt-4' })
 
             // @ts-expect-error - 'done' event expects { totalTokens: number, model: string }, not 'chunk' payload { content: string, index: number }
-            await connection.send('done', { content: 'hello', index: 0 })
+            await ctx.connection.send('done', { content: 'hello', index: 0 })
 
             // @ts-expect-error - 'error' event expects { code: number, message: string }, not 'chunk' payload
-            await connection.send('error', { content: 'hello', index: 0 })
+            await ctx.connection.send('error', { content: 'hello', index: 0 })
           },
-        )
+        })
       }
 
       expect(MismatchedPayloadController).toBeDefined()
@@ -214,21 +207,23 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: TypedRequestController.contracts.chatStream,
-              handler: this.handleChat,
+              handlers: this.chatHandlers,
             },
           }
         }
 
-        private handleChat = buildFastifySSEHandler(chatStreamContract, (request, _connection) => {
-          // These should be typed
-          const model: string = request.body.model
-          const messages: Array<{ role: string; content: string }> = request.body.messages
+        private chatHandlers = buildHandler(chatStreamContract, {
+          sse: (ctx) => {
+            // These should be typed
+            const model: string = ctx.request.body.model
+            const messages: Array<{ role: string; content: string }> = ctx.request.body.messages
 
-          // @ts-expect-error - 'nonExistent' doesn't exist on body
-          const _invalid = request.body.nonExistent
+            // @ts-expect-error - 'nonExistent' doesn't exist on body
+            const _invalid = ctx.request.body.nonExistent
 
-          expect(model).toBeDefined()
-          expect(messages).toBeDefined()
+            expect(model).toBeDefined()
+            expect(messages).toBeDefined()
+          },
         })
       }
 
@@ -243,18 +238,20 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: TypedHeadersController.contracts.chatStream,
-              handler: this.handleChat,
+              handlers: this.chatHandlers,
             },
           }
         }
 
-        private handleChat = buildFastifySSEHandler(chatStreamContract, (request, _connection) => {
-          // Authorization header is typed as string (required by contract schema)
-          const auth: string = request.headers.authorization
+        private chatHandlers = buildHandler(chatStreamContract, {
+          sse: (ctx) => {
+            // Authorization header is typed as string (required by contract schema)
+            const auth: string = ctx.request.headers.authorization
 
-          // Note: Fastify headers are loosely typed (allow arbitrary keys)
-          // so we can't test @ts-expect-error for non-existent headers
-          expect(auth).toBeDefined()
+            // Note: Fastify headers are loosely typed (allow arbitrary keys)
+            // so we can't test @ts-expect-error for non-existent headers
+            expect(auth).toBeDefined()
+          },
         })
       }
 
@@ -271,7 +268,7 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: ExternalTriggerController.contracts.chatStream,
-              handler: buildFastifySSEHandler(chatStreamContract, async () => {}),
+              handlers: buildHandler(chatStreamContract, { sse: async () => {} }),
             },
           }
         }
@@ -307,7 +304,7 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: InvalidExternalController.contracts.chatStream,
-              handler: buildFastifySSEHandler(chatStreamContract, async () => {}),
+              handlers: buildHandler(chatStreamContract, { sse: async () => {} }),
             },
           }
         }
@@ -329,7 +326,7 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: WrongPayloadExternalController.contracts.chatStream,
-              handler: buildFastifySSEHandler(chatStreamContract, async () => {}),
+              handlers: buildHandler(chatStreamContract, { sse: async () => {} }),
             },
           }
         }
@@ -351,7 +348,7 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: MissingFieldExternalController.contracts.chatStream,
-              handler: buildFastifySSEHandler(chatStreamContract, async () => {}),
+              handlers: buildHandler(chatStreamContract, { sse: async () => {} }),
             },
           }
         }
@@ -394,11 +391,11 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: MultiContractController.contracts.chatStream,
-              handler: buildFastifySSEHandler(chatStreamContract, async () => {}),
+              handlers: buildHandler(chatStreamContract, { sse: async () => {} }),
             },
             notifications: {
               contract: MultiContractController.contracts.notifications,
-              handler: buildFastifySSEHandler(notificationContract, async () => {}),
+              handlers: buildHandler(notificationContract, { sse: async () => {} }),
             },
           }
         }
@@ -523,7 +520,7 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
     notifications: typeof notificationsContract
   }
 
-  describe('buildFastifySSEHandler with GET contract', () => {
+  describe('buildHandler with GET SSE contract', () => {
     it('allows correctly typed event sending', () => {
       class NotificationsController extends AbstractSSEController<NotificationContracts> {
         public static contracts = { notifications: notificationsContract } as const
@@ -532,27 +529,26 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
           return {
             notifications: {
               contract: NotificationsController.contracts.notifications,
-              handler: this.handleNotifications,
+              handlers: this.handleNotifications,
             },
           }
         }
 
-        private handleNotifications = buildFastifySSEHandler(
-          notificationsContract,
-          async (request, connection) => {
+        private handleNotifications = buildHandler(notificationsContract, {
+          sse: async (ctx) => {
             // Valid: correct event names and payloads
-            await connection.send('notification', { id: '1', message: 'Hello' })
-            await connection.send('heartbeat', { timestamp: Date.now() })
+            await ctx.connection.send('notification', { id: '1', message: 'Hello' })
+            await ctx.connection.send('heartbeat', { timestamp: Date.now() })
 
             // Request params are typed
-            const userId: string = request.params.userId
+            const userId: string = ctx.request.params.userId
             expect(userId).toBeDefined()
 
             // Request query is typed
-            const since: string | undefined = request.query.since
+            const since: string | undefined = ctx.request.query.since
             expect(since).toBeDefined()
           },
-        )
+        })
       }
 
       const controller = new NotificationsController({})
@@ -560,53 +556,63 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
     })
 
     it('catches invalid event name at compile time', () => {
-      buildFastifySSEHandler(notificationsContract, async (_request, connection) => {
-        // @ts-expect-error - 'message' is not a valid event name
-        await connection.send('message', { text: 'hello' })
+      buildHandler(notificationsContract, {
+        sse: async (ctx) => {
+          // @ts-expect-error - 'message' is not a valid event name
+          await ctx.connection.send('message', { text: 'hello' })
+        },
       })
 
       expect(true).toBe(true)
     })
 
     it('catches wrong payload structure at compile time', () => {
-      buildFastifySSEHandler(notificationsContract, async (_request, connection) => {
-        // @ts-expect-error - 'notification' expects { id: string, message: string }, not { text: string }
-        await connection.send('notification', { text: 'hello' })
+      buildHandler(notificationsContract, {
+        sse: async (ctx) => {
+          // @ts-expect-error - 'notification' expects { id: string, message: string }, not { text: string }
+          await ctx.connection.send('notification', { text: 'hello' })
+        },
       })
 
       expect(true).toBe(true)
     })
 
     it('catches missing required fields at compile time', () => {
-      buildFastifySSEHandler(notificationsContract, async (_request, connection) => {
-        // @ts-expect-error - 'notification' requires both 'id' and 'message'
-        await connection.send('notification', { id: '1' })
+      buildHandler(notificationsContract, {
+        sse: async (ctx) => {
+          // @ts-expect-error - 'notification' requires both 'id' and 'message'
+          await ctx.connection.send('notification', { id: '1' })
+        },
       })
 
       expect(true).toBe(true)
     })
 
     it('types request params from contract', () => {
-      buildFastifySSEHandler(notificationsContract, (request, _connection) => {
-        const userId: string = request.params.userId
+      buildHandler(notificationsContract, {
+        sse: (ctx) => {
+          const userId: string = ctx.request.params.userId
 
-        // @ts-expect-error - 'nonExistent' does not exist on params
-        const _invalid = request.params.nonExistent
+          // @ts-expect-error - 'nonExistent' does not exist on params
+          const _invalid = ctx.request.params.nonExistent
 
-        expect(userId).toBeDefined()
+          expect(userId).toBeDefined()
+        },
       })
 
       expect(true).toBe(true)
     })
 
     it('types request query from contract', () => {
-      buildFastifySSEHandler(notificationsContract, (request, _connection) => {
-        const since: string | undefined = request.query.since
+      buildHandler(notificationsContract, {
+        sse: (ctx) => {
+          const since: string | undefined = ctx.request.query.since
 
-        // @ts-expect-error - 'nonExistent' does not exist on query
-        const _invalid = request.query.nonExistent
+          // @ts-expect-error - 'nonExistent' does not exist on query
+          const _invalid = ctx.request.query.nonExistent
 
-        expect(since).toBeDefined()
+          expect(since).toBeDefined()
+        },
       })
 
       expect(true).toBe(true)
@@ -617,11 +623,13 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
       expect(notificationsContract.body).toBeUndefined()
 
       // The handler can still be created and works without body
-      const handler = buildFastifySSEHandler(notificationsContract, async (_request, connection) => {
-        await connection.send('notification', { id: '1', message: 'test' })
+      const handlers = buildHandler(notificationsContract, {
+        sse: async (ctx) => {
+          await ctx.connection.send('notification', { id: '1', message: 'test' })
+        },
       })
 
-      expect(handler).toBeDefined()
+      expect(handlers).toBeDefined()
     })
   })
 })
@@ -656,7 +664,7 @@ describe('Dual-Mode Handler Type Safety', () => {
     chatCompletion: typeof chatCompletionContract
   }
 
-  describe('buildDualModeHandler with POST contract', () => {
+  describe('buildHandler with POST dual-mode contract', () => {
     it('allows correctly typed json handler return', () => {
       class ChatController extends AbstractDualModeController<ChatContracts> {
         public static contracts = { chatCompletion: chatCompletionContract } as const
@@ -665,8 +673,8 @@ describe('Dual-Mode Handler Type Safety', () => {
           return {
             chatCompletion: {
               contract: ChatController.contracts.chatCompletion,
-              handlers: buildDualModeHandler(chatCompletionContract, {
-                json: async (ctx) => {
+              handlers: buildHandler(chatCompletionContract, {
+                json: (ctx) => {
                   // Valid: return matches syncResponse schema
                   return {
                     reply: ctx.request.body.message,
@@ -688,32 +696,32 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('catches wrong json handler return type at compile time', () => {
-      buildDualModeHandler(chatCompletionContract, {
+      buildHandler(chatCompletionContract, {
         // @ts-expect-error - return type doesn't match syncResponse: missing 'usage'
-        json: async () => {
+        json: () => {
           return { reply: 'Hello' }
         },
-        sse: async () => {},
+        sse: () => {},
       })
 
       expect(true).toBe(true)
     })
 
     it('catches wrong json handler return field type at compile time', () => {
-      buildDualModeHandler(chatCompletionContract, {
+      buildHandler(chatCompletionContract, {
         // @ts-expect-error - 'tokens' should be number, not string
-        json: async () => {
+        json: () => {
           return { reply: 'Hello', usage: { tokens: 'ten' } }
         },
-        sse: async () => {},
+        sse: () => {},
       })
 
       expect(true).toBe(true)
     })
 
     it('catches extra fields in json handler return at compile time', () => {
-      buildDualModeHandler(chatCompletionContract, {
-        json: async () => {
+      buildHandler(chatCompletionContract, {
+        json: () => {
           return {
             reply: 'Hello',
             usage: { tokens: 10 },
@@ -722,15 +730,15 @@ describe('Dual-Mode Handler Type Safety', () => {
             // would require explicit typing
           }
         },
-        sse: async () => {},
+        sse: () => {},
       })
 
       expect(true).toBe(true)
     })
 
     it('catches invalid sse event name at compile time', () => {
-      buildDualModeHandler(chatCompletionContract, {
-        json: async () => ({ reply: 'Hello', usage: { tokens: 10 } }),
+      buildHandler(chatCompletionContract, {
+        json: () => ({ reply: 'Hello', usage: { tokens: 10 } }),
         sse: async (ctx) => {
           // @ts-expect-error - 'invalid' is not a valid event name
           await ctx.connection.send('invalid', { data: 'test' })
@@ -741,8 +749,8 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('catches wrong sse event payload at compile time', () => {
-      buildDualModeHandler(chatCompletionContract, {
-        json: async () => ({ reply: 'Hello', usage: { tokens: 10 } }),
+      buildHandler(chatCompletionContract, {
+        json: () => ({ reply: 'Hello', usage: { tokens: 10 } }),
         sse: async (ctx) => {
           // @ts-expect-error - 'chunk' expects { delta: string }, not { content: string }
           await ctx.connection.send('chunk', { content: 'Hello' })
@@ -753,8 +761,8 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('catches missing required sse event fields at compile time', () => {
-      buildDualModeHandler(chatCompletionContract, {
-        json: async () => ({ reply: 'Hello', usage: { tokens: 10 } }),
+      buildHandler(chatCompletionContract, {
+        json: () => ({ reply: 'Hello', usage: { tokens: 10 } }),
         sse: async (ctx) => {
           // @ts-expect-error - 'done' requires { usage: { total: number } }
           await ctx.connection.send('done', {})
@@ -765,8 +773,8 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('types request body in json handler', () => {
-      buildDualModeHandler(chatCompletionContract, {
-        json: async (ctx) => {
+      buildHandler(chatCompletionContract, {
+        json: (ctx) => {
           // Body is typed
           const message: string = ctx.request.body.message
           const temperature: number | undefined = ctx.request.body.temperature
@@ -779,16 +787,16 @@ describe('Dual-Mode Handler Type Safety', () => {
 
           return { reply: message, usage: { tokens: 10 } }
         },
-        sse: async () => {},
+        sse: () => {},
       })
 
       expect(true).toBe(true)
     })
 
     it('types request body in sse handler', () => {
-      buildDualModeHandler(chatCompletionContract, {
-        json: async () => ({ reply: 'Hello', usage: { tokens: 10 } }),
-        sse: async (ctx) => {
+      buildHandler(chatCompletionContract, {
+        json: () => ({ reply: 'Hello', usage: { tokens: 10 } }),
+        sse: (ctx) => {
           // Body is typed
           const message: string = ctx.request.body.message
 
@@ -803,8 +811,8 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('types request params in both handlers', () => {
-      buildDualModeHandler(chatCompletionContract, {
-        json: async (ctx) => {
+      buildHandler(chatCompletionContract, {
+        json: (ctx) => {
           const chatId: string = ctx.request.params.chatId
 
           // @ts-expect-error - 'nonExistent' does not exist on params
@@ -813,7 +821,7 @@ describe('Dual-Mode Handler Type Safety', () => {
           expect(chatId).toBeDefined()
           return { reply: 'Hello', usage: { tokens: 10 } }
         },
-        sse: async (ctx) => {
+        sse: (ctx) => {
           const chatId: string = ctx.request.params.chatId
 
           // @ts-expect-error - 'nonExistent' does not exist on params
@@ -827,8 +835,8 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('types request query in both handlers', () => {
-      buildDualModeHandler(chatCompletionContract, {
-        json: async (ctx) => {
+      buildHandler(chatCompletionContract, {
+        json: (ctx) => {
           const verbose: boolean | undefined = ctx.request.query.verbose
 
           // @ts-expect-error - 'nonExistent' does not exist on query
@@ -837,7 +845,7 @@ describe('Dual-Mode Handler Type Safety', () => {
           expect(verbose).toBeDefined()
           return { reply: 'Hello', usage: { tokens: 10 } }
         },
-        sse: async (ctx) => {
+        sse: (ctx) => {
           const verbose: boolean | undefined = ctx.request.query.verbose
 
           // @ts-expect-error - 'nonExistent' does not exist on query
@@ -851,14 +859,14 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('provides mode discriminator in context', () => {
-      buildDualModeHandler(chatCompletionContract, {
-        json: async (ctx) => {
+      buildHandler(chatCompletionContract, {
+        json: (ctx) => {
           // Mode is 'json'
           const mode: 'json' = ctx.mode
           expect(mode).toBe('json')
           return { reply: 'Hello', usage: { tokens: 10 } }
         },
-        sse: async (ctx) => {
+        sse: (ctx) => {
           // Mode is 'sse'
           const mode: 'sse' = ctx.mode
           expect(mode).toBe('sse')
@@ -869,13 +877,13 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('provides reply in json handler context', () => {
-      buildDualModeHandler(chatCompletionContract, {
-        json: async (ctx) => {
+      buildHandler(chatCompletionContract, {
+        json: (ctx) => {
           // Reply is available in json context
           expect(ctx.reply).toBeDefined()
           return { reply: 'Hello', usage: { tokens: 10 } }
         },
-        sse: async (ctx) => {
+        sse: (ctx) => {
           // @ts-expect-error - reply does not exist in sse context
           const _reply = ctx.reply
         },
@@ -885,13 +893,13 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('provides connection in sse handler context', () => {
-      buildDualModeHandler(chatCompletionContract, {
-        json: async (ctx) => {
+      buildHandler(chatCompletionContract, {
+        json: (ctx) => {
           // @ts-expect-error - connection does not exist in json context
           const _connection = ctx.connection
           return { reply: 'Hello', usage: { tokens: 10 } }
         },
-        sse: async (ctx) => {
+        sse: (ctx) => {
           // Connection is available in sse context
           expect(ctx.connection).toBeDefined()
         },
@@ -921,7 +929,7 @@ describe('Dual-Mode Handler Type Safety', () => {
     jobStatus: typeof jobStatusContract
   }
 
-  describe('buildDualModeHandler with GET contract (no body)', () => {
+  describe('buildHandler with GET dual-mode contract (no body)', () => {
     it('allows correctly typed handlers without body', () => {
       class JobController extends AbstractDualModeController<JobContracts> {
         public static contracts = { jobStatus: jobStatusContract } as const
@@ -930,10 +938,10 @@ describe('Dual-Mode Handler Type Safety', () => {
           return {
             jobStatus: {
               contract: JobController.contracts.jobStatus,
-              handlers: buildDualModeHandler(jobStatusContract, {
-                json: async (ctx) => {
+              handlers: buildHandler(jobStatusContract, {
+                json: (ctx) => {
                   // Valid: return matches syncResponse schema
-                  const jobId = ctx.request.params.jobId
+                  const _jobId = ctx.request.params.jobId
                   return { status: 'running' as const, progress: 50 }
                 },
                 sse: async (ctx) => {
@@ -951,20 +959,20 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('catches wrong json return type for GET contract', () => {
-      buildDualModeHandler(jobStatusContract, {
+      buildHandler(jobStatusContract, {
         // @ts-expect-error - 'invalid' is not a valid status enum value
-        json: async () => {
+        json: () => {
           return { status: 'invalid' as const, progress: 50 }
         },
-        sse: async () => {},
+        sse: () => {},
       })
 
       expect(true).toBe(true)
     })
 
     it('catches wrong sse event for GET contract', () => {
-      buildDualModeHandler(jobStatusContract, {
-        json: async () => ({ status: 'running' as const, progress: 50 }),
+      buildHandler(jobStatusContract, {
+        json: () => ({ status: 'running' as const, progress: 50 }),
         sse: async (ctx) => {
           // @ts-expect-error - 'chunk' is not a valid event name
           await ctx.connection.send('chunk', { delta: 'test' })
@@ -979,8 +987,8 @@ describe('Dual-Mode Handler Type Safety', () => {
       expect(jobStatusContract.body).toBeUndefined()
 
       // Handlers work without body
-      const handlers = buildDualModeHandler(jobStatusContract, {
-        json: async () => ({ status: 'running' as const, progress: 50 }),
+      const handlers = buildHandler(jobStatusContract, {
+        json: () => ({ status: 'running' as const, progress: 50 }),
         sse: async (ctx) => {
           await ctx.connection.send('progress', { percent: 50 })
         },
@@ -990,8 +998,8 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('types params correctly for GET contract', () => {
-      buildDualModeHandler(jobStatusContract, {
-        json: async (ctx) => {
+      buildHandler(jobStatusContract, {
+        json: (ctx) => {
           const jobId: string = ctx.request.params.jobId
 
           // @ts-expect-error - 'nonExistent' does not exist on params
@@ -1000,7 +1008,252 @@ describe('Dual-Mode Handler Type Safety', () => {
           expect(jobId).toBeDefined()
           return { status: 'running' as const, progress: 50 }
         },
-        sse: async () => {},
+        sse: () => {},
+      })
+
+      expect(true).toBe(true)
+    })
+  })
+})
+
+// ============================================================================
+// Unified buildHandler Type Safety
+// ============================================================================
+
+describe('Unified buildHandler Type Safety', () => {
+  // SSE-only contract
+  const notificationsContract = buildContract({
+    pathResolver: (params) => `/api/users/${params.userId}/notifications`,
+    params: z.object({ userId: z.string() }),
+    query: z.object({ since: z.string().optional() }),
+    requestHeaders: z.object({}),
+    events: {
+      notification: z.object({ id: z.string(), message: z.string() }),
+      heartbeat: z.object({ timestamp: z.number() }),
+    },
+  })
+
+  // Dual-mode contract
+  const chatCompletionContract = buildContract({
+    method: 'POST',
+    pathResolver: () => '/api/chat/completions',
+    params: z.object({}),
+    query: z.object({}),
+    requestHeaders: z.object({}),
+    body: z.object({ message: z.string() }),
+    syncResponse: z.object({
+      reply: z.string(),
+      usage: z.object({ tokens: z.number() }),
+    }),
+    events: {
+      chunk: z.object({ delta: z.string() }),
+      done: z.object({ usage: z.object({ total: z.number() }) }),
+    },
+  })
+
+  describe('SSE-only contracts', () => {
+    it('accepts { sse } handler for SSE-only contract', () => {
+      const handlers = buildHandler(notificationsContract, {
+        sse: async (ctx) => {
+          // ctx.connection.send is typed
+          await ctx.connection.send('notification', { id: '1', message: 'Hello' })
+          await ctx.connection.send('heartbeat', { timestamp: Date.now() })
+
+          // ctx.request is typed
+          const userId: string = ctx.request.params.userId
+          expect(userId).toBeDefined()
+        },
+      })
+
+      expect(handlers).toBeDefined()
+      expect(handlers.sse).toBeDefined()
+    })
+
+    it('catches invalid event name in SSE-only handler', () => {
+      buildHandler(notificationsContract, {
+        sse: async (ctx) => {
+          // @ts-expect-error - 'invalid' is not a valid event name
+          await ctx.connection.send('invalid', { data: 'test' })
+        },
+      })
+
+      expect(true).toBe(true)
+    })
+
+    it('catches wrong event payload in SSE-only handler', () => {
+      buildHandler(notificationsContract, {
+        sse: async (ctx) => {
+          // @ts-expect-error - 'notification' expects { id, message }, not { text }
+          await ctx.connection.send('notification', { text: 'wrong' })
+        },
+      })
+
+      expect(true).toBe(true)
+    })
+
+    it('types request params in SSE-only handler', () => {
+      buildHandler(notificationsContract, {
+        sse: (ctx) => {
+          const userId: string = ctx.request.params.userId
+
+          // @ts-expect-error - 'nonExistent' does not exist on params
+          const _invalid = ctx.request.params.nonExistent
+
+          expect(userId).toBeDefined()
+        },
+      })
+
+      expect(true).toBe(true)
+    })
+
+    it('provides mode discriminator in SSE-only handler', () => {
+      buildHandler(notificationsContract, {
+        sse: (ctx) => {
+          const mode: 'sse' = ctx.mode
+          expect(mode).toBe('sse')
+        },
+      })
+
+      expect(true).toBe(true)
+    })
+  })
+
+  describe('Dual-mode contracts', () => {
+    it('accepts { json, sse } handlers for dual-mode contract', () => {
+      const handlers = buildHandler(chatCompletionContract, {
+        json: (ctx) => {
+          return {
+            reply: ctx.request.body.message,
+            usage: { tokens: 10 },
+          }
+        },
+        sse: async (ctx) => {
+          await ctx.connection.send('chunk', { delta: 'Hello' })
+          await ctx.connection.send('done', { usage: { total: 10 } })
+        },
+      })
+
+      expect(handlers).toBeDefined()
+      expect(handlers.json).toBeDefined()
+      expect(handlers.sse).toBeDefined()
+    })
+
+    it('catches wrong json return type', () => {
+      buildHandler(chatCompletionContract, {
+        // @ts-expect-error - missing 'usage' in return type
+        json: () => {
+          return { reply: 'Hello' }
+        },
+        sse: () => {},
+      })
+
+      expect(true).toBe(true)
+    })
+
+    it('catches invalid sse event in dual-mode', () => {
+      buildHandler(chatCompletionContract, {
+        json: () => ({ reply: 'Hello', usage: { tokens: 10 } }),
+        sse: async (ctx) => {
+          // @ts-expect-error - 'invalid' is not a valid event name
+          await ctx.connection.send('invalid', { data: 'test' })
+        },
+      })
+
+      expect(true).toBe(true)
+    })
+
+    it('types request body in both handlers', () => {
+      buildHandler(chatCompletionContract, {
+        json: (ctx) => {
+          const message: string = ctx.request.body.message
+
+          // @ts-expect-error - 'nonExistent' does not exist on body
+          const _invalid = ctx.request.body.nonExistent
+
+          expect(message).toBeDefined()
+          return { reply: message, usage: { tokens: 10 } }
+        },
+        sse: (ctx) => {
+          const message: string = ctx.request.body.message
+
+          // @ts-expect-error - 'nonExistent' does not exist on body
+          const _invalid = ctx.request.body.nonExistent
+
+          expect(message).toBeDefined()
+        },
+      })
+
+      expect(true).toBe(true)
+    })
+
+    it('provides mode discriminator in both handlers', () => {
+      buildHandler(chatCompletionContract, {
+        json: (ctx) => {
+          const mode: 'json' = ctx.mode
+          expect(mode).toBe('json')
+          return { reply: 'Hello', usage: { tokens: 10 } }
+        },
+        sse: (ctx) => {
+          const mode: 'sse' = ctx.mode
+          expect(mode).toBe('sse')
+        },
+      })
+
+      expect(true).toBe(true)
+    })
+
+    it('provides reply in json handler, connection in sse handler', () => {
+      buildHandler(chatCompletionContract, {
+        json: (ctx) => {
+          expect(ctx.reply).toBeDefined()
+          // @ts-expect-error - connection does not exist in json context
+          const _conn = ctx.connection
+          return { reply: 'Hello', usage: { tokens: 10 } }
+        },
+        sse: (ctx) => {
+          expect(ctx.connection).toBeDefined()
+          // @ts-expect-error - reply does not exist in sse context
+          const _reply = ctx.reply
+        },
+      })
+
+      expect(true).toBe(true)
+    })
+
+    it('requires json handler for dual-mode contract', () => {
+      // @ts-expect-error - dual-mode contracts require both json and sse handlers
+      buildHandler(chatCompletionContract, {
+        sse: () => {},
+      })
+
+      expect(true).toBe(true)
+    })
+
+    it('requires sse handler for dual-mode contract', () => {
+      // @ts-expect-error - dual-mode contracts require both json and sse handlers
+      buildHandler(chatCompletionContract, {
+        json: () => ({ reply: 'Hello', usage: { tokens: 10 } }),
+      })
+
+      expect(true).toBe(true)
+    })
+  })
+
+  describe('SSE-only contracts require only sse handler', () => {
+    it('accepts handlers with only sse for SSE-only contract', () => {
+      const handlers = buildHandler(notificationsContract, {
+        sse: () => {},
+      })
+
+      expect(handlers).toBeDefined()
+      expect(handlers.sse).toBeDefined()
+    })
+
+    it('rejects json handler for SSE-only contract', () => {
+      buildHandler(notificationsContract, {
+        // @ts-expect-error - SSE-only contracts should not have json handler
+        json: () => {},
+        sse: () => {},
       })
 
       expect(true).toBe(true)

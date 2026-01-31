@@ -5,8 +5,8 @@ export { buildFastifyRoute, extractPathTemplate } from './fastifyRouteBuilder.js
 export {
   type BuildFastifyDualModeRoutesReturnType,
   type BuildFastifySSERoutesReturnType,
-  buildDualModeHandler,
-  buildFastifySSEHandler,
+  // Unified handler builder
+  buildHandler,
   type DualModeHandlers,
   type FastifyDualModeHandlerConfig,
   type FastifyDualModeRouteOptions,
@@ -14,6 +14,7 @@ export {
   type FastifySSEPreHandler,
   type FastifySSERouteHandler,
   type FastifySSERouteOptions,
+  type InferHandlers,
   type InferSSERequest,
   // Dual-mode types
   type JsonModeContext,
@@ -25,6 +26,7 @@ export {
   type SSEConnection,
   type SSEModeContext,
   type SSEModeHandler,
+  type SSEOnlyHandlers,
 } from './fastifyRouteTypes.js'
 
 // Route utilities
