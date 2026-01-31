@@ -1,5 +1,5 @@
 import { stringify } from 'fast-querystring'
-import type { SSEConnection } from '../sse/fastifySSETypes.ts'
+import type { SSEConnection } from '../routes/fastifyRouteTypes.ts'
 import type { SSEConnectionSpy } from '../sse/SSEConnectionSpy.ts'
 import { type ParsedSSEEvent, parseSSEBuffer } from '../sse/sseParser.ts'
 

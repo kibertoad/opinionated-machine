@@ -28,6 +28,8 @@ export {
 // Dual-mode (SSE + JSON)
 export * from './lib/dualmode/index.js'
 export * from './lib/resolverFunctions.js'
+// Routes (unified route builder)
+export * from './lib/routes/index.js'
 // SSE
 export * from './lib/sse/index.js'
 // SSE testing utilities

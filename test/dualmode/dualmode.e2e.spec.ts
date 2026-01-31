@@ -1,9 +1,10 @@
+import { success } from '@lokalise/node-core'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
-  buildFastifyDualModeRoute,
+  buildFastifyRoute,
   DIContext,
   SSEHttpClient,
   SSEInjectClient,
@@ -859,11 +860,11 @@ describe('Dual-Mode Route Builder Validation', () => {
     }
 
     expect(() =>
-      buildFastifyDualModeRoute(controller, {
+      buildFastifyRoute(controller, {
         contract: invalidContract,
         handlers: {
           json: async () => ({ result: 'test' }),
-          sse: async () => {},
+          sse: () => success('disconnect'),
         },
       }),
     ).toThrow('Route params schema must be a ZodObject for path template extraction')
@@ -899,16 +900,18 @@ describe('Dual-Mode Response Headers', () => {
       isDualMode: true as const,
     }
 
-    const route = buildFastifyDualModeRoute(controller, {
+    const route = buildFastifyRoute(controller, {
       contract: contractWithHeaders,
       handlers: {
-        json: (ctx) => {
+        json: (request, reply) => {
           // Set the required headers
-          ctx.reply.header('x-request-id', 'req-123')
-          ctx.reply.header('x-ratelimit-remaining', '99')
-          return { result: ctx.request.body.data }
+          reply.header('x-request-id', 'req-123')
+          reply.header('x-ratelimit-remaining', '99')
+          return { result: request.body.data }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       },
     })
 
@@ -969,14 +972,16 @@ describe('Dual-Mode Response Headers', () => {
       isDualMode: true as const,
     }
 
-    const route = buildFastifyDualModeRoute(controller, {
+    const route = buildFastifyRoute(controller, {
       contract: contractWithHeaders,
       handlers: {
-        json: (ctx) => {
+        json: (request) => {
           // Intentionally NOT setting the required header
-          return { result: ctx.request.body.data }
+          return { result: request.body.data }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       },
     })
 
@@ -1034,13 +1039,15 @@ describe('Dual-Mode Response Headers', () => {
       isDualMode: true as const,
     }
 
-    const route = buildFastifyDualModeRoute(controller, {
+    const route = buildFastifyRoute(controller, {
       contract: contractWithoutHeaders,
       handlers: {
-        json: (ctx) => {
-          return { result: ctx.request.body.data }
+        json: (request) => {
+          return { result: request.body.data }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       },
     })
 

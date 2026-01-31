@@ -1,7 +1,8 @@
+import { success } from '@lokalise/node-core'
 import {
   AbstractSSEController,
   type BuildFastifySSERoutesReturnType,
-  buildFastifySSEHandler,
+  buildHandler,
   type SSEConnection,
   type SSEControllerConfig,
   type SSELogger,
@@ -43,7 +44,7 @@ export class StreamController extends AbstractSSEController<{
     return {
       stream: {
         contract: StreamController.contracts.stream,
-        handler: this.handleStream,
+        handlers: this.handleStream,
         options: {
           onConnect: (conn) => {
             this.connectionEvents.push({ type: 'connect', connectionId: conn.id })
@@ -57,18 +58,22 @@ export class StreamController extends AbstractSSEController<{
     }
   }
 
-  private handleStream = buildFastifySSEHandler(streamContract, (request, connection) => {
-    const userId = request.query.userId ?? 'anonymous'
-    connection.context = { userId }
+  private handleStream = buildHandler(streamContract, {
+    sse: (request, connection) => {
+      const userId = request.query.userId ?? 'anonymous'
+      connection.context = { userId }
 
-    // Subscribe to events for this connection
-    // Uses sendEventInternal for external event sources (subscriptions, timers, etc.)
-    this.eventService.subscribe(connection.id, async (data) => {
-      await this.sendEventInternal(connection.id, {
-        event: 'message',
-        data: { text: String(data) },
+      // Subscribe to events for this connection
+      // Uses sendEventInternal for external event sources (subscriptions, timers, etc.)
+      this.eventService.subscribe(connection.id, async (data) => {
+        await this.sendEventInternal(connection.id, {
+          event: 'message',
+          data: { text: String(data) },
+        })
       })
-    })
+
+      return success('maintain_connection')
+    },
   })
 
   // Testing helper - uses sendEventInternal which is public but @internal
@@ -107,7 +112,7 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
     return {
       notificationsStream: {
         contract: TestSSEController.contracts.notificationsStream,
-        handler: this.handleStream,
+        handlers: this.handleStream,
         options: {
           onConnect: this.onConnect,
           onDisconnect: this.onDisconnect,
@@ -116,9 +121,8 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
     }
   }
 
-  private handleStream = buildFastifySSEHandler(
-    notificationsStreamContract,
-    async (request, connection) => {
+  private handleStream = buildHandler(notificationsStreamContract, {
+    sse: async (request, connection) => {
       const userId = request.query.userId ?? 'default'
       connection.context = { userId }
 
@@ -126,8 +130,10 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
       await new Promise<void>((resolve) => {
         this.handlerDoneResolvers.set(connection.id, resolve)
       })
+
+      return success('maintain_connection')
     },
-  )
+  })
 
   private onConnect = (_connection: SSEConnection) => {
     // Setup subscription when connected
@@ -201,23 +207,22 @@ export class TestPostSSEController extends AbstractSSEController<TestPostSSECont
     return {
       chatCompletion: {
         contract: TestPostSSEController.contracts.chatCompletion,
-        handler: this.handleChatCompletion,
+        handlers: this.handleChatCompletion,
       },
     }
   }
 
-  private handleChatCompletion = buildFastifySSEHandler(
-    chatCompletionContract,
-    async (request, connection) => {
+  private handleChatCompletion = buildHandler(chatCompletionContract, {
+    sse: async (request, connection) => {
       // Simulate streaming response
       const words = request.body.message.split(' ')
       for (const word of words) {
         await connection.send('chunk', { content: word })
       }
       await connection.send('done', { totalTokens: words.length })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
-  )
+  })
 }
 
 /**
@@ -236,7 +241,7 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
     return {
       authenticatedStream: {
         contract: TestAuthSSEController.contracts.authenticatedStream,
-        handler: this.handleAuthenticatedStream,
+        handlers: this.handleAuthenticatedStream,
         options: {
           preHandler: (request, reply) => {
             const auth = request.headers.authorization
@@ -250,13 +255,12 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
     }
   }
 
-  private handleAuthenticatedStream = buildFastifySSEHandler(
-    authenticatedStreamContract,
-    async (_request, connection) => {
+  private handleAuthenticatedStream = buildHandler(authenticatedStreamContract, {
+    sse: async (_request, connection) => {
       await connection.send('data', { value: 'authenticated data' })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
-  )
+  })
 }
 
 /**
@@ -275,23 +279,22 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
     return {
       channelStream: {
         contract: TestChannelSSEController.contracts.channelStream,
-        handler: this.handleChannelStream,
+        handlers: this.handleChannelStream,
       },
     }
   }
 
-  private handleChannelStream = buildFastifySSEHandler(
-    channelStreamContract,
-    async (request, connection) => {
+  private handleChannelStream = buildHandler(channelStreamContract, {
+    sse: async (request, connection) => {
       connection.context = { channelId: request.params.channelId }
       await connection.send('message', {
         id: '1',
         content: `Welcome to channel ${request.params.channelId}`,
         author: 'system',
       })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
-  )
+  })
 }
 
 /**
@@ -325,7 +328,7 @@ export class TestReconnectSSEController extends AbstractSSEController<TestReconn
     return {
       reconnectStream: {
         contract: TestReconnectSSEController.contracts.reconnectStream,
-        handler: this.handleReconnectStream,
+        handlers: this.handleReconnectStream,
         options: {
           onReconnect: this.handleReconnect,
         },
@@ -333,14 +336,13 @@ export class TestReconnectSSEController extends AbstractSSEController<TestReconn
     }
   }
 
-  private handleReconnectStream = buildFastifySSEHandler(
-    reconnectStreamContract,
-    async (_request, connection) => {
+  private handleReconnectStream = buildHandler(reconnectStreamContract, {
+    sse: async (_request, connection) => {
       // Send a new event after connection
       await connection.send('event', { id: '6', data: 'New event after reconnect' }, { id: '6' })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
-  )
+  })
 
   private handleReconnect = (
     _connection: SSEConnection,
@@ -393,7 +395,7 @@ export class TestAsyncReconnectSSEController extends AbstractSSEController<TestA
     return {
       asyncReconnectStream: {
         contract: TestAsyncReconnectSSEController.contracts.asyncReconnectStream,
-        handler: this.handleReconnectStream,
+        handlers: this.handleReconnectStream,
         options: {
           onReconnect: this.handleReconnect,
         },
@@ -401,18 +403,17 @@ export class TestAsyncReconnectSSEController extends AbstractSSEController<TestA
     }
   }
 
-  private handleReconnectStream = buildFastifySSEHandler(
-    asyncReconnectStreamContract,
-    async (_request, connection) => {
+  private handleReconnectStream = buildHandler(asyncReconnectStreamContract, {
+    sse: async (_request, connection) => {
       // Send a new event after connection
       await connection.send(
         'event',
         { id: '4', data: 'Async new event after reconnect' },
         { id: '4' },
       )
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
-  )
+  })
 
   // Async generator for replay - simulates fetching from database
   private handleReconnect = (
@@ -456,14 +457,13 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
     return {
       largeContentStream: {
         contract: TestLargeContentSSEController.contracts.largeContentStream,
-        handler: this.handleLargeContentStream,
+        handlers: this.handleLargeContentStream,
       },
     }
   }
 
-  private handleLargeContentStream = buildFastifySSEHandler(
-    largeContentStreamContract,
-    async (request, connection) => {
+  private handleLargeContentStream = buildHandler(largeContentStreamContract, {
+    sse: async (request, connection) => {
       const { chunkCount, chunkSize } = request.body
 
       // Generate content of specified size (repeating pattern for easy verification)
@@ -485,9 +485,9 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
       // Send completion event with totals
       await connection.send('done', { totalChunks: chunkCount, totalBytes })
 
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
-  )
+  })
 }
 
 /**
@@ -516,7 +516,7 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
     return {
       loggerTestStream: {
         contract: TestLoggerSSEController.contracts.loggerTestStream,
-        handler: this.handleStream,
+        handlers: this.handleStream,
         options: {
           logger: this.logger,
           onDisconnect: () => {
@@ -528,13 +528,13 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
     }
   }
 
-  private handleStream = buildFastifySSEHandler(
-    loggerTestStreamContract,
-    async (_request, connection) => {
+  private handleStream = buildHandler(loggerTestStreamContract, {
+    sse: async (_request, connection) => {
       await connection.send('message', { text: 'Hello from logger test' })
       // Don't close connection - let client close to trigger onDisconnect
+      return success('maintain_connection')
     },
-  )
+  })
 }
 
 /**
@@ -558,14 +558,13 @@ export class TestValidationSSEController extends AbstractSSEController<TestValid
     return {
       validationTestStream: {
         contract: TestValidationSSEController.contracts.validationTestStream,
-        handler: this.handleStream,
+        handlers: this.handleStream,
       },
     }
   }
 
-  private handleStream = buildFastifySSEHandler(
-    validationTestStreamContract,
-    async (request, connection) => {
+  private handleStream = buildHandler(validationTestStreamContract, {
+    sse: async (request, connection) => {
       // Send the event - if validation fails, error propagates to the framework
       // which sends an error event and closes the connection automatically
       // Cast to expected type since we're testing runtime validation with potentially invalid data
@@ -576,9 +575,9 @@ export class TestValidationSSEController extends AbstractSSEController<TestValid
         status: 'active' | 'inactive'
       }
       await connection.send('validatedEvent', eventData)
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
-  )
+  })
 }
 
 /**
@@ -603,14 +602,13 @@ export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpen
     return {
       openaiStyleStream: {
         contract: TestOpenAIStyleSSEController.contracts.openaiStyleStream,
-        handler: this.handleOpenAIStyleStream,
+        handlers: this.handleOpenAIStyleStream,
       },
     }
   }
 
-  private handleOpenAIStyleStream = buildFastifySSEHandler(
-    openaiStyleStreamContract,
-    async (request, connection) => {
+  private handleOpenAIStyleStream = buildHandler(openaiStyleStreamContract, {
+    sse: async (request, connection) => {
       // Split prompt into words and stream each as a JSON chunk (like OpenAI)
       const words = request.body.prompt.split(' ')
 
@@ -630,9 +628,9 @@ export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpen
       // This demonstrates that JSON encoding is NOT mandatory for SSE data
       await connection.send('done', '[DONE]')
 
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
-  )
+  })
 }
 
 /**
@@ -661,7 +659,7 @@ export class TestOnReconnectErrorSSEController extends AbstractSSEController<Tes
     return {
       onReconnectErrorStream: {
         contract: TestOnReconnectErrorSSEController.contracts.onReconnectErrorStream,
-        handler: this.handleStream,
+        handlers: this.handleStream,
         options: {
           logger: this.logger,
           onReconnect: () => {
@@ -673,14 +671,13 @@ export class TestOnReconnectErrorSSEController extends AbstractSSEController<Tes
     }
   }
 
-  private handleStream = buildFastifySSEHandler(
-    onReconnectErrorStreamContract,
-    async (_request, connection) => {
+  private handleStream = buildHandler(onReconnectErrorStreamContract, {
+    sse: async (_request, connection) => {
       // Send message to verify connection still works after onReconnect error
       await connection.send('event', { id: 'new', data: 'Hello after onReconnect error' })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
-  )
+  })
 }
 
 /**
@@ -709,7 +706,7 @@ export class TestOnConnectErrorSSEController extends AbstractSSEController<TestO
     return {
       onConnectErrorStream: {
         contract: TestOnConnectErrorSSEController.contracts.onConnectErrorStream,
-        handler: this.handleStream,
+        handlers: this.handleStream,
         options: {
           logger: this.logger,
           onConnect: () => {
@@ -721,12 +718,11 @@ export class TestOnConnectErrorSSEController extends AbstractSSEController<TestO
     }
   }
 
-  private handleStream = buildFastifySSEHandler(
-    onConnectErrorStreamContract,
-    async (_request, connection) => {
+  private handleStream = buildHandler(onConnectErrorStreamContract, {
+    sse: async (_request, connection) => {
       // Send message to verify connection still works after onConnect error
       await connection.send('message', { text: 'Hello after onConnect error' })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
-  )
+  })
 }

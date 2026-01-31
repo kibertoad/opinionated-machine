@@ -1,7 +1,8 @@
+import { success } from '@lokalise/node-core'
 import {
   AbstractDualModeController,
   type BuildFastifyDualModeRoutesReturnType,
-  buildDualModeHandler,
+  buildHandler,
 } from '../../../index.js'
 import {
   authenticatedDualModeContract,
@@ -30,21 +31,21 @@ export class TestChatDualModeController extends AbstractDualModeController<TestC
     return {
       chatCompletion: {
         contract: TestChatDualModeController.contracts.chatCompletion,
-        handlers: buildDualModeHandler(chatCompletionContract, {
-          json: (ctx) => {
-            const words = ctx.request.body.message.split(' ')
+        handlers: buildHandler(chatCompletionContract, {
+          json: (request) => {
+            const words = request.body.message.split(' ')
             return {
-              reply: `Echo: ${ctx.request.body.message}`,
+              reply: `Echo: ${request.body.message}`,
               usage: { tokens: words.length },
             }
           },
-          sse: async (ctx) => {
-            const words = ctx.request.body.message.split(' ')
+          sse: async (request, connection) => {
+            const words = request.body.message.split(' ')
             for (const word of words) {
-              await ctx.connection.send('chunk', { delta: word })
+              await connection.send('chunk', { delta: word })
             }
-            await ctx.connection.send('done', { usage: { total: words.length } })
-            this.closeConnection(ctx.connection.id)
+            await connection.send('done', { usage: { total: words.length } })
+            return success('disconnect')
           },
         }),
       },
@@ -68,20 +69,20 @@ export class TestConversationDualModeController extends AbstractDualModeControll
     return {
       conversationCompletion: {
         contract: TestConversationDualModeController.contracts.conversationCompletion,
-        handlers: buildDualModeHandler(conversationCompletionContract, {
-          json: (ctx) => ({
-            reply: `Response for conversation ${ctx.request.params.conversationId}: ${ctx.request.body.message}`,
-            conversationId: ctx.request.params.conversationId,
+        handlers: buildHandler(conversationCompletionContract, {
+          json: (request) => ({
+            reply: `Response for conversation ${request.params.conversationId}: ${request.body.message}`,
+            conversationId: request.params.conversationId,
           }),
-          sse: async (ctx) => {
-            const words = ctx.request.body.message.split(' ')
+          sse: async (request, connection) => {
+            const words = request.body.message.split(' ')
             for (const word of words) {
-              await ctx.connection.send('chunk', { delta: word })
+              await connection.send('chunk', { delta: word })
             }
-            await ctx.connection.send('done', {
-              conversationId: ctx.request.params.conversationId,
+            await connection.send('done', {
+              conversationId: request.params.conversationId,
             })
-            this.closeConnection(ctx.connection.id)
+            return success('disconnect')
           },
         }),
         options: {
@@ -124,9 +125,9 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
     return {
       jobStatus: {
         contract: TestJobStatusDualModeController.contracts.jobStatus,
-        handlers: buildDualModeHandler(jobStatusContract, {
-          json: (ctx) => {
-            const state = this.jobStates.get(ctx.request.params.jobId)
+        handlers: buildHandler(jobStatusContract, {
+          json: (request) => {
+            const state = this.jobStates.get(request.params.jobId)
             if (!state) {
               return {
                 status: 'pending' as const,
@@ -139,29 +140,28 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
               result: state.result,
             }
           },
-          sse: async (ctx) => {
-            const state = this.jobStates.get(ctx.request.params.jobId)
+          sse: async (request, connection) => {
+            const state = this.jobStates.get(request.params.jobId)
             if (!state) {
-              await ctx.connection.send('progress', { percent: 0 })
-              this.closeConnection(ctx.connection.id)
-              return
+              await connection.send('progress', { percent: 0 })
+              return success('disconnect')
             }
 
             // Simulate progress updates
             for (let i = 0; i <= state.progress; i += 25) {
-              await ctx.connection.send('progress', {
+              await connection.send('progress', {
                 percent: Math.min(i, state.progress),
                 message: `Processing... ${i}%`,
               })
             }
 
             if (state.status === 'completed' && state.result) {
-              await ctx.connection.send('done', { result: state.result })
+              await connection.send('done', { result: state.result })
             } else if (state.status === 'failed') {
-              await ctx.connection.send('error', { code: 'JOB_FAILED', message: 'Job failed' })
+              await connection.send('error', { code: 'JOB_FAILED', message: 'Job failed' })
             }
 
-            this.closeConnection(ctx.connection.id)
+            return success('disconnect')
           },
         }),
       },
@@ -185,17 +185,17 @@ export class TestAuthenticatedDualModeController extends AbstractDualModeControl
     return {
       protectedAction: {
         contract: TestAuthenticatedDualModeController.contracts.protectedAction,
-        handlers: buildDualModeHandler(authenticatedDualModeContract, {
-          json: async (ctx) => ({
+        handlers: buildHandler(authenticatedDualModeContract, {
+          json: (request) => ({
             success: true,
-            data: `Processed: ${ctx.request.body.data}`,
+            data: `Processed: ${request.body.data}`,
           }),
-          sse: async (ctx) => {
-            await ctx.connection.send('result', {
+          sse: async (request, connection) => {
+            await connection.send('result', {
               success: true,
-              data: `Processed: ${ctx.request.body.data}`,
+              data: `Processed: ${request.body.data}`,
             })
-            this.closeConnection(ctx.connection.id)
+            return success('disconnect')
           },
         }),
         options: {
@@ -228,13 +228,13 @@ export class TestDefaultModeDualModeController extends AbstractDualModeControlle
     return {
       defaultModeTest: {
         contract: TestDefaultModeDualModeController.contracts.defaultModeTest,
-        handlers: buildDualModeHandler(defaultModeTestContract, {
-          json: async (ctx) => ({
-            output: `JSON: ${ctx.request.body.input}`,
+        handlers: buildHandler(defaultModeTestContract, {
+          json: (request) => ({
+            output: `JSON: ${request.body.input}`,
           }),
-          sse: async (ctx) => {
-            await ctx.connection.send('output', { value: `SSE: ${ctx.request.body.input}` })
-            this.closeConnection(ctx.connection.id)
+          sse: async (request, connection) => {
+            await connection.send('output', { value: `SSE: ${request.body.input}` })
+            return success('disconnect')
           },
         }),
         options: {
@@ -261,16 +261,16 @@ export class TestErrorDualModeController extends AbstractDualModeController<Test
     return {
       errorTest: {
         contract: TestErrorDualModeController.contracts.errorTest,
-        handlers: buildDualModeHandler(errorTestContract, {
-          json: (ctx) => ({
-            success: !ctx.request.body.shouldThrow,
+        handlers: buildHandler(errorTestContract, {
+          json: (request) => ({
+            success: !request.body.shouldThrow,
           }),
-          sse: async (ctx) => {
-            if (ctx.request.body.shouldThrow) {
+          sse: async (request, connection) => {
+            if (request.body.shouldThrow) {
               throw new Error('Test error in SSE handler')
             }
-            await ctx.connection.send('result', { success: true })
-            this.closeConnection(ctx.connection.id)
+            await connection.send('result', { success: true })
+            return success('disconnect')
           },
         }),
       },
@@ -294,13 +294,13 @@ export class TestDefaultMethodDualModeController extends AbstractDualModeControl
     return {
       defaultMethodTest: {
         contract: TestDefaultMethodDualModeController.contracts.defaultMethodTest,
-        handlers: buildDualModeHandler(defaultMethodContract, {
-          json: (ctx) => ({
-            result: `Processed: ${ctx.request.body.value}`,
+        handlers: buildHandler(defaultMethodContract, {
+          json: (request) => ({
+            result: `Processed: ${request.body.value}`,
           }),
-          sse: async (ctx) => {
-            await ctx.connection.send('data', { value: ctx.request.body.value })
-            this.closeConnection(ctx.connection.id)
+          sse: async (request, connection) => {
+            await connection.send('data', { value: request.body.value })
+            return success('disconnect')
           },
         }),
       },
@@ -325,17 +325,17 @@ export class TestJsonValidationDualModeController extends AbstractDualModeContro
     return {
       jsonValidationTest: {
         contract: TestJsonValidationDualModeController.contracts.jsonValidationTest,
-        handlers: buildDualModeHandler(jsonValidationContract, {
-          json: (ctx): { requiredField: string; count: number } => {
-            if (ctx.request.body.returnInvalid) {
+        handlers: buildHandler(jsonValidationContract, {
+          json: (request): { requiredField: string; count: number } => {
+            if (request.body.returnInvalid) {
               // @ts-expect-error Intentionally returning invalid data to test validation failure
               return { wrongField: 'invalid', count: -5 }
             }
             return { requiredField: 'valid', count: 42 }
           },
-          sse: async (ctx) => {
-            await ctx.connection.send('result', { success: true })
-            this.closeConnection(ctx.connection.id)
+          sse: async (_request, connection) => {
+            await connection.send('result', { success: true })
+            return success('disconnect')
           },
         }),
       },

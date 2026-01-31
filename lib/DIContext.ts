@@ -9,13 +9,12 @@ import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configU
 import type { ENABLE_ALL } from './diConfigUtils.js'
 import type { AbstractDualModeController } from './dualmode/AbstractDualModeController.js'
 import type { AnyDualModeContractDefinition } from './dualmode/dualModeContracts.js'
-import { buildFastifyDualModeRoute } from './dualmode/fastifyDualModeRouteBuilder.js'
-import type { RegisterDualModeRoutesOptions } from './dualmode/fastifyDualModeTypes.js'
-import type { AbstractSSEController } from './sse/AbstractSSEController.js'
 import {
-  buildFastifySSERoute,
+  buildFastifyRoute,
+  type RegisterDualModeRoutesOptions,
   type RegisterSSERoutesOptions,
-} from './sse/fastifySSERouteBuilder.js'
+} from './routes/index.js'
+import type { AbstractSSEController } from './sse/AbstractSSEController.js'
 import type { AnySSEContractDefinition } from './sse/sseContracts.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
@@ -237,7 +236,7 @@ export class DIContext<
       const sseRoutes = sseController.buildSSERoutes()
 
       for (const routeConfig of Object.values(sseRoutes)) {
-        const route = buildFastifySSERoute(sseController, routeConfig)
+        const route = buildFastifyRoute(sseController, routeConfig)
         this.applySSERouteOptions(route, options)
         app.route(route)
       }
@@ -282,7 +281,7 @@ export class DIContext<
       const dualModeRoutes = dualModeController.buildDualModeRoutes()
 
       for (const routeConfig of Object.values(dualModeRoutes)) {
-        const route = buildFastifyDualModeRoute(dualModeController, routeConfig)
+        const route = buildFastifyRoute(dualModeController, routeConfig)
         this.applyDualModeRouteOptions(route, options)
         app.route(route)
       }

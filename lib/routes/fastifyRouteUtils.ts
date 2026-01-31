@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto'
 import type { SSEReplyInterface } from '@fastify/sse'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
-import type { SSEConnection } from './fastifySSETypes.ts'
-import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from './sseTypes.ts'
+import type { DualModeType } from '../dualmode/dualModeTypes.ts'
+import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
+import type { SSEConnection } from './fastifyRouteTypes.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
@@ -237,4 +238,60 @@ export async function setupSSEConnection<Events extends SSEEventSchemas>(
     connectionClosed,
     sseReply,
   }
+}
+
+/**
+ * Determine response mode from Accept header.
+ *
+ * Parses the Accept header and determines whether to use JSON or SSE mode.
+ * Supports quality values (q=) for content negotiation.
+ *
+ * @param accept - The Accept header value
+ * @param defaultMode - Mode to use when no preference is specified
+ * @returns The determined response mode
+ */
+export function determineMode(
+  accept: string | undefined,
+  defaultMode: DualModeType = 'json',
+): DualModeType {
+  if (!accept) return defaultMode
+
+  // Split by comma and parse each media type with quality value
+  const mediaTypes = accept
+    .split(',')
+    .map((part) => {
+      const [mediaType, ...params] = part.trim().split(';')
+      let quality = 1.0
+
+      for (const param of params) {
+        const [key, value] = param.trim().split('=')
+        if (key === 'q' && value) {
+          quality = Number.parseFloat(value)
+        }
+      }
+
+      return { mediaType: (mediaType ?? '').trim().toLowerCase(), quality }
+    })
+    // Filter out rejected types (quality <= 0)
+    .filter((entry) => entry.quality > 0)
+
+  // Sort by quality (highest first)
+  mediaTypes.sort((a, b) => b.quality - a.quality)
+
+  // Find the first matching type
+  for (const { mediaType } of mediaTypes) {
+    if (mediaType === 'text/event-stream') {
+      return 'sse'
+    }
+    if (mediaType === 'application/json') {
+      return 'json'
+    }
+  }
+
+  // If */* is present with highest priority, use default
+  if (mediaTypes.some((m) => m.mediaType === '*/*')) {
+    return defaultMode
+  }
+
+  return defaultMode
 }
