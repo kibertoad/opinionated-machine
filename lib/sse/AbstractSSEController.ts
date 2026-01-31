@@ -166,7 +166,7 @@ export abstract class AbstractSSEController<
    *
    * Event data is validated against the Zod schema defined in the contract's `events` field
    * if the connection has event schemas attached (which happens automatically when routes
-   * are built using buildFastifySSERoute).
+   * are built using buildFastifyRoute).
    *
    * @param connectionId - The connection to send to
    * @param message - The SSE message to send
