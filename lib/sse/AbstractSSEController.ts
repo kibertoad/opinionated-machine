@@ -62,7 +62,11 @@ type SSEReply = FastifyReply & { sse: SSEReplyInterface }
  *     return {
  *       notifications: {
  *         contract: NotificationsSSEController.contracts.notifications,
- *         handler: this.handleNotifications,
+ *         handlers: buildHandler(NotificationsSSEController.contracts.notifications, {
+ *           sse: async (ctx) => {
+ *             await ctx.connection.send('notification', { message: 'Hello!' })
+ *           },
+ *         }),
  *       },
  *     }
  *   }
