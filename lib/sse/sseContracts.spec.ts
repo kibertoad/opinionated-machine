@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
+import { buildContract } from '../contracts/contractBuilders.ts'
 import { buildFastifySSEHandler } from './fastifySSETypes.ts'
-import { buildPayloadSSEContract, buildSSEContract } from './sseContracts.ts'
 
 describe('sseContracts', () => {
-  describe('buildPayloadSSEContract', () => {
+  describe('buildContract (SSE with body)', () => {
     const baseConfig = {
       pathResolver: () => '/api/test',
       params: z.object({}),
@@ -17,7 +17,7 @@ describe('sseContracts', () => {
     }
 
     it('defaults method to POST when not specified', () => {
-      const route = buildPayloadSSEContract(baseConfig)
+      const route = buildContract(baseConfig)
 
       expect(route.method).toBe('POST')
       expect(route.pathResolver({})).toBe('/api/test')
@@ -25,7 +25,7 @@ describe('sseContracts', () => {
     })
 
     it('uses specified method when provided', () => {
-      const route = buildPayloadSSEContract({
+      const route = buildContract({
         ...baseConfig,
         method: 'PUT',
       })
@@ -34,7 +34,7 @@ describe('sseContracts', () => {
     })
 
     it('supports PATCH method', () => {
-      const route = buildPayloadSSEContract({
+      const route = buildContract({
         ...baseConfig,
         method: 'PATCH',
       })
@@ -43,9 +43,9 @@ describe('sseContracts', () => {
     })
   })
 
-  describe('buildSSEContract', () => {
+  describe('buildContract (SSE GET)', () => {
     it('creates GET SSE route', () => {
-      const route = buildSSEContract({
+      const route = buildContract({
         pathResolver: () => '/api/stream',
         params: z.object({}),
         query: z.object({ userId: z.string() }),
@@ -63,7 +63,7 @@ describe('sseContracts', () => {
   })
 
   describe('buildFastifySSEHandler type checking', () => {
-    const testContract = buildPayloadSSEContract({
+    const testContract = buildContract({
       method: 'POST',
       pathResolver: (params) => `/api/test/${params.id}/stream`,
       params: z.object({ id: z.string() }),

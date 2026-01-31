@@ -1,17 +1,17 @@
+// Re-export buildContract from contracts module
+export { buildContract } from '../contracts/index.js'
 export {
   AbstractDualModeController,
   type AllDualModeContractEventNames,
   type ExtractDualModeEventSchema,
 } from './AbstractDualModeController.js'
-export {
-  type AnyDualModeContractDefinition,
-  buildDualModeContract,
-  buildPayloadDualModeContract,
-  type DualModeContractConfig,
-  type DualModeContractDefinition,
-  type DualModeMethod,
-  type PathResolver,
-  type PayloadDualModeContractConfig,
+export type {
+  AnyDualModeContractDefinition,
+  DualModeContractConfig,
+  DualModeContractDefinition,
+  DualModeMethod,
+  PathResolver,
+  PayloadDualModeContractConfig,
 } from './dualModeContracts.js'
 // Framework-agnostic types
 export type {

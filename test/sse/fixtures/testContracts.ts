@@ -1,10 +1,10 @@
 import { z } from 'zod'
-import { buildPayloadSSEContract, buildSSEContract } from '../../../index.js'
+import { buildContract } from '../../../index.js'
 
 /**
  * Simple GET SSE route for integration tests
  */
-export const streamContract = buildSSEContract({
+export const streamContract = buildContract({
   pathResolver: () => '/api/stream',
   params: z.object({}),
   query: z.object({ userId: z.string().optional() }),
@@ -15,7 +15,7 @@ export const streamContract = buildSSEContract({
 /**
  * GET SSE route for notifications stream
  */
-export const notificationsStreamContract = buildSSEContract({
+export const notificationsStreamContract = buildContract({
   pathResolver: () => '/api/notifications/stream',
   params: z.object({}),
   query: z.object({
@@ -33,7 +33,7 @@ export const notificationsStreamContract = buildSSEContract({
 /**
  * POST SSE route for chat completions (OpenAI-style)
  */
-export const chatCompletionContract = buildPayloadSSEContract({
+export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/chat/completions',
   params: z.object({}),
@@ -56,7 +56,7 @@ export const chatCompletionContract = buildPayloadSSEContract({
 /**
  * GET SSE route with authentication header
  */
-export const authenticatedStreamContract = buildSSEContract({
+export const authenticatedStreamContract = buildContract({
   pathResolver: () => '/api/protected/stream',
   params: z.object({}),
   query: z.object({}),
@@ -73,7 +73,7 @@ export const authenticatedStreamContract = buildSSEContract({
 /**
  * GET SSE route with path params
  */
-export const channelStreamContract = buildSSEContract({
+export const channelStreamContract = buildContract({
   pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
   params: z.object({
     channelId: z.string(),
@@ -94,7 +94,7 @@ export const channelStreamContract = buildSSEContract({
 /**
  * GET SSE route for testing Last-Event-ID reconnection (sync replay)
  */
-export const reconnectStreamContract = buildSSEContract({
+export const reconnectStreamContract = buildContract({
   pathResolver: () => '/api/reconnect/stream',
   params: z.object({}),
   query: z.object({}),
@@ -112,7 +112,7 @@ export const reconnectStreamContract = buildSSEContract({
 /**
  * GET SSE route for testing Last-Event-ID reconnection (async replay)
  */
-export const asyncReconnectStreamContract = buildSSEContract({
+export const asyncReconnectStreamContract = buildContract({
   pathResolver: () => '/api/async-reconnect/stream',
   params: z.object({}),
   query: z.object({}),
@@ -131,7 +131,7 @@ export const asyncReconnectStreamContract = buildSSEContract({
  * POST SSE route for testing large content streaming
  * Verifies that closeConnection doesn't cut off data transfer
  */
-export const largeContentStreamContract = buildPayloadSSEContract({
+export const largeContentStreamContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/large-content/stream',
   params: z.object({}),
@@ -156,7 +156,7 @@ export const largeContentStreamContract = buildPayloadSSEContract({
 /**
  * GET SSE route for testing logger error handling in onDisconnect
  */
-export const loggerTestStreamContract = buildSSEContract({
+export const loggerTestStreamContract = buildContract({
   pathResolver: () => '/api/logger-test/stream',
   params: z.object({}),
   query: z.object({}),
@@ -169,7 +169,7 @@ export const loggerTestStreamContract = buildSSEContract({
 /**
  * GET SSE route for testing logger error handling in onConnect
  */
-export const onConnectErrorStreamContract = buildSSEContract({
+export const onConnectErrorStreamContract = buildContract({
   pathResolver: () => '/api/on-connect-error/stream',
   params: z.object({}),
   query: z.object({}),
@@ -182,7 +182,7 @@ export const onConnectErrorStreamContract = buildSSEContract({
 /**
  * GET SSE route for testing logger error handling in onReconnect
  */
-export const onReconnectErrorStreamContract = buildSSEContract({
+export const onReconnectErrorStreamContract = buildContract({
   pathResolver: () => '/api/on-reconnect-error/stream',
   params: z.object({}),
   query: z.object({}),
@@ -199,7 +199,7 @@ export const onReconnectErrorStreamContract = buildSSEContract({
  * The handler sends the provided eventData as an event, allowing tests
  * to verify validation behavior with different payloads.
  */
-export const validationTestStreamContract = buildPayloadSSEContract({
+export const validationTestStreamContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/validation-test/stream',
   params: z.object({}),
@@ -237,7 +237,7 @@ export const validationTestStreamContract = buildPayloadSSEContract({
  * data: [DONE]
  * ```
  */
-export const openaiStyleStreamContract = buildPayloadSSEContract({
+export const openaiStyleStreamContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/openai-style/stream',
   params: z.object({}),

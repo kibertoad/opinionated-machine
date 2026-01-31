@@ -398,14 +398,14 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildSSEContract` for GET-based SSE streams or `buildPayloadSSEContract` for POST/PUT/PATCH streams. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
+Use `buildContract` to define SSE routes. The contract type is automatically determined based on the presence of `body` and `jsonResponse` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
-import { buildSSEContract, buildPayloadSSEContract } from 'opinionated-machine'
+import { buildContract } from 'opinionated-machine'
 
-// GET-based SSE stream with path params
-export const channelStreamContract = buildSSEContract({
+// GET-based SSE stream with path params (no body = GET)
+export const channelStreamContract = buildContract({
   pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
   params: z.object({ channelId: z.string() }),
   query: z.object({}),
@@ -416,7 +416,7 @@ export const channelStreamContract = buildSSEContract({
 })
 
 // GET-based SSE stream without path params
-export const notificationsContract = buildSSEContract({
+export const notificationsContract = buildContract({
   pathResolver: () => '/api/notifications/stream',
   params: z.object({}),
   query: z.object({ userId: z.string().optional() }),
@@ -429,8 +429,8 @@ export const notificationsContract = buildSSEContract({
   },
 })
 
-// POST-based SSE stream (e.g., AI chat completions)
-export const chatCompletionContract = buildPayloadSSEContract({
+// POST-based SSE stream (e.g., AI chat completions) - has body = POST/PUT/PATCH
+export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/chat/completions',
   params: z.object({}),
@@ -1308,14 +1308,16 @@ Dual-mode controllers extend `AbstractDualModeController` which inherits from `A
 
 ### Defining Dual-Mode Contracts
 
-Use `buildDualModeContract` for GET routes or `buildPayloadDualModeContract` for POST/PUT/PATCH routes. The key difference from SSE contracts is the addition of `jsonResponse` schema:
+Use `buildContract` with a `jsonResponse` schema to create dual-mode contracts. The contract type is automatically determined:
+- Has `jsonResponse` but no `body` → GET dual-mode route
+- Has both `jsonResponse` and `body` → POST/PUT/PATCH dual-mode route
 
 ```ts
 import { z } from 'zod'
-import { buildDualModeContract, buildPayloadDualModeContract } from 'opinionated-machine'
+import { buildContract } from 'opinionated-machine'
 
-// GET dual-mode route (polling or streaming job status)
-export const jobStatusContract = buildDualModeContract({
+// GET dual-mode route (polling or streaming job status) - has jsonResponse, no body
+export const jobStatusContract = buildContract({
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
@@ -1331,8 +1333,8 @@ export const jobStatusContract = buildDualModeContract({
   },
 })
 
-// POST dual-mode route (OpenAI-style chat completion)
-export const chatCompletionContract = buildPayloadDualModeContract({
+// POST dual-mode route (OpenAI-style chat completion) - has both jsonResponse and body
+export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
   params: z.object({ chatId: z.string().uuid() }),

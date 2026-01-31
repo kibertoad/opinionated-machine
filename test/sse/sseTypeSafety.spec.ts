@@ -3,9 +3,8 @@ import { z } from 'zod/v4'
 import {
   AbstractSSEController,
   type BuildFastifySSERoutesReturnType,
+  buildContract,
   buildFastifySSEHandler,
-  buildPayloadSSEContract,
-  buildSSEContract,
 } from '../../index.js'
 
 /**
@@ -16,7 +15,7 @@ import {
  */
 
 // Define a realistic contract like users would
-const chatStreamContract = buildPayloadSSEContract({
+const chatStreamContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/chat/stream',
   params: z.object({}),
@@ -366,7 +365,7 @@ describe('SSE Controller Type Safety', () => {
     it('provides autocomplete for event names from all contracts', () => {
       // This test demonstrates that a controller with multiple contracts
       // gets autocomplete for all events across all routes
-      const notificationContract = buildSSEContract({
+      const notificationContract = buildContract({
         pathResolver: () => '/api/notifications',
         params: z.object({}),
         query: z.object({}),
