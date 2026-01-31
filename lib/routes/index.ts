@@ -16,14 +16,12 @@ export {
   type InferHandlers,
   type InferSSERequest,
   // Dual-mode types
-  type JsonModeContext,
   type JsonModeHandler,
   type RegisterDualModeRoutesOptions,
   // Registration options
   type RegisterSSERoutesOptions,
   // SSE types
   type SSEConnection,
-  type SSEModeContext,
   type SSEModeHandler,
   type SSEOnlyHandlers,
 } from './fastifyRouteTypes.js'

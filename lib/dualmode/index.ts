@@ -10,10 +10,8 @@ export {
   extractPathTemplate,
   type FastifyDualModeHandlerConfig,
   type FastifyDualModeRouteOptions,
-  type JsonModeContext,
   type JsonModeHandler,
   type RegisterDualModeRoutesOptions,
-  type SSEModeContext,
   type SSEModeHandler,
 } from '../routes/index.js'
 export {

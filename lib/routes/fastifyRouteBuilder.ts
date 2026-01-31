@@ -72,11 +72,7 @@ async function handleJsonMode<Contract extends AnyDualModeContractDefinition>(
   request: any,
   reply: FastifyReply,
 ) {
-  const response = await handlers.json({
-    mode: 'json',
-    request,
-    reply,
-  })
+  const response = await handlers.json(request, reply)
 
   validateResponseBody(contract, response)
 
@@ -110,11 +106,8 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
   )
 
   try {
-    await handlers.sse({
-      mode: 'sse',
-      connection: connection as Parameters<typeof handlers.sse>[0]['connection'],
-      request,
-    })
+    // biome-ignore lint/suspicious/noExplicitAny: Connection types are validated by FastifyDualModeHandlerConfig
+    await handlers.sse(request, connection as any)
   } catch (err) {
     await handleSSEError(sseReply, controller, connectionId, err)
     // Re-throw the error intentionally to let Fastify's error handler and onError hooks
@@ -229,17 +222,12 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         'SSE',
       )
 
-      // Call user handler with SSE context (matching dual-mode pattern)
+      // Call user handler with flat (request, connection) signature
       // Errors (including validation errors) are caught, sent as error events, and re-thrown
       // so the app's error handler can process them (for logging, monitoring, etc.)
       try {
-        await handlers.sse({
-          mode: 'sse',
-          // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
-          request: request as any,
-          // biome-ignore lint/suspicious/noExplicitAny: Connection types are validated by FastifySSEHandlerConfig
-          connection: connection as any,
-        })
+        // biome-ignore lint/suspicious/noExplicitAny: Request and connection types are validated by FastifySSEHandlerConfig
+        await handlers.sse(request as any, connection as any)
       } catch (err) {
         await handleSSEError(sseReply, controller, connectionId, err)
 

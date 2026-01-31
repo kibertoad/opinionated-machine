@@ -58,14 +58,14 @@ export class StreamController extends AbstractSSEController<{
   }
 
   private handleStream = buildHandler(streamContract, {
-    sse: (ctx) => {
-      const userId = ctx.request.query.userId ?? 'anonymous'
-      ctx.connection.context = { userId }
+    sse: (request, connection) => {
+      const userId = request.query.userId ?? 'anonymous'
+      connection.context = { userId }
 
       // Subscribe to events for this connection
       // Uses sendEventInternal for external event sources (subscriptions, timers, etc.)
-      this.eventService.subscribe(ctx.connection.id, async (data) => {
-        await this.sendEventInternal(ctx.connection.id, {
+      this.eventService.subscribe(connection.id, async (data) => {
+        await this.sendEventInternal(connection.id, {
           event: 'message',
           data: { text: String(data) },
         })
@@ -119,13 +119,13 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
   }
 
   private handleStream = buildHandler(notificationsStreamContract, {
-    sse: async (ctx) => {
-      const userId = ctx.request.query.userId ?? 'default'
-      ctx.connection.context = { userId }
+    sse: async (request, connection) => {
+      const userId = request.query.userId ?? 'default'
+      connection.context = { userId }
 
       // Wait for test to signal completion
       await new Promise<void>((resolve) => {
-        this.handlerDoneResolvers.set(ctx.connection.id, resolve)
+        this.handlerDoneResolvers.set(connection.id, resolve)
       })
     },
   })
@@ -208,14 +208,14 @@ export class TestPostSSEController extends AbstractSSEController<TestPostSSECont
   }
 
   private handleChatCompletion = buildHandler(chatCompletionContract, {
-    sse: async (ctx) => {
+    sse: async (request, connection) => {
       // Simulate streaming response
-      const words = ctx.request.body.message.split(' ')
+      const words = request.body.message.split(' ')
       for (const word of words) {
-        await ctx.connection.send('chunk', { content: word })
+        await connection.send('chunk', { content: word })
       }
-      await ctx.connection.send('done', { totalTokens: words.length })
-      this.closeConnection(ctx.connection.id)
+      await connection.send('done', { totalTokens: words.length })
+      this.closeConnection(connection.id)
     },
   })
 }
@@ -251,9 +251,9 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
   }
 
   private handleAuthenticatedStream = buildHandler(authenticatedStreamContract, {
-    sse: async (ctx) => {
-      await ctx.connection.send('data', { value: 'authenticated data' })
-      this.closeConnection(ctx.connection.id)
+    sse: async (_request, connection) => {
+      await connection.send('data', { value: 'authenticated data' })
+      this.closeConnection(connection.id)
     },
   })
 }
@@ -280,14 +280,14 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
   }
 
   private handleChannelStream = buildHandler(channelStreamContract, {
-    sse: async (ctx) => {
-      ctx.connection.context = { channelId: ctx.request.params.channelId }
-      await ctx.connection.send('message', {
+    sse: async (request, connection) => {
+      connection.context = { channelId: request.params.channelId }
+      await connection.send('message', {
         id: '1',
-        content: `Welcome to channel ${ctx.request.params.channelId}`,
+        content: `Welcome to channel ${request.params.channelId}`,
         author: 'system',
       })
-      this.closeConnection(ctx.connection.id)
+      this.closeConnection(connection.id)
     },
   })
 }
@@ -332,14 +332,10 @@ export class TestReconnectSSEController extends AbstractSSEController<TestReconn
   }
 
   private handleReconnectStream = buildHandler(reconnectStreamContract, {
-    sse: async (ctx) => {
+    sse: async (_request, connection) => {
       // Send a new event after connection
-      await ctx.connection.send(
-        'event',
-        { id: '6', data: 'New event after reconnect' },
-        { id: '6' },
-      )
-      this.closeConnection(ctx.connection.id)
+      await connection.send('event', { id: '6', data: 'New event after reconnect' }, { id: '6' })
+      this.closeConnection(connection.id)
     },
   })
 
@@ -403,14 +399,14 @@ export class TestAsyncReconnectSSEController extends AbstractSSEController<TestA
   }
 
   private handleReconnectStream = buildHandler(asyncReconnectStreamContract, {
-    sse: async (ctx) => {
+    sse: async (_request, connection) => {
       // Send a new event after connection
-      await ctx.connection.send(
+      await connection.send(
         'event',
         { id: '4', data: 'Async new event after reconnect' },
         { id: '4' },
       )
-      this.closeConnection(ctx.connection.id)
+      this.closeConnection(connection.id)
     },
   })
 
@@ -462,8 +458,8 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
   }
 
   private handleLargeContentStream = buildHandler(largeContentStreamContract, {
-    sse: async (ctx) => {
-      const { chunkCount, chunkSize } = ctx.request.body
+    sse: async (request, connection) => {
+      const { chunkCount, chunkSize } = request.body
 
       // Generate content of specified size (repeating pattern for easy verification)
       const generateContent = (index: number): string => {
@@ -478,13 +474,13 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
       for (let i = 0; i < chunkCount; i++) {
         const content = generateContent(i)
         totalBytes += content.length
-        await ctx.connection.send('chunk', { index: i, content })
+        await connection.send('chunk', { index: i, content })
       }
 
       // Send completion event with totals
-      await ctx.connection.send('done', { totalChunks: chunkCount, totalBytes })
+      await connection.send('done', { totalChunks: chunkCount, totalBytes })
 
-      this.closeConnection(ctx.connection.id)
+      this.closeConnection(connection.id)
     },
   })
 }
@@ -528,8 +524,8 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
   }
 
   private handleStream = buildHandler(loggerTestStreamContract, {
-    sse: async (ctx) => {
-      await ctx.connection.send('message', { text: 'Hello from logger test' })
+    sse: async (_request, connection) => {
+      await connection.send('message', { text: 'Hello from logger test' })
       // Don't close connection - let client close to trigger onDisconnect
     },
   })
@@ -562,18 +558,18 @@ export class TestValidationSSEController extends AbstractSSEController<TestValid
   }
 
   private handleStream = buildHandler(validationTestStreamContract, {
-    sse: async (ctx) => {
+    sse: async (request, connection) => {
       // Send the event - if validation fails, error propagates to the framework
       // which sends an error event and closes the connection automatically
       // Cast to expected type since we're testing runtime validation with potentially invalid data
       // The body.eventData has loose typing (status: string) but event expects strict (status: enum)
-      const eventData = ctx.request.body.eventData as {
+      const eventData = request.body.eventData as {
         id: string
         count: number
         status: 'active' | 'inactive'
       }
-      await ctx.connection.send('validatedEvent', eventData)
-      this.closeConnection(ctx.connection.id)
+      await connection.send('validatedEvent', eventData)
+      this.closeConnection(connection.id)
     },
   })
 }
@@ -606,12 +602,12 @@ export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpen
   }
 
   private handleOpenAIStyleStream = buildHandler(openaiStyleStreamContract, {
-    sse: async (ctx) => {
+    sse: async (request, connection) => {
       // Split prompt into words and stream each as a JSON chunk (like OpenAI)
-      const words = ctx.request.body.prompt.split(' ')
+      const words = request.body.prompt.split(' ')
 
       for (const word of words) {
-        await ctx.connection.send('chunk', {
+        await connection.send('chunk', {
           choices: [
             {
               delta: {
@@ -624,9 +620,9 @@ export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpen
 
       // Send the terminator as a plain string, exactly like OpenAI does
       // This demonstrates that JSON encoding is NOT mandatory for SSE data
-      await ctx.connection.send('done', '[DONE]')
+      await connection.send('done', '[DONE]')
 
-      this.closeConnection(ctx.connection.id)
+      this.closeConnection(connection.id)
     },
   })
 }
@@ -670,10 +666,10 @@ export class TestOnReconnectErrorSSEController extends AbstractSSEController<Tes
   }
 
   private handleStream = buildHandler(onReconnectErrorStreamContract, {
-    sse: async (ctx) => {
+    sse: async (_request, connection) => {
       // Send message to verify connection still works after onReconnect error
-      await ctx.connection.send('event', { id: 'new', data: 'Hello after onReconnect error' })
-      this.closeConnection(ctx.connection.id)
+      await connection.send('event', { id: 'new', data: 'Hello after onReconnect error' })
+      this.closeConnection(connection.id)
     },
   })
 }
@@ -717,10 +713,10 @@ export class TestOnConnectErrorSSEController extends AbstractSSEController<TestO
   }
 
   private handleStream = buildHandler(onConnectErrorStreamContract, {
-    sse: async (ctx) => {
+    sse: async (_request, connection) => {
       // Send message to verify connection still works after onConnect error
-      await ctx.connection.send('message', { text: 'Hello after onConnect error' })
-      this.closeConnection(ctx.connection.id)
+      await connection.send('message', { text: 'Hello after onConnect error' })
+      this.closeConnection(connection.id)
     },
   })
 }

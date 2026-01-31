@@ -508,20 +508,20 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
   }
 
   // Handler with automatic type inference from contract
-  // ctx.connection.send provides type-safe event sending
+  // connection.send provides type-safe event sending
   private handleStream = buildHandler(notificationsContract, {
-    sse: async (ctx) => {
-      // ctx.request.query is typed from contract: { userId?: string }
-      const userId = ctx.request.query.userId ?? 'anonymous'
-      ctx.connection.context = { userId }
+    sse: async (request, connection) => {
+      // request.query is typed from contract: { userId?: string }
+      const userId = request.query.userId ?? 'anonymous'
+      connection.context = { userId }
 
       // For external triggers (subscriptions, timers, message queues), use sendEventInternal.
-      // ctx.connection.send is only available within this handler's scope - external callbacks
+      // connection.send is only available within this handler's scope - external callbacks
       // like subscription handlers execute later, outside this function, so they can't access connection.
       // sendEventInternal is a controller method, so it's accessible from any callback.
       // It provides autocomplete for all event names defined in the controller's contracts.
       this.notificationService.subscribe(userId, async (notification) => {
-        await this.sendEventInternal(ctx.connection.id, {
+        await this.sendEventInternal(connection.id, {
           event: 'notification',
           data: notification,
         })
@@ -529,7 +529,7 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
 
       // For direct sending within the handler, use the connection's send method.
       // It provides stricter per-route typing (only events from this specific contract).
-      await ctx.connection.send('notification', { id: 'welcome', message: 'Connected!' })
+      await connection.send('notification', { id: 'welcome', message: 'Connected!' })
     },
   })
 
@@ -567,20 +567,20 @@ class ChatSSEController extends AbstractSSEController<Contracts> {
   }
 
   // Handler with automatic type inference from contract
-  // ctx.connection.send is fully typed per-route
+  // connection.send is fully typed per-route
   private handleChatCompletion = buildHandler(chatCompletionContract, {
-    sse: async (ctx) => {
-      // ctx.request.body is typed as { message: string; stream: true }
-      // ctx.request.query, ctx.request.params, ctx.request.headers all typed from contract
-      const words = ctx.request.body.message.split(' ')
+    sse: async (request, connection) => {
+      // request.body is typed as { message: string; stream: true }
+      // request.query, request.params, request.headers all typed from contract
+      const words = request.body.message.split(' ')
 
       for (const word of words) {
-        // ctx.connection.send() provides compile-time type checking for event names and data
-        await ctx.connection.send('chunk', { content: word })
+        // connection.send() provides compile-time type checking for event names and data
+        await connection.send('chunk', { content: word })
       }
 
       // Gracefully end the stream - all sent data is flushed before connection closes
-      this.closeConnection(ctx.connection.id)
+      this.closeConnection(connection.id)
     },
   })
 
@@ -807,11 +807,11 @@ public buildSSERoutes() {
 
 ```ts
 private handleStream = buildHandler(streamContract, {
-  sse: async (ctx) => {
-    // External callbacks (subscriptions, timers) can't access `ctx.connection` - it's only in this scope.
+  sse: async (request, connection) => {
+    // External callbacks (subscriptions, timers) can't access `connection` - it's only in this scope.
     // Use sendEventInternal instead - it's a controller method accessible from any callback.
-    this.service.subscribe(ctx.connection.id, (data) => {
-      this.sendEventInternal(ctx.connection.id, { event: 'update', data })
+    this.service.subscribe(connection.id, (data) => {
+      this.sendEventInternal(connection.id, { event: 'update', data })
     })
     // Handler returns, connection stays open
   },
@@ -824,19 +824,19 @@ private handleStream = buildHandler(streamContract, {
 
 ```ts
 private handleChatCompletion = buildHandler(chatCompletionContract, {
-  sse: async (ctx) => {
-    // ctx.request.body is typed from contract
-    const words = ctx.request.body.message.split(' ')
+  sse: async (request, connection) => {
+    // request.body is typed from contract
+    const words = request.body.message.split(' ')
 
     for (const word of words) {
-      // ctx.connection.send() provides compile-time type checking for event names and data
-      await ctx.connection.send('chunk', { content: word })
+      // connection.send() provides compile-time type checking for event names and data
+      await connection.send('chunk', { content: word })
     }
 
-    await ctx.connection.send('done', { totalTokens: words.length })
+    await connection.send('done', { totalTokens: words.length })
 
     // Gracefully end the stream - all sent data is flushed before connection closes
-    this.closeConnection(ctx.connection.id)
+    this.closeConnection(connection.id)
   },
 })
 ```
@@ -1387,17 +1387,17 @@ export const rateLimitedContract = buildContract({
 })
 ```
 
-In your handler, set headers using `ctx.reply.header()`:
+In your handler, set headers using `reply.header()`:
 
 ```ts
 handlers: {
-  json: async (ctx) => {
-    ctx.reply.header('x-ratelimit-limit', '100')
-    ctx.reply.header('x-ratelimit-remaining', '99')
-    ctx.reply.header('x-ratelimit-reset', '1640000000')
+  json: async (request, reply) => {
+    reply.header('x-ratelimit-limit', '100')
+    reply.header('x-ratelimit-remaining', '99')
+    reply.header('x-ratelimit-reset', '1640000000')
     return { result: 'success' }
   },
-  sse: async (ctx) => { /* ... */ },
+  sse: async (request, connection) => { /* ... */ },
 }
 ```
 
@@ -1441,22 +1441,22 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
         contract: ChatDualModeController.contracts.chatCompletion,
         handlers: buildHandler(chatCompletionContract, {
           // JSON mode - return complete response
-          json: async (ctx) => {
-            const result = await this.aiService.complete(ctx.request.body.message)
+          json: async (request) => {
+            const result = await this.aiService.complete(request.body.message)
             return {
               reply: result.text,
               usage: { tokens: result.tokenCount },
             }
           },
           // SSE mode - stream response chunks
-          sse: async (ctx) => {
+          sse: async (request, connection) => {
             let totalTokens = 0
-            for await (const chunk of this.aiService.stream(ctx.request.body.message)) {
-              await ctx.connection.send('chunk', { delta: chunk.text })
+            for await (const chunk of this.aiService.stream(request.body.message)) {
+              await connection.send('chunk', { delta: chunk.text })
               totalTokens += chunk.tokenCount ?? 0
             }
-            await ctx.connection.send('done', { usage: { total: totalTokens } })
-            this.closeConnection(ctx.connection.id)
+            await connection.send('done', { usage: { total: totalTokens } })
+            this.closeConnection(connection.id)
           },
         }),
         options: {
@@ -1478,14 +1478,14 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 }
 ```
 
-**Handler Context:**
+**Handler Signatures:**
 
-| Mode | Context Properties |
-| ---- | ------------------ |
-| `json` | `ctx.mode`, `ctx.request`, `ctx.reply` |
-| `sse` | `ctx.mode`, `ctx.connection`, `ctx.request` |
+| Mode | Signature |
+| ---- | --------- |
+| `json` | `(request, reply) => Response` |
+| `sse` | `(request, connection) => void` |
 
-The `json` handler must return a value matching `syncResponse` schema. The `sse` handler uses `ctx.connection.send()` for type-safe event streaming.
+The `json` handler must return a value matching `syncResponse` schema. The `sse` handler uses `connection.send()` for type-safe event streaming.
 
 ### Registering Dual-Mode Controllers
 

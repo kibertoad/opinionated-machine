@@ -902,11 +902,11 @@ describe('Dual-Mode Response Headers', () => {
     const route = buildFastifyRoute(controller, {
       contract: contractWithHeaders,
       handlers: {
-        json: (ctx) => {
+        json: (request, reply) => {
           // Set the required headers
-          ctx.reply.header('x-request-id', 'req-123')
-          ctx.reply.header('x-ratelimit-remaining', '99')
-          return { result: ctx.request.body.data }
+          reply.header('x-request-id', 'req-123')
+          reply.header('x-ratelimit-remaining', '99')
+          return { result: request.body.data }
         },
         sse: () => {},
       },
@@ -972,9 +972,9 @@ describe('Dual-Mode Response Headers', () => {
     const route = buildFastifyRoute(controller, {
       contract: contractWithHeaders,
       handlers: {
-        json: (ctx) => {
+        json: (request) => {
           // Intentionally NOT setting the required header
-          return { result: ctx.request.body.data }
+          return { result: request.body.data }
         },
         sse: () => {},
       },
@@ -1037,8 +1037,8 @@ describe('Dual-Mode Response Headers', () => {
     const route = buildFastifyRoute(controller, {
       contract: contractWithoutHeaders,
       handlers: {
-        json: (ctx) => {
-          return { result: ctx.request.body.data }
+        json: (request) => {
+          return { result: request.body.data }
         },
         sse: () => {},
       },

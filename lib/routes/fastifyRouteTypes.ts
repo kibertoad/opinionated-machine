@@ -166,49 +166,14 @@ export type InferSSERequest<Contract extends AnySSEContractDefinition> = Fastify
 // ============================================================================
 
 /**
- * Context provided to the JSON mode handler.
- *
- * @template Params - Path parameters type
- * @template Query - Query string parameters type
- * @template Headers - Request headers type
- * @template Body - Request body type
- */
-export type JsonModeContext<
-  Params = unknown,
-  Query = unknown,
-  Headers = unknown,
-  Body = unknown,
-> = {
-  mode: 'json'
-  request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>
-  reply: FastifyReply
-}
-
-/**
- * Context provided to the SSE mode handler.
- *
- * @template Events - SSE event schemas
- * @template Params - Path parameters type
- * @template Query - Query string parameters type
- * @template Headers - Request headers type
- * @template Body - Request body type
- * @template Context - Custom context data type
- */
-export type SSEModeContext<
-  Events extends SSEEventSchemas = SSEEventSchemas,
-  Params = unknown,
-  Query = unknown,
-  Headers = unknown,
-  Body = unknown,
-  Context = unknown,
-> = {
-  mode: 'sse'
-  connection: SSEConnection<Events, Context>
-  request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>
-}
-
-/**
  * Handler function for JSON mode.
+ * Signature matches Fastify's `(request, reply)` pattern.
+ *
+ * @template Params - Path parameters type
+ * @template Query - Query string parameters type
+ * @template Headers - Request headers type
+ * @template Body - Request body type
+ * @template SyncResponse - Response type that must match contract's syncResponse schema
  */
 export type JsonModeHandler<
   Params = unknown,
@@ -216,10 +181,21 @@ export type JsonModeHandler<
   Headers = unknown,
   Body = unknown,
   SyncResponse = unknown,
-> = (ctx: JsonModeContext<Params, Query, Headers, Body>) => SyncResponse | Promise<SyncResponse>
+> = (
+  request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
+  reply: FastifyReply,
+) => SyncResponse | Promise<SyncResponse>
 
 /**
  * Handler function for SSE mode.
+ * Signature matches Fastify's `(request, reply)` pattern but with typed SSE connection.
+ *
+ * @template Events - SSE event schemas for type-safe sending
+ * @template Params - Path parameters type
+ * @template Query - Query string parameters type
+ * @template Headers - Request headers type
+ * @template Body - Request body type
+ * @template Context - Custom context data type stored per connection
  */
 export type SSEModeHandler<
   Events extends SSEEventSchemas = SSEEventSchemas,
@@ -228,7 +204,10 @@ export type SSEModeHandler<
   Headers = unknown,
   Body = unknown,
   Context = unknown,
-> = (ctx: SSEModeContext<Events, Params, Query, Headers, Body, Context>) => void | Promise<void>
+> = (
+  request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
+  connection: SSEConnection<Events, Context>,
+) => void | Promise<void>
 
 /**
  * Combined handlers for dual-mode routes.
@@ -300,6 +279,7 @@ export type BuildFastifyDualModeRoutesReturnType<
 
 /**
  * SSE-only handler object - just the SSE handler.
+ * Explicitly rejects `json` property to distinguish from dual-mode handlers.
  */
 export type SSEOnlyHandlers<
   Events extends SSEEventSchemas = SSEEventSchemas,
@@ -309,6 +289,8 @@ export type SSEOnlyHandlers<
   Body = unknown,
 > = {
   sse: SSEModeHandler<Events, Params, Query, Headers, Body>
+  /** SSE-only contracts do not support JSON handlers */
+  json?: never
 }
 
 /**
@@ -361,26 +343,31 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
  * Unified handler builder for both SSE-only and dual-mode contracts.
  *
  * This function provides automatic type inference based on the contract type:
- * - **SSE-only contracts**: Provide `{ sse: handler }`
- * - **Dual-mode contracts**: Provide `{ json: handler, sse: handler }`
+ * - **SSE-only contracts**: Provide `{ sse: (request, connection) => void }`
+ * - **Dual-mode contracts**: Provide `{ json: (request, reply) => Response, sse: (request, connection) => void }`
+ *
+ * Handler signatures follow Fastify patterns:
+ * - `json` handler: `(request, reply) => SyncResponse | Promise<SyncResponse>`
+ * - `sse` handler: `(request, connection) => void | Promise<void>`
  *
  * @example
  * ```typescript
  * // SSE-only contract
  * const sseHandlers = buildHandler(notificationsContract, {
- *   sse: async (ctx) => {
- *     await ctx.connection.send('notification', { id: '1', message: 'Hello' })
+ *   sse: async (request, connection) => {
+ *     await connection.send('notification', { id: '1', message: 'Hello' })
  *   },
  * })
  *
  * // Dual-mode contract
  * const dualModeHandlers = buildHandler(chatCompletionContract, {
- *   json: async (ctx) => {
+ *   json: async (request, reply) => {
+ *     reply.header('x-custom', 'value')
  *     return { reply: 'Hello', usage: { tokens: 5 } }
  *   },
- *   sse: async (ctx) => {
- *     await ctx.connection.send('chunk', { delta: 'Hello' })
- *     await ctx.connection.send('done', { usage: { total: 5 } })
+ *   sse: async (request, connection) => {
+ *     await connection.send('chunk', { delta: 'Hello' })
+ *     await connection.send('done', { usage: { total: 5 } })
  *   },
  * })
  * ```
