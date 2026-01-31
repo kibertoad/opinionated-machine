@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
 import { buildContract } from '../contracts/contractBuilders.ts'
-import { buildFastifySSEHandler } from './fastifySSETypes.ts'
+import { buildFastifySSEHandler } from '../routes/fastifyRouteTypes.ts'
 
 describe('sseContracts', () => {
   describe('buildContract (SSE with body)', () => {

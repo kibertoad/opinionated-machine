@@ -1,5 +1,21 @@
 // Re-export buildContract from contracts module
 export { buildContract } from '../contracts/index.js'
+// Re-export route types from routes module
+export {
+  type BuildFastifyDualModeRoutesReturnType,
+  buildDualModeHandler,
+  buildFastifyRoute,
+  type DualModeHandlers,
+  determineMode,
+  extractPathTemplate,
+  type FastifyDualModeHandlerConfig,
+  type FastifyDualModeRouteOptions,
+  type JsonModeContext,
+  type JsonModeHandler,
+  type RegisterDualModeRoutesOptions,
+  type SSEModeContext,
+  type SSEModeHandler,
+} from '../routes/index.js'
 export {
   AbstractDualModeController,
   type AllDualModeContractEventNames,
@@ -17,21 +33,3 @@ export type {
   DualModeLogger,
   DualModeType,
 } from './dualModeTypes.js'
-// Fastify-specific
-export {
-  buildFastifyDualModeRoute,
-  determineMode,
-  extractPathTemplate,
-} from './fastifyDualModeRouteBuilder.js'
-export {
-  type BuildFastifyDualModeRoutesReturnType,
-  buildDualModeHandler,
-  type DualModeHandlers,
-  type FastifyDualModeHandlerConfig,
-  type FastifyDualModeRouteOptions,
-  type JsonModeContext,
-  type JsonModeHandler,
-  type RegisterDualModeRoutesOptions,
-  type SSEModeContext,
-  type SSEModeHandler,
-} from './fastifyDualModeTypes.js'

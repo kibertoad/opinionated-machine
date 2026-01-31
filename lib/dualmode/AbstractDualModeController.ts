@@ -1,11 +1,13 @@
 import type { z } from 'zod'
+import type {
+  BuildFastifyDualModeRoutesReturnType,
+  BuildFastifySSERoutesReturnType,
+} from '../routes/fastifyRouteTypes.ts'
 import { AbstractSSEController } from '../sse/AbstractSSEController.ts'
-import type { BuildFastifySSERoutesReturnType } from '../sse/fastifySSETypes.ts'
 import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { SSEControllerConfig } from '../sse/sseTypes.ts'
 import type { AnyDualModeContractDefinition } from './dualModeContracts.ts'
 import type { DualModeControllerConfig } from './dualModeTypes.ts'
-import type { BuildFastifyDualModeRoutesReturnType } from './fastifyDualModeTypes.ts'
 
 /**
  * Extract all event names from dual-mode contracts as a union of string literals.

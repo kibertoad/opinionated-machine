@@ -1,5 +1,18 @@
 // Re-export buildContract from contracts module
 export { buildContract } from '../contracts/index.js'
+// Re-export route types from routes module
+export {
+  type BuildFastifySSERoutesReturnType,
+  buildFastifyRoute,
+  buildFastifySSEHandler,
+  type FastifySSEHandlerConfig,
+  type FastifySSEPreHandler,
+  type FastifySSERouteHandler,
+  type FastifySSERouteOptions,
+  type InferSSERequest,
+  type RegisterSSERoutesOptions,
+  type SSEConnection,
+} from '../routes/index.js'
 export {
   AbstractSSEController,
   type AllContractEventNames,
@@ -11,18 +24,6 @@ export {
   type SSELogger,
   type SSEMessage,
 } from './AbstractSSEController.js'
-export { buildFastifySSERoute, type RegisterSSERoutesOptions } from './fastifySSERouteBuilder.js'
-// Fastify-specific types
-export {
-  type BuildFastifySSERoutesReturnType,
-  buildFastifySSEHandler,
-  type FastifySSEHandlerConfig,
-  type FastifySSEPreHandler,
-  type FastifySSERouteHandler,
-  type FastifySSERouteOptions,
-  type InferSSERequest,
-  type SSEConnection,
-} from './fastifySSETypes.js'
 export { type SSEConnectionEvent, SSEConnectionSpy } from './SSEConnectionSpy.js'
 export type {
   AnySSEContractDefinition,

@@ -3,7 +3,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
-  buildFastifyDualModeRoute,
+  buildFastifyRoute,
   DIContext,
   SSEHttpClient,
   SSEInjectClient,
@@ -859,7 +859,7 @@ describe('Dual-Mode Route Builder Validation', () => {
     }
 
     expect(() =>
-      buildFastifyDualModeRoute(controller, {
+      buildFastifyRoute(controller, {
         contract: invalidContract,
         handlers: {
           json: async () => ({ result: 'test' }),
@@ -899,7 +899,7 @@ describe('Dual-Mode Response Headers', () => {
       isDualMode: true as const,
     }
 
-    const route = buildFastifyDualModeRoute(controller, {
+    const route = buildFastifyRoute(controller, {
       contract: contractWithHeaders,
       handlers: {
         json: (ctx) => {
@@ -969,7 +969,7 @@ describe('Dual-Mode Response Headers', () => {
       isDualMode: true as const,
     }
 
-    const route = buildFastifyDualModeRoute(controller, {
+    const route = buildFastifyRoute(controller, {
       contract: contractWithHeaders,
       handlers: {
         json: (ctx) => {
@@ -1034,7 +1034,7 @@ describe('Dual-Mode Response Headers', () => {
       isDualMode: true as const,
     }
 
-    const route = buildFastifyDualModeRoute(controller, {
+    const route = buildFastifyRoute(controller, {
       contract: contractWithoutHeaders,
       handlers: {
         json: (ctx) => {

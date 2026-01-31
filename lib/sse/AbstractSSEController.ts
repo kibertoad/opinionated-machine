@@ -2,7 +2,7 @@ import type { SSEReplyInterface } from '@fastify/sse'
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import type { z } from 'zod'
-import type { BuildFastifySSERoutesReturnType, SSEConnection } from './fastifySSETypes.ts'
+import type { BuildFastifySSERoutesReturnType, SSEConnection } from '../routes/fastifyRouteTypes.ts'
 import { SSEConnectionSpy } from './SSEConnectionSpy.ts'
 import type { AnySSEContractDefinition } from './sseContracts.ts'
 import type {
@@ -21,7 +21,7 @@ export type {
   FastifySSERouteOptions,
   InferSSERequest,
   SSEConnection,
-} from './fastifySSETypes.ts'
+} from '../routes/fastifyRouteTypes.ts'
 // Re-export types for backwards compatibility
 export type { SSEConnectionEvent } from './SSEConnectionSpy.ts'
 export { SSEConnectionSpy } from './SSEConnectionSpy.ts'
