@@ -59,15 +59,15 @@ export type ExtractDualModeEventSchema<
  *       chatCompletion: {
  *         contract: ChatController.contracts.chatCompletion,
  *         handlers: buildHandler(ChatController.contracts.chatCompletion, {
- *           json: async (ctx) => {
+ *           json: async (request, reply) => {
  *             // Return complete JSON response
  *             return { reply: 'Hello', usage: { tokens: 5 } }
  *           },
- *           sse: async (ctx) => {
+ *           sse: async (request, connection) => {
  *             // Stream SSE events
- *             await ctx.connection.send('chunk', { delta: 'Hello' })
- *             await ctx.connection.send('done', { usage: { total: 5 } })
- *             this.closeConnection(ctx.connection.id)
+ *             await connection.send('chunk', { delta: 'Hello' })
+ *             await connection.send('done', { usage: { total: 5 } })
+ *             this.closeConnection(connection.id)
  *           },
  *         }),
  *       },

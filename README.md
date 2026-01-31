@@ -800,46 +800,58 @@ public buildSSERoutes() {
 
 ### Long-lived Connections vs Request-Response Streaming
 
+SSE supports two fundamentally different patterns with different connection lifecycles:
+
 **Long-lived connections** (notifications, live updates):
-- Handler sets up subscriptions and returns
-- Connection stays open until client disconnects
-- Use `sendEventInternal()` for external triggers (typed with union of all contract events)
+- Handler sets up subscriptions and returns immediately
+- Connection stays open indefinitely after handler returns
+- Events are sent later via callbacks using `sendEventInternal()`
+- **Client closes connection** when done (e.g., `eventSource.close()` or navigating away)
+- Server cleans up via `onConnectionClosed()` hook
 
 ```ts
 private handleStream = buildHandler(streamContract, {
   sse: async (request, connection) => {
-    // External callbacks (subscriptions, timers) can't access `connection` - it's only in this scope.
-    // Use sendEventInternal instead - it's a controller method accessible from any callback.
+    // Set up subscription - events sent via callback AFTER handler returns
     this.service.subscribe(connection.id, (data) => {
       this.sendEventInternal(connection.id, { event: 'update', data })
     })
-    // Handler returns, connection stays open
+    // Handler returns, connection stays open until CLIENT disconnects
   },
 })
+
+// Clean up when client disconnects
+protected onConnectionClosed(connection: SSEConnection): void {
+  this.service.unsubscribe(connection.id)
+}
 ```
 
 **Request-response streaming** (AI completions):
-- Handler sends all events and closes connection
-- Use `connection.send` for type-safe event sending
+- Handler sends all events synchronously, then closes connection
+- Use `connection.send()` for type-safe event sending within the handler
+- Must explicitly call `closeConnection()` when done
 
 ```ts
 private handleChatCompletion = buildHandler(chatCompletionContract, {
   sse: async (request, connection) => {
-    // request.body is typed from contract
     const words = request.body.message.split(' ')
 
     for (const word of words) {
-      // connection.send() provides compile-time type checking for event names and data
       await connection.send('chunk', { content: word })
     }
-
     await connection.send('done', { totalTokens: words.length })
 
-    // Gracefully end the stream - all sent data is flushed before connection closes
+    // Must explicitly close - see note below
     this.closeConnection(connection.id)
   },
 })
 ```
+
+**Why no automatic connection closure?**
+
+Connections are not automatically closed when the handler returns because this would break long-lived connections. In the long-lived pattern, the handler returns early to set up event sources (subscriptions, timers, external triggers), and events are sent later. Auto-closing would terminate these connections before any events could be sent.
+
+Since the framework cannot distinguish between "handler finished streaming" and "handler set up listeners and returned early", explicit `closeConnection()` is required for request-response patterns.
 
 ### SSE Parsing Utilities
 
