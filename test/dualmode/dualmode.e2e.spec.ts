@@ -1,7 +1,14 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DIContext, SSEHttpClient, SSEInjectClient, SSETestServer } from '../../index.js'
+import { z } from 'zod'
+import {
+  buildFastifyDualModeRoute,
+  DIContext,
+  SSEHttpClient,
+  SSEInjectClient,
+  SSETestServer,
+} from '../../index.js'
 import { defaultMethodContract } from './fixtures/testContracts.js'
 import type {
   TestChatDualModeController,
@@ -823,6 +830,43 @@ describe('Dual-Mode DI Integration', () => {
 
     // connectionSpy should throw
     expect(() => controller.connectionSpy).toThrow('Connection spy is not enabled')
+
+    await context.destroy()
+  })
+})
+
+describe('Dual-Mode Route Builder Validation', () => {
+  it('throws error when params is not a ZodObject', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
+
+    const controller: TestChatDualModeController = context.diContainer.resolve(
+      'testChatDualModeController',
+    )
+
+    // Create an invalid contract where params is a ZodString instead of ZodObject
+    const invalidContract = {
+      method: 'POST' as const,
+      pathResolver: () => '/api/invalid',
+      params: z.string(), // Invalid: should be ZodObject
+      query: z.object({}),
+      requestHeaders: z.object({}),
+      body: z.object({ data: z.string() }),
+      jsonResponse: z.object({ result: z.string() }),
+      events: { result: z.object({ success: z.boolean() }) },
+      isDualMode: true as const,
+    }
+
+    expect(() =>
+      buildFastifyDualModeRoute(controller, {
+        contract: invalidContract,
+        handlers: {
+          json: async () => ({ result: 'test' }),
+          sse: async () => {},
+        },
+      }),
+    ).toThrow('Route params schema must be a ZodObject for path template extraction')
 
     await context.destroy()
   })
