@@ -1,10 +1,15 @@
 import { InternalError } from '@lokalise/node-core'
 import type { RouteOptions } from 'fastify'
 import { ZodObject } from 'zod'
-import { extractPathTemplate, handleSSEError, setupSSEConnection } from '../sse/sseRouteUtils.ts'
+import {
+  extractPathTemplate,
+  handleSSEError,
+  setupSSEConnection,
+} from '../sse/fastifySSERouteUtils.ts'
 import type { AbstractDualModeController } from './AbstractDualModeController.ts'
-import type { AnyDualModeRouteDefinition } from './dualModeContracts.ts'
-import type { DualModeHandlerConfig, DualModeType } from './dualModeTypes.ts'
+import type { AnyDualModeContractDefinition } from './dualModeContracts.ts'
+import type { DualModeType } from './dualModeTypes.ts'
+import type { FastifyDualModeHandlerConfig } from './fastifyDualModeTypes.ts'
 
 // Re-export for convenience
 export { extractPathTemplate }
@@ -76,9 +81,9 @@ export function determineMode(
  * @param config - The dual-mode handler configuration
  * @returns Fastify route options
  */
-export function buildFastifyDualModeRoute<Contract extends AnyDualModeRouteDefinition>(
-  controller: AbstractDualModeController<Record<string, AnyDualModeRouteDefinition>>,
-  config: DualModeHandlerConfig<Contract>,
+export function buildFastifyDualModeRoute<Contract extends AnyDualModeContractDefinition>(
+  controller: AbstractDualModeController<Record<string, AnyDualModeContractDefinition>>,
+  config: FastifyDualModeHandlerConfig<Contract>,
 ): RouteOptions {
   const { contract, handlers, options } = config
   const defaultMode = options?.defaultMode ?? 'json'

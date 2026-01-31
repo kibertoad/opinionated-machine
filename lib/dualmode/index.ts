@@ -4,32 +4,36 @@ export {
   type ExtractDualModeEventSchema,
 } from './AbstractDualModeController.js'
 export {
-  type AnyDualModeRouteDefinition,
-  buildDualModeRoute,
-  buildPayloadDualModeRoute,
+  type AnyDualModeContractDefinition,
+  buildDualModeContract,
+  buildPayloadDualModeContract,
+  type DualModeContractConfig,
+  type DualModeContractDefinition,
   type DualModeMethod,
-  type DualModeRouteConfig,
-  type DualModeRouteDefinition,
   type PathResolver,
-  type PayloadDualModeRouteConfig,
+  type PayloadDualModeContractConfig,
 } from './dualModeContracts.js'
+// Framework-agnostic types
+export type {
+  DualModeControllerConfig,
+  DualModeLogger,
+  DualModeType,
+} from './dualModeTypes.js'
+// Fastify-specific
 export {
   buildFastifyDualModeRoute,
   determineMode,
   extractPathTemplate,
-} from './dualModeRouteBuilder.js'
+} from './fastifyDualModeRouteBuilder.js'
 export {
-  type BuildDualModeRoutesReturnType,
+  type BuildFastifyDualModeRoutesReturnType,
   buildDualModeHandler,
-  type DualModeControllerConfig,
-  type DualModeHandlerConfig,
   type DualModeHandlers,
-  type DualModeLogger,
-  type DualModeRouteOptions,
-  type DualModeType,
+  type FastifyDualModeHandlerConfig,
+  type FastifyDualModeRouteOptions,
   type JsonModeContext,
   type JsonModeHandler,
   type RegisterDualModeRoutesOptions,
   type SSEModeContext,
   type SSEModeHandler,
-} from './dualModeTypes.js'
+} from './fastifyDualModeTypes.js'

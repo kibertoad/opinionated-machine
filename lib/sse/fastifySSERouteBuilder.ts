@@ -1,9 +1,9 @@
 import type { RouteOptions } from 'fastify'
 import type { z } from 'zod'
 import type { AbstractSSEController } from './AbstractSSEController.ts'
+import { extractPathTemplate, handleSSEError, setupSSEConnection } from './fastifySSERouteUtils.ts'
+import type { FastifySSEHandlerConfig } from './fastifySSETypes.ts'
 import type { AnySSEContractDefinition } from './sseContracts.ts'
-import { extractPathTemplate, handleSSEError, setupSSEConnection } from './sseRouteUtils.ts'
-import type { SSEHandlerConfig } from './sseTypes.ts'
 
 /**
  * Build a Fastify route configuration for an SSE endpoint.
@@ -17,7 +17,7 @@ import type { SSEHandlerConfig } from './sseTypes.ts'
  */
 export function buildFastifySSERoute<Contract extends AnySSEContractDefinition>(
   controller: AbstractSSEController<Record<string, AnySSEContractDefinition>>,
-  config: SSEHandlerConfig<Contract>,
+  config: FastifySSEHandlerConfig<Contract>,
 ): RouteOptions {
   const { contract, handler, options } = config
 
@@ -51,7 +51,7 @@ export function buildFastifySSERoute<Contract extends AnySSEContractDefinition>(
       // Errors (including validation errors) are caught, sent as error events, and re-thrown
       // so the app's error handler can process them (for logging, monitoring, etc.)
       try {
-        // biome-ignore lint/suspicious/noExplicitAny: Handler types are validated by SSEHandlerConfig
+        // biome-ignore lint/suspicious/noExplicitAny: Handler types are validated by FastifySSEHandlerConfig
         await handler(request as any, connection as any)
       } catch (err) {
         await handleSSEError(sseReply, controller, connectionId, err)

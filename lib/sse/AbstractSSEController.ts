@@ -2,36 +2,39 @@ import type { SSEReplyInterface } from '@fastify/sse'
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import type { z } from 'zod'
+import type { BuildFastifySSERoutesReturnType, SSEConnection } from './fastifySSETypes.ts'
 import { SSEConnectionSpy } from './SSEConnectionSpy.ts'
 import type { AnySSEContractDefinition } from './sseContracts.ts'
 import type {
   AllContractEventNames,
-  BuildSSERoutesReturnType,
   ExtractEventSchema,
-  SSEConnection,
   SSEControllerConfig,
   SSEMessage,
 } from './sseTypes.ts'
 
+// Re-export Fastify-specific types
+export type {
+  BuildFastifySSERoutesReturnType,
+  FastifySSEHandlerConfig,
+  FastifySSEPreHandler,
+  FastifySSERouteHandler,
+  FastifySSERouteOptions,
+  InferSSERequest,
+  SSEConnection,
+} from './fastifySSETypes.ts'
 // Re-export types for backwards compatibility
 export type { SSEConnectionEvent } from './SSEConnectionSpy.ts'
 export { SSEConnectionSpy } from './SSEConnectionSpy.ts'
+// Re-export framework-agnostic types
 export type {
   AllContractEventNames,
   AllContractEvents,
-  BuildSSERoutesReturnType,
   ExtractEventSchema,
-  InferSSERequest,
-  SSEConnection,
   SSEControllerConfig,
   SSEEventSchemas,
   SSEEventSender,
-  SSEHandlerConfig,
   SSELogger,
   SSEMessage,
-  SSEPreHandler,
-  SSERouteHandler,
-  SSERouteOptions,
 } from './sseTypes.ts'
 
 /**
@@ -134,7 +137,7 @@ export abstract class AbstractSSEController<
    * Build and return SSE route configurations.
    * Similar pattern to AbstractController.buildRoutes().
    */
-  public abstract buildSSERoutes(): BuildSSERoutesReturnType<APIContracts>
+  public abstract buildSSERoutes(): BuildFastifySSERoutesReturnType<APIContracts>
 
   /**
    * Controller-level hook called when any connection is established.

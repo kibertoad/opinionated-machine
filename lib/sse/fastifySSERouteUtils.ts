@@ -2,13 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type { SSEReplyInterface } from '@fastify/sse'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
-import type {
-  SSEConnection,
-  SSEEventSchemas,
-  SSEEventSender,
-  SSELogger,
-  SSEMessage,
-} from './sseTypes.ts'
+import type { SSEConnection } from './fastifySSETypes.ts'
+import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from './sseTypes.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.

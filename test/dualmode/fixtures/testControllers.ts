@@ -1,6 +1,6 @@
 import {
   AbstractDualModeController,
-  type BuildDualModeRoutesReturnType,
+  type BuildFastifyDualModeRoutesReturnType,
   buildDualModeHandler,
 } from '../../../index.js'
 import {
@@ -26,7 +26,7 @@ export class TestChatDualModeController extends AbstractDualModeController<TestC
     chatCompletion: chatCompletionContract,
   } as const
 
-  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<TestChatContracts> {
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestChatContracts> {
     return {
       chatCompletion: {
         contract: TestChatDualModeController.contracts.chatCompletion,
@@ -64,7 +64,7 @@ export class TestConversationDualModeController extends AbstractDualModeControll
     conversationCompletion: conversationCompletionContract,
   } as const
 
-  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<TestConversationContracts> {
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestConversationContracts> {
     return {
       conversationCompletion: {
         contract: TestConversationDualModeController.contracts.conversationCompletion,
@@ -120,7 +120,7 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
     this.jobStates.set(jobId, state)
   }
 
-  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<TestJobStatusContracts> {
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestJobStatusContracts> {
     return {
       jobStatus: {
         contract: TestJobStatusDualModeController.contracts.jobStatus,
@@ -181,7 +181,7 @@ export class TestAuthenticatedDualModeController extends AbstractDualModeControl
     protectedAction: authenticatedDualModeContract,
   } as const
 
-  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<TestAuthenticatedContracts> {
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestAuthenticatedContracts> {
     return {
       protectedAction: {
         contract: TestAuthenticatedDualModeController.contracts.protectedAction,
@@ -224,7 +224,7 @@ export class TestDefaultModeDualModeController extends AbstractDualModeControlle
     defaultModeTest: defaultModeTestContract,
   } as const
 
-  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<TestDefaultModeContracts> {
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestDefaultModeContracts> {
     return {
       defaultModeTest: {
         contract: TestDefaultModeDualModeController.contracts.defaultModeTest,
@@ -257,7 +257,7 @@ export class TestErrorDualModeController extends AbstractDualModeController<Test
     errorTest: errorTestContract,
   } as const
 
-  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<TestErrorContracts> {
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestErrorContracts> {
     return {
       errorTest: {
         contract: TestErrorDualModeController.contracts.errorTest,
@@ -290,7 +290,7 @@ export class TestDefaultMethodDualModeController extends AbstractDualModeControl
     defaultMethodTest: defaultMethodContract,
   } as const
 
-  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<TestDefaultMethodContracts> {
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestDefaultMethodContracts> {
     return {
       defaultMethodTest: {
         contract: TestDefaultMethodDualModeController.contracts.defaultMethodTest,
@@ -321,7 +321,7 @@ export class TestJsonValidationDualModeController extends AbstractDualModeContro
     jsonValidationTest: jsonValidationContract,
   } as const
 
-  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<TestJsonValidationContracts> {
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestJsonValidationContracts> {
     return {
       jsonValidationTest: {
         contract: TestJsonValidationDualModeController.contracts.jsonValidationTest,

@@ -8,12 +8,15 @@ import type { AbstractModule } from './AbstractModule.js'
 import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configUtils.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
 import type { AbstractDualModeController } from './dualmode/AbstractDualModeController.js'
-import type { AnyDualModeRouteDefinition } from './dualmode/dualModeContracts.js'
-import { buildFastifyDualModeRoute } from './dualmode/dualModeRouteBuilder.js'
-import type { RegisterDualModeRoutesOptions } from './dualmode/dualModeTypes.js'
+import type { AnyDualModeContractDefinition } from './dualmode/dualModeContracts.js'
+import { buildFastifyDualModeRoute } from './dualmode/fastifyDualModeRouteBuilder.js'
+import type { RegisterDualModeRoutesOptions } from './dualmode/fastifyDualModeTypes.js'
 import type { AbstractSSEController } from './sse/AbstractSSEController.js'
+import {
+  buildFastifySSERoute,
+  type RegisterSSERoutesOptions,
+} from './sse/fastifySSERouteBuilder.js'
 import type { AnySSEContractDefinition } from './sse/sseContracts.js'
-import { buildFastifySSERoute, type RegisterSSERoutesOptions } from './sse/sseRouteBuilder.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
   modules: readonly AbstractModule<unknown, ExternalDependencies>[]
@@ -274,7 +277,7 @@ export class DIContext<
     for (const controllerName of this.dualModeControllerNames) {
       // Resolve from container to use the singleton instance
       const dualModeController: AbstractDualModeController<
-        Record<string, AnyDualModeRouteDefinition>
+        Record<string, AnyDualModeContractDefinition>
       > = this.diContainer.resolve(controllerName)
       const dualModeRoutes = dualModeController.buildDualModeRoutes()
 

@@ -146,7 +146,7 @@ export class TestErrorDualModeModule extends AbstractModule<TestErrorDualModeMod
 
 /**
  * Module with default method test dual-mode controller.
- * Tests the case where method is not specified in buildPayloadDualModeRoute.
+ * Tests the case where method is not specified in buildPayloadDualModeContract.
  */
 export type TestDefaultMethodDualModeModuleDependencies = Record<string, never>
 

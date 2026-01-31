@@ -1308,14 +1308,14 @@ Dual-mode controllers extend `AbstractDualModeController` which inherits from `A
 
 ### Defining Dual-Mode Contracts
 
-Use `buildDualModeRoute` for GET routes or `buildPayloadDualModeRoute` for POST/PUT/PATCH routes. The key difference from SSE contracts is the addition of `jsonResponse` schema:
+Use `buildDualModeContract` for GET routes or `buildPayloadDualModeContract` for POST/PUT/PATCH routes. The key difference from SSE contracts is the addition of `jsonResponse` schema:
 
 ```ts
 import { z } from 'zod'
-import { buildDualModeRoute, buildPayloadDualModeRoute } from 'opinionated-machine'
+import { buildDualModeContract, buildPayloadDualModeContract } from 'opinionated-machine'
 
 // GET dual-mode route (polling or streaming job status)
-export const jobStatusContract = buildDualModeRoute({
+export const jobStatusContract = buildDualModeContract({
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
@@ -1332,7 +1332,7 @@ export const jobStatusContract = buildDualModeRoute({
 })
 
 // POST dual-mode route (OpenAI-style chat completion)
-export const chatCompletionContract = buildPayloadDualModeRoute({
+export const chatCompletionContract = buildPayloadDualModeContract({
   method: 'POST',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
   params: z.object({ chatId: z.string().uuid() }),
@@ -1360,7 +1360,7 @@ Dual-mode controllers use `buildDualModeHandler` to define both JSON and SSE han
 import {
   AbstractDualModeController,
   buildDualModeHandler,
-  type BuildDualModeRoutesReturnType,
+  type BuildFastifyDualModeRoutesReturnType,
   type DualModeControllerConfig,
 } from 'opinionated-machine'
 
@@ -1384,7 +1384,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
     this.aiService = deps.aiService
   }
 
-  public buildDualModeRoutes(): BuildDualModeRoutesReturnType<Contracts> {
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<Contracts> {
     return {
       chatCompletion: {
         contract: ChatDualModeController.contracts.chatCompletion,

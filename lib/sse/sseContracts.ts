@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { SSEEventSchemas, SSERouteHandler } from './sseTypes.ts'
+import type { SSEEventSchemas } from './sseTypes.ts'
 
 /**
  * Supported HTTP methods for SSE routes.
@@ -197,60 +197,4 @@ export function buildPayloadSSEContract<
     events: config.events,
     isSSE: true,
   }
-}
-
-/**
- * Type-inference helper for SSE handlers with type-safe event sending.
- *
- * Similar to `buildFastifyPayloadRoute`, this function provides automatic
- * type inference for the request and connection parameters based on the contract.
- *
- * The `connection.send` method provides compile-time type checking:
- * - Event names must match those defined in `contract.events`
- * - Event data must match the Zod schema for that event
- *
- * @example
- * ```typescript
- * const contract = buildPayloadSSEContract({
- *   // ...
- *   events: {
- *     chunk: z.object({ content: z.string() }),
- *     done: z.object({ totalTokens: z.number() }),
- *   },
- * })
- *
- * class MyController extends AbstractSSEController<{ stream: typeof contract }> {
- *   private handleStream = buildSSEHandler(
- *     contract,
- *     async (request, connection) => {
- *       // connection.send is typed - only 'chunk' and 'done' are valid event names
- *       await connection.send('chunk', { content: 'hello' })  // OK
- *       await connection.send('done', { totalTokens: 1 })     // OK
- *       // await connection.send('chunk', { totalTokens: 1 }) // TS Error: wrong payload
- *       // await connection.send('invalid', {})               // TS Error: invalid event name
- *     },
- *   )
- *
- *   buildSSERoutes() {
- *     return {
- *       stream: {
- *         contract,
- *         handler: this.handleStream,
- *       },
- *     }
- *   }
- * }
- * ```
- */
-export function buildSSEHandler<Contract extends AnySSEContractDefinition>(
-  _contract: Contract,
-  handler: SSERouteHandler<
-    z.infer<Contract['params']>,
-    z.infer<Contract['query']>,
-    z.infer<Contract['requestHeaders']>,
-    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-    Contract['events']
-  >,
-): typeof handler {
-  return handler
 }

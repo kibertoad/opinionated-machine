@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
-import { buildPayloadSSEContract, buildSSEContract, buildSSEHandler } from './sseContracts.ts'
+import { buildFastifySSEHandler } from './fastifySSETypes.ts'
+import { buildPayloadSSEContract, buildSSEContract } from './sseContracts.ts'
 
 describe('sseContracts', () => {
   describe('buildPayloadSSEContract', () => {
@@ -61,7 +62,7 @@ describe('sseContracts', () => {
     })
   })
 
-  describe('buildSSEHandler type checking', () => {
+  describe('buildFastifySSEHandler type checking', () => {
     const testContract = buildPayloadSSEContract({
       method: 'POST',
       pathResolver: (params) => `/api/test/${params.id}/stream`,
@@ -76,7 +77,7 @@ describe('sseContracts', () => {
     })
 
     it('allows valid event names and payloads', () => {
-      const handler = buildSSEHandler(testContract, async (_request, connection) => {
+      const handler = buildFastifySSEHandler(testContract, async (_request, connection) => {
         await connection.send('chunk', { content: 'hello' })
         await connection.send('done', { totalTokens: 42 })
       })
@@ -85,7 +86,7 @@ describe('sseContracts', () => {
     })
 
     it('rejects invalid event name at compile time', () => {
-      buildSSEHandler(testContract, async (_request, connection) => {
+      buildFastifySSEHandler(testContract, async (_request, connection) => {
         // @ts-expect-error - 'invalid' is not a valid event name
         await connection.send('invalid', { content: 'test' })
       })
@@ -94,7 +95,7 @@ describe('sseContracts', () => {
     })
 
     it('rejects wrong payload at compile time', () => {
-      buildSSEHandler(testContract, async (_request, connection) => {
+      buildFastifySSEHandler(testContract, async (_request, connection) => {
         // @ts-expect-error - chunk expects { content: string }, not { totalTokens: number }
         await connection.send('chunk', { totalTokens: 42 })
       })
@@ -103,7 +104,7 @@ describe('sseContracts', () => {
     })
 
     it('rejects missing required field at compile time', () => {
-      buildSSEHandler(testContract, async (_request, connection) => {
+      buildFastifySSEHandler(testContract, async (_request, connection) => {
         // @ts-expect-error - done requires totalTokens field
         await connection.send('done', {})
       })
@@ -112,7 +113,7 @@ describe('sseContracts', () => {
     })
 
     it('rejects wrong field type at compile time', () => {
-      buildSSEHandler(testContract, async (_request, connection) => {
+      buildFastifySSEHandler(testContract, async (_request, connection) => {
         // @ts-expect-error - totalTokens should be number, not string
         await connection.send('done', { totalTokens: 'not a number' })
       })
@@ -121,7 +122,7 @@ describe('sseContracts', () => {
     })
 
     it('types request body from contract', () => {
-      buildSSEHandler(testContract, (request, _connection) => {
+      buildFastifySSEHandler(testContract, (request, _connection) => {
         const message: string = request.body.message
         const count: number = request.body.count
 
@@ -136,7 +137,7 @@ describe('sseContracts', () => {
     })
 
     it('types request params from contract', () => {
-      buildSSEHandler(testContract, (request, _connection) => {
+      buildFastifySSEHandler(testContract, (request, _connection) => {
         const id: string = request.params.id
 
         // @ts-expect-error - nonExistent does not exist on params

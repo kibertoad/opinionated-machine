@@ -33,7 +33,7 @@ export type PathResolver<Params> = (params: Params) => string
  * @template JsonResponse - JSON response schema (for Accept: application/json)
  * @template Events - SSE event schemas (for Accept: text/event-stream)
  */
-export type DualModeRouteDefinition<
+export type DualModeContractDefinition<
   Method extends DualModeMethod = DualModeMethod,
   Params extends z.ZodTypeAny = z.ZodTypeAny,
   Query extends z.ZodTypeAny = z.ZodTypeAny,
@@ -57,7 +57,7 @@ export type DualModeRouteDefinition<
  * Type representing any dual-mode route definition (for use in generic constraints).
  * Uses a manually defined type to avoid pathResolver type incompatibilities.
  */
-export type AnyDualModeRouteDefinition = {
+export type AnyDualModeContractDefinition = {
   method: DualModeMethod
   // biome-ignore lint/suspicious/noExplicitAny: Required for compatibility with all param types
   pathResolver: PathResolver<any>
@@ -73,7 +73,7 @@ export type AnyDualModeRouteDefinition = {
 /**
  * Configuration for building a GET dual-mode route
  */
-export type DualModeRouteConfig<
+export type DualModeContractConfig<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
@@ -91,7 +91,7 @@ export type DualModeRouteConfig<
 /**
  * Configuration for building a POST/PUT/PATCH dual-mode route with request body
  */
-export type PayloadDualModeRouteConfig<
+export type PayloadDualModeContractConfig<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
@@ -117,7 +117,7 @@ export type PayloadDualModeRouteConfig<
  *
  * @example
  * ```typescript
- * const statusContract = buildDualModeRoute({
+ * const statusContract = buildDualModeContract({
  *   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
  *   params: z.object({ jobId: z.string().uuid() }),
  *   query: z.object({}),
@@ -133,15 +133,23 @@ export type PayloadDualModeRouteConfig<
  * })
  * ```
  */
-export function buildDualModeRoute<
+export function buildDualModeContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   JsonResponse extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
 >(
-  config: DualModeRouteConfig<Params, Query, RequestHeaders, JsonResponse, Events>,
-): DualModeRouteDefinition<'GET', Params, Query, RequestHeaders, undefined, JsonResponse, Events> {
+  config: DualModeContractConfig<Params, Query, RequestHeaders, JsonResponse, Events>,
+): DualModeContractDefinition<
+  'GET',
+  Params,
+  Query,
+  RequestHeaders,
+  undefined,
+  JsonResponse,
+  Events
+> {
   return {
     method: 'GET',
     pathResolver: config.pathResolver,
@@ -163,7 +171,7 @@ export function buildDualModeRoute<
  *
  * @example
  * ```typescript
- * const chatCompletionContract = buildPayloadDualModeRoute({
+ * const chatCompletionContract = buildPayloadDualModeContract({
  *   method: 'POST',
  *   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
  *   params: z.object({ chatId: z.string().uuid() }),
@@ -181,7 +189,7 @@ export function buildDualModeRoute<
  * })
  * ```
  */
-export function buildPayloadDualModeRoute<
+export function buildPayloadDualModeContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
@@ -189,8 +197,8 @@ export function buildPayloadDualModeRoute<
   JsonResponse extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
 >(
-  config: PayloadDualModeRouteConfig<Params, Query, RequestHeaders, Body, JsonResponse, Events>,
-): DualModeRouteDefinition<
+  config: PayloadDualModeContractConfig<Params, Query, RequestHeaders, Body, JsonResponse, Events>,
+): DualModeContractDefinition<
   'POST' | 'PUT' | 'PATCH',
   Params,
   Query,
