@@ -853,7 +853,7 @@ describe('Dual-Mode Route Builder Validation', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       body: z.object({ data: z.string() }),
-      jsonResponse: z.object({ result: z.string() }),
+      syncResponse: z.object({ result: z.string() }),
       events: { result: z.object({ success: z.boolean() }) },
       isDualMode: true as const,
     }
@@ -869,5 +869,208 @@ describe('Dual-Mode Route Builder Validation', () => {
     ).toThrow('Route params schema must be a ZodObject for path template extraction')
 
     await context.destroy()
+  })
+})
+
+describe('Dual-Mode Response Headers', () => {
+  it('validates response headers when schema is defined', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
+
+    const controller: TestChatDualModeController = context.diContainer.resolve(
+      'testChatDualModeController',
+    )
+
+    // Create a contract with responseHeaders schema
+    const contractWithHeaders = {
+      method: 'POST' as const,
+      pathResolver: () => '/api/with-headers',
+      params: z.object({}),
+      query: z.object({}),
+      requestHeaders: z.object({}),
+      body: z.object({ data: z.string() }),
+      syncResponse: z.object({ result: z.string() }),
+      responseHeaders: z.object({
+        'x-request-id': z.string(),
+        'x-ratelimit-remaining': z.string(),
+      }),
+      events: { result: z.object({ success: z.boolean() }) },
+      isDualMode: true as const,
+    }
+
+    const route = buildFastifyDualModeRoute(controller, {
+      contract: contractWithHeaders,
+      handlers: {
+        json: (ctx) => {
+          // Set the required headers
+          ctx.reply.header('x-request-id', 'req-123')
+          ctx.reply.header('x-ratelimit-remaining', '99')
+          return { result: ctx.request.body.data }
+        },
+        sse: () => {},
+      },
+    })
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route(route)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/api/with-headers',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      payload: { data: 'test' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['x-request-id']).toBe('req-123')
+    expect(response.headers['x-ratelimit-remaining']).toBe('99')
+    expect(response.json()).toEqual({ result: 'test' })
+
+    await context.destroy()
+    await server.close()
+  })
+
+  it('throws validation error when required response headers are missing', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
+
+    const controller: TestChatDualModeController = context.diContainer.resolve(
+      'testChatDualModeController',
+    )
+
+    // Create a contract with responseHeaders schema
+    const contractWithHeaders = {
+      method: 'POST' as const,
+      pathResolver: () => '/api/missing-headers',
+      params: z.object({}),
+      query: z.object({}),
+      requestHeaders: z.object({}),
+      body: z.object({ data: z.string() }),
+      syncResponse: z.object({ result: z.string() }),
+      responseHeaders: z.object({
+        'x-required-header': z.string(),
+      }),
+      events: { result: z.object({ success: z.boolean() }) },
+      isDualMode: true as const,
+    }
+
+    const route = buildFastifyDualModeRoute(controller, {
+      contract: contractWithHeaders,
+      handlers: {
+        json: (ctx) => {
+          // Intentionally NOT setting the required header
+          return { result: ctx.request.body.data }
+        },
+        sse: () => {},
+      },
+    })
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route(route)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/api/missing-headers',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      payload: { data: 'test' },
+    })
+
+    // Should fail validation
+    expect(response.statusCode).toBe(500)
+    expect(response.json().message).toContain('Response headers validation failed')
+
+    await context.destroy()
+    await server.close()
+  })
+
+  it('works without responseHeaders schema (optional)', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
+
+    const controller: TestChatDualModeController = context.diContainer.resolve(
+      'testChatDualModeController',
+    )
+
+    // Create a contract WITHOUT responseHeaders schema
+    const contractWithoutHeaders = {
+      method: 'POST' as const,
+      pathResolver: () => '/api/no-headers',
+      params: z.object({}),
+      query: z.object({}),
+      requestHeaders: z.object({}),
+      body: z.object({ data: z.string() }),
+      syncResponse: z.object({ result: z.string() }),
+      // No responseHeaders - should still work
+      events: { result: z.object({ success: z.boolean() }) },
+      isDualMode: true as const,
+    }
+
+    const route = buildFastifyDualModeRoute(controller, {
+      contract: contractWithoutHeaders,
+      handlers: {
+        json: (ctx) => {
+          return { result: ctx.request.body.data }
+        },
+        sse: () => {},
+      },
+    })
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route(route)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/api/no-headers',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      payload: { data: 'test' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ result: 'test' })
+
+    await context.destroy()
+    await server.close()
   })
 })

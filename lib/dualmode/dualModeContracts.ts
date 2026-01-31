@@ -30,8 +30,9 @@ export type PathResolver<Params> = (params: Params) => string
  * @template Query - Query string parameters schema
  * @template RequestHeaders - Request headers schema
  * @template Body - Request body schema (for POST/PUT/PATCH)
- * @template JsonResponse - JSON response schema (for Accept: application/json)
+ * @template SyncResponse - Sync response schema (for Accept: application/json)
  * @template Events - SSE event schemas (for Accept: text/event-stream)
+ * @template ResponseHeaders - Response headers schema (for JSON mode)
  */
 export type DualModeContractDefinition<
   Method extends DualModeMethod = DualModeMethod,
@@ -39,8 +40,9 @@ export type DualModeContractDefinition<
   Query extends z.ZodTypeAny = z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny = z.ZodTypeAny,
   Body extends z.ZodTypeAny | undefined = undefined,
-  JsonResponse extends z.ZodTypeAny = z.ZodTypeAny,
+  SyncResponse extends z.ZodTypeAny = z.ZodTypeAny,
   Events extends SSEEventSchemas = SSEEventSchemas,
+  ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
 > = {
   method: Method
   pathResolver: PathResolver<z.infer<Params>>
@@ -48,7 +50,8 @@ export type DualModeContractDefinition<
   query: Query
   requestHeaders: RequestHeaders
   body: Body
-  jsonResponse: JsonResponse
+  syncResponse: SyncResponse
+  responseHeaders?: ResponseHeaders
   events: Events
   isDualMode: true
 }
@@ -65,157 +68,8 @@ export type AnyDualModeContractDefinition = {
   query: z.ZodTypeAny
   requestHeaders: z.ZodTypeAny
   body: z.ZodTypeAny | undefined
-  jsonResponse: z.ZodTypeAny
+  syncResponse: z.ZodTypeAny
+  responseHeaders?: z.ZodTypeAny
   events: SSEEventSchemas
   isDualMode: true
-}
-
-/**
- * Configuration for building a GET dual-mode route
- */
-export type DualModeContractConfig<
-  Params extends z.ZodTypeAny,
-  Query extends z.ZodTypeAny,
-  RequestHeaders extends z.ZodTypeAny,
-  JsonResponse extends z.ZodTypeAny,
-  Events extends SSEEventSchemas,
-> = {
-  pathResolver: PathResolver<z.infer<Params>>
-  params: Params
-  query: Query
-  requestHeaders: RequestHeaders
-  jsonResponse: JsonResponse
-  events: Events
-}
-
-/**
- * Configuration for building a POST/PUT/PATCH dual-mode route with request body
- */
-export type PayloadDualModeContractConfig<
-  Params extends z.ZodTypeAny,
-  Query extends z.ZodTypeAny,
-  RequestHeaders extends z.ZodTypeAny,
-  Body extends z.ZodTypeAny,
-  JsonResponse extends z.ZodTypeAny,
-  Events extends SSEEventSchemas,
-> = {
-  method?: 'POST' | 'PUT' | 'PATCH'
-  pathResolver: PathResolver<z.infer<Params>>
-  params: Params
-  query: Query
-  requestHeaders: RequestHeaders
-  body: Body
-  jsonResponse: JsonResponse
-  events: Events
-}
-
-/**
- * Build a GET dual-mode route definition.
- *
- * Use this for endpoints that can return either a complete JSON response
- * or stream SSE events based on the client's Accept header.
- *
- * @example
- * ```typescript
- * const statusContract = buildDualModeContract({
- *   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
- *   params: z.object({ jobId: z.string().uuid() }),
- *   query: z.object({}),
- *   requestHeaders: z.object({}),
- *   jsonResponse: z.object({
- *     status: z.enum(['pending', 'running', 'completed']),
- *     progress: z.number(),
- *   }),
- *   events: {
- *     progress: z.object({ percent: z.number() }),
- *     done: z.object({ result: z.string() }),
- *   },
- * })
- * ```
- */
-export function buildDualModeContract<
-  Params extends z.ZodTypeAny,
-  Query extends z.ZodTypeAny,
-  RequestHeaders extends z.ZodTypeAny,
-  JsonResponse extends z.ZodTypeAny,
-  Events extends SSEEventSchemas,
->(
-  config: DualModeContractConfig<Params, Query, RequestHeaders, JsonResponse, Events>,
-): DualModeContractDefinition<
-  'GET',
-  Params,
-  Query,
-  RequestHeaders,
-  undefined,
-  JsonResponse,
-  Events
-> {
-  return {
-    method: 'GET',
-    pathResolver: config.pathResolver,
-    params: config.params,
-    query: config.query,
-    requestHeaders: config.requestHeaders,
-    body: undefined,
-    jsonResponse: config.jsonResponse,
-    events: config.events,
-    isDualMode: true,
-  }
-}
-
-/**
- * Build a POST/PUT/PATCH dual-mode route definition.
- *
- * Use this for endpoints that accept a request body and can return either
- * a complete JSON response or stream SSE events based on the Accept header.
- *
- * @example
- * ```typescript
- * const chatCompletionContract = buildPayloadDualModeContract({
- *   method: 'POST',
- *   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
- *   params: z.object({ chatId: z.string().uuid() }),
- *   query: z.object({}),
- *   requestHeaders: z.object({ authorization: z.string() }),
- *   body: z.object({ message: z.string() }),
- *   jsonResponse: z.object({
- *     reply: z.string(),
- *     usage: z.object({ tokens: z.number() }),
- *   }),
- *   events: {
- *     chunk: z.object({ delta: z.string() }),
- *     done: z.object({ usage: z.object({ total: z.number() }) }),
- *   },
- * })
- * ```
- */
-export function buildPayloadDualModeContract<
-  Params extends z.ZodTypeAny,
-  Query extends z.ZodTypeAny,
-  RequestHeaders extends z.ZodTypeAny,
-  Body extends z.ZodTypeAny,
-  JsonResponse extends z.ZodTypeAny,
-  Events extends SSEEventSchemas,
->(
-  config: PayloadDualModeContractConfig<Params, Query, RequestHeaders, Body, JsonResponse, Events>,
-): DualModeContractDefinition<
-  'POST' | 'PUT' | 'PATCH',
-  Params,
-  Query,
-  RequestHeaders,
-  Body,
-  JsonResponse,
-  Events
-> {
-  return {
-    method: config.method ?? 'POST',
-    pathResolver: config.pathResolver,
-    params: config.params,
-    query: config.query,
-    requestHeaders: config.requestHeaders,
-    body: config.body,
-    jsonResponse: config.jsonResponse,
-    events: config.events,
-    isDualMode: true,
-  }
 }

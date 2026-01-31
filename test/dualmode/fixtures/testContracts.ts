@@ -1,18 +1,18 @@
 import { z } from 'zod'
-import { buildDualModeContract, buildPayloadDualModeContract } from '../../../index.js'
+import { buildContract } from '../../../index.js'
 
 /**
  * Simple POST dual-mode route without path params.
  * Used for basic Accept header routing tests.
  */
-export const chatCompletionContract = buildPayloadDualModeContract({
+export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/chat/completions',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
   body: z.object({ message: z.string() }),
-  jsonResponse: z.object({
+  syncResponse: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
@@ -25,14 +25,14 @@ export const chatCompletionContract = buildPayloadDualModeContract({
 /**
  * POST dual-mode route with path params demonstrating type-safe pathResolver.
  */
-export const conversationCompletionContract = buildPayloadDualModeContract({
+export const conversationCompletionContract = buildContract({
   method: 'POST',
   pathResolver: (params) => `/api/conversations/${params.conversationId}/completions`,
   params: z.object({ conversationId: z.string().uuid() }),
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
   body: z.object({ message: z.string() }),
-  jsonResponse: z.object({
+  syncResponse: z.object({
     reply: z.string(),
     conversationId: z.string(),
   }),
@@ -45,12 +45,12 @@ export const conversationCompletionContract = buildPayloadDualModeContract({
 /**
  * GET dual-mode route for status polling/streaming.
  */
-export const jobStatusContract = buildDualModeContract({
+export const jobStatusContract = buildContract({
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
   requestHeaders: z.object({}),
-  jsonResponse: z.object({
+  syncResponse: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
@@ -67,7 +67,7 @@ export const jobStatusContract = buildDualModeContract({
  * Note: authorization is optional in schema so schema validation doesn't block
  * unauthenticated requests - the preHandler handles 401 responses.
  */
-export const authenticatedDualModeContract = buildPayloadDualModeContract({
+export const authenticatedDualModeContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/protected/action',
   params: z.object({}),
@@ -76,7 +76,7 @@ export const authenticatedDualModeContract = buildPayloadDualModeContract({
     authorization: z.string().optional(),
   }),
   body: z.object({ data: z.string() }),
-  jsonResponse: z.object({
+  syncResponse: z.object({
     success: z.boolean(),
     data: z.string(),
   }),
@@ -88,14 +88,14 @@ export const authenticatedDualModeContract = buildPayloadDualModeContract({
 /**
  * Simple POST dual-mode route for testing default mode behavior.
  */
-export const defaultModeTestContract = buildPayloadDualModeContract({
+export const defaultModeTestContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/default-mode-test',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
   body: z.object({ input: z.string() }),
-  jsonResponse: z.object({ output: z.string() }),
+  syncResponse: z.object({ output: z.string() }),
   events: {
     output: z.object({ value: z.string() }),
   },
@@ -104,14 +104,14 @@ export const defaultModeTestContract = buildPayloadDualModeContract({
 /**
  * POST dual-mode route for testing error handling in SSE mode.
  */
-export const errorTestContract = buildPayloadDualModeContract({
+export const errorTestContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/error-test',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
   body: z.object({ shouldThrow: z.boolean() }),
-  jsonResponse: z.object({ success: z.boolean() }),
+  syncResponse: z.object({ success: z.boolean() }),
   events: {
     result: z.object({ success: z.boolean() }),
   },
@@ -119,16 +119,16 @@ export const errorTestContract = buildPayloadDualModeContract({
 
 /**
  * POST dual-mode route WITHOUT explicit method - tests the default POST behavior.
- * This covers the `config.method ?? 'POST'` branch in buildPayloadDualModeContract.
+ * This covers the `config.method ?? 'POST'` branch in buildContract.
  */
-export const defaultMethodContract = buildPayloadDualModeContract({
+export const defaultMethodContract = buildContract({
   // method is intentionally omitted to test default behavior
   pathResolver: () => '/api/default-method-test',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
   body: z.object({ value: z.string() }),
-  jsonResponse: z.object({ result: z.string() }),
+  syncResponse: z.object({ result: z.string() }),
   events: {
     data: z.object({ value: z.string() }),
   },
@@ -136,16 +136,16 @@ export const defaultMethodContract = buildPayloadDualModeContract({
 
 /**
  * POST dual-mode route for testing JSON response validation failure.
- * The jsonResponse schema is strict, but the handler will return mismatched data.
+ * The syncResponse schema is strict, but the handler will return mismatched data.
  */
-export const jsonValidationContract = buildPayloadDualModeContract({
+export const jsonValidationContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/json-validation-test',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
   body: z.object({ returnInvalid: z.boolean() }),
-  jsonResponse: z.object({
+  syncResponse: z.object({
     requiredField: z.string(),
     count: z.number().int().positive(),
   }),

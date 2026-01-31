@@ -3,9 +3,8 @@ import { z } from 'zod/v4'
 import {
   AbstractSSEController,
   type BuildFastifySSERoutesReturnType,
+  buildContract,
   buildFastifySSEHandler,
-  buildPayloadSSEContract,
-  buildSSEContract,
 } from '../../index.js'
 
 /**
@@ -16,7 +15,7 @@ import {
  */
 
 // Define a realistic contract like users would
-const chatStreamContract = buildPayloadSSEContract({
+const chatStreamContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/chat/stream',
   params: z.object({}),
@@ -366,7 +365,7 @@ describe('SSE Controller Type Safety', () => {
     it('provides autocomplete for event names from all contracts', () => {
       // This test demonstrates that a controller with multiple contracts
       // gets autocomplete for all events across all routes
-      const notificationContract = buildSSEContract({
+      const notificationContract = buildContract({
         pathResolver: () => '/api/notifications',
         params: z.object({}),
         query: z.object({}),
@@ -428,6 +427,74 @@ describe('SSE Controller Type Safety', () => {
       const controller = new MultiContractController({})
       expect(controller.sendChunk).toBeDefined()
       expect(controller.sendAlert).toBeDefined()
+    })
+  })
+})
+
+describe('Dual-Mode Contract Type Safety', () => {
+  describe('responseHeaders type inference', () => {
+    it('infers responseHeaders type when defined', () => {
+      // Contract with responseHeaders
+      const contractWithHeaders = buildContract({
+        method: 'POST',
+        pathResolver: () => '/api/test',
+        params: z.object({}),
+        query: z.object({}),
+        requestHeaders: z.object({}),
+        body: z.object({ data: z.string() }),
+        syncResponse: z.object({ result: z.string() }),
+        responseHeaders: z.object({
+          'x-request-id': z.string(),
+          'x-custom': z.number(),
+        }),
+        events: {
+          done: z.object({ success: z.boolean() }),
+        },
+      })
+
+      // Type should include responseHeaders
+      expect(contractWithHeaders.responseHeaders).toBeDefined()
+      expect(contractWithHeaders.isDualMode).toBe(true)
+    })
+
+    it('allows omitting responseHeaders', () => {
+      // Contract WITHOUT responseHeaders - should compile fine
+      const contractWithoutHeaders = buildContract({
+        method: 'POST',
+        pathResolver: () => '/api/test',
+        params: z.object({}),
+        query: z.object({}),
+        requestHeaders: z.object({}),
+        body: z.object({ data: z.string() }),
+        syncResponse: z.object({ result: z.string() }),
+        events: {
+          done: z.object({ success: z.boolean() }),
+        },
+      })
+
+      // responseHeaders should be undefined
+      expect(contractWithoutHeaders.responseHeaders).toBeUndefined()
+      expect(contractWithoutHeaders.isDualMode).toBe(true)
+    })
+
+    it('SSE contracts do not have responseHeaders', () => {
+      // SSE contract (no syncResponse)
+      const sseContract = buildContract({
+        method: 'POST',
+        pathResolver: () => '/api/sse',
+        params: z.object({}),
+        query: z.object({}),
+        requestHeaders: z.object({}),
+        body: z.object({ data: z.string() }),
+        events: {
+          chunk: z.object({ content: z.string() }),
+        },
+      })
+
+      // SSE contracts are marked with isSSE, not isDualMode
+      expect(sseContract.isSSE).toBe(true)
+      // @ts-expect-error - responseHeaders does not exist on SSE contracts
+      expect(sseContract.responseHeaders).toBeUndefined()
     })
   })
 })

@@ -1,3 +1,5 @@
+// Re-export buildContract from contracts module
+export { buildContract } from '../contracts/index.js'
 export {
   AbstractSSEController,
   type AllContractEventNames,
@@ -22,15 +24,11 @@ export {
   type SSEConnection,
 } from './fastifySSETypes.js'
 export { type SSEConnectionEvent, SSEConnectionSpy } from './SSEConnectionSpy.js'
-export {
-  type AnySSEContractDefinition,
-  buildPayloadSSEContract,
-  buildSSEContract,
-  type PayloadSSEContractConfig,
-  type SSEContractConfig,
-  type SSEContractDefinition,
-  type SSEMethod,
-  type SSEPathResolver,
+export type {
+  AnySSEContractDefinition,
+  SSEContractDefinition,
+  SSEMethod,
+  SSEPathResolver,
 } from './sseContracts.js'
 export {
   type ParsedSSEEvent,

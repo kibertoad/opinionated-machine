@@ -55,7 +55,7 @@ type SSEReply = FastifyReply & { sse: SSEReplyInterface }
  * ```typescript
  * class NotificationsSSEController extends AbstractSSEController<typeof contracts> {
  *   public static contracts = {
- *     notifications: buildSSEContract({ ... }),
+ *     notifications: buildContract({ ... }),
  *   } as const
  *
  *   public buildSSERoutes() {

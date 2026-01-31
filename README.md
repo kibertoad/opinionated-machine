@@ -398,14 +398,14 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildSSEContract` for GET-based SSE streams or `buildPayloadSSEContract` for POST/PUT/PATCH streams. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
+Use `buildContract` to define SSE routes. The contract type is automatically determined based on the presence of `body` and `syncResponse` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
-import { buildSSEContract, buildPayloadSSEContract } from 'opinionated-machine'
+import { buildContract } from 'opinionated-machine'
 
-// GET-based SSE stream with path params
-export const channelStreamContract = buildSSEContract({
+// GET-based SSE stream with path params (no body = GET)
+export const channelStreamContract = buildContract({
   pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
   params: z.object({ channelId: z.string() }),
   query: z.object({}),
@@ -416,7 +416,7 @@ export const channelStreamContract = buildSSEContract({
 })
 
 // GET-based SSE stream without path params
-export const notificationsContract = buildSSEContract({
+export const notificationsContract = buildContract({
   pathResolver: () => '/api/notifications/stream',
   params: z.object({}),
   query: z.object({ userId: z.string().optional() }),
@@ -429,8 +429,8 @@ export const notificationsContract = buildSSEContract({
   },
 })
 
-// POST-based SSE stream (e.g., AI chat completions)
-export const chatCompletionContract = buildPayloadSSEContract({
+// POST-based SSE stream (e.g., AI chat completions) - has body = POST/PUT/PATCH
+export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/chat/completions',
   params: z.object({}),
@@ -1308,19 +1308,27 @@ Dual-mode controllers extend `AbstractDualModeController` which inherits from `A
 
 ### Defining Dual-Mode Contracts
 
-Use `buildDualModeContract` for GET routes or `buildPayloadDualModeContract` for POST/PUT/PATCH routes. The key difference from SSE contracts is the addition of `jsonResponse` schema:
+Dual-mode contracts define endpoints that can return **either** a complete JSON response **or** stream SSE events, based on the client's `Accept` header. Use dual-mode when:
+
+- Clients may want immediate results (JSON) or real-time updates (SSE)
+- You're building OpenAI-style APIs where `stream: true` triggers SSE
+- You need polling fallback for clients that don't support SSE
+
+To create a dual-mode contract, include a `syncResponse` schema in your `buildContract` call:
+- Has `syncResponse` but no `body` → GET dual-mode route
+- Has both `syncResponse` and `body` → POST/PUT/PATCH dual-mode route
 
 ```ts
 import { z } from 'zod'
-import { buildDualModeContract, buildPayloadDualModeContract } from 'opinionated-machine'
+import { buildContract } from 'opinionated-machine'
 
-// GET dual-mode route (polling or streaming job status)
-export const jobStatusContract = buildDualModeContract({
+// GET dual-mode route (polling or streaming job status) - has syncResponse, no body
+export const jobStatusContract = buildContract({
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
   requestHeaders: z.object({}),
-  jsonResponse: z.object({
+  syncResponse: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
@@ -1331,15 +1339,15 @@ export const jobStatusContract = buildDualModeContract({
   },
 })
 
-// POST dual-mode route (OpenAI-style chat completion)
-export const chatCompletionContract = buildPayloadDualModeContract({
+// POST dual-mode route (OpenAI-style chat completion) - has both syncResponse and body
+export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
   params: z.object({ chatId: z.string().uuid() }),
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
   body: z.object({ message: z.string() }),
-  jsonResponse: z.object({
+  syncResponse: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
@@ -1351,6 +1359,47 @@ export const chatCompletionContract = buildPayloadDualModeContract({
 ```
 
 **Note**: Dual-mode contracts use `pathResolver` instead of static `path` for type-safe path construction. The `pathResolver` function receives typed params and returns the URL path.
+
+### Response Headers (JSON Mode)
+
+Dual-mode contracts support an optional `responseHeaders` schema to define and validate headers sent with JSON responses. This is useful for documenting expected headers (rate limits, pagination, cache control) and validating that your handlers set them correctly:
+
+```ts
+export const rateLimitedContract = buildContract({
+  method: 'POST',
+  pathResolver: () => '/api/rate-limited',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  body: z.object({ data: z.string() }),
+  syncResponse: z.object({ result: z.string() }),
+  // Define expected response headers
+  responseHeaders: z.object({
+    'x-ratelimit-limit': z.string(),
+    'x-ratelimit-remaining': z.string(),
+    'x-ratelimit-reset': z.string(),
+  }),
+  events: {
+    result: z.object({ success: z.boolean() }),
+  },
+})
+```
+
+In your handler, set headers using `ctx.reply.header()`:
+
+```ts
+handlers: {
+  json: async (ctx) => {
+    ctx.reply.header('x-ratelimit-limit', '100')
+    ctx.reply.header('x-ratelimit-remaining', '99')
+    ctx.reply.header('x-ratelimit-reset', '1640000000')
+    return { result: 'success' }
+  },
+  sse: async (ctx) => { /* ... */ },
+}
+```
+
+If the handler doesn't set the required headers, validation will fail with a `RESPONSE_HEADERS_VALIDATION_FAILED` error.
 
 ### Implementing Dual-Mode Controllers
 
@@ -1434,7 +1483,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 | `json` | `ctx.mode`, `ctx.request`, `ctx.reply` |
 | `sse` | `ctx.mode`, `ctx.connection`, `ctx.request` |
 
-The `json` handler must return a value matching `jsonResponse` schema. The `sse` handler uses `ctx.connection.send()` for type-safe event streaming.
+The `json` handler must return a value matching `syncResponse` schema. The `sse` handler uses `ctx.connection.send()` for type-safe event streaming.
 
 ### Registering Dual-Mode Controllers
 
