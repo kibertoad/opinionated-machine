@@ -1,6 +1,6 @@
 import { InternalError } from '@lokalise/node-core'
 import type { RouteOptions } from 'fastify'
-import type { z } from 'zod'
+import { ZodObject } from 'zod'
 import { extractPathTemplate, handleSSEError, setupSSEConnection } from '../sse/sseRouteUtils.ts'
 import type { AbstractDualModeController } from './AbstractDualModeController.ts'
 import type { AnyDualModeRouteDefinition } from './dualModeContracts.ts'
@@ -84,10 +84,14 @@ export function buildFastifyDualModeRoute<Contract extends AnyDualModeRouteDefin
   const defaultMode = options?.defaultMode ?? 'json'
 
   // Extract Fastify path template from pathResolver
-  const url = extractPathTemplate(
-    contract.pathResolver,
-    contract.params as z.ZodObject<z.ZodRawShape>,
-  )
+  // Runtime guard: extractPathTemplate requires a ZodObject to access .shape for parameter names
+  if (!(contract.params instanceof ZodObject)) {
+    throw new InternalError({
+      message: `Route params schema must be a ZodObject for path template extraction, got ${contract.params.constructor.name}`,
+      errorCode: 'INVALID_PARAMS_SCHEMA',
+    })
+  }
+  const url = extractPathTemplate(contract.pathResolver, contract.params)
 
   const routeOptions: RouteOptions = {
     method: contract.method,
@@ -145,6 +149,11 @@ export function buildFastifyDualModeRoute<Contract extends AnyDualModeRouteDefin
         })
       } catch (err) {
         await handleSSEError(sseReply, controller, connectionId, err)
+        // Re-throw the error intentionally to let Fastify's error handler and onError hooks
+        // run for logging/monitoring purposes. Although headers are already sent at this point
+        // (so the HTTP status code cannot be changed), propagating the error ensures that
+        // application-level error tracking, metrics, and logging infrastructure can observe
+        // and record the failure.
         throw err
       }
 
