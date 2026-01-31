@@ -820,7 +820,7 @@ private handleStream = buildHandler(streamContract, {
 
 **Request-response streaming** (AI completions):
 - Handler sends all events and closes connection
-- Use `ctx.connection.send` for type-safe event sending
+- Use `connection.send` for type-safe event sending
 
 ```ts
 private handleChatCompletion = buildHandler(chatCompletionContract, {
