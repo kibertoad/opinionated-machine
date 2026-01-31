@@ -1,4 +1,4 @@
-import { InternalError } from '@lokalise/node-core'
+import { InternalError, isFailure } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
 import type { z } from 'zod'
 import { ZodObject } from 'zod'
@@ -105,7 +105,21 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
 
   try {
     // biome-ignore lint/suspicious/noExplicitAny: Connection types are validated by FastifyDualModeHandlerConfig
-    await handlers.sse(request, connection as any)
+    const result = await handlers.sse(request, connection as any)
+
+    if (isFailure(result)) {
+      // Handler returned an error - treat as handler error
+      throw result.error
+    }
+
+    // Handle connection based on result
+    if (result.result === 'disconnect') {
+      // Request-response streaming: close connection after handler completes
+      controller.closeConnection(connectionId)
+    } else {
+      // Long-lived connection: wait for client to disconnect
+      await connectionClosed
+    }
   } catch (err) {
     await handleSSEError(sseReply, controller, connectionId, err)
     // Re-throw the error intentionally to let Fastify's error handler and onError hooks
@@ -115,9 +129,6 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
     // and record the failure.
     throw err
   }
-
-  // Block the handler until the connection closes
-  await connectionClosed
 }
 
 /**
@@ -225,11 +236,24 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
       )
 
       // Call user handler with flat (request, connection) signature
-      // Errors (including validation errors) are caught, sent as error events, and re-thrown
-      // so the app's error handler can process them (for logging, monitoring, etc.)
+      // Handler returns Either<Error, SSEHandlerResult> indicating how to manage connection
       try {
         // biome-ignore lint/suspicious/noExplicitAny: Request and connection types are validated by FastifySSEHandlerConfig
-        await handlers.sse(request as any, connection as any)
+        const result = await handlers.sse(request as any, connection as any)
+
+        if (isFailure(result)) {
+          // Handler returned an error - treat as handler error
+          throw result.error
+        }
+
+        // Handle connection based on result
+        if (result.result === 'disconnect') {
+          // Request-response streaming: close connection after handler completes
+          controller.closeConnection(connectionId)
+        } else {
+          // Long-lived connection: wait for client to disconnect
+          await connectionClosed
+        }
       } catch (err) {
         await handleSSEError(sseReply, controller, connectionId, err)
 
@@ -238,10 +262,6 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         // but error hooks will still fire for monitoring/logging purposes
         throw err
       }
-
-      // Block the handler until the connection closes
-      // This prevents Fastify from ending the response prematurely
-      await connectionClosed
     },
   }
 

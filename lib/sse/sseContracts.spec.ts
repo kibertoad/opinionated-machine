@@ -1,3 +1,4 @@
+import { success } from '@lokalise/node-core'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
 import { buildContract } from '../contracts/contractBuilders.ts'
@@ -81,6 +82,7 @@ describe('sseContracts', () => {
         sse: async (_request, connection) => {
           await connection.send('chunk', { content: 'hello' })
           await connection.send('done', { totalTokens: 42 })
+          return success('disconnect')
         },
       })
 
@@ -92,6 +94,7 @@ describe('sseContracts', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - 'invalid' is not a valid event name
           await connection.send('invalid', { content: 'test' })
+          return success('disconnect')
         },
       })
 
@@ -103,6 +106,7 @@ describe('sseContracts', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - chunk expects { content: string }, not { totalTokens: number }
           await connection.send('chunk', { totalTokens: 42 })
+          return success('disconnect')
         },
       })
 
@@ -114,6 +118,7 @@ describe('sseContracts', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - done requires totalTokens field
           await connection.send('done', {})
+          return success('disconnect')
         },
       })
 
@@ -125,6 +130,7 @@ describe('sseContracts', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - totalTokens should be number, not string
           await connection.send('done', { totalTokens: 'not a number' })
+          return success('disconnect')
         },
       })
 
@@ -142,6 +148,7 @@ describe('sseContracts', () => {
 
           expect(message).toBeDefined()
           expect(count).toBeDefined()
+          return success('disconnect')
         },
       })
 
@@ -157,6 +164,7 @@ describe('sseContracts', () => {
           const _invalid = request.params.nonExistent
 
           expect(id).toBeDefined()
+          return success('disconnect')
         },
       })
 

@@ -1,3 +1,4 @@
+import { success } from '@lokalise/node-core'
 import {
   AbstractDualModeController,
   type BuildFastifyDualModeRoutesReturnType,
@@ -44,7 +45,7 @@ export class TestChatDualModeController extends AbstractDualModeController<TestC
               await connection.send('chunk', { delta: word })
             }
             await connection.send('done', { usage: { total: words.length } })
-            this.closeConnection(connection.id)
+            return success('disconnect')
           },
         }),
       },
@@ -81,7 +82,7 @@ export class TestConversationDualModeController extends AbstractDualModeControll
             await connection.send('done', {
               conversationId: request.params.conversationId,
             })
-            this.closeConnection(connection.id)
+            return success('disconnect')
           },
         }),
         options: {
@@ -143,8 +144,7 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
             const state = this.jobStates.get(request.params.jobId)
             if (!state) {
               await connection.send('progress', { percent: 0 })
-              this.closeConnection(connection.id)
-              return
+              return success('disconnect')
             }
 
             // Simulate progress updates
@@ -161,7 +161,7 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
               await connection.send('error', { code: 'JOB_FAILED', message: 'Job failed' })
             }
 
-            this.closeConnection(connection.id)
+            return success('disconnect')
           },
         }),
       },
@@ -195,7 +195,7 @@ export class TestAuthenticatedDualModeController extends AbstractDualModeControl
               success: true,
               data: `Processed: ${request.body.data}`,
             })
-            this.closeConnection(connection.id)
+            return success('disconnect')
           },
         }),
         options: {
@@ -234,7 +234,7 @@ export class TestDefaultModeDualModeController extends AbstractDualModeControlle
           }),
           sse: async (request, connection) => {
             await connection.send('output', { value: `SSE: ${request.body.input}` })
-            this.closeConnection(connection.id)
+            return success('disconnect')
           },
         }),
         options: {
@@ -270,7 +270,7 @@ export class TestErrorDualModeController extends AbstractDualModeController<Test
               throw new Error('Test error in SSE handler')
             }
             await connection.send('result', { success: true })
-            this.closeConnection(connection.id)
+            return success('disconnect')
           },
         }),
       },
@@ -300,7 +300,7 @@ export class TestDefaultMethodDualModeController extends AbstractDualModeControl
           }),
           sse: async (request, connection) => {
             await connection.send('data', { value: request.body.value })
-            this.closeConnection(connection.id)
+            return success('disconnect')
           },
         }),
       },
@@ -335,7 +335,7 @@ export class TestJsonValidationDualModeController extends AbstractDualModeContro
           },
           sse: async (_request, connection) => {
             await connection.send('result', { success: true })
-            this.closeConnection(connection.id)
+            return success('disconnect')
           },
         }),
       },

@@ -1,3 +1,6 @@
+// Re-export Either utilities from @lokalise/node-core for SSE handler results
+export { type Either, failure, success } from '@lokalise/node-core'
+
 // Unified route builder
 export { buildFastifyRoute, extractPathTemplate } from './fastifyRouteBuilder.js'
 
@@ -22,6 +25,10 @@ export {
   type RegisterSSERoutesOptions,
   // SSE types
   type SSEConnection,
+  // SSE handler result types
+  type SSEHandlerDisconnect,
+  type SSEHandlerMaintainConnection,
+  type SSEHandlerResult,
   type SSEModeHandler,
   type SSEOnlyHandlers,
 } from './fastifyRouteTypes.js'

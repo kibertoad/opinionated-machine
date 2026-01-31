@@ -1,3 +1,4 @@
+import { success } from '@lokalise/node-core'
 import {
   AbstractSSEController,
   type BuildFastifySSERoutesReturnType,
@@ -70,6 +71,8 @@ export class StreamController extends AbstractSSEController<{
           data: { text: String(data) },
         })
       })
+
+      return success('maintain_connection')
     },
   })
 
@@ -127,6 +130,8 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
       await new Promise<void>((resolve) => {
         this.handlerDoneResolvers.set(connection.id, resolve)
       })
+
+      return success('maintain_connection')
     },
   })
 
@@ -215,7 +220,7 @@ export class TestPostSSEController extends AbstractSSEController<TestPostSSECont
         await connection.send('chunk', { content: word })
       }
       await connection.send('done', { totalTokens: words.length })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
   })
 }
@@ -253,7 +258,7 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
   private handleAuthenticatedStream = buildHandler(authenticatedStreamContract, {
     sse: async (_request, connection) => {
       await connection.send('data', { value: 'authenticated data' })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
   })
 }
@@ -287,7 +292,7 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
         content: `Welcome to channel ${request.params.channelId}`,
         author: 'system',
       })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
   })
 }
@@ -335,7 +340,7 @@ export class TestReconnectSSEController extends AbstractSSEController<TestReconn
     sse: async (_request, connection) => {
       // Send a new event after connection
       await connection.send('event', { id: '6', data: 'New event after reconnect' }, { id: '6' })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
   })
 
@@ -406,7 +411,7 @@ export class TestAsyncReconnectSSEController extends AbstractSSEController<TestA
         { id: '4', data: 'Async new event after reconnect' },
         { id: '4' },
       )
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
   })
 
@@ -480,7 +485,7 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
       // Send completion event with totals
       await connection.send('done', { totalChunks: chunkCount, totalBytes })
 
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
   })
 }
@@ -527,6 +532,7 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
     sse: async (_request, connection) => {
       await connection.send('message', { text: 'Hello from logger test' })
       // Don't close connection - let client close to trigger onDisconnect
+      return success('maintain_connection')
     },
   })
 }
@@ -569,7 +575,7 @@ export class TestValidationSSEController extends AbstractSSEController<TestValid
         status: 'active' | 'inactive'
       }
       await connection.send('validatedEvent', eventData)
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
   })
 }
@@ -622,7 +628,7 @@ export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpen
       // This demonstrates that JSON encoding is NOT mandatory for SSE data
       await connection.send('done', '[DONE]')
 
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
   })
 }
@@ -669,7 +675,7 @@ export class TestOnReconnectErrorSSEController extends AbstractSSEController<Tes
     sse: async (_request, connection) => {
       // Send message to verify connection still works after onReconnect error
       await connection.send('event', { id: 'new', data: 'Hello after onReconnect error' })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
   })
 }
@@ -716,7 +722,7 @@ export class TestOnConnectErrorSSEController extends AbstractSSEController<TestO
     sse: async (_request, connection) => {
       // Send message to verify connection still works after onConnect error
       await connection.send('message', { text: 'Hello after onConnect error' })
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
   })
 }

@@ -319,13 +319,14 @@ export abstract class AbstractSSEController<
    *
    * This gracefully ends the SSE stream by calling the underlying `reply.sse.close()`.
    * All previously sent data is flushed to the client before the connection terminates.
-   * Use this to signal end-of-stream after sending all events (e.g., in request-response
-   * style streaming like OpenAI completions).
+   *
+   * Called automatically by the route builder when handler returns `success('disconnect')`.
+   * Can also be called manually for scenarios like external triggers or timeouts.
    *
    * @param connectionId - The connection to close
    * @returns true if connection was found and closed
    */
-  protected closeConnection(connectionId: string): boolean {
+  public closeConnection(connectionId: string): boolean {
     const connection = this.connections.get(connectionId)
     if (!connection) {
       return false

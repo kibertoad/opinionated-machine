@@ -580,7 +580,7 @@ class ChatSSEController extends AbstractSSEController<Contracts> {
       }
 
       // Gracefully end the stream - all sent data is flushed before connection closes
-      this.closeConnection(connection.id)
+      return success('disconnect')
     },
   })
 
@@ -800,23 +800,36 @@ public buildSSERoutes() {
 
 ### Long-lived Connections vs Request-Response Streaming
 
-SSE supports two fundamentally different patterns with different connection lifecycles:
+SSE handlers must return an `Either<Error, SSEHandlerResult>` to explicitly indicate connection management.
+
+The `Either` type along with the `success` and `failure` helper functions are re-exported from `@lokalise/node-core` for convenience, so you don't need to add `@lokalise/node-core` as a direct dependency:
+
+```ts
+import { type Either, success, failure } from 'opinionated-machine'
+
+// Return success('disconnect') - close connection after handler completes
+// Return success('maintain_connection') - keep connection open for external events
+// Return failure(error) - handle error and close connection
+```
 
 **Long-lived connections** (notifications, live updates):
-- Handler sets up subscriptions and returns immediately
+- Handler sets up subscriptions and returns `success('maintain_connection')`
 - Connection stays open indefinitely after handler returns
 - Events are sent later via callbacks using `sendEventInternal()`
 - **Client closes connection** when done (e.g., `eventSource.close()` or navigating away)
 - Server cleans up via `onConnectionClosed()` hook
 
 ```ts
+import { success } from 'opinionated-machine'
+
 private handleStream = buildHandler(streamContract, {
   sse: async (request, connection) => {
     // Set up subscription - events sent via callback AFTER handler returns
     this.service.subscribe(connection.id, (data) => {
       this.sendEventInternal(connection.id, { event: 'update', data })
     })
-    // Handler returns, connection stays open until CLIENT disconnects
+    // Keep connection open until CLIENT disconnects
+    return success('maintain_connection')
   },
 })
 
@@ -827,11 +840,13 @@ protected onConnectionClosed(connection: SSEConnection): void {
 ```
 
 **Request-response streaming** (AI completions):
-- Handler sends all events synchronously, then closes connection
+- Handler sends all events synchronously, then returns `success('disconnect')`
 - Use `connection.send()` for type-safe event sending within the handler
-- Must explicitly call `closeConnection()` when done
+- Connection automatically closes when handler returns with `'disconnect'`
 
 ```ts
+import { success } from 'opinionated-machine'
+
 private handleChatCompletion = buildHandler(chatCompletionContract, {
   sse: async (request, connection) => {
     const words = request.body.message.split(' ')
@@ -841,17 +856,30 @@ private handleChatCompletion = buildHandler(chatCompletionContract, {
     }
     await connection.send('done', { totalTokens: words.length })
 
-    // Must explicitly close - see note below
-    this.closeConnection(connection.id)
+    // Signal that streaming is complete and connection should close
+    return success('disconnect')
   },
 })
 ```
 
-**Why no automatic connection closure?**
+**Error handling:**
 
-Connections are not automatically closed when the handler returns because this would break long-lived connections. In the long-lived pattern, the handler returns early to set up event sources (subscriptions, timers, external triggers), and events are sent later. Auto-closing would terminate these connections before any events could be sent.
+Return `failure(error)` to signal an error occurred. The framework will send an error event and close the connection:
 
-Since the framework cannot distinguish between "handler finished streaming" and "handler set up listeners and returned early", explicit `closeConnection()` is required for request-response patterns.
+```ts
+import { success, failure } from 'opinionated-machine'
+
+private handleStream = buildHandler(streamContract, {
+  sse: async (request, connection) => {
+    try {
+      const data = await this.service.getData(request.params.id)
+      await connection.send('data', data)
+      return success('disconnect')
+    } catch (err) {
+      return failure(err instanceof Error ? err : new Error(String(err)))
+    }
+  },
+})
 
 ### SSE Parsing Utilities
 
@@ -1468,7 +1496,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
               totalTokens += chunk.tokenCount ?? 0
             }
             await connection.send('done', { usage: { total: totalTokens } })
-            this.closeConnection(connection.id)
+            return success('disconnect')
           },
         }),
         options: {
@@ -1495,7 +1523,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 | Mode | Signature |
 | ---- | --------- |
 | `json` | `(request, reply) => Response` |
-| `sse` | `(request, connection) => void` |
+| `sse` | `(request, connection) => Either<Error, SSEHandlerResult>` |
 
 The `json` handler must return a value matching `syncResponse` schema. The `sse` handler uses `connection.send()` for type-safe event streaming.
 

@@ -1,3 +1,4 @@
+import { success } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { z } from 'zod/v4'
@@ -81,6 +82,8 @@ describe('SSE Controller Type Safety', () => {
             // Request body is typed
             const messages = request.body.messages
             expect(messages).toBeDefined()
+
+            return success('disconnect')
           },
         })
       }
@@ -106,6 +109,7 @@ describe('SSE Controller Type Safety', () => {
           sse: async (_request, connection) => {
             // @ts-expect-error - 'message' is not a valid event name, should be 'chunk', 'done', or 'error'
             await connection.send('message', { text: 'hello' })
+            return success('disconnect')
           },
         })
       }
@@ -130,6 +134,7 @@ describe('SSE Controller Type Safety', () => {
           sse: async (_request, connection) => {
             // @ts-expect-error - 'chunk' event expects { content: string, index: number }, not { text: string }
             await connection.send('chunk', { text: 'hello' })
+            return success('disconnect')
           },
         })
       }
@@ -154,6 +159,7 @@ describe('SSE Controller Type Safety', () => {
           sse: async (_request, connection) => {
             // @ts-expect-error - 'done' event requires both 'totalTokens' and 'model', missing 'model'
             await connection.send('done', { totalTokens: 10 })
+            return success('disconnect')
           },
         })
       }
@@ -178,6 +184,7 @@ describe('SSE Controller Type Safety', () => {
           sse: async (_request, connection) => {
             // @ts-expect-error - 'index' should be number, not string
             await connection.send('chunk', { content: 'hello', index: 'one' })
+            return success('disconnect')
           },
         })
       }
@@ -208,6 +215,8 @@ describe('SSE Controller Type Safety', () => {
 
             // @ts-expect-error - 'error' event expects { code: number, message: string }, not 'chunk' payload
             await connection.send('error', { content: 'hello', index: 0 })
+
+            return success('disconnect')
           },
         })
       }
@@ -239,6 +248,8 @@ describe('SSE Controller Type Safety', () => {
 
             expect(model).toBeDefined()
             expect(messages).toBeDefined()
+
+            return success('disconnect')
           },
         })
       }
@@ -267,6 +278,8 @@ describe('SSE Controller Type Safety', () => {
             // Note: Fastify headers are loosely typed (allow arbitrary keys)
             // so we can't test @ts-expect-error for non-existent headers
             expect(auth).toBeDefined()
+
+            return success('disconnect')
           },
         })
       }
@@ -284,7 +297,11 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: ExternalTriggerController.contracts.chatStream,
-              handlers: buildHandler(chatStreamContract, { sse: () => {} }),
+              handlers: buildHandler(chatStreamContract, {
+                sse: () => {
+                  return success('maintain_connection')
+                },
+              }),
             },
           }
         }
@@ -320,7 +337,11 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: InvalidExternalController.contracts.chatStream,
-              handlers: buildHandler(chatStreamContract, { sse: () => {} }),
+              handlers: buildHandler(chatStreamContract, {
+                sse: () => {
+                  return success('maintain_connection')
+                },
+              }),
             },
           }
         }
@@ -342,7 +363,11 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: WrongPayloadExternalController.contracts.chatStream,
-              handlers: buildHandler(chatStreamContract, { sse: () => {} }),
+              handlers: buildHandler(chatStreamContract, {
+                sse: () => {
+                  return success('maintain_connection')
+                },
+              }),
             },
           }
         }
@@ -364,7 +389,11 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: MissingFieldExternalController.contracts.chatStream,
-              handlers: buildHandler(chatStreamContract, { sse: () => {} }),
+              handlers: buildHandler(chatStreamContract, {
+                sse: () => {
+                  return success('maintain_connection')
+                },
+              }),
             },
           }
         }
@@ -407,11 +436,19 @@ describe('SSE Controller Type Safety', () => {
           return {
             chatStream: {
               contract: MultiContractController.contracts.chatStream,
-              handlers: buildHandler(chatStreamContract, { sse: () => {} }),
+              handlers: buildHandler(chatStreamContract, {
+                sse: () => {
+                  return success('maintain_connection')
+                },
+              }),
             },
             notifications: {
               contract: MultiContractController.contracts.notifications,
-              handlers: buildHandler(notificationContract, { sse: () => {} }),
+              handlers: buildHandler(notificationContract, {
+                sse: () => {
+                  return success('maintain_connection')
+                },
+              }),
             },
           }
         }
@@ -563,6 +600,8 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
             // Request query is typed
             const since: string | undefined = request.query.since
             expect(since).toBeDefined()
+
+            return success('disconnect')
           },
         })
       }
@@ -576,6 +615,7 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - 'message' is not a valid event name
           await connection.send('message', { text: 'hello' })
+          return success('disconnect')
         },
       })
 
@@ -587,6 +627,7 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - 'notification' expects { id: string, message: string }, not { text: string }
           await connection.send('notification', { text: 'hello' })
+          return success('disconnect')
         },
       })
 
@@ -598,6 +639,7 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - 'notification' requires both 'id' and 'message'
           await connection.send('notification', { id: '1' })
+          return success('disconnect')
         },
       })
 
@@ -613,6 +655,8 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
           const _invalid = request.params.nonExistent
 
           expect(userId).toBeDefined()
+
+          return success('disconnect')
         },
       })
 
@@ -628,6 +672,8 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
           const _invalid = request.query.nonExistent
 
           expect(since).toBeDefined()
+
+          return success('disconnect')
         },
       })
 
@@ -642,6 +688,7 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
       const handlers = buildHandler(notificationsContract, {
         sse: async (_request, connection) => {
           await connection.send('notification', { id: '1', message: 'test' })
+          return success('disconnect')
         },
       })
 
@@ -700,6 +747,7 @@ describe('Dual-Mode Handler Type Safety', () => {
                 sse: async (_request, connection) => {
                   await connection.send('chunk', { delta: 'Hello' })
                   await connection.send('done', { usage: { total: 10 } })
+                  return success('disconnect')
                 },
               }),
             },
@@ -717,7 +765,9 @@ describe('Dual-Mode Handler Type Safety', () => {
         json: () => {
           return { reply: 'Hello' }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
@@ -729,7 +779,9 @@ describe('Dual-Mode Handler Type Safety', () => {
         json: () => {
           return { reply: 'Hello', usage: { tokens: 'ten' } }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
@@ -746,7 +798,9 @@ describe('Dual-Mode Handler Type Safety', () => {
             // would require explicit typing
           }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
@@ -758,6 +812,7 @@ describe('Dual-Mode Handler Type Safety', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - 'invalid' is not a valid event name
           await connection.send('invalid', { data: 'test' })
+          return success('disconnect')
         },
       })
 
@@ -770,6 +825,7 @@ describe('Dual-Mode Handler Type Safety', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - 'chunk' expects { delta: string }, not { content: string }
           await connection.send('chunk', { content: 'Hello' })
+          return success('disconnect')
         },
       })
 
@@ -782,6 +838,7 @@ describe('Dual-Mode Handler Type Safety', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - 'done' requires { usage: { total: number } }
           await connection.send('done', {})
+          return success('disconnect')
         },
       })
 
@@ -803,7 +860,9 @@ describe('Dual-Mode Handler Type Safety', () => {
 
           return { reply: message, usage: { tokens: 10 } }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
@@ -820,6 +879,8 @@ describe('Dual-Mode Handler Type Safety', () => {
           const _invalid = request.body.nonExistent
 
           expect(message).toBeDefined()
+
+          return success('disconnect')
         },
       })
 
@@ -844,6 +905,8 @@ describe('Dual-Mode Handler Type Safety', () => {
           const _invalid = request.params.nonExistent
 
           expect(chatId).toBeDefined()
+
+          return success('disconnect')
         },
       })
 
@@ -868,6 +931,8 @@ describe('Dual-Mode Handler Type Safety', () => {
           const _invalid = request.query.nonExistent
 
           expect(verbose).toBeDefined()
+
+          return success('disconnect')
         },
       })
 
@@ -881,7 +946,9 @@ describe('Dual-Mode Handler Type Safety', () => {
           expect(reply).toBeDefined()
           return { reply: 'Hello', usage: { tokens: 10 } }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
@@ -893,6 +960,7 @@ describe('Dual-Mode Handler Type Safety', () => {
         sse: (_request, connection) => {
           // Connection is available as second argument in sse handler
           expect(connection).toBeDefined()
+          return success('disconnect')
         },
       })
 
@@ -938,6 +1006,7 @@ describe('Dual-Mode Handler Type Safety', () => {
                 sse: async (_request, connection) => {
                   await connection.send('progress', { percent: 50 })
                   await connection.send('done', { result: 'completed' })
+                  return success('disconnect')
                 },
               }),
             },
@@ -955,7 +1024,9 @@ describe('Dual-Mode Handler Type Safety', () => {
         json: () => {
           return { status: 'invalid' as const, progress: 50 }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
@@ -967,6 +1038,7 @@ describe('Dual-Mode Handler Type Safety', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - 'chunk' is not a valid event name
           await connection.send('chunk', { delta: 'test' })
+          return success('disconnect')
         },
       })
 
@@ -982,6 +1054,7 @@ describe('Dual-Mode Handler Type Safety', () => {
         json: () => ({ status: 'running' as const, progress: 50 }),
         sse: async (_request, connection) => {
           await connection.send('progress', { percent: 50 })
+          return success('disconnect')
         },
       })
 
@@ -999,7 +1072,9 @@ describe('Dual-Mode Handler Type Safety', () => {
           expect(jobId).toBeDefined()
           return { status: 'running' as const, progress: 50 }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
@@ -1053,6 +1128,8 @@ describe('Unified buildHandler Type Safety', () => {
           // request is typed
           const userId: string = request.params.userId
           expect(userId).toBeDefined()
+
+          return success('disconnect')
         },
       })
 
@@ -1065,6 +1142,7 @@ describe('Unified buildHandler Type Safety', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - 'invalid' is not a valid event name
           await connection.send('invalid', { data: 'test' })
+          return success('disconnect')
         },
       })
 
@@ -1076,6 +1154,7 @@ describe('Unified buildHandler Type Safety', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - 'notification' expects { id, message }, not { text }
           await connection.send('notification', { text: 'wrong' })
+          return success('disconnect')
         },
       })
 
@@ -1091,6 +1170,8 @@ describe('Unified buildHandler Type Safety', () => {
           const _invalid = request.params.nonExistent
 
           expect(userId).toBeDefined()
+
+          return success('disconnect')
         },
       })
 
@@ -1110,6 +1191,7 @@ describe('Unified buildHandler Type Safety', () => {
         sse: async (_request, connection) => {
           await connection.send('chunk', { delta: 'Hello' })
           await connection.send('done', { usage: { total: 10 } })
+          return success('disconnect')
         },
       })
 
@@ -1124,7 +1206,9 @@ describe('Unified buildHandler Type Safety', () => {
         json: () => {
           return { reply: 'Hello' }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
@@ -1136,6 +1220,7 @@ describe('Unified buildHandler Type Safety', () => {
         sse: async (_request, connection) => {
           // @ts-expect-error - 'invalid' is not a valid event name
           await connection.send('invalid', { data: 'test' })
+          return success('disconnect')
         },
       })
 
@@ -1160,6 +1245,8 @@ describe('Unified buildHandler Type Safety', () => {
           const _invalid = request.body.nonExistent
 
           expect(message).toBeDefined()
+
+          return success('disconnect')
         },
       })
 
@@ -1173,7 +1260,9 @@ describe('Unified buildHandler Type Safety', () => {
           expectTypeOf(reply).toEqualTypeOf<FastifyReply>()
           return { reply: 'Hello', usage: { tokens: 10 } }
         },
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
@@ -1187,6 +1276,7 @@ describe('Unified buildHandler Type Safety', () => {
           expectTypeOf(connection).toEqualTypeOf<
             SSEConnection<typeof chatCompletionContract.events>
           >()
+          return success('disconnect')
         },
       })
 
@@ -1196,7 +1286,9 @@ describe('Unified buildHandler Type Safety', () => {
     it('requires json handler for dual-mode contract', () => {
       // @ts-expect-error - dual-mode contracts require both json and sse handlers
       buildHandler(chatCompletionContract, {
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
@@ -1215,7 +1307,9 @@ describe('Unified buildHandler Type Safety', () => {
   describe('SSE-only contracts require only sse handler', () => {
     it('accepts handlers with only sse for SSE-only contract', () => {
       const handlers = buildHandler(notificationsContract, {
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(handlers).toBeDefined()
@@ -1226,7 +1320,9 @@ describe('Unified buildHandler Type Safety', () => {
       buildHandler(notificationsContract, {
         // @ts-expect-error - SSE-only contracts do not allow json handler (json?: never)
         json: () => {},
-        sse: () => {},
+        sse: () => {
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)

@@ -1,9 +1,34 @@
+import type { Either } from '@lokalise/node-core'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
 import type { AnyDualModeContractDefinition } from '../dualmode/dualModeContracts.ts'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
+
+// ============================================================================
+// SSE Handler Result Types
+// ============================================================================
+
+/**
+ * Result indicating the SSE handler completed and the connection should be closed.
+ * Use this for request-response streaming patterns (e.g., AI completions).
+ */
+export type SSEHandlerDisconnect = 'disconnect'
+
+/**
+ * Result indicating the SSE handler completed but the connection should stay open.
+ * Use this for long-lived connection patterns (e.g., notifications).
+ * The connection will remain open until the client disconnects.
+ */
+export type SSEHandlerMaintainConnection = 'maintain_connection'
+
+/**
+ * Possible success results from an SSE handler.
+ * - `'disconnect'`: Close connection after handler completes (request-response streaming)
+ * - `'maintain_connection'`: Keep connection open (long-lived connections)
+ */
+export type SSEHandlerResult = SSEHandlerDisconnect | SSEHandlerMaintainConnection
 
 // ============================================================================
 // SSE Connection Types
@@ -188,7 +213,28 @@ export type JsonModeHandler<
 
 /**
  * Handler function for SSE mode.
- * Signature matches Fastify's `(request, reply)` pattern but with typed SSE connection.
+ * Returns an Either indicating success with connection action, or failure with error.
+ *
+ * @returns Either<Error, SSEHandlerResult> where:
+ * - `success('disconnect')`: Close connection after handler completes
+ * - `success('maintain_connection')`: Keep connection open for long-lived streaming
+ * - `failure(error)`: Handle error and close connection
+ *
+ * @example
+ * ```typescript
+ * // Request-response streaming (AI completions)
+ * sse: async (request, connection) => {
+ *   await connection.send('chunk', { delta: 'Hello' })
+ *   await connection.send('done', { usage: { total: 5 } })
+ *   return success('disconnect')
+ * }
+ *
+ * // Long-lived connection (notifications)
+ * sse: async (request, connection) => {
+ *   this.subscriptions.set(connection.id, request.params.userId)
+ *   return success('maintain_connection')
+ * }
+ * ```
  *
  * @template Events - SSE event schemas for type-safe sending
  * @template Params - Path parameters type
@@ -207,7 +253,7 @@ export type SSEModeHandler<
 > = (
   request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
   connection: SSEConnection<Events, Context>,
-) => void | Promise<void>
+) => Either<Error, SSEHandlerResult> | Promise<Either<Error, SSEHandlerResult>>
 
 /**
  * Combined handlers for dual-mode routes.
