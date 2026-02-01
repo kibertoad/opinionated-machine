@@ -180,6 +180,54 @@ describe('fastifyRouteUtils', () => {
       )
       expect(result).toEqual({ mode: 'sync', contentType: 'application/json' })
     })
+
+    describe('subtype wildcard matching', () => {
+      it('matches application/* to first application format', () => {
+        const result = determineSyncFormat('application/*', supportedFormats)
+        expect(result).toEqual({ mode: 'sync', contentType: 'application/json' })
+      })
+
+      it('matches text/* to first text format', () => {
+        const result = determineSyncFormat('text/*', supportedFormats)
+        expect(result).toEqual({ mode: 'sync', contentType: 'text/plain' })
+      })
+
+      it('prioritizes exact match over wildcard', () => {
+        const result = determineSyncFormat('text/csv, application/*', supportedFormats)
+        expect(result).toEqual({ mode: 'sync', contentType: 'text/csv' })
+      })
+
+      it('uses wildcard when exact match not found', () => {
+        const result = determineSyncFormat('text/xml, application/*', supportedFormats)
+        expect(result).toEqual({ mode: 'sync', contentType: 'application/json' })
+      })
+
+      it('prioritizes SSE over wildcard', () => {
+        const result = determineSyncFormat('text/event-stream, text/*', supportedFormats)
+        expect(result).toEqual({ mode: 'sse' })
+      })
+
+      it('respects quality values with wildcards', () => {
+        const result = determineSyncFormat('text/*;q=0.5, application/*;q=0.9', supportedFormats)
+        expect(result).toEqual({ mode: 'sync', contentType: 'application/json' })
+      })
+
+      it('falls back to default when wildcard type not in supported formats', () => {
+        const result = determineSyncFormat('image/*', supportedFormats)
+        expect(result).toEqual({ mode: 'sync', contentType: 'application/json' })
+      })
+
+      it('handles case-insensitive wildcard', () => {
+        const result = determineSyncFormat('APPLICATION/*', supportedFormats)
+        expect(result).toEqual({ mode: 'sync', contentType: 'application/json' })
+      })
+
+      it('matches first supported format in order for wildcard', () => {
+        // Order matters: text/plain comes before text/csv in supportedFormats
+        const result = determineSyncFormat('text/*', supportedFormats)
+        expect(result).toEqual({ mode: 'sync', contentType: 'text/plain' })
+      })
+    })
   })
 
   describe('determineMode edge cases', () => {

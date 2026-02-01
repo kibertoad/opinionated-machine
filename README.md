@@ -398,7 +398,7 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildContract` to define SSE routes. The contract type is automatically determined based on the presence of `body` and `jsonResponse` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
+Use `buildContract` to define SSE routes. The contract type is automatically determined based on the presence of `requestBody` and `jsonResponse` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
@@ -753,7 +753,7 @@ public buildSSERoutes() {
 **Available route options:**
 
 | Option | Description |
-|--------|-------------|
+| -------- | ------------- |
 | `preHandler` | Authentication/authorization hook that runs before SSE connection |
 | `onConnect` | Called after client connects (SSE handshake complete) |
 | `onDisconnect` | Called when underlying socket closes (client disconnect, network failure) |
@@ -805,7 +805,7 @@ private handleStream = buildHandler(streamContract, {
 ```
 
 | Method | Description |
-|--------|-------------|
+| -------- | ------------- |
 | `send(event, data, options?)` | Send a typed event (validates against contract schema) |
 | `isConnected()` | Check if the connection is still active |
 | `getStream()` | Get the underlying `WritableStream` for advanced use cases |
@@ -1193,7 +1193,7 @@ import { SSETestServer, SSEHttpClient } from 'opinionated-machine'
 const server = await SSETestServer.create(async (app) => {
   app.get('/api/events', async (request, reply) => {
     reply.sse({ event: 'message', data: { hello: 'world' } })
-    reply.sseClose()
+    reply.sse.close()
   })
 })
 
@@ -1412,14 +1412,14 @@ Dual-mode contracts define endpoints that can return **either** a complete JSON 
 - You need polling fallback for clients that don't support SSE
 
 To create a dual-mode contract, include a `jsonResponse` schema in your `buildContract` call:
-- Has `jsonResponse` but no `body` → GET dual-mode route
-- Has both `jsonResponse` and `body` → POST/PUT/PATCH dual-mode route
+- Has `jsonResponse` but no `requestBody` → GET dual-mode route
+- Has both `jsonResponse` and `requestBody` → POST/PUT/PATCH dual-mode route
 
 ```ts
 import { z } from 'zod'
 import { buildContract } from 'opinionated-machine'
 
-// GET dual-mode route (polling or streaming job status) - has jsonResponse, no body
+// GET dual-mode route (polling or streaming job status) - has jsonResponse, no requestBody
 export const jobStatusContract = buildContract({
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   params: z.object({ jobId: z.string().uuid() }),
@@ -1436,7 +1436,7 @@ export const jobStatusContract = buildContract({
   },
 })
 
-// POST dual-mode route (OpenAI-style chat completion) - has both jsonResponse and body
+// POST dual-mode route (OpenAI-style chat completion) - has both jsonResponse and requestBody
 export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
@@ -1729,6 +1729,21 @@ curl -H "Accept: text/event-stream;q=0.5, application/json;q=1.0" ...
 # Prefer SSE (higher quality value)
 curl -H "Accept: application/json;q=0.5, text/event-stream;q=1.0" ...
 ```
+
+**Subtype wildcards** are supported for flexible content negotiation:
+
+```bash
+# Accept any text format (matches text/plain, text/csv, etc.)
+curl -H "Accept: text/*" ...
+
+# Accept any application format (matches application/json, application/xml, etc.)
+curl -H "Accept: application/*" ...
+
+# Combine with quality values
+curl -H "Accept: text/event-stream;q=0.9, application/*;q=0.5" ...
+```
+
+The matching priority is: `text/event-stream` (SSE) > exact matches > subtype wildcards > `*/*` > fallback.
 
 ### Testing Dual-Mode Controllers
 

@@ -368,7 +368,15 @@ export type SyncFormatResult = { mode: 'sse' } | { mode: 'sync'; contentType: st
  * Determine sync format from Accept header for multi-format routes.
  *
  * Parses the Accept header and determines which format handler to use.
- * Supports quality values (q=) for content negotiation.
+ * Supports quality values (q=) for content negotiation and subtype wildcards
+ * (e.g., "application/*", "text/*").
+ *
+ * Matching priority:
+ * 1. text/event-stream (SSE mode)
+ * 2. Exact matches against supportedFormats
+ * 3. Subtype wildcards (e.g., "text/*" matches first "text/..." in supportedFormats)
+ * 4. Full wildcard (*\/*) uses fallback format
+ * 5. Fallback to defaultFormat or first supported format
  *
  * @param accept - The Accept header value
  * @param supportedFormats - Array of Content-Types that the route supports
@@ -414,9 +422,17 @@ export function determineSyncFormat(
     if (mediaType === 'text/event-stream') {
       return { mode: 'sse' }
     }
-    // Check against supported formats
+    // Check exact match against supported formats
     if (supportedFormats.includes(mediaType)) {
       return { mode: 'sync', contentType: mediaType }
+    }
+    // Check subtype wildcard (e.g., "application/*", "text/*")
+    if (mediaType.endsWith('/*')) {
+      const mainType = mediaType.slice(0, -2) // Extract "application" from "application/*"
+      const matchedFormat = supportedFormats.find((format) => format.startsWith(`${mainType}/`))
+      if (matchedFormat) {
+        return { mode: 'sync', contentType: matchedFormat }
+      }
     }
   }
 

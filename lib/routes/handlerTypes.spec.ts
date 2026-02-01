@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from 'vitest'
-import { z } from 'zod'
+import { z } from 'zod/v4'
 import { buildContract } from '../contracts/contractBuilders.ts'
 import type { InferDualModeHandlers, VerboseDualModeHandlers } from './fastifyRouteTypes.ts'
 import { buildHandler } from './fastifyRouteTypes.ts'
