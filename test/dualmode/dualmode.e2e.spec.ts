@@ -7,7 +7,6 @@ import {
   buildContract,
   buildFastifyRoute,
   DIContext,
-  type SSEHandlerResult,
   SSEHttpClient,
   SSEInjectClient,
   SSETestServer,
@@ -869,7 +868,7 @@ describe('Dual-Mode Route Builder Validation', () => {
         contract: invalidContract,
         handlers: {
           json: async () => ({ result: 'test' }),
-          sse: () => success<SSEHandlerResult>('disconnect'),
+          sse: () => success('disconnect'),
         },
       }),
     ).toThrow('Route params schema must be a ZodObject for path template extraction')
@@ -914,7 +913,7 @@ describe('Dual-Mode Response Headers', () => {
           return { result: request.body.data }
         },
         sse: () => {
-          return success<SSEHandlerResult>('disconnect')
+          return success('disconnect')
         },
       },
     })

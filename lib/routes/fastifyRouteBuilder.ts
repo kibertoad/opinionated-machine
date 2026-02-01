@@ -387,8 +387,11 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
  * @param config - The dual-mode handler configuration
  * @returns Fastify route options
  */
-export function buildFastifyRoute<Contract extends AnyDualModeContractDefinition>(
-  controller: AbstractDualModeController<Record<string, AnyDualModeContractDefinition>>,
+export function buildFastifyRoute<
+  Contracts extends Record<string, AnyDualModeContractDefinition>,
+  Contract extends AnyDualModeContractDefinition,
+>(
+  controller: AbstractDualModeController<Contracts>,
   config: FastifyDualModeHandlerConfig<Contract>,
 ): RouteOptions
 
@@ -402,8 +405,11 @@ export function buildFastifyRoute<Contract extends AnyDualModeContractDefinition
  * @param config - The SSE handler configuration
  * @returns Fastify route options
  */
-export function buildFastifyRoute<Contract extends AnySSEContractDefinition>(
-  controller: AbstractSSEController<Record<string, AnySSEContractDefinition>>,
+export function buildFastifyRoute<
+  Contracts extends Record<string, AnySSEContractDefinition>,
+  Contract extends AnySSEContractDefinition,
+>(
+  controller: AbstractSSEController<Contracts>,
   config: FastifySSEHandlerConfig<Contract>,
 ): RouteOptions
 

@@ -262,3 +262,61 @@ export const openaiStyleStreamContract = buildContract({
     done: z.string(),
   },
 })
+
+/**
+ * GET SSE route for testing logger error handling in onClose
+ */
+export const onCloseErrorStreamContract = buildContract({
+  pathResolver: () => '/api/on-close-error/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    message: z.object({ text: z.string() }),
+  },
+})
+
+/**
+ * GET SSE route for testing isConnected() method
+ */
+export const isConnectedTestStreamContract = buildContract({
+  pathResolver: () => '/api/is-connected-test/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    status: z.object({ connected: z.boolean() }),
+    done: z.object({ ok: z.boolean() }),
+  },
+})
+
+/**
+ * POST SSE route for testing sendStream() method with validation
+ */
+export const sendStreamTestContract = buildContract({
+  method: 'POST',
+  pathResolver: () => '/api/send-stream-test/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  body: z.object({
+    sendInvalid: z.boolean().optional(),
+  }),
+  events: {
+    message: z.object({ text: z.string() }),
+    done: z.object({ ok: z.boolean() }),
+  },
+})
+
+/**
+ * GET SSE route for testing getStream() method
+ */
+export const getStreamTestContract = buildContract({
+  pathResolver: () => '/api/get-stream-test/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    message: z.object({ text: z.string() }),
+  },
+})

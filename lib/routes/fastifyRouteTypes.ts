@@ -453,25 +453,61 @@ export type FastifyDualModeRouteOptions = FastifySSERouteOptions & {
  * Infer handlers type based on contract type - simplified vs verbose.
  * - Simplified contracts (jsonResponse): `{ json: handler, sse: handler }`
  * - Verbose contracts (multiFormatResponses): `{ sync: { format: handler, ... }, sse: handler }`
+ *
+ * When the contract type is the generic AnyDualModeContractDefinition (where multiFormatResponses
+ * is optional), we return a union of both handler types to allow either style.
  */
 export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition> =
-  Contract['multiFormatResponses'] extends MultiFormatResponses
-    ? VerboseDualModeHandlers<
-        Contract['multiFormatResponses'],
-        z.infer<Contract['params']>,
-        z.infer<Contract['query']>,
-        z.infer<Contract['requestHeaders']>,
-        Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-        Contract['events']
-      >
-    : DualModeHandlers<
-        z.infer<Contract['params']>,
-        z.infer<Contract['query']>,
-        z.infer<Contract['requestHeaders']>,
-        Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-        Contract['jsonResponse'] extends z.ZodTypeAny ? z.infer<Contract['jsonResponse']> : unknown,
-        Contract['events']
-      >
+  // Check if multiFormatResponses is definitely defined (not optional)
+  undefined extends Contract['multiFormatResponses']
+    ? // multiFormatResponses is optional - could be either simplified or verbose
+      Contract['jsonResponse'] extends z.ZodTypeAny
+      ? // jsonResponse is defined - simplified handlers
+        DualModeHandlers<
+          z.infer<Contract['params']>,
+          z.infer<Contract['query']>,
+          z.infer<Contract['requestHeaders']>,
+          Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+          z.infer<Contract['jsonResponse']>,
+          Contract['events']
+        >
+      : // Neither is definitely defined - accept both handler styles (for AnyDualModeContractDefinition)
+          | DualModeHandlers<
+              z.infer<Contract['params']>,
+              z.infer<Contract['query']>,
+              z.infer<Contract['requestHeaders']>,
+              Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+              unknown,
+              Contract['events']
+            >
+          | VerboseDualModeHandlers<
+              MultiFormatResponses,
+              z.infer<Contract['params']>,
+              z.infer<Contract['query']>,
+              z.infer<Contract['requestHeaders']>,
+              Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+              Contract['events']
+            >
+    : // multiFormatResponses is definitely defined - verbose handlers
+      Contract['multiFormatResponses'] extends MultiFormatResponses
+      ? VerboseDualModeHandlers<
+          Contract['multiFormatResponses'],
+          z.infer<Contract['params']>,
+          z.infer<Contract['query']>,
+          z.infer<Contract['requestHeaders']>,
+          Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+          Contract['events']
+        >
+      : DualModeHandlers<
+          z.infer<Contract['params']>,
+          z.infer<Contract['query']>,
+          z.infer<Contract['requestHeaders']>,
+          Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+          Contract['jsonResponse'] extends z.ZodTypeAny
+            ? z.infer<Contract['jsonResponse']>
+            : unknown,
+          Contract['events']
+        >
 
 /**
  * Handler configuration returned by buildDualModeRoutes().

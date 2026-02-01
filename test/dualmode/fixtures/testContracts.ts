@@ -153,3 +153,52 @@ export const jsonValidationContract = buildContract({
     result: z.object({ success: z.boolean() }),
   },
 })
+
+/**
+ * POST dual-mode route with multi-format responses (verbose format).
+ * Supports JSON, plain text, and CSV output formats.
+ */
+export const multiFormatExportContract = buildContract({
+  method: 'POST',
+  pathResolver: () => '/api/export',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  body: z.object({
+    data: z.array(z.object({ name: z.string(), value: z.number() })),
+  }),
+  multiFormatResponses: {
+    'application/json': z.object({
+      items: z.array(z.object({ name: z.string(), value: z.number() })),
+      count: z.number(),
+    }),
+    'text/plain': z.string(),
+    'text/csv': z.string(),
+  },
+  events: {
+    progress: z.object({ percent: z.number() }),
+    done: z.object({ format: z.string() }),
+  },
+})
+
+/**
+ * GET dual-mode route with multi-format responses.
+ */
+export const multiFormatReportContract = buildContract({
+  pathResolver: (params) => `/api/reports/${params.reportId}`,
+  params: z.object({ reportId: z.string() }),
+  query: z.object({ detailed: z.string().optional() }),
+  requestHeaders: z.object({}),
+  multiFormatResponses: {
+    'application/json': z.object({
+      id: z.string(),
+      title: z.string(),
+      data: z.unknown(),
+    }),
+    'text/plain': z.string(),
+  },
+  events: {
+    chunk: z.object({ content: z.string() }),
+    done: z.object({ totalSize: z.number() }),
+  },
+})

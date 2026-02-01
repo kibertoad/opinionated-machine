@@ -12,13 +12,17 @@ import {
   TestAsyncReconnectSSEController,
   TestAuthSSEController,
   TestChannelSSEController,
+  TestGetStreamSSEController,
+  TestIsConnectedSSEController,
   TestLargeContentSSEController,
   TestLoggerSSEController,
+  TestOnCloseErrorSSEController,
   TestOnConnectErrorSSEController,
   TestOnReconnectErrorSSEController,
   TestOpenAIStyleSSEController,
   TestPostSSEController,
   TestReconnectSSEController,
+  TestSendStreamSSEController,
   TestSSEController,
   TestValidationSSEController,
 } from './testControllers.js'
@@ -313,6 +317,102 @@ export class TestValidationSSEModule extends AbstractModule<TestValidationSSEMod
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testValidationSSEController: asSSEControllerClass(TestValidationSSEController, { diOptions }),
+    }
+  }
+}
+
+/**
+ * Module with onClose error test SSE controller for testing error handling in onClose
+ */
+export type TestOnCloseErrorSSEModuleDependencies = {
+  logger: SSELogger
+}
+
+export class TestOnCloseErrorSSEModule extends AbstractModule<TestOnCloseErrorSSEModuleDependencies> {
+  private mockLogger: SSELogger
+
+  constructor(mockLogger: SSELogger) {
+    super()
+    this.mockLogger = mockLogger
+  }
+
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestOnCloseErrorSSEModuleDependencies> {
+    const logger = this.mockLogger
+    return {
+      logger: asSingletonFunction(() => logger),
+    }
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testOnCloseErrorSSEController: asSSEControllerClass(TestOnCloseErrorSSEController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with isConnected test SSE controller
+ */
+export type TestIsConnectedSSEModuleDependencies = Record<string, never>
+
+export class TestIsConnectedSSEModule extends AbstractModule<TestIsConnectedSSEModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestIsConnectedSSEModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testIsConnectedSSEController: asSSEControllerClass(TestIsConnectedSSEController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with sendStream test SSE controller
+ */
+export type TestSendStreamSSEModuleDependencies = Record<string, never>
+
+export class TestSendStreamSSEModule extends AbstractModule<TestSendStreamSSEModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestSendStreamSSEModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testSendStreamSSEController: asSSEControllerClass(TestSendStreamSSEController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with getStream test SSE controller
+ */
+export type TestGetStreamSSEModuleDependencies = Record<string, never>
+
+export class TestGetStreamSSEModule extends AbstractModule<TestGetStreamSSEModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestGetStreamSSEModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testGetStreamSSEController: asSSEControllerClass(TestGetStreamSSEController, {
+        diOptions,
+      }),
     }
   }
 }

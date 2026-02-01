@@ -14,6 +14,8 @@ import {
   TestErrorDualModeController,
   TestJobStatusDualModeController,
   TestJsonValidationDualModeController,
+  TestMultiFormatExportController,
+  TestMultiFormatReportController,
 } from './testControllers.js'
 
 /**
@@ -206,6 +208,48 @@ export class GenericDualModeModule extends AbstractModule<GenericDualModeModuleD
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
       genericDualModeController: asDualModeControllerClass(GenericDualModeController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with multi-format export controller.
+ */
+export type TestMultiFormatExportModuleDependencies = Record<string, never>
+
+export class TestMultiFormatExportModule extends AbstractModule<TestMultiFormatExportModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestMultiFormatExportModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testMultiFormatExportController: asDualModeControllerClass(TestMultiFormatExportController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with multi-format report controller.
+ */
+export type TestMultiFormatReportModuleDependencies = Record<string, never>
+
+export class TestMultiFormatReportModule extends AbstractModule<TestMultiFormatReportModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestMultiFormatReportModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testMultiFormatReportController: asDualModeControllerClass(TestMultiFormatReportController, {
         diOptions,
       }),
     }

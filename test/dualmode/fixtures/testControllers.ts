@@ -13,6 +13,8 @@ import {
   errorTestContract,
   jobStatusContract,
   jsonValidationContract,
+  multiFormatExportContract,
+  multiFormatReportContract,
 } from './testContracts.js'
 
 /**
@@ -356,5 +358,85 @@ export class GenericDualModeController extends AbstractDualModeController<Generi
   public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<GenericDualModeContracts> {
     // This controller doesn't define its own routes - it's used for ad-hoc route building
     return {}
+  }
+}
+
+/**
+ * Multi-format export controller (verbose format with multiFormatResponses).
+ */
+export type TestMultiFormatExportContracts = {
+  export: typeof multiFormatExportContract
+}
+
+export class TestMultiFormatExportController extends AbstractDualModeController<TestMultiFormatExportContracts> {
+  public static contracts = {
+    export: multiFormatExportContract,
+  } as const
+
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestMultiFormatExportContracts> {
+    return {
+      export: {
+        contract: TestMultiFormatExportController.contracts.export,
+        handlers: buildHandler(multiFormatExportContract, {
+          sync: {
+            'application/json': (request) => ({
+              items: request.body.data,
+              count: request.body.data.length,
+            }),
+            'text/plain': (request) =>
+              request.body.data.map((item) => `${item.name}: ${item.value}`).join('\n'),
+            'text/csv': (request) =>
+              `name,value\n${request.body.data.map((item) => `${item.name},${item.value}`).join('\n')}`,
+          },
+          sse: async (request, connection) => {
+            const items = request.body.data
+            for (let i = 0; i < items.length; i++) {
+              await connection.send('progress', { percent: ((i + 1) / items.length) * 100 })
+            }
+            await connection.send('done', { format: 'sse' })
+            return success('disconnect')
+          },
+        }),
+      },
+    }
+  }
+}
+
+/**
+ * Multi-format report controller (GET method with verbose format).
+ */
+export type TestMultiFormatReportContracts = {
+  report: typeof multiFormatReportContract
+}
+
+export class TestMultiFormatReportController extends AbstractDualModeController<TestMultiFormatReportContracts> {
+  public static contracts = {
+    report: multiFormatReportContract,
+  } as const
+
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestMultiFormatReportContracts> {
+    return {
+      report: {
+        contract: TestMultiFormatReportController.contracts.report,
+        handlers: buildHandler(multiFormatReportContract, {
+          sync: {
+            'application/json': (request) => ({
+              id: request.params.reportId,
+              title: `Report ${request.params.reportId}`,
+              data: { detailed: request.query.detailed === 'true' },
+            }),
+            'text/plain': (request) =>
+              `Report: ${request.params.reportId}\nDetailed: ${request.query.detailed ?? 'false'}`,
+          },
+          sse: async (request, connection) => {
+            await connection.send('chunk', {
+              content: `Streaming report ${request.params.reportId}`,
+            })
+            await connection.send('done', { totalSize: 100 })
+            return success('disconnect')
+          },
+        }),
+      },
+    }
   }
 }
