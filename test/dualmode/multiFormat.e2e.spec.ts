@@ -350,4 +350,70 @@ describe('Multi-Format Response Validation', () => {
     await context.destroy()
     await server.close()
   })
+
+  it('falls back to first format when Accept header is unsupported', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
+
+    const controller: GenericDualModeController = context.diContainer.resolve(
+      'genericDualModeController',
+    )
+
+    const contract = buildContract({
+      method: 'POST',
+      pathResolver: () => '/api/fallback-test',
+      params: z.object({}),
+      query: z.object({}),
+      requestHeaders: z.object({}),
+      requestBody: z.object({ value: z.string() }),
+      multiFormatResponses: {
+        'application/json': z.object({ result: z.string() }),
+        'text/plain': z.string(),
+      },
+      events: { done: z.object({ ok: z.boolean() }) },
+    })
+
+    const route = buildFastifyRoute(controller, {
+      contract,
+      handlers: {
+        sync: {
+          'application/json': () => ({ result: 'json-response' }),
+          'text/plain': () => 'plain-text-response',
+        },
+        sse: async (_req, conn) => {
+          await conn.send('done', { ok: true })
+          return success('disconnect')
+        },
+      },
+    })
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route(route)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    // Request an unsupported format (text/xml) - should fall back to first format (application/json)
+    const response = await server.app.inject({
+      method: 'POST',
+      url: '/api/fallback-test',
+      headers: { 'content-type': 'application/json', accept: 'text/xml' },
+      payload: { value: 'test' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('application/json')
+    expect(response.json()).toEqual({ result: 'json-response' })
+
+    await context.destroy()
+    await server.close()
+  })
 })
