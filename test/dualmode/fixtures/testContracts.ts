@@ -12,7 +12,7 @@ export const chatCompletionContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   body: z.object({ message: z.string() }),
-  syncResponse: z.object({
+  jsonResponse: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
@@ -32,7 +32,7 @@ export const conversationCompletionContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
   body: z.object({ message: z.string() }),
-  syncResponse: z.object({
+  jsonResponse: z.object({
     reply: z.string(),
     conversationId: z.string(),
   }),
@@ -50,7 +50,7 @@ export const jobStatusContract = buildContract({
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
   requestHeaders: z.object({}),
-  syncResponse: z.object({
+  jsonResponse: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
@@ -76,7 +76,7 @@ export const authenticatedDualModeContract = buildContract({
     authorization: z.string().optional(),
   }),
   body: z.object({ data: z.string() }),
-  syncResponse: z.object({
+  jsonResponse: z.object({
     success: z.boolean(),
     data: z.string(),
   }),
@@ -95,7 +95,7 @@ export const defaultModeTestContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   body: z.object({ input: z.string() }),
-  syncResponse: z.object({ output: z.string() }),
+  jsonResponse: z.object({ output: z.string() }),
   events: {
     output: z.object({ value: z.string() }),
   },
@@ -111,7 +111,7 @@ export const errorTestContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   body: z.object({ shouldThrow: z.boolean() }),
-  syncResponse: z.object({ success: z.boolean() }),
+  jsonResponse: z.object({ success: z.boolean() }),
   events: {
     result: z.object({ success: z.boolean() }),
   },
@@ -128,7 +128,7 @@ export const defaultMethodContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   body: z.object({ value: z.string() }),
-  syncResponse: z.object({ result: z.string() }),
+  jsonResponse: z.object({ result: z.string() }),
   events: {
     data: z.object({ value: z.string() }),
   },
@@ -136,7 +136,7 @@ export const defaultMethodContract = buildContract({
 
 /**
  * POST dual-mode route for testing JSON response validation failure.
- * The syncResponse schema is strict, but the handler will return mismatched data.
+ * The jsonResponse schema is strict, but the handler will return mismatched data.
  */
 export const jsonValidationContract = buildContract({
   method: 'POST',
@@ -145,7 +145,7 @@ export const jsonValidationContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   body: z.object({ returnInvalid: z.boolean() }),
-  syncResponse: z.object({
+  jsonResponse: z.object({
     requiredField: z.string(),
     count: z.number().int().positive(),
   }),

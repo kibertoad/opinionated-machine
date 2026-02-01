@@ -4,7 +4,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
-import type { SSEConnection } from './fastifyRouteTypes.ts'
+import type { SSEConnection, SSEStreamMessage } from './fastifyRouteTypes.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
@@ -26,6 +26,15 @@ export type SSEControllerLike = {
  */
 export type SSELifecycleOptions<TConnection = SSEConnection> = {
   onConnect?: (connection: TConnection) => void | Promise<void>
+  /**
+   * Called when the SSE connection is explicitly closed by the server via reply.sse.close().
+   * This is different from onDisconnect which fires when the underlying socket closes
+   * (client disconnect, network failure, etc.).
+   *
+   * Use onClose for cleanup when you explicitly close a connection.
+   * Use onDisconnect for cleanup when the client disconnects.
+   */
+  onClose?: (connection: TConnection) => void | Promise<void>
   onDisconnect?: (connection: TConnection) => void | Promise<void>
   onReconnect?: (
     connection: TConnection,
@@ -183,6 +192,31 @@ export async function setupSSEConnection<Events extends SSEEventSchemas>(
     })
   }
 
+  const sseReply = reply as SSEReply
+
+  // Create sendStream function that validates and sends messages from async iterable
+  const sendStream = async (messages: AsyncIterable<SSEStreamMessage<Events>>): Promise<void> => {
+    for await (const message of messages) {
+      // Validate against schema if available
+      const schema = eventSchemas[message.event]
+      if (schema) {
+        const result = schema.safeParse(message.data)
+        if (!result.success) {
+          throw new Error(
+            `SSE event validation failed for '${message.event}': ${result.error.message}`,
+          )
+        }
+      }
+      // Send the validated message
+      await sseReply.sse.send({
+        event: message.event,
+        data: message.data,
+        id: message.id,
+        retry: message.retry,
+      })
+    }
+  }
+
   // Create connection wrapper with event schemas for validation and typed send
   const connection: SSEConnection<Events> = {
     id: connectionId,
@@ -191,14 +225,18 @@ export async function setupSSEConnection<Events extends SSEEventSchemas>(
     context: {},
     connectedAt: new Date(),
     send,
+    isConnected: () => sseReply.sse.isConnected,
+    getStream: () => sseReply.sse.stream(),
+    sendStream,
     eventSchemas,
   }
 
   // Create a promise that will resolve when the client disconnects
+  // Cast connection for lifecycle callbacks - they don't need type-safe event schemas
   const connectionClosed = new Promise<void>((resolve) => {
     request.socket.on('close', async () => {
       try {
-        await options?.onDisconnect?.(connection)
+        await options?.onDisconnect?.(connection as unknown as SSEConnection)
       } catch (err) {
         options?.logger?.error({ err }, `Error in ${logPrefix} onDisconnect handler`)
       } finally {
@@ -209,11 +247,21 @@ export async function setupSSEConnection<Events extends SSEEventSchemas>(
   })
 
   // Register connection with controller
-  controller.registerConnection(connection)
+  controller.registerConnection(connection as unknown as SSEConnection)
 
   // Tell @fastify/sse to keep the connection open after handler returns
-  const sseReply = reply as SSEReply
   sseReply.sse.keepAlive()
+
+  // Register onClose callback if provided (fires when server explicitly closes connection)
+  if (options?.onClose) {
+    sseReply.sse.onClose(async () => {
+      try {
+        await options.onClose?.(connection as unknown as SSEConnection)
+      } catch (err) {
+        options?.logger?.error({ err }, `Error in ${logPrefix} onClose handler`)
+      }
+    })
+  }
 
   // Send headers and flush them to establish the stream
   sseReply.sse.sendHeaders()
@@ -222,12 +270,18 @@ export async function setupSSEConnection<Events extends SSEEventSchemas>(
   // Handle reconnection with Last-Event-ID
   const lastEventId = request.headers['last-event-id']
   if (lastEventId) {
-    await handleReconnection(sseReply, connection, lastEventId as string, options, logPrefix)
+    await handleReconnection(
+      sseReply,
+      connection as unknown as SSEConnection,
+      lastEventId as string,
+      options,
+      logPrefix,
+    )
   }
 
   // Notify connection established
   try {
-    await options?.onConnect?.(connection)
+    await options?.onConnect?.(connection as unknown as SSEConnection)
   } catch (err) {
     options?.logger?.error({ err }, `Error in ${logPrefix} onConnect handler`)
   }
@@ -294,4 +348,74 @@ export function determineMode(
   }
 
   return defaultMode
+}
+
+/**
+ * Result of sync format determination.
+ */
+export type SyncFormatResult = { mode: 'sse' } | { mode: 'sync'; contentType: string }
+
+/**
+ * Determine sync format from Accept header for multi-format routes.
+ *
+ * Parses the Accept header and determines which format handler to use.
+ * Supports quality values (q=) for content negotiation.
+ *
+ * @param accept - The Accept header value
+ * @param supportedFormats - Array of Content-Types that the route supports
+ * @param defaultFormat - Format to use when no preference is specified (default: first supported format)
+ * @returns The determined format or 'sse' mode indicator
+ */
+export function determineSyncFormat(
+  accept: string | undefined,
+  supportedFormats: string[],
+  defaultFormat?: string,
+): SyncFormatResult {
+  const fallbackFormat = defaultFormat ?? supportedFormats[0] ?? 'application/json'
+
+  if (!accept) {
+    return { mode: 'sync', contentType: fallbackFormat }
+  }
+
+  // Split by comma and parse each media type with quality value
+  const mediaTypes = accept
+    .split(',')
+    .map((part) => {
+      const [mediaType, ...params] = part.trim().split(';')
+      let quality = 1.0
+
+      for (const param of params) {
+        const [key, value] = param.trim().split('=')
+        if (key === 'q' && value) {
+          quality = Number.parseFloat(value)
+        }
+      }
+
+      return { mediaType: (mediaType ?? '').trim().toLowerCase(), quality }
+    })
+    // Filter out rejected types (quality <= 0)
+    .filter((entry) => entry.quality > 0)
+
+  // Sort by quality (highest first)
+  mediaTypes.sort((a, b) => b.quality - a.quality)
+
+  // Find the first matching type
+  for (const { mediaType } of mediaTypes) {
+    // SSE takes priority if requested
+    if (mediaType === 'text/event-stream') {
+      return { mode: 'sse' }
+    }
+    // Check against supported formats
+    if (supportedFormats.includes(mediaType)) {
+      return { mode: 'sync', contentType: mediaType }
+    }
+  }
+
+  // If */* is present, use default format
+  if (mediaTypes.some((m) => m.mediaType === '*/*')) {
+    return { mode: 'sync', contentType: fallbackFormat }
+  }
+
+  // Default to first supported format
+  return { mode: 'sync', contentType: fallbackFormat }
 }

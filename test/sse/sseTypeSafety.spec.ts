@@ -495,7 +495,7 @@ describe('Dual-Mode Contract Type Safety', () => {
         query: z.object({}),
         requestHeaders: z.object({}),
         body: z.object({ data: z.string() }),
-        syncResponse: z.object({ result: z.string() }),
+        jsonResponse: z.object({ result: z.string() }),
         responseHeaders: z.object({
           'x-request-id': z.string(),
           'x-custom': z.number(),
@@ -519,7 +519,7 @@ describe('Dual-Mode Contract Type Safety', () => {
         query: z.object({}),
         requestHeaders: z.object({}),
         body: z.object({ data: z.string() }),
-        syncResponse: z.object({ result: z.string() }),
+        jsonResponse: z.object({ result: z.string() }),
         events: {
           done: z.object({ success: z.boolean() }),
         },
@@ -531,7 +531,7 @@ describe('Dual-Mode Contract Type Safety', () => {
     })
 
     it('SSE contracts do not have responseHeaders', () => {
-      // SSE contract (no syncResponse)
+      // SSE contract (no jsonResponse)
       const sseContract = buildContract({
         method: 'POST',
         pathResolver: () => '/api/sse',
@@ -713,7 +713,7 @@ describe('Dual-Mode Handler Type Safety', () => {
       message: z.string(),
       temperature: z.number().optional(),
     }),
-    syncResponse: z.object({
+    jsonResponse: z.object({
       reply: z.string(),
       usage: z.object({ tokens: z.number() }),
     }),
@@ -738,7 +738,7 @@ describe('Dual-Mode Handler Type Safety', () => {
               contract: ChatController.contracts.chatCompletion,
               handlers: buildHandler(chatCompletionContract, {
                 json: (request) => {
-                  // Valid: return matches syncResponse schema
+                  // Valid: return matches jsonResponse schema
                   return {
                     reply: request.body.message,
                     usage: { tokens: 10 },
@@ -761,7 +761,7 @@ describe('Dual-Mode Handler Type Safety', () => {
 
     it('catches wrong json handler return type at compile time', () => {
       buildHandler(chatCompletionContract, {
-        // @ts-expect-error - return type doesn't match syncResponse: missing 'usage'
+        // @ts-expect-error - return type doesn't match jsonResponse: missing 'usage'
         json: () => {
           return { reply: 'Hello' }
         },
@@ -974,7 +974,7 @@ describe('Dual-Mode Handler Type Safety', () => {
     params: z.object({ jobId: z.string().uuid() }),
     query: z.object({ verbose: z.boolean().optional() }),
     requestHeaders: z.object({}),
-    syncResponse: z.object({
+    jsonResponse: z.object({
       status: z.enum(['pending', 'running', 'completed', 'failed']),
       progress: z.number(),
     }),
@@ -999,7 +999,7 @@ describe('Dual-Mode Handler Type Safety', () => {
               contract: JobController.contracts.jobStatus,
               handlers: buildHandler(jobStatusContract, {
                 json: (request) => {
-                  // Valid: return matches syncResponse schema
+                  // Valid: return matches jsonResponse schema
                   const _jobId = request.params.jobId
                   return { status: 'running' as const, progress: 50 }
                 },
@@ -1107,7 +1107,7 @@ describe('Unified buildHandler Type Safety', () => {
     query: z.object({}),
     requestHeaders: z.object({}),
     body: z.object({ message: z.string() }),
-    syncResponse: z.object({
+    jsonResponse: z.object({
       reply: z.string(),
       usage: z.object({ tokens: z.number() }),
     }),

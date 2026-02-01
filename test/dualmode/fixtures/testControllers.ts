@@ -310,7 +310,7 @@ export class TestDefaultMethodDualModeController extends AbstractDualModeControl
 
 /**
  * Controller for testing JSON response validation failure.
- * When returnInvalid is true, returns data that doesn't match the syncResponse schema.
+ * When returnInvalid is true, returns data that doesn't match the jsonResponse schema.
  */
 export type TestJsonValidationContracts = {
   jsonValidationTest: typeof jsonValidationContract
@@ -340,5 +340,21 @@ export class TestJsonValidationDualModeController extends AbstractDualModeContro
         }),
       },
     }
+  }
+}
+
+/**
+ * Generic controller for ad-hoc contract testing.
+ * Use this when you need to test inline contracts not registered in a specific controller.
+ */
+export type GenericDualModeContracts = Record<
+  string,
+  import('../../../index.js').AnyDualModeContractDefinition
+>
+
+export class GenericDualModeController extends AbstractDualModeController<GenericDualModeContracts> {
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<GenericDualModeContracts> {
+    // This controller doesn't define its own routes - it's used for ad-hoc route building
+    return {}
   }
 }

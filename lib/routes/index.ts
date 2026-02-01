@@ -16,6 +16,9 @@ export {
   type FastifySSEHandlerConfig,
   type FastifySSEPreHandler,
   type FastifySSERouteOptions,
+  // Multi-format handler types
+  type FormatHandler,
+  type InferDualModeHandlers,
   type InferHandlers,
   type InferSSERequest,
   // Dual-mode types
@@ -31,11 +34,17 @@ export {
   type SSEHandlerResult,
   type SSEModeHandler,
   type SSEOnlyHandlers,
+  // SSE stream message type
+  type SSEStreamMessage,
+  // Multi-format sync handlers type
+  type SyncHandlers,
+  type VerboseDualModeHandlers,
 } from './fastifyRouteTypes.js'
 
 // Route utilities
 export {
   determineMode,
+  determineSyncFormat,
   handleReconnection,
   handleSSEError,
   isErrorLike,
@@ -43,6 +52,7 @@ export {
   type SSEControllerLike,
   type SSELifecycleOptions,
   type SSEReply,
+  type SyncFormatResult,
   sendReplayEvents,
   setupSSEConnection,
 } from './fastifyRouteUtils.js'

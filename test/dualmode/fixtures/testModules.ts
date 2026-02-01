@@ -5,6 +5,7 @@ import {
   type MandatoryNameAndRegistrationPair,
 } from '../../../index.js'
 import {
+  GenericDualModeController,
   TestAuthenticatedDualModeController,
   TestChatDualModeController,
   TestConversationDualModeController,
@@ -186,6 +187,27 @@ export class TestJsonValidationDualModeModule extends AbstractModule<TestJsonVal
         TestJsonValidationDualModeController,
         { diOptions },
       ),
+    }
+  }
+}
+
+/**
+ * Module with generic dual-mode controller for ad-hoc contract testing.
+ */
+export type GenericDualModeModuleDependencies = Record<string, never>
+
+export class GenericDualModeModule extends AbstractModule<GenericDualModeModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<GenericDualModeModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      genericDualModeController: asDualModeControllerClass(GenericDualModeController, {
+        diOptions,
+      }),
     }
   }
 }

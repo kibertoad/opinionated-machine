@@ -4,18 +4,22 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
+  buildContract,
   buildFastifyRoute,
   DIContext,
+  type SSEHandlerResult,
   SSEHttpClient,
   SSEInjectClient,
   SSETestServer,
 } from '../../index.js'
 import { defaultMethodContract } from './fixtures/testContracts.js'
 import type {
+  GenericDualModeController,
   TestChatDualModeController,
   TestJobStatusDualModeController,
 } from './fixtures/testControllers.js'
 import {
+  GenericDualModeModule,
   TestAuthenticatedDualModeModule,
   TestChatDualModeModule,
   TestConversationDualModeModule,
@@ -670,7 +674,7 @@ describe('Dual-Mode JSON Response Validation', () => {
     // Should return 500 with error about validation failure
     expect(response.statusCode).toBe(500)
     const body = JSON.parse(response.body)
-    expect(body.message).toContain('JSON response validation failed')
+    expect(body.message).toContain('Response validation failed for application/json')
   })
 
   it('returns 200 when JSON response is valid', { timeout: 10000 }, async () => {
@@ -840,10 +844,10 @@ describe('Dual-Mode Route Builder Validation', () => {
   it('throws error when params is not a ZodObject', async () => {
     const container = createContainer({ injectionMode: 'PROXY' })
     const context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
+    context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
 
-    const controller: TestChatDualModeController = context.diContainer.resolve(
-      'testChatDualModeController',
+    const controller: GenericDualModeController = context.diContainer.resolve(
+      'genericDualModeController',
     )
 
     // Create an invalid contract where params is a ZodString instead of ZodObject
@@ -854,9 +858,10 @@ describe('Dual-Mode Route Builder Validation', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       body: z.object({ data: z.string() }),
-      syncResponse: z.object({ result: z.string() }),
+      jsonResponse: z.object({ result: z.string() }),
       events: { result: z.object({ success: z.boolean() }) },
       isDualMode: true as const,
+      isSimplified: true as const,
     }
 
     expect(() =>
@@ -864,7 +869,7 @@ describe('Dual-Mode Route Builder Validation', () => {
         contract: invalidContract,
         handlers: {
           json: async () => ({ result: 'test' }),
-          sse: () => success('disconnect'),
+          sse: () => success<SSEHandlerResult>('disconnect'),
         },
       }),
     ).toThrow('Route params schema must be a ZodObject for path template extraction')
@@ -877,28 +882,27 @@ describe('Dual-Mode Response Headers', () => {
   it('validates response headers when schema is defined', async () => {
     const container = createContainer({ injectionMode: 'PROXY' })
     const context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
+    context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
 
-    const controller: TestChatDualModeController = context.diContainer.resolve(
-      'testChatDualModeController',
+    const controller: GenericDualModeController = context.diContainer.resolve(
+      'genericDualModeController',
     )
 
     // Create a contract with responseHeaders schema
-    const contractWithHeaders = {
-      method: 'POST' as const,
+    const contractWithHeaders = buildContract({
+      method: 'POST',
       pathResolver: () => '/api/with-headers',
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
       body: z.object({ data: z.string() }),
-      syncResponse: z.object({ result: z.string() }),
+      jsonResponse: z.object({ result: z.string() }),
       responseHeaders: z.object({
         'x-request-id': z.string(),
         'x-ratelimit-remaining': z.string(),
       }),
       events: { result: z.object({ success: z.boolean() }) },
-      isDualMode: true as const,
-    }
+    })
 
     const route = buildFastifyRoute(controller, {
       contract: contractWithHeaders,
@@ -910,7 +914,7 @@ describe('Dual-Mode Response Headers', () => {
           return { result: request.body.data }
         },
         sse: () => {
-          return success('disconnect')
+          return success<SSEHandlerResult>('disconnect')
         },
       },
     })
@@ -950,27 +954,26 @@ describe('Dual-Mode Response Headers', () => {
   it('throws validation error when required response headers are missing', async () => {
     const container = createContainer({ injectionMode: 'PROXY' })
     const context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
+    context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
 
-    const controller: TestChatDualModeController = context.diContainer.resolve(
-      'testChatDualModeController',
+    const controller: GenericDualModeController = context.diContainer.resolve(
+      'genericDualModeController',
     )
 
     // Create a contract with responseHeaders schema
-    const contractWithHeaders = {
-      method: 'POST' as const,
+    const contractWithHeaders = buildContract({
+      method: 'POST',
       pathResolver: () => '/api/missing-headers',
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
       body: z.object({ data: z.string() }),
-      syncResponse: z.object({ result: z.string() }),
+      jsonResponse: z.object({ result: z.string() }),
       responseHeaders: z.object({
         'x-required-header': z.string(),
       }),
       events: { result: z.object({ success: z.boolean() }) },
-      isDualMode: true as const,
-    }
+    })
 
     const route = buildFastifyRoute(controller, {
       contract: contractWithHeaders,
@@ -1019,25 +1022,24 @@ describe('Dual-Mode Response Headers', () => {
   it('works without responseHeaders schema (optional)', async () => {
     const container = createContainer({ injectionMode: 'PROXY' })
     const context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
+    context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
 
-    const controller: TestChatDualModeController = context.diContainer.resolve(
-      'testChatDualModeController',
+    const controller: GenericDualModeController = context.diContainer.resolve(
+      'genericDualModeController',
     )
 
     // Create a contract WITHOUT responseHeaders schema
-    const contractWithoutHeaders = {
-      method: 'POST' as const,
+    const contractWithoutHeaders = buildContract({
+      method: 'POST',
       pathResolver: () => '/api/no-headers',
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
       body: z.object({ data: z.string() }),
-      syncResponse: z.object({ result: z.string() }),
+      jsonResponse: z.object({ result: z.string() }),
       // No responseHeaders - should still work
       events: { result: z.object({ success: z.boolean() }) },
-      isDualMode: true as const,
-    }
+    })
 
     const route = buildFastifyRoute(controller, {
       contract: contractWithoutHeaders,

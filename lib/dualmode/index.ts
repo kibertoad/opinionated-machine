@@ -21,10 +21,13 @@ export {
 } from './AbstractDualModeController.js'
 export type {
   AnyDualModeContractDefinition,
-  DualModeContractDefinition,
   DualModeMethod,
+  MultiFormatResponses,
   PathResolver,
+  SimplifiedDualModeContractDefinition,
+  VerboseDualModeContractDefinition,
 } from './dualModeContracts.js'
+export { isSimplifiedContract, isVerboseContract } from './dualModeContracts.js'
 // Framework-agnostic types
 export type {
   DualModeControllerConfig,
