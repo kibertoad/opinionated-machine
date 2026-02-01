@@ -1,7 +1,8 @@
+import { success } from '@lokalise/node-core'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
 import { buildContract } from '../contracts/contractBuilders.ts'
-import { buildFastifySSEHandler } from './fastifySSETypes.ts'
+import { buildHandler } from '../routes/fastifyRouteTypes.ts'
 
 describe('sseContracts', () => {
   describe('buildContract (SSE with body)', () => {
@@ -62,7 +63,7 @@ describe('sseContracts', () => {
     })
   })
 
-  describe('buildFastifySSEHandler type checking', () => {
+  describe('buildHandler type checking', () => {
     const testContract = buildContract({
       method: 'POST',
       pathResolver: (params) => `/api/test/${params.id}/stream`,
@@ -77,73 +78,94 @@ describe('sseContracts', () => {
     })
 
     it('allows valid event names and payloads', () => {
-      const handler = buildFastifySSEHandler(testContract, async (_request, connection) => {
-        await connection.send('chunk', { content: 'hello' })
-        await connection.send('done', { totalTokens: 42 })
+      const handlers = buildHandler(testContract, {
+        sse: async (_request, connection) => {
+          await connection.send('chunk', { content: 'hello' })
+          await connection.send('done', { totalTokens: 42 })
+          return success('disconnect')
+        },
       })
 
-      expect(handler).toBeDefined()
+      expect(handlers).toBeDefined()
     })
 
     it('rejects invalid event name at compile time', () => {
-      buildFastifySSEHandler(testContract, async (_request, connection) => {
-        // @ts-expect-error - 'invalid' is not a valid event name
-        await connection.send('invalid', { content: 'test' })
+      buildHandler(testContract, {
+        sse: async (_request, connection) => {
+          // @ts-expect-error - 'invalid' is not a valid event name
+          await connection.send('invalid', { content: 'test' })
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
     })
 
     it('rejects wrong payload at compile time', () => {
-      buildFastifySSEHandler(testContract, async (_request, connection) => {
-        // @ts-expect-error - chunk expects { content: string }, not { totalTokens: number }
-        await connection.send('chunk', { totalTokens: 42 })
+      buildHandler(testContract, {
+        sse: async (_request, connection) => {
+          // @ts-expect-error - chunk expects { content: string }, not { totalTokens: number }
+          await connection.send('chunk', { totalTokens: 42 })
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
     })
 
     it('rejects missing required field at compile time', () => {
-      buildFastifySSEHandler(testContract, async (_request, connection) => {
-        // @ts-expect-error - done requires totalTokens field
-        await connection.send('done', {})
+      buildHandler(testContract, {
+        sse: async (_request, connection) => {
+          // @ts-expect-error - done requires totalTokens field
+          await connection.send('done', {})
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
     })
 
     it('rejects wrong field type at compile time', () => {
-      buildFastifySSEHandler(testContract, async (_request, connection) => {
-        // @ts-expect-error - totalTokens should be number, not string
-        await connection.send('done', { totalTokens: 'not a number' })
+      buildHandler(testContract, {
+        sse: async (_request, connection) => {
+          // @ts-expect-error - totalTokens should be number, not string
+          await connection.send('done', { totalTokens: 'not a number' })
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
     })
 
     it('types request body from contract', () => {
-      buildFastifySSEHandler(testContract, (request, _connection) => {
-        const message: string = request.body.message
-        const count: number = request.body.count
+      buildHandler(testContract, {
+        sse: (request) => {
+          const message: string = request.body.message
+          const count: number = request.body.count
 
-        // @ts-expect-error - nonExistent does not exist on body
-        const _invalid = request.body.nonExistent
+          // @ts-expect-error - nonExistent does not exist on body
+          const _invalid = request.body.nonExistent
 
-        expect(message).toBeDefined()
-        expect(count).toBeDefined()
+          expect(message).toBeDefined()
+          expect(count).toBeDefined()
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)
     })
 
     it('types request params from contract', () => {
-      buildFastifySSEHandler(testContract, (request, _connection) => {
-        const id: string = request.params.id
+      buildHandler(testContract, {
+        sse: (request) => {
+          const id: string = request.params.id
 
-        // @ts-expect-error - nonExistent does not exist on params
-        const _invalid = request.params.nonExistent
+          // @ts-expect-error - nonExistent does not exist on params
+          const _invalid = request.params.nonExistent
 
-        expect(id).toBeDefined()
+          expect(id).toBeDefined()
+          return success('disconnect')
+        },
       })
 
       expect(true).toBe(true)

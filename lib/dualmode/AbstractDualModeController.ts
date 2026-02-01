@@ -1,11 +1,13 @@
 import type { z } from 'zod'
+import type {
+  BuildFastifyDualModeRoutesReturnType,
+  BuildFastifySSERoutesReturnType,
+} from '../routes/fastifyRouteTypes.ts'
 import { AbstractSSEController } from '../sse/AbstractSSEController.ts'
-import type { BuildFastifySSERoutesReturnType } from '../sse/fastifySSETypes.ts'
 import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { SSEControllerConfig } from '../sse/sseTypes.ts'
 import type { AnyDualModeContractDefinition } from './dualModeContracts.ts'
 import type { DualModeControllerConfig } from './dualModeTypes.ts'
-import type { BuildFastifyDualModeRoutesReturnType } from './fastifyDualModeTypes.ts'
 
 /**
  * Extract all event names from dual-mode contracts as a union of string literals.
@@ -56,16 +58,16 @@ export type ExtractDualModeEventSchema<
  *     return {
  *       chatCompletion: {
  *         contract: ChatController.contracts.chatCompletion,
- *         handlers: buildDualModeHandler(ChatController.contracts.chatCompletion, {
- *           json: async (ctx) => {
+ *         handlers: buildHandler(ChatController.contracts.chatCompletion, {
+ *           json: async (request, reply) => {
  *             // Return complete JSON response
  *             return { reply: 'Hello', usage: { tokens: 5 } }
  *           },
- *           sse: async (ctx) => {
+ *           sse: async (request, connection) => {
  *             // Stream SSE events
- *             await ctx.connection.send('chunk', { delta: 'Hello' })
- *             await ctx.connection.send('done', { usage: { total: 5 } })
- *             this.closeConnection(ctx.connection.id)
+ *             await connection.send('chunk', { delta: 'Hello' })
+ *             await connection.send('done', { usage: { total: 5 } })
+ *             this.closeConnection(connection.id)
  *           },
  *         }),
  *       },
