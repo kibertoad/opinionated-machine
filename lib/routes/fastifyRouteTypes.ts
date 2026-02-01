@@ -389,23 +389,53 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
  * Unified handler builder for both SSE-only and dual-mode contracts.
  *
  * This function provides automatic type inference based on the contract type:
- * - **SSE-only contracts**: Provide `{ sse: (request, connection) => void }`
- * - **Dual-mode contracts**: Provide `{ json: (request, reply) => Response, sse: (request, connection) => void }`
+ * - **SSE-only contracts**: Provide `{ sse: handler }` only
+ * - **Dual-mode contracts**: Provide both `{ json: handler, sse: handler }`
  *
- * Handler signatures follow Fastify patterns:
- * - `json` handler: `(request, reply) => SyncResponse | Promise<SyncResponse>`
- * - `sse` handler: `(request, connection) => void | Promise<void>`
+ * ## Handler Signatures
+ *
+ * **JSON handler** (dual-mode only):
+ * ```typescript
+ * json: (request, reply) => SyncResponse | Promise<SyncResponse>
+ * ```
+ *
+ * **SSE handler** (both SSE-only and dual-mode):
+ * ```typescript
+ * sse: (request, connection) => Either<Error, SSEHandlerResult> | Promise<Either<Error, SSEHandlerResult>>
+ * ```
+ *
+ * The SSE handler must return an `Either` from `@lokalise/node-core`:
+ * - `success('disconnect')` - Close connection after handler completes (request-response streaming)
+ * - `success('maintain_connection')` - Keep connection open until client disconnects (long-lived)
+ * - `failure(error)` - Signal an error; the framework sends an error event and closes the connection
+ *
+ * @see SSEHandlerResult for the possible success values
+ * @see Either from `@lokalise/node-core` for the result wrapper
  *
  * @example
  * ```typescript
- * // SSE-only contract
- * const sseHandlers = buildHandler(notificationsContract, {
+ * import { success, failure } from '@lokalise/node-core'
+ *
+ * // SSE-only contract - request-response streaming (e.g., AI completions)
+ * const sseHandlers = buildHandler(chatStreamContract, {
  *   sse: async (request, connection) => {
- *     await connection.send('notification', { id: '1', message: 'Hello' })
+ *     for (const word of request.body.message.split(' ')) {
+ *       await connection.send('chunk', { delta: word })
+ *     }
+ *     await connection.send('done', { usage: { total: 5 } })
+ *     return success('disconnect')
  *   },
  * })
  *
- * // Dual-mode contract
+ * // SSE-only contract - long-lived connection (e.g., notifications)
+ * const notificationHandlers = buildHandler(notificationsContract, {
+ *   sse: async (request, connection) => {
+ *     this.subscriptions.set(connection.id, request.params.userId)
+ *     return success('maintain_connection')
+ *   },
+ * })
+ *
+ * // Dual-mode contract - supports both JSON and SSE responses
  * const dualModeHandlers = buildHandler(chatCompletionContract, {
  *   json: async (request, reply) => {
  *     reply.header('x-custom', 'value')
@@ -414,6 +444,7 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
  *   sse: async (request, connection) => {
  *     await connection.send('chunk', { delta: 'Hello' })
  *     await connection.send('done', { usage: { total: 5 } })
+ *     return success('disconnect')
  *   },
  * })
  * ```

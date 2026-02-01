@@ -469,6 +469,7 @@ SSE controllers extend `AbstractSSEController` and must implement a two-paramete
 import {
   AbstractSSEController,
   buildHandler,
+  success,
   type SSEControllerConfig,
   type SSEConnection
 } from 'opinionated-machine'
@@ -530,6 +531,9 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
       // For direct sending within the handler, use the connection's send method.
       // It provides stricter per-route typing (only events from this specific contract).
       await connection.send('notification', { id: 'welcome', message: 'Connected!' })
+
+      // Keep connection open for subscription events (client closes when done)
+      return success('maintain_connection')
     },
   })
 
