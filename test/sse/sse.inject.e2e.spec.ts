@@ -1,7 +1,9 @@
+import { success } from '@lokalise/node-core'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  buildFastifyRoute,
   DIContext,
   injectPayloadSSE,
   injectSSE,
@@ -22,7 +24,10 @@ import {
   reconnectStreamContract,
   sendStreamTestContract,
 } from './fixtures/testContracts.js'
-import type { TestSSEController } from './fixtures/testControllers.js'
+import type {
+  TestOnCloseErrorSSEController,
+  TestSSEController,
+} from './fixtures/testControllers.js'
 import {
   TestAuthSSEModule,
   TestChannelSSEModule,
@@ -704,6 +709,70 @@ describe('SSE Inject E2E (onClose error handling)', () => {
     // Note: This may be called asynchronously after the response completes
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(mockLogger.error).toHaveBeenCalled()
+
+    await context.destroy()
+    await server.close()
+  })
+
+  it('does not fire onDisconnect when onClose is triggered', { timeout: 10000 }, async () => {
+    const onCloseCalled = vi.fn()
+    const onDisconnectCalled = vi.fn()
+    const mockLogger: SSELogger = { error: vi.fn() }
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies(
+      { modules: [new TestOnCloseErrorSSEModule(mockLogger)] },
+      undefined,
+    )
+
+    const controller = context.diContainer.resolve(
+      'testOnCloseErrorSSEController',
+    ) as TestOnCloseErrorSSEController
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route(
+          buildFastifyRoute(controller, {
+            contract: onCloseErrorStreamContract,
+            handlers: {
+              sse: async (_request, connection) => {
+                await connection.send('message', { text: 'Hello' })
+                return success('disconnect')
+              },
+            },
+            options: {
+              onClose: () => {
+                onCloseCalled()
+                // Don't throw, just track that it was called
+              },
+              onDisconnect: () => {
+                onDisconnectCalled()
+              },
+            },
+          }),
+        )
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    const { closed } = injectSSE(server.app, onCloseErrorStreamContract, {})
+
+    await closed
+
+    // Wait for async callbacks to complete
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    // onClose should have been called (when handler returns 'disconnect')
+    expect(onCloseCalled).toHaveBeenCalledTimes(1)
+    // onDisconnect should NOT be called when onClose was triggered
+    expect(onDisconnectCalled).not.toHaveBeenCalled()
 
     await context.destroy()
     await server.close()

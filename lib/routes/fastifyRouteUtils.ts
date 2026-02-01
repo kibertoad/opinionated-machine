@@ -231,12 +231,19 @@ export async function setupSSEConnection<Events extends SSEEventSchemas>(
     eventSchemas,
   }
 
+  // Track whether connection was explicitly closed by server (to avoid double-firing callbacks)
+  let explicitlyClosed = false
+
   // Create a promise that will resolve when the client disconnects
   // Cast connection for lifecycle callbacks - they don't need type-safe event schemas
   const connectionClosed = new Promise<void>((resolve) => {
     request.socket.on('close', async () => {
       try {
-        await options?.onDisconnect?.(connection as unknown as SSEConnection)
+        // Skip onDisconnect if the connection was explicitly closed via onClose
+        // This prevents double-firing cleanup when server closes the connection
+        if (!explicitlyClosed && options?.onDisconnect) {
+          await options.onDisconnect(connection as unknown as SSEConnection)
+        }
       } catch (err) {
         options?.logger?.error({ err }, `Error in ${logPrefix} onDisconnect handler`)
       } finally {
@@ -255,6 +262,8 @@ export async function setupSSEConnection<Events extends SSEEventSchemas>(
   // Register onClose callback if provided (fires when server explicitly closes connection)
   if (options?.onClose) {
     sseReply.sse.onClose(async () => {
+      // Mark as explicitly closed to prevent onDisconnect from also firing
+      explicitlyClosed = true
       try {
         await options.onClose?.(connection as unknown as SSEConnection)
       } catch (err) {
