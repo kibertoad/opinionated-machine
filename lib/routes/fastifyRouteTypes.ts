@@ -240,7 +240,7 @@ export type FastifySSEHandlerConfig<Contract extends AnySSEContractDefinition> =
     z.infer<Contract['params']>,
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
-    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+    Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
   >
   /** Optional route configuration */
   options?: FastifySSERouteOptions
@@ -276,7 +276,7 @@ export type InferSSERequest<Contract extends AnySSEContractDefinition> = Fastify
   Params: z.infer<Contract['params']>
   Querystring: z.infer<Contract['query']>
   Headers: z.infer<Contract['requestHeaders']>
-  Body: Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+  Body: Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
 }>
 
 // ============================================================================
@@ -467,7 +467,9 @@ export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition
           z.infer<Contract['params']>,
           z.infer<Contract['query']>,
           z.infer<Contract['requestHeaders']>,
-          Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+          Contract['requestBody'] extends z.ZodTypeAny
+            ? z.infer<Contract['requestBody']>
+            : undefined,
           z.infer<Contract['jsonResponse']>,
           Contract['events']
         >
@@ -476,7 +478,9 @@ export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition
               z.infer<Contract['params']>,
               z.infer<Contract['query']>,
               z.infer<Contract['requestHeaders']>,
-              Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+              Contract['requestBody'] extends z.ZodTypeAny
+                ? z.infer<Contract['requestBody']>
+                : undefined,
               unknown,
               Contract['events']
             >
@@ -485,7 +489,9 @@ export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition
               z.infer<Contract['params']>,
               z.infer<Contract['query']>,
               z.infer<Contract['requestHeaders']>,
-              Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+              Contract['requestBody'] extends z.ZodTypeAny
+                ? z.infer<Contract['requestBody']>
+                : undefined,
               Contract['events']
             >
     : // multiFormatResponses is definitely defined - verbose handlers
@@ -495,14 +501,18 @@ export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition
           z.infer<Contract['params']>,
           z.infer<Contract['query']>,
           z.infer<Contract['requestHeaders']>,
-          Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+          Contract['requestBody'] extends z.ZodTypeAny
+            ? z.infer<Contract['requestBody']>
+            : undefined,
           Contract['events']
         >
       : DualModeHandlers<
           z.infer<Contract['params']>,
           z.infer<Contract['query']>,
           z.infer<Contract['requestHeaders']>,
-          Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
+          Contract['requestBody'] extends z.ZodTypeAny
+            ? z.infer<Contract['requestBody']>
+            : undefined,
           Contract['jsonResponse'] extends z.ZodTypeAny
             ? z.infer<Contract['jsonResponse']>
             : unknown,
@@ -566,7 +576,7 @@ export type InferHandlers<Contract> = Contract extends AnyDualModeContractDefini
         z.infer<Contract['params']>,
         z.infer<Contract['query']>,
         z.infer<Contract['requestHeaders']>,
-        Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+        Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
       >
     : never
 
@@ -581,7 +591,7 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
         z.infer<Contract['params']>,
         z.infer<Contract['query']>,
         z.infer<Contract['requestHeaders']>,
-        Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+        Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
       >
     : never
 

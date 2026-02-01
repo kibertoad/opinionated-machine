@@ -63,8 +63,18 @@ function validateResponseBody(
 
   if (isVerboseContract(contract)) {
     // Multi-format: use schema for the content type
-    if (contentType && contract.multiFormatResponses[contentType]) {
-      schema = contract.multiFormatResponses[contentType]
+    if (!contentType) {
+      throw new InternalError({
+        message: 'Content-Type is required for multi-format response validation',
+        errorCode: 'MISSING_CONTENT_TYPE',
+      })
+    }
+    schema = contract.multiFormatResponses[contentType]
+    if (!schema) {
+      throw new InternalError({
+        message: `No schema defined for Content-Type '${contentType}' in multiFormatResponses. Available formats: ${Object.keys(contract.multiFormatResponses).join(', ')}`,
+        errorCode: 'UNKNOWN_CONTENT_TYPE',
+      })
     }
   } else {
     // Simplified: use jsonResponse
@@ -250,7 +260,7 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
       params: contract.params,
       querystring: contract.query,
       headers: contract.requestHeaders,
-      ...(contract.body && { body: contract.body }),
+      ...(contract.requestBody && { body: contract.requestBody }),
       // Note: response schema for JSON mode could be added here
     },
     handler: async (request, reply) => {
@@ -322,7 +332,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
       params: contract.params,
       querystring: contract.query,
       headers: contract.requestHeaders,
-      ...(contract.body && { body: contract.body }),
+      ...(contract.requestBody && { body: contract.requestBody }),
     },
     handler: async (request, reply) => {
       // Setup SSE connection with all boilerplate

@@ -429,14 +429,14 @@ export const notificationsContract = buildContract({
   },
 })
 
-// POST-based SSE stream (e.g., AI chat completions) - has body = POST/PUT/PATCH
+// POST-based SSE stream (e.g., AI chat completions) - has requestBody = POST/PUT/PATCH
 export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/chat/completions',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     message: z.string(),
     stream: z.literal(true),
   }),
@@ -1443,7 +1443,7 @@ export const chatCompletionContract = buildContract({
   params: z.object({ chatId: z.string().uuid() }),
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
-  body: z.object({ message: z.string() }),
+  requestBody: z.object({ message: z.string() }),
   jsonResponse: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
@@ -1468,7 +1468,7 @@ export const rateLimitedContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ data: z.string() }),
+  requestBody: z.object({ data: z.string() }),
   jsonResponse: z.object({ result: z.string() }),
   // Define expected response headers
   responseHeaders: z.object({
@@ -1513,7 +1513,7 @@ export const exportContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     data: z.array(z.object({ name: z.string(), value: z.number() })),
   }),
   // Define multiple response formats

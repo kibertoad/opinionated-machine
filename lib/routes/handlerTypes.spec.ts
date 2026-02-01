@@ -12,7 +12,7 @@ describe('Handler Type Enforcement', () => {
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
-      body: z.object({ data: z.string() }),
+      requestBody: z.object({ data: z.string() }),
       multiFormatResponses: {
         'application/json': z.object({ result: z.string() }),
         'text/plain': z.string(),
@@ -63,7 +63,7 @@ describe('Handler Type Enforcement', () => {
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
-      body: z.object({ message: z.string() }),
+      requestBody: z.object({ message: z.string() }),
       jsonResponse: z.object({ reply: z.string() }),
       events: { chunk: z.object({ delta: z.string() }) },
     })
@@ -96,7 +96,7 @@ describe('Handler Type Enforcement', () => {
         params: z.object({}),
         query: z.object({}),
         requestHeaders: z.object({}),
-        body: z.object({ data: z.string() }),
+        requestBody: z.object({ data: z.string() }),
         multiFormatResponses: {
           'application/json': z.object({ result: z.string() }),
           'text/plain': z.string(),
@@ -127,7 +127,7 @@ describe('Handler Type Enforcement', () => {
         params: z.object({}),
         query: z.object({}),
         requestHeaders: z.object({}),
-        body: z.object({ message: z.string() }),
+        requestBody: z.object({ message: z.string() }),
         jsonResponse: z.object({ reply: z.string() }),
         events: { chunk: z.object({ delta: z.string() }) },
       })

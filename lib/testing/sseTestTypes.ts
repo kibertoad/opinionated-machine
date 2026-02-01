@@ -75,7 +75,7 @@ export type InjectPayloadSSEOptions<Contract extends AnySSEContractDefinition> =
   params?: z.infer<Contract['params']>
   query?: z.infer<Contract['query']>
   headers?: z.infer<Contract['requestHeaders']>
-  body: Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : never
+  body: Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : never
 }
 
 /**

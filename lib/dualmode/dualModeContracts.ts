@@ -44,7 +44,7 @@ export type MultiFormatResponses = Record<string, z.ZodTypeAny>
  * @template Params - Path parameters schema
  * @template Query - Query string parameters schema
  * @template RequestHeaders - Request headers schema
- * @template Body - Request body schema (for POST/PUT/PATCH)
+ * @template Body - Request requestBody schema (for POST/PUT/PATCH)
  * @template JsonResponse - JSON response schema (for Accept: application/json)
  * @template Events - SSE event schemas (for Accept: text/event-stream)
  * @template ResponseHeaders - Response headers schema (for JSON mode)
@@ -64,7 +64,7 @@ export type SimplifiedDualModeContractDefinition<
   params: Params
   query: Query
   requestHeaders: RequestHeaders
-  body: Body
+  requestBody: Body
   /** Single JSON response schema - use with `json` handler */
   jsonResponse: JsonResponse
   /** Explicitly forbidden when using jsonResponse */
@@ -83,7 +83,7 @@ export type SimplifiedDualModeContractDefinition<
  * @template Params - Path parameters schema
  * @template Query - Query string parameters schema
  * @template RequestHeaders - Request headers schema
- * @template Body - Request body schema (for POST/PUT/PATCH)
+ * @template Body - Request requestBody schema (for POST/PUT/PATCH)
  * @template Formats - Multi-format response schemas
  * @template Events - SSE event schemas (for Accept: text/event-stream)
  * @template ResponseHeaders - Response headers schema (for JSON mode)
@@ -103,7 +103,7 @@ export type VerboseDualModeContractDefinition<
   params: Params
   query: Query
   requestHeaders: RequestHeaders
-  body: Body
+  requestBody: Body
   /** Explicitly forbidden when using multiFormatResponses */
   jsonResponse?: never
   /** Multi-format response schemas - use with `sync` handlers */
@@ -125,7 +125,7 @@ export type AnyDualModeContractDefinition = {
   params: z.ZodTypeAny
   query: z.ZodTypeAny
   requestHeaders: z.ZodTypeAny
-  body: z.ZodTypeAny | undefined
+  requestBody: z.ZodTypeAny | undefined
   /** Single JSON response schema */
   jsonResponse?: z.ZodTypeAny
   /** Multi-format response schemas */

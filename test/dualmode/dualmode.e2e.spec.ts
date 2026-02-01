@@ -856,7 +856,7 @@ describe('Dual-Mode Route Builder Validation', () => {
       params: z.string(), // Invalid: should be ZodObject
       query: z.object({}),
       requestHeaders: z.object({}),
-      body: z.object({ data: z.string() }),
+      requestBody: z.object({ data: z.string() }),
       jsonResponse: z.object({ result: z.string() }),
       events: { result: z.object({ success: z.boolean() }) },
       isDualMode: true as const,
@@ -894,7 +894,7 @@ describe('Dual-Mode Response Headers', () => {
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
-      body: z.object({ data: z.string() }),
+      requestBody: z.object({ data: z.string() }),
       jsonResponse: z.object({ result: z.string() }),
       responseHeaders: z.object({
         'x-request-id': z.string(),
@@ -966,7 +966,7 @@ describe('Dual-Mode Response Headers', () => {
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
-      body: z.object({ data: z.string() }),
+      requestBody: z.object({ data: z.string() }),
       jsonResponse: z.object({ result: z.string() }),
       responseHeaders: z.object({
         'x-required-header': z.string(),
@@ -1034,7 +1034,7 @@ describe('Dual-Mode Response Headers', () => {
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
-      body: z.object({ data: z.string() }),
+      requestBody: z.object({ data: z.string() }),
       jsonResponse: z.object({ result: z.string() }),
       // No responseHeaders - should still work
       events: { result: z.object({ success: z.boolean() }) },

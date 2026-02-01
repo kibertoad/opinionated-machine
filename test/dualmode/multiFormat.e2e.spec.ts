@@ -290,7 +290,7 @@ describe('Multi-Format Response Validation', () => {
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
-      body: z.object({ value: z.string() }),
+      requestBody: z.object({ value: z.string() }),
       multiFormatResponses: {
         'application/json': z.object({ result: z.string(), count: z.number().positive() }),
         'text/plain': z.string().min(1),

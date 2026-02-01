@@ -39,7 +39,7 @@ export const chatCompletionContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     message: z.string(),
     stream: z.literal(true),
   }),
@@ -137,7 +137,7 @@ export const largeContentStreamContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     chunkCount: z.number(),
     chunkSize: z.number(),
   }),
@@ -205,7 +205,7 @@ export const validationTestStreamContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     // The event data to send - passed through to sendEvent
     eventData: z.object({
       id: z.string(),
@@ -243,7 +243,7 @@ export const openaiStyleStreamContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     prompt: z.string(),
     stream: z.literal(true),
   }),
@@ -299,7 +299,7 @@ export const sendStreamTestContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     sendInvalid: z.boolean().optional(),
   }),
   events: {

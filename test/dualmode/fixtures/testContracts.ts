@@ -11,7 +11,7 @@ export const chatCompletionContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ message: z.string() }),
+  requestBody: z.object({ message: z.string() }),
   jsonResponse: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
@@ -31,7 +31,7 @@ export const conversationCompletionContract = buildContract({
   params: z.object({ conversationId: z.string().uuid() }),
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
-  body: z.object({ message: z.string() }),
+  requestBody: z.object({ message: z.string() }),
   jsonResponse: z.object({
     reply: z.string(),
     conversationId: z.string(),
@@ -75,7 +75,7 @@ export const authenticatedDualModeContract = buildContract({
   requestHeaders: z.object({
     authorization: z.string().optional(),
   }),
-  body: z.object({ data: z.string() }),
+  requestBody: z.object({ data: z.string() }),
   jsonResponse: z.object({
     success: z.boolean(),
     data: z.string(),
@@ -94,7 +94,7 @@ export const defaultModeTestContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ input: z.string() }),
+  requestBody: z.object({ input: z.string() }),
   jsonResponse: z.object({ output: z.string() }),
   events: {
     output: z.object({ value: z.string() }),
@@ -110,7 +110,7 @@ export const errorTestContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ shouldThrow: z.boolean() }),
+  requestBody: z.object({ shouldThrow: z.boolean() }),
   jsonResponse: z.object({ success: z.boolean() }),
   events: {
     result: z.object({ success: z.boolean() }),
@@ -127,7 +127,7 @@ export const defaultMethodContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ value: z.string() }),
+  requestBody: z.object({ value: z.string() }),
   jsonResponse: z.object({ result: z.string() }),
   events: {
     data: z.object({ value: z.string() }),
@@ -144,7 +144,7 @@ export const jsonValidationContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ returnInvalid: z.boolean() }),
+  requestBody: z.object({ returnInvalid: z.boolean() }),
   jsonResponse: z.object({
     requiredField: z.string(),
     count: z.number().int().positive(),
@@ -164,7 +164,7 @@ export const multiFormatExportContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     data: z.array(z.object({ name: z.string(), value: z.number() })),
   }),
   multiFormatResponses: {
