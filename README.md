@@ -500,52 +500,52 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
         contract: NotificationsSSEController.contracts.notificationsStream,
         handlers: this.handleStream,
         options: {
-          onConnect: (conn) => this.onConnect(conn),
-          onClose: (conn, reason) => this.onClose(conn, reason),
+          onConnect: (session) => this.onConnect(session),
+          onClose: (session, reason) => this.onClose(session, reason),
         },
       },
     }
   }
 
   // Handler with automatic type inference from contract
-  // sse.start() returns a connection with type-safe event sending
+  // sse.start() returns a session with type-safe event sending
   private handleStream = buildHandler(notificationsContract, {
     sse: async (request, sse) => {
       // request.query is typed from contract: { userId?: string }
       const userId = request.query.userId ?? 'anonymous'
 
       // Start streaming - sends HTTP 200 + SSE headers
-      const connection = sse.start({ context: { userId } })
+      const session = sse.start({ context: { userId } })
 
       // For external triggers (subscriptions, timers, message queues), use sendEventInternal.
-      // connection.send is only available within this handler's scope - external callbacks
-      // like subscription handlers execute later, outside this function, so they can't access connection.
+      // session.send is only available within this handler's scope - external callbacks
+      // like subscription handlers execute later, outside this function, so they can't access session.
       // sendEventInternal is a controller method, so it's accessible from any callback.
       // It provides autocomplete for all event names defined in the controller's contracts.
       this.notificationService.subscribe(userId, async (notification) => {
-        await this.sendEventInternal(connection.id, {
+        await this.sendEventInternal(session.id, {
           event: 'notification',
           data: notification,
         })
       })
 
-      // For direct sending within the handler, use the connection's send method.
+      // For direct sending within the handler, use the session's send method.
       // It provides stricter per-route typing (only events from this specific contract).
-      await connection.send('notification', { id: 'welcome', message: 'Connected!' })
+      await session.send('notification', { id: 'welcome', message: 'Connected!' })
 
-      // Keep connection open for subscription events (client closes when done)
-      return connection.keepAlive()
+      // Keep session open for subscription events (client closes when done)
+      return session.keepAlive()
     },
   })
 
-  private onConnect = (connection: SSESession) => {
-    console.log('Client connected:', connection.id)
+  private onConnect = (session: SSESession) => {
+    console.log('Client connected:', session.id)
   }
 
-  private onClose = (connection: SSESession, reason: SSECloseReason) => {
-    const userId = connection.context?.userId as string
+  private onClose = (session: SSESession, reason: SSECloseReason) => {
+    const userId = session.context?.userId as string
     this.notificationService.unsubscribe(userId)
-    console.log(`Client disconnected (${reason}):`, connection.id)
+    console.log(`Client disconnected (${reason}):`, session.id)
   }
 }
 ```
@@ -572,7 +572,7 @@ class ChatSSEController extends AbstractSSEController<Contracts> {
   }
 
   // Handler with automatic type inference from contract
-  // sse.start() returns connection with fully typed send()
+  // sse.start() returns session with fully typed send()
   private handleChatCompletion = buildHandler(chatCompletionContract, {
     sse: async (request, sse) => {
       // request.body is typed as { message: string; stream: true }
@@ -580,15 +580,15 @@ class ChatSSEController extends AbstractSSEController<Contracts> {
       const words = request.body.message.split(' ')
 
       // Start streaming - sends HTTP 200 + SSE headers
-      const connection = sse.start()
+      const session = sse.start()
 
       for (const word of words) {
-        // connection.send() provides compile-time type checking for event names and data
-        await connection.send('chunk', { content: word })
+        // session.send() provides compile-time type checking for event names and data
+        await session.send('chunk', { content: word })
       }
 
-      // Gracefully end the stream - all sent data is flushed before connection closes
-      return connection.close()
+      // Gracefully end the stream - all sent data is flushed before session closes
+      return session.close()
     },
   })
 
@@ -613,10 +613,10 @@ private handleStream = async (
   sse: SSEContext<typeof chatCompletionContract['events']>,
 ) => {
   // request.body, request.params, etc. all typed from contract
-  const connection = sse.start()
-  // connection.send() is typed based on contract events
-  await connection.send('chunk', { content: 'hello' })
-  return connection.close()
+  const session = sse.start()
+  // session.send() is typed based on contract events
+  await session.send('chunk', { content: 'hello' })
+  return session.close()
 }
 ```
 
@@ -697,10 +697,10 @@ await this.broadcast({
   data: { message: 'Server maintenance in 5 minutes' },
 })
 
-// Broadcast to connections matching a predicate
+// Broadcast to sessions matching a predicate
 await this.broadcastIf(
   { event: 'channel-update', data: { channelId: '123', newMessage: msg } },
-  (connection) => connection.context.channelId === '123',
+  (session) => session.context.channelId === '123',
 )
 ```
 
@@ -708,17 +708,17 @@ Both methods return the number of clients the message was successfully sent to.
 
 ### Controller-Level Hooks
 
-Override these optional methods on your controller for global connection handling:
+Override these optional methods on your controller for global session handling:
 
 ```ts
 class MySSEController extends AbstractSSEController<Contracts> {
-  // Called AFTER connection is registered (for all routes)
-  protected onConnectionEstablished(connection: SSESession): void {
+  // Called AFTER session is registered (for all routes)
+  protected onConnectionEstablished(session: SSESession): void {
     this.metrics.incrementConnections()
   }
 
-  // Called BEFORE connection is unregistered (for all routes)
-  protected onConnectionClosed(connection: SSESession): void {
+  // Called BEFORE session is unregistered (for all routes)
+  protected onConnectionClosed(session: SSESession): void {
     this.metrics.decrementConnections()
   }
 }
@@ -741,10 +741,10 @@ public buildSSERoutes() {
             reply.code(403).send({ error: 'Forbidden' })
           }
         },
-        onConnect: (conn) => console.log('Admin connected'),
-        onClose: (conn, reason) => console.log(`Admin disconnected (${reason})`),
+        onConnect: (session) => console.log('Admin connected'),
+        onClose: (session, reason) => console.log(`Admin disconnected (${reason})`),
         // Handle client reconnection with Last-Event-ID
-        onReconnect: async (conn, lastEventId) => {
+        onReconnect: async (session, lastEventId) => {
           // Return events to replay, or handle manually
           return this.getEventsSince(lastEventId)
         },
@@ -760,23 +760,23 @@ public buildSSERoutes() {
 
 | Option | Description |
 | -------- | ------------- |
-| `preHandler` | Authentication/authorization hook that runs before SSE connection |
+| `preHandler` | Authentication/authorization hook that runs before SSE session |
 | `onConnect` | Called after client connects (SSE handshake complete) |
-| `onClose` | Called when connection closes (client disconnect, network failure, or server close). Receives `(connection, reason)` where reason is `'server'` or `'client'` |
+| `onClose` | Called when session closes (client disconnect, network failure, or server close). Receives `(session, reason)` where reason is `'server'` or `'client'` |
 | `onReconnect` | Handle Last-Event-ID reconnection, return events to replay |
 | `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
 | `serializer` | Custom serializer for SSE data (e.g., for custom JSON encoding) |
 | `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages |
 
 **onClose reason parameter:**
-- `'server'`: Server explicitly closed the connection (via `closeConnection()` or `connection.close()`)
-- `'client'`: Client closed the connection (EventSource.close(), navigation, network failure)
+- `'server'`: Server explicitly closed the session (via `closeConnection()` or `session.close()`)
+- `'client'`: Client closed the session (EventSource.close(), navigation, network failure)
 
 ```ts
 options: {
-  onConnect: (conn) => console.log('Client connected'),
-  onClose: (conn, reason) => {
-    console.log(`Connection closed (${reason}):`, conn.id)
+  onConnect: (session) => console.log('Client connected'),
+  onClose: (session, reason) => {
+    console.log(`Session closed (${reason}):`, session.id)
     // reason is 'server' or 'client'
   },
   serializer: (data) => JSON.stringify(data, null, 2), // Pretty-print JSON
@@ -784,31 +784,31 @@ options: {
 }
 ```
 
-### SSE Connection Methods
+### SSE Session Methods
 
-The `connection` object returned by `sse.start()` provides several useful methods:
+The `session` object returned by `sse.start()` provides several useful methods:
 
 ```ts
 private handleStream = buildHandler(streamContract, {
   sse: async (request, sse) => {
-    const connection = sse.start()
+    const session = sse.start()
 
-    // Check if connection is still active
-    if (connection.isConnected()) {
-      await connection.send('status', { connected: true })
+    // Check if session is still active
+    if (session.isConnected()) {
+      await session.send('status', { connected: true })
     }
 
     // Get raw writable stream for advanced use cases (e.g., pipeline)
-    const stream = connection.getStream()
+    const stream = session.getStream()
 
     // Stream messages from an async iterable with automatic validation
     async function* generateMessages() {
       yield { event: 'message' as const, data: { text: 'Hello' } }
       yield { event: 'message' as const, data: { text: 'World' } }
     }
-    await connection.sendStream(generateMessages())
+    await session.sendStream(generateMessages())
 
-    return connection.close()
+    return session.close()
   },
 })
 ```
@@ -816,7 +816,7 @@ private handleStream = buildHandler(streamContract, {
 | Method | Description |
 | -------- | ------------- |
 | `send(event, data, options?)` | Send a typed event (validates against contract schema) |
-| `isConnected()` | Check if the connection is still active |
+| `isConnected()` | Check if the session is still active |
 | `getStream()` | Get the underlying `WritableStream` for advanced use cases |
 | `sendStream(messages)` | Stream messages from an `AsyncIterable` with validation |
 
@@ -843,7 +843,7 @@ if (!sent) {
 - All lifecycle hooks are wrapped in try/catch to prevent crashes
 - If a `logger` is provided in route options, errors are logged with context
 - If no logger is provided, errors are silently ignored
-- The connection lifecycle continues even if a hook throws
+- The session lifecycle continues even if a hook throws
 
 ```ts
 // Provide a logger to capture lifecycle errors
@@ -854,8 +854,8 @@ public buildSSERoutes() {
       handlers: this.handleStream,
       options: {
         logger: this.logger, // pino-compatible logger
-        onConnect: (conn) => { /* may throw */ },
-        onClose: (conn, reason) => { /* may throw */ },
+        onConnect: (session) => { /* may throw */ },
+        onClose: (session, reason) => { /* may throw */ },
       },
     },
   }
@@ -864,61 +864,61 @@ public buildSSERoutes() {
 
 ### Long-lived Connections vs Request-Response Streaming
 
-SSE handlers must return an `SSEHandlerResult` to explicitly indicate connection management:
+SSE handlers must return an `SSEHandlerResult` to explicitly indicate session management:
 
 ```ts
 // Return sse.error(code, body) - send HTTP error before streaming starts
-// Return connection.close() - close connection after handler completes
-// Return connection.keepAlive() - keep connection open for external events
+// Return session.close() - close session after handler completes
+// Return session.keepAlive() - keep session open for external events
 ```
 
-**Long-lived connections** (notifications, live updates):
-- Handler starts streaming and returns `connection.keepAlive()`
-- Connection stays open indefinitely after handler returns
+**Long-lived sessions** (notifications, live updates):
+- Handler starts streaming and returns `session.keepAlive()`
+- Session stays open indefinitely after handler returns
 - Events are sent later via callbacks using `sendEventInternal()`
-- **Client closes connection** when done (e.g., `eventSource.close()` or navigating away)
+- **Client closes session** when done (e.g., `eventSource.close()` or navigating away)
 - Server cleans up via `onConnectionClosed()` hook
 
 ```ts
 private handleStream = buildHandler(streamContract, {
   sse: async (request, sse) => {
     // Start streaming - sends HTTP 200 + SSE headers
-    const connection = sse.start()
+    const session = sse.start()
 
     // Set up subscription - events sent via callback AFTER handler returns
-    this.service.subscribe(connection.id, (data) => {
-      this.sendEventInternal(connection.id, { event: 'update', data })
+    this.service.subscribe(session.id, (data) => {
+      this.sendEventInternal(session.id, { event: 'update', data })
     })
-    // Keep connection open until CLIENT disconnects
-    return connection.keepAlive()
+    // Keep session open until CLIENT disconnects
+    return session.keepAlive()
   },
 })
 
 // Clean up when client disconnects
-protected onConnectionClosed(connection: SSESession): void {
-  this.service.unsubscribe(connection.id)
+protected onConnectionClosed(session: SSESession): void {
+  this.service.unsubscribe(session.id)
 }
 ```
 
 **Request-response streaming** (AI completions):
-- Handler starts streaming, sends all events, then returns `connection.close()`
-- Use `connection.send()` for type-safe event sending within the handler
-- Connection automatically closes when handler returns
+- Handler starts streaming, sends all events, then returns `session.close()`
+- Use `session.send()` for type-safe event sending within the handler
+- Session automatically closes when handler returns
 
 ```ts
 private handleChatCompletion = buildHandler(chatCompletionContract, {
   sse: async (request, sse) => {
     // Start streaming - sends HTTP 200 + SSE headers
-    const connection = sse.start()
+    const session = sse.start()
 
     const words = request.body.message.split(' ')
     for (const word of words) {
-      await connection.send('chunk', { content: word })
+      await session.send('chunk', { content: word })
     }
-    await connection.send('done', { totalTokens: words.length })
+    await session.send('done', { totalTokens: words.length })
 
-    // Signal that streaming is complete and connection should close
-    return connection.close()
+    // Signal that streaming is complete and session should close
+    return session.close()
   },
 })
 ```
@@ -937,9 +937,9 @@ private handleStream = buildHandler(streamContract, {
     }
 
     // Validation passed - start streaming
-    const connection = sse.start()
-    await connection.send('data', entity)
-    return connection.close()
+    const session = sse.start()
+    await session.send('data', entity)
+    return session.close()
   },
 })
 
@@ -1120,42 +1120,42 @@ describe('NotificationsSSEController', () => {
 The `connectionSpy` is available when `isTestMode: true` is passed to `asSSEControllerClass`:
 
 ```ts
-// Wait for a connection to be established (with timeout)
-const connection = await controller.connectionSpy.waitForConnection({ timeout: 5000 })
+// Wait for a session to be established (with timeout)
+const session = await controller.connectionSpy.waitForConnection({ timeout: 5000 })
 
-// Wait for a connection matching a predicate (useful for multiple connections)
-const connection = await controller.connectionSpy.waitForConnection({
+// Wait for a session matching a predicate (useful for multiple sessions)
+const session = await controller.connectionSpy.waitForConnection({
   timeout: 5000,
-  predicate: (conn) => conn.request.url.includes('/api/notifications'),
+  predicate: (s) => s.request.url.includes('/api/notifications'),
 })
 
-// Check if a specific connection is active
-const isConnected = controller.connectionSpy.isConnected(connectionId)
+// Check if a specific session is active
+const isConnected = controller.connectionSpy.isConnected(sessionId)
 
-// Wait for a specific connection to disconnect
-await controller.connectionSpy.waitForDisconnection(connectionId, { timeout: 5000 })
+// Wait for a specific session to disconnect
+await controller.connectionSpy.waitForDisconnection(sessionId, { timeout: 5000 })
 
-// Get all connection events (connect/disconnect history)
+// Get all session events (connect/disconnect history)
 const events = controller.connectionSpy.getEvents()
 
-// Clear event history and claimed connections between tests
+// Clear event history and claimed sessions between tests
 controller.connectionSpy.clear()
 ```
 
-**Note**: `waitForConnection` tracks "claimed" connections internally. Each call returns a unique unclaimed connection, allowing sequential waits for the same URL path without returning the same connection twice. This is used internally by `SSEHttpClient.connect()` with `awaitServerConnection`.
+**Note**: `waitForConnection` tracks "claimed" sessions internally. Each call returns a unique unclaimed session, allowing sequential waits for the same URL path without returning the same session twice. This is used internally by `SSEHttpClient.connect()` with `awaitServerConnection`.
 
-### Connection Monitoring
+### Session Monitoring
 
-Controllers have access to utility methods for monitoring connections:
+Controllers have access to utility methods for monitoring sessions:
 
 ```ts
-// Get count of active connections
+// Get count of active sessions
 const count = this.getConnectionCount()
 
-// Get all active connections (for iteration/inspection)
-const connections = this.getConnections()
+// Get all active sessions (for iteration/inspection)
+const sessions = this.getConnections()
 
-// Check if connection spy is enabled (useful for conditional logic)
+// Check if session spy is enabled (useful for conditional logic)
 if (this.hasConnectionSpy()) {
   // ...
 }
@@ -1165,9 +1165,9 @@ if (this.hasConnectionSpy()) {
 
 The library provides utilities for testing SSE endpoints.
 
-**Two connection methods:**
-- **Inject** - Uses Fastify's built-in `inject()` to simulate HTTP requests directly in-memory, without network overhead. No `listen()` required. Handler must close the connection for the request to complete.
-- **Real HTTP** - Actual HTTP connection via `fetch()`. Requires the server to be listening. Supports long-lived connections.
+**Two transport methods:**
+- **Inject** - Uses Fastify's built-in `inject()` to simulate HTTP requests directly in-memory, without network overhead. No `listen()` required. Handler must close the session for the request to complete.
+- **Real HTTP** - Actual HTTP via `fetch()`. Requires the server to be listening. Supports long-lived sessions.
 
 #### Quick Reference
 
@@ -1500,9 +1500,9 @@ handlers: {
     return { result: 'success' }
   },
   sse: async (request, sse) => {
-    const connection = sse.start()
+    const session = sse.start()
     // ... send events ...
-    return connection.close()
+    return session.close()
   },
 }
 ```
@@ -1559,9 +1559,9 @@ handlers: buildHandler(exportContract, {
   },
   sse: async (request, sse) => {
     // SSE streaming handler
-    const connection = sse.start()
-    await connection.send('done', { totalItems: request.body.data.length })
-    return connection.close()
+    const session = sse.start()
+    await session.send('done', { totalItems: request.body.data.length })
+    return session.close()
   },
 })
 ```
@@ -1624,14 +1624,14 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
           },
           // SSE mode - stream response chunks
           sse: async (request, sse) => {
-            const connection = sse.start()
+            const session = sse.start()
             let totalTokens = 0
             for await (const chunk of this.aiService.stream(request.body.message)) {
-              await connection.send('chunk', { delta: chunk.text })
+              await session.send('chunk', { delta: chunk.text })
               totalTokens += chunk.tokenCount ?? 0
             }
-            await connection.send('done', { usage: { total: totalTokens } })
-            return connection.close()
+            await session.send('done', { usage: { total: totalTokens } })
+            return session.close()
           },
         }),
         options: {
@@ -1644,8 +1644,8 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
             }
           },
           // Optional: SSE lifecycle hooks
-          onConnect: (conn) => console.log('Client connected:', conn.id),
-          onClose: (conn, reason) => console.log(`Client disconnected (${reason}):`, conn.id),
+          onConnect: (session) => console.log('Client connected:', session.id),
+          onClose: (session, reason) => console.log(`Client disconnected (${reason}):`, session.id),
         },
       },
     }
@@ -1660,7 +1660,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 | `json` | `(request, reply) => Response` |
 | `sse` | `(request, sse) => SSEHandlerResult` |
 
-The `json` handler must return a value matching `jsonResponse` schema. The `sse` handler uses `sse.start()` to begin streaming and `connection.send()` for type-safe event sending.
+The `json` handler must return a value matching `jsonResponse` schema. The `sse` handler uses `sse.start()` to begin streaming and `session.send()` for type-safe event sending.
 
 ### Registering Dual-Mode Controllers
 

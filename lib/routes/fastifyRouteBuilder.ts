@@ -191,11 +191,13 @@ async function processSSEHandlerResult(
 ): Promise<void> {
   switch (result._type) {
     case 'error':
-      // Send HTTP error response (headers not sent yet)
-      // Note: With the zod serializer compiler and @fastify/sse, we must explicitly
-      // override content-type and remove SSE-specific headers for error responses
+      // Send HTTP error response (headers not sent yet).
+      // Clean up SSE-specific headers that @fastify/sse sets early in the lifecycle.
+      // Not strictly necessary, but avoids confusing headers on JSON error responses.
       reply.removeHeader('cache-control')
       reply.removeHeader('x-accel-buffering')
+      // Critical: override content-type from text/event-stream to application/json,
+      // otherwise the zod serializer compiler won't serialize the error body correctly.
       reply.type('application/json').code(result.code).send(result.body)
       break
 
