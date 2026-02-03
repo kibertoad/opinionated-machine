@@ -11,7 +11,6 @@ export {
   extractPathTemplate,
   type FastifyDualModeHandlerConfig,
   type FastifyDualModeRouteOptions,
-  type JsonModeHandler,
   type RegisterDualModeRoutesOptions,
   type SSEModeHandler,
   type SyncModeHandler,
@@ -24,12 +23,9 @@ export {
 export type {
   AnyDualModeContractDefinition,
   DualModeMethod,
-  MultiFormatResponses,
   PathResolver,
   SimplifiedDualModeContractDefinition,
-  VerboseDualModeContractDefinition,
 } from './dualModeContracts.js'
-export { isSimplifiedContract, isVerboseContract } from './dualModeContracts.js'
 // Framework-agnostic types
 export type {
   DualModeControllerConfig,

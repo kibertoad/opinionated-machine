@@ -1,9 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
-import type {
-  AnyDualModeContractDefinition,
-  MultiFormatResponses,
-} from '../dualmode/dualModeContracts.ts'
+import type { AnyDualModeContractDefinition } from '../dualmode/dualModeContracts.ts'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
@@ -408,17 +405,6 @@ export type SyncModeHandler<
 ) => SyncResponse | Promise<SyncResponse>
 
 /**
- * @deprecated Use SyncModeHandler instead. This alias is kept for backwards compatibility.
- */
-export type JsonModeHandler<
-  Params = unknown,
-  Query = unknown,
-  Headers = unknown,
-  Body = unknown,
-  SyncResponse = unknown,
-> = SyncModeHandler<Params, Query, Headers, Body, SyncResponse>
-
-/**
  * Handler function for SSE mode with deferred headers.
  *
  * The handler receives an SSEContext object that allows:
@@ -489,76 +475,6 @@ export type DualModeHandlers<
   Events extends SSEEventSchemas = SSEEventSchemas,
 > = {
   sync: SyncModeHandler<Params, Query, Headers, Body, SyncResponse>
-  sse: SSEModeHandler<Events, Params, Query, Headers, Body>
-}
-
-/**
- * @deprecated Multi-format handlers are no longer supported. Use single sync handler instead.
- * Handler function for a specific format in multi-format mode.
- * @template Params - Path parameters type
- * @template Query - Query string parameters type
- * @template Headers - Request headers type
- * @template Body - Request body type
- * @template Response - Response type for this format
- */
-export type FormatHandler<
-  Params = unknown,
-  Query = unknown,
-  Headers = unknown,
-  Body = unknown,
-  Response = unknown,
-> = (
-  request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
-  reply: FastifyReply,
-) => Response | Promise<Response>
-
-/**
- * @deprecated Multi-format handlers are no longer supported. Use single sync handler instead.
- * Handler object for multi-format sync responses.
- * Maps Content-Type to handler function.
- *
- * @template Formats - The multi-format response schemas from the contract
- * @template Params - Path parameters type
- * @template Query - Query string parameters type
- * @template Headers - Request headers type
- * @template Body - Request body type
- */
-export type SyncHandlers<
-  Formats extends MultiFormatResponses,
-  Params = unknown,
-  Query = unknown,
-  Headers = unknown,
-  Body = unknown,
-> = {
-  [ContentType in keyof Formats & string]: FormatHandler<
-    Params,
-    Query,
-    Headers,
-    Body,
-    z.infer<Formats[ContentType]>
-  >
-}
-
-/**
- * @deprecated Multi-format handlers are no longer supported. Use DualModeHandlers with single sync handler instead.
- * Combined handlers for verbose multi-format dual-mode routes.
- *
- * @template Formats - Multi-format response schemas
- * @template Params - Path parameters type
- * @template Query - Query string parameters type
- * @template Headers - Request headers type
- * @template Body - Request body type
- * @template Events - SSE event schemas
- */
-export type VerboseDualModeHandlers<
-  Formats extends MultiFormatResponses,
-  Params = unknown,
-  Query = unknown,
-  Headers = unknown,
-  Body = unknown,
-  Events extends SSEEventSchemas = SSEEventSchemas,
-> = {
-  sync: SyncHandlers<Formats, Params, Query, Headers, Body>
   sse: SSEModeHandler<Events, Params, Query, Headers, Body>
 }
 

@@ -570,9 +570,9 @@ export function determineMode(
 export type SyncFormatResult = { mode: 'sse' } | { mode: 'sync'; contentType: string }
 
 /**
- * Determine sync format from Accept header for multi-format routes.
+ * Determine sync format from Accept header for content negotiation.
  *
- * Parses the Accept header and determines which format handler to use.
+ * Parses the Accept header and determines which format to use.
  * Supports quality values (q=) for content negotiation and subtype wildcards
  * (e.g., "application/*", "text/*").
  *

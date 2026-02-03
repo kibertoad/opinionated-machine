@@ -259,7 +259,7 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
       querystring: contract.query,
       headers: contract.requestHeaders,
       ...(contract.requestBody && { body: contract.requestBody }),
-      // Note: response schema for JSON mode could be added here
+      // Note: response schema for sync mode could be added here
     },
     handler: async (request, reply) => {
       // Determine mode based on Accept header

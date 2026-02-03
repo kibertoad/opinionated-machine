@@ -35,7 +35,7 @@ export type ExtractDualModeEventSchema<
 /**
  * Abstract base class for dual-mode controllers.
  *
- * Dual-mode controllers handle both SSE streaming and JSON responses on the
+ * Dual-mode controllers handle both SSE streaming and sync responses on the
  * same route path, automatically branching based on the `Accept` header.
  *
  * This class extends `AbstractSSEController` to reuse connection management,
@@ -47,7 +47,7 @@ export type ExtractDualModeEventSchema<
  * ```typescript
  * class ChatController extends AbstractDualModeController<typeof contracts> {
  *   public static contracts = {
- *     chatCompletion: buildContract({ requestBody: ..., jsonResponse: ..., ... }),
+ *     chatCompletion: buildContract({ requestBody: ..., syncResponse: ..., ... }),
  *   } as const
  *
  *   constructor(deps: Dependencies, config?: DualModeControllerConfig) {
@@ -56,23 +56,23 @@ export type ExtractDualModeEventSchema<
  *
  *   public buildDualModeRoutes() {
  *     return {
- *       chatCompletion: {
- *         contract: ChatController.contracts.chatCompletion,
- *         handlers: buildHandler(ChatController.contracts.chatCompletion, {
- *           json: async (request, reply) => {
- *             // Return complete JSON response
- *             return { reply: 'Hello', usage: { tokens: 5 } }
- *           },
- *           sse: async (request, connection) => {
- *             // Stream SSE events
- *             await connection.send('chunk', { delta: 'Hello' })
- *             await connection.send('done', { usage: { total: 5 } })
- *             this.closeConnection(connection.id)
- *           },
- *         }),
- *       },
+ *       chatCompletion: this.handleChatCompletion,
  *     }
  *   }
+ *
+ *   private handleChatCompletion = buildHandler(ChatController.contracts.chatCompletion, {
+ *     sync: async (request, reply) => {
+ *       // Return complete response
+ *       return { reply: 'Hello', usage: { tokens: 5 } }
+ *     },
+ *     sse: async (request, sse) => {
+ *       // Stream SSE events with autoClose mode
+ *       const session = sse.start('autoClose')
+ *       await session.send('chunk', { delta: 'Hello' })
+ *       await session.send('done', { usage: { total: 5 } })
+ *       // Connection closes automatically when handler returns
+ *     },
+ *   })
  * }
  * ```
  */

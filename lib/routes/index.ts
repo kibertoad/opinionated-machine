@@ -15,13 +15,9 @@ export {
   type FastifySSEHandlerConfig,
   type FastifySSEPreHandler,
   type FastifySSERouteOptions,
-  // Multi-format handler types (deprecated)
-  type FormatHandler,
   type InferDualModeHandlers,
   type InferHandlers,
   type InferSSERequest,
-  // Dual-mode types (deprecated alias)
-  type JsonModeHandler,
   type RegisterDualModeRoutesOptions,
   // Registration options
   type RegisterSSERoutesOptions,
@@ -39,11 +35,8 @@ export {
   type SSEStartOptions,
   // SSE stream message type
   type SSEStreamMessage,
-  // Multi-format sync handlers type (deprecated)
-  type SyncHandlers,
-  // Sync mode handler type (renamed from JsonModeHandler)
+  // Sync mode handler type
   type SyncModeHandler,
-  type VerboseDualModeHandlers,
 } from './fastifyRouteTypes.js'
 
 // Route utilities
