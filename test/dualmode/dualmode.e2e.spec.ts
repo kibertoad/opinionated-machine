@@ -867,7 +867,9 @@ describe('Dual-Mode Route Builder Validation', () => {
         contract: invalidContract,
         handlers: {
           json: async () => ({ result: 'test' }),
-          sse: (_request, sse) => sse.start().close(),
+          sse: (_request, sse) => {
+            sse.start('autoClose')
+          },
         },
       }),
     ).toThrow('Route params schema must be a ZodObject for path template extraction')
@@ -912,7 +914,7 @@ describe('Dual-Mode Response Headers', () => {
           return { result: request.body.data }
         },
         sse: (_request, sse) => {
-          return sse.start().close()
+          sse.start('autoClose')
         },
       },
     })
@@ -981,7 +983,7 @@ describe('Dual-Mode Response Headers', () => {
           return { result: request.body.data }
         },
         sse: (_request, sse) => {
-          return sse.start().close()
+          sse.start('autoClose')
         },
       },
     })
@@ -1046,7 +1048,7 @@ describe('Dual-Mode Response Headers', () => {
           return { result: request.body.data }
         },
         sse: (_request, sse) => {
-          return sse.start().close()
+          sse.start('autoClose')
         },
       },
     })

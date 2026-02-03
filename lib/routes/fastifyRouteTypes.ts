@@ -25,28 +25,19 @@ export type SSERespondResult = {
 }
 
 /**
- * Result indicating the SSE handler completed and the session should be closed.
- * Created via `session.close()`.
+ * Session lifetime mode, specified when calling `sse.start()`.
+ * - `'autoClose'`: Close session automatically after handler completes (request-response streaming)
+ * - `'keepAlive'`: Keep session open after handler completes (long-lived connections)
  */
-export type SSECloseResult = {
-  _type: 'close'
-}
-
-/**
- * Result indicating the SSE handler completed but the session should stay open.
- * Created via `session.keepAlive()`.
- */
-export type SSEKeepAliveResult = {
-  _type: 'keepAlive'
-}
+export type SSESessionMode = 'autoClose' | 'keepAlive'
 
 /**
  * Possible results from an SSE handler.
- * - `{ _type: 'respond', code, body }`: Send HTTP response before streaming (via sse.respond())
- * - `{ _type: 'close' }`: Close session after handler completes (via session.close())
- * - `{ _type: 'keepAlive' }`: Keep session open (via session.keepAlive())
+ * - `SSERespondResult`: Send HTTP response before streaming (via sse.respond())
+ * - `void`: Streaming was started via sse.start(), mode determines what happens next
  */
-export type SSEHandlerResult = SSERespondResult | SSECloseResult | SSEKeepAliveResult
+// biome-ignore lint/suspicious/noConfusingVoidType: void is intentional here - handlers can return nothing after calling sse.start()
+export type SSEHandlerResult = SSERespondResult | void
 
 // ============================================================================
 // SSE Session Types
@@ -143,39 +134,6 @@ export type SSESession<Events extends SSEEventSchemas = SSEEventSchemas, Context
    */
   sendStream: (messages: AsyncIterable<SSEStreamMessage<Events>>) => Promise<void>
   /**
-   * Signal that the connection should be closed after the handler completes.
-   * Use this for request-response streaming patterns (e.g., AI completions).
-   *
-   * @returns SSEHandlerResult to return from the handler
-   *
-   * @example
-   * ```typescript
-   * sse: async (request, sse) => {
-   *   const connection = sse.start()
-   *   await connection.send('chunk', { delta: 'Hello' })
-   *   return connection.close() // Close after handler
-   * }
-   * ```
-   */
-  close: () => SSECloseResult
-  /**
-   * Signal that the connection should stay open after the handler completes.
-   * Use this for long-lived connection patterns (e.g., notifications).
-   * The connection will remain open until the client disconnects.
-   *
-   * @returns SSEHandlerResult to return from the handler
-   *
-   * @example
-   * ```typescript
-   * sse: async (request, sse) => {
-   *   const connection = sse.start()
-   *   this.subscriptions.set(connection.id, request.params.userId)
-   *   return connection.keepAlive() // Keep open for external events
-   * }
-   * ```
-   */
-  keepAlive: () => SSEKeepAliveResult
-  /**
    * Zod schemas for validating event data.
    * Map of event name to Zod schema. Used by sendEvent for runtime validation.
    * @internal
@@ -216,13 +174,11 @@ export type SSEStartOptions<Context = unknown> = {
  *   }
  *
  *   // Phase 2: Start streaming (sends 200 + SSE headers)
- *   const session = sse.start({ context: { entity } })
+ *   // 'autoClose' = close after handler, 'keepAlive' = keep open for external events
+ *   const session = sse.start('autoClose', { context: { entity } })
  *
  *   // Phase 3: Stream events
  *   await session.send('data', { item: entity })
- *
- *   // Phase 4: Signal completion
- *   return session.close()
  * }
  * ```
  */
@@ -233,10 +189,16 @@ export type SSEContext<Events extends SSEEventSchemas = SSEEventSchemas, Respons
    * After calling this method, you can no longer send HTTP responses.
    * Use `respond()` before `start()` for early returns.
    *
+   * @param mode - Session lifetime mode:
+   *   - `'autoClose'`: Close session automatically after handler completes (request-response streaming)
+   *   - `'keepAlive'`: Keep session open after handler completes (long-lived connections)
    * @param options - Optional configuration for the session
    * @returns SSESession for sending events
    */
-  start: <Context = unknown>(options?: SSEStartOptions<Context>) => SSESession<Events, Context>
+  start: <Context = unknown>(
+    mode: SSESessionMode,
+    options?: SSEStartOptions<Context>,
+  ) => SSESession<Events, Context>
 
   /**
    * Send an HTTP response before streaming starts (early return).
@@ -450,34 +412,33 @@ export type JsonModeHandler<
  *
  * The handler receives an SSEContext object that allows:
  * 1. Early returns before headers are sent (validation errors, not found, etc.)
- * 2. Explicit streaming start via `sse.start()`
+ * 2. Explicit streaming start via `sse.start(mode)`
  * 3. Type-safe event sending via the returned session
  *
  * @returns SSEHandlerResult indicating how to handle the response:
  * - `sse.respond(code, body)`: Send HTTP response before streaming (early return)
- * - `session.close()`: Close session after handler completes
- * - `session.keepAlive()`: Keep session open for external events
+ * - `void`: Streaming started, session mode determines lifecycle
  *
  * @example
  * ```typescript
- * // Request-response streaming (AI completions)
+ * // Request-response streaming (AI completions) - autoClose mode
  * sse: async (request, sse) => {
  *   const entity = await db.find(request.params.id)
  *   if (!entity) {
  *     return sse.respond(404, { error: 'Not found' })
  *   }
  *
- *   const session = sse.start()
+ *   const session = sse.start('autoClose')
  *   await session.send('chunk', { delta: 'Hello' })
  *   await session.send('done', { usage: { total: 5 } })
- *   return session.close()
+ *   // Session closes automatically after handler returns
  * }
  *
- * // Long-lived session (notifications)
+ * // Long-lived session (notifications) - keepAlive mode
  * sse: async (request, sse) => {
- *   const session = sse.start()
+ *   const session = sse.start('keepAlive')
  *   this.subscriptions.set(session.id, request.params.userId)
- *   return session.keepAlive()
+ *   // Session stays open after handler returns
  * }
  * ```
  *
@@ -766,9 +727,9 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
  *
  * The SSE handler receives an SSEContext that allows deferred header sending:
  * - `sse.respond(code, body)` - Return HTTP response before streaming (early return)
- * - `sse.start()` - Start streaming (sends 200 + SSE headers), returns session
- * - `session.close()` - Signal to close session after handler completes
- * - `session.keepAlive()` - Signal to keep session open for external events
+ * - `sse.start(mode)` - Start streaming (sends 200 + SSE headers), returns session
+ *   - `'autoClose'` - Close session after handler completes
+ *   - `'keepAlive'` - Keep session open for external events
  *
  * @see SSEContext for the sse parameter API
  * @see SSEHandlerResult for the possible return values
@@ -785,24 +746,23 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
  *     }
  *
  *     // Start streaming (sends 200 + SSE headers)
- *     const session = sse.start()
+ *     // 'autoClose' closes session after handler returns
+ *     const session = sse.start('autoClose')
  *
  *     // Stream events
  *     for (const word of request.body.message.split(' ')) {
  *       await session.send('chunk', { delta: word })
  *     }
  *     await session.send('done', { usage: { total: 5 } })
- *
- *     return session.close()
  *   },
  * })
  *
  * // SSE-only contract - long-lived session (e.g., notifications)
  * const notificationHandlers = buildHandler(notificationsContract, {
  *   sse: async (request, sse) => {
- *     const session = sse.start()
+ *     // 'keepAlive' keeps session open after handler returns
+ *     const session = sse.start('keepAlive')
  *     this.subscriptions.set(session.id, request.params.userId)
- *     return session.keepAlive()
  *   },
  * })
  *
@@ -813,10 +773,9 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
  *     return { reply: 'Hello', usage: { tokens: 5 } }
  *   },
  *   sse: async (request, sse) => {
- *     const session = sse.start()
+ *     const session = sse.start('autoClose')
  *     await session.send('chunk', { delta: 'Hello' })
  *     await session.send('done', { usage: { total: 5 } })
- *     return session.close()
  *   },
  * })
  * ```

@@ -751,10 +751,9 @@ describe('SSE Inject E2E (onClose error handling)', () => {
               contract: onCloseErrorStreamContract,
               handlers: {
                 sse: async (_request, sse) => {
-                  const connection = sse.start()
+                  const connection = sse.start('autoClose')
                   await connection.send('message', { text: 'Hello' })
-                  // Server explicitly closes connection
-                  return connection.close()
+                  // Server explicitly closes connection (autoClose mode)
                 },
               },
               options: {
@@ -971,9 +970,9 @@ describe('SSE Inject E2E (getStream method)', () => {
  * 1. Handler receives `sse` context (not session)
  * 2. Handler performs validation
  * 3. If validation fails: `return sse.respond(code, body)` - sends HTTP response
- * 4. If validation passes: `const session = sse.start()` - sends 200 + SSE headers
+ * 4. If validation passes: `const session = sse.start('autoClose'|'keepAlive')` - sends 200 + SSE headers
  * 5. Stream events via `session.send()`
- * 6. Return `session.close()` or `session.keepAlive()`
+ * 6. Handler returns (session mode determines lifecycle: autoClose closes, keepAlive stays open)
  */
 describe('SSE Inject E2E (deferred headers - HTTP error before streaming)', () => {
   let server: SSETestServer<{ context: DIContext<object, object> }>
@@ -1345,7 +1344,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
     await server.close()
   })
 
-  it('hasError() returns true after sse.respond() is called', { timeout: 10000 }, async () => {
+  it('hasResponse() returns true after sse.respond() is called', { timeout: 10000 }, async () => {
     const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
     const { z } = await import('zod/v4')
 
@@ -1370,7 +1369,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
             const respondResult = result.sseContext.respond(400, { error: 'test' })
 
             // Check hasError
-            hasErrorResult = result.hasError()
+            hasErrorResult = result.hasResponse()
 
             // Process the respond result
             reply.code(respondResult.code).send(respondResult.body)
@@ -1421,7 +1420,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
             const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
 
             // First start streaming
-            const connection = result.sseContext.start()
+            const connection = result.sseContext.start('autoClose')
 
             // Then try sendHeaders - should throw
             try {
@@ -1537,11 +1536,11 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
             const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
 
             // First start
-            const connection = result.sseContext.start()
+            const connection = result.sseContext.start('autoClose')
 
             // Try to start again - should throw
             try {
-              result.sseContext.start()
+              result.sseContext.start('autoClose')
             } catch (e) {
               thrownError = e as Error
             }
@@ -1600,7 +1599,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
 
             // Try to start - should throw
             try {
-              result.sseContext.start()
+              result.sseContext.start('autoClose')
             } catch (e) {
               thrownError = e as Error
             }
@@ -1653,7 +1652,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
             const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
 
             // First start streaming
-            const session = result.sseContext.start()
+            const session = result.sseContext.start('autoClose')
 
             // Then try respond - should throw
             try {
@@ -1712,7 +1711,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
             const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
 
             // Start streaming
-            const connection = result.sseContext.start()
+            const connection = result.sseContext.start('autoClose')
 
             // Get connection from getter
             connectionFromGetter = result.getConnection()

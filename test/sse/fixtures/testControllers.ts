@@ -70,7 +70,7 @@ export class StreamController extends AbstractSSEController<{
   private handleStream = buildHandler(streamContract, {
     sse: (request, sse) => {
       const userId = request.query.userId ?? 'anonymous'
-      const connection = sse.start({ context: { userId } })
+      const connection = sse.start('keepAlive', { context: { userId } })
 
       // Subscribe to events for this connection
       // Uses sendEventInternal for external event sources (subscriptions, timers, etc.)
@@ -80,8 +80,6 @@ export class StreamController extends AbstractSSEController<{
           data: { text: String(data) },
         })
       })
-
-      return connection.keepAlive()
     },
   })
 
@@ -133,14 +131,12 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
   private handleStream = buildHandler(notificationsStreamContract, {
     sse: async (request, sse) => {
       const userId = request.query.userId ?? 'default'
-      const connection = sse.start({ context: { userId } })
+      const connection = sse.start('keepAlive', { context: { userId } })
 
       // Wait for test to signal completion
       await new Promise<void>((resolve) => {
         this.handlerDoneResolvers.set(connection.id, resolve)
       })
-
-      return connection.keepAlive()
     },
   })
 
@@ -223,14 +219,13 @@ export class TestPostSSEController extends AbstractSSEController<TestPostSSECont
 
   private handleChatCompletion = buildHandler(chatCompletionContract, {
     sse: async (request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       // Simulate streaming response
       const words = request.body.message.split(' ')
       for (const word of words) {
         await connection.send('chunk', { content: word })
       }
       await connection.send('done', { totalTokens: words.length })
-      return connection.close()
     },
   })
 }
@@ -267,9 +262,8 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
 
   private handleAuthenticatedStream = buildHandler(authenticatedStreamContract, {
     sse: async (_request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       await connection.send('data', { value: 'authenticated data' })
-      return connection.close()
     },
   })
 }
@@ -297,13 +291,14 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
 
   private handleChannelStream = buildHandler(channelStreamContract, {
     sse: async (request, sse) => {
-      const connection = sse.start({ context: { channelId: request.params.channelId } })
+      const connection = sse.start('autoClose', {
+        context: { channelId: request.params.channelId },
+      })
       await connection.send('message', {
         id: '1',
         content: `Welcome to channel ${request.params.channelId}`,
         author: 'system',
       })
-      return connection.close()
     },
   })
 }
@@ -349,10 +344,9 @@ export class TestReconnectSSEController extends AbstractSSEController<TestReconn
 
   private handleReconnectStream = buildHandler(reconnectStreamContract, {
     sse: async (_request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       // Send a new event after connection
       await connection.send('event', { id: '6', data: 'New event after reconnect' }, { id: '6' })
-      return connection.close()
     },
   })
 
@@ -417,14 +411,13 @@ export class TestAsyncReconnectSSEController extends AbstractSSEController<TestA
 
   private handleReconnectStream = buildHandler(asyncReconnectStreamContract, {
     sse: async (_request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       // Send a new event after connection
       await connection.send(
         'event',
         { id: '4', data: 'Async new event after reconnect' },
         { id: '4' },
       )
-      return connection.close()
     },
   })
 
@@ -477,7 +470,7 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
 
   private handleLargeContentStream = buildHandler(largeContentStreamContract, {
     sse: async (request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       const { chunkCount, chunkSize } = request.body
 
       // Generate content of specified size (repeating pattern for easy verification)
@@ -498,8 +491,6 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
 
       // Send completion event with totals
       await connection.send('done', { totalChunks: chunkCount, totalBytes })
-
-      return connection.close()
     },
   })
 }
@@ -544,10 +535,9 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
 
   private handleStream = buildHandler(loggerTestStreamContract, {
     sse: async (_request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('keepAlive')
       await connection.send('message', { text: 'Hello from logger test' })
       // Don't close connection - let client close to trigger onClose
-      return connection.keepAlive()
     },
   })
 }
@@ -580,7 +570,7 @@ export class TestValidationSSEController extends AbstractSSEController<TestValid
 
   private handleStream = buildHandler(validationTestStreamContract, {
     sse: async (request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       // Send the event - if validation fails, error propagates to the framework
       // which sends an error event and closes the connection automatically
       // Cast to expected type since we're testing runtime validation with potentially invalid data
@@ -591,7 +581,6 @@ export class TestValidationSSEController extends AbstractSSEController<TestValid
         status: 'active' | 'inactive'
       }
       await connection.send('validatedEvent', eventData)
-      return connection.close()
     },
   })
 }
@@ -625,7 +614,7 @@ export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpen
 
   private handleOpenAIStyleStream = buildHandler(openaiStyleStreamContract, {
     sse: async (request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       // Split prompt into words and stream each as a JSON chunk (like OpenAI)
       const words = request.body.prompt.split(' ')
 
@@ -644,8 +633,6 @@ export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpen
       // Send the terminator as a plain string, exactly like OpenAI does
       // This demonstrates that JSON encoding is NOT mandatory for SSE data
       await connection.send('done', '[DONE]')
-
-      return connection.close()
     },
   })
 }
@@ -690,10 +677,9 @@ export class TestOnReconnectErrorSSEController extends AbstractSSEController<Tes
 
   private handleStream = buildHandler(onReconnectErrorStreamContract, {
     sse: async (_request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       // Send message to verify connection still works after onReconnect error
       await connection.send('event', { id: 'new', data: 'Hello after onReconnect error' })
-      return connection.close()
     },
   })
 }
@@ -738,10 +724,9 @@ export class TestOnConnectErrorSSEController extends AbstractSSEController<TestO
 
   private handleStream = buildHandler(onConnectErrorStreamContract, {
     sse: async (_request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       // Send message to verify connection still works after onConnect error
       await connection.send('message', { text: 'Hello after onConnect error' })
-      return connection.close()
     },
   })
 }
@@ -786,10 +771,9 @@ export class TestOnCloseErrorSSEController extends AbstractSSEController<TestOnC
 
   private handleStream = buildHandler(onCloseErrorStreamContract, {
     sse: async (_request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       // Send message then signal disconnect to trigger onClose
       await connection.send('message', { text: 'Hello before close' })
-      return connection.close()
     },
   })
 }
@@ -817,12 +801,11 @@ export class TestIsConnectedSSEController extends AbstractSSEController<TestIsCo
 
   private handleStream = buildHandler(isConnectedTestStreamContract, {
     sse: async (_request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       // Check if connected at start
       const wasConnected = connection.isConnected()
       await connection.send('status', { connected: wasConnected })
       await connection.send('done', { ok: true })
-      return connection.close()
     },
   })
 }
@@ -850,7 +833,7 @@ export class TestSendStreamSSEController extends AbstractSSEController<TestSendS
 
   private handleStream = buildHandler(sendStreamTestContract, {
     sse: async (request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       // Create an async generator that produces messages
       // biome-ignore lint/suspicious/useAwait: we need this for tests
       async function* generateMessages(sendInvalid: boolean) {
@@ -863,7 +846,6 @@ export class TestSendStreamSSEController extends AbstractSSEController<TestSendS
       }
 
       await connection.sendStream(generateMessages(request.body.sendInvalid ?? false))
-      return connection.close()
     },
   })
 }
@@ -891,7 +873,7 @@ export class TestGetStreamSSEController extends AbstractSSEController<TestGetStr
 
   private handleStream = buildHandler(getStreamTestContract, {
     sse: async (_request, sse) => {
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
       // Get the raw stream and verify it exists
       const stream = connection.getStream()
       const hasStream = stream !== null && stream !== undefined
@@ -900,8 +882,6 @@ export class TestGetStreamSSEController extends AbstractSSEController<TestGetStr
       await connection.send('message', {
         text: hasStream ? 'Got stream successfully' : 'Failed to get stream',
       })
-
-      return connection.close()
     },
   })
 }
@@ -945,9 +925,8 @@ export class TestDeferredHeaders404Controller extends AbstractSSEController<Test
       }
 
       // Entity exists - start streaming
-      const session = sse.start()
+      const session = sse.start('autoClose')
       await session.send('message', { text: `Found entity ${id}` })
-      return session.close()
     },
   })
 
@@ -1001,9 +980,8 @@ export class TestDeferredHeaders422Controller extends AbstractSSEController<Test
       }
 
       // Valid - start streaming
-      const session = sse.start()
+      const session = sse.start('autoClose')
       await session.send('result', { computed: value * 2 })
-      return session.close()
     },
   })
 }
@@ -1064,7 +1042,7 @@ export class TestErrorAfterStartController extends AbstractSSEController<TestErr
   private handleStream = buildHandler(errorAfterStartContract, {
     sse: async (_request, sse) => {
       // Start streaming (sends 200 + SSE headers)
-      const connection = sse.start()
+      const connection = sse.start('autoClose')
 
       // Send a message successfully
       await connection.send('message', { text: 'First message' })

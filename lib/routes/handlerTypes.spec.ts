@@ -111,9 +111,9 @@ describe('Handler Type Enforcement', () => {
           'text/plain': () => 'plain text',
         },
         sse: async (_req, sse) => {
-          const connection = sse.start()
+          const connection = sse.start('autoClose')
           await connection.send('done', { ok: true })
-          return connection.close()
+          // autoClose mode
         },
       })
 
@@ -137,9 +137,9 @@ describe('Handler Type Enforcement', () => {
       const handlers = buildHandler(simplifiedContract, {
         json: () => ({ reply: 'hello' }),
         sse: async (_req, sse) => {
-          const connection = sse.start()
+          const connection = sse.start('autoClose')
           await connection.send('chunk', { delta: 'hi' })
-          return connection.close()
+          // autoClose mode
         },
       })
 

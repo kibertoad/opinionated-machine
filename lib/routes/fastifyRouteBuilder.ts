@@ -188,30 +188,30 @@ async function processSSEHandlerResult(
   connectionId: string | undefined,
   connectionClosed: Promise<void>,
   reply: FastifyReply,
+  mode: 'autoClose' | 'keepAlive' | undefined,
 ): Promise<void> {
-  switch (result._type) {
-    case 'respond':
-      // Send HTTP response (early return before streaming started).
-      // Clean up SSE-specific headers that @fastify/sse sets early in the lifecycle.
-      // Not strictly necessary, but avoids confusing headers on JSON responses.
-      reply.removeHeader('cache-control')
-      reply.removeHeader('x-accel-buffering')
-      // Critical: override content-type from text/event-stream to application/json,
-      // otherwise the zod serializer compiler won't serialize the body correctly.
-      reply.type('application/json').code(result.code).send(result.body)
-      break
+  // Check if handler returned an early response (before streaming started)
+  if (result && result._type === 'respond') {
+    // Send HTTP response (early return before streaming started).
+    // Clean up SSE-specific headers that @fastify/sse sets early in the lifecycle.
+    // Not strictly necessary, but avoids confusing headers on JSON responses.
+    reply.removeHeader('cache-control')
+    reply.removeHeader('x-accel-buffering')
+    // Critical: override content-type from text/event-stream to application/json,
+    // otherwise the zod serializer compiler won't serialize the body correctly.
+    reply.type('application/json').code(result.code).send(result.body)
+    return
+  }
 
-    case 'close':
-      // Request-response streaming: close session after handler completes
-      if (connectionId) {
-        controller.closeConnection(connectionId)
-      }
-      break
-
-    case 'keepAlive':
-      // Long-lived session: wait for client to disconnect
-      await connectionClosed
-      break
+  // Streaming was started, mode determines what happens next
+  if (mode === 'autoClose') {
+    // Request-response streaming: close session after handler completes
+    if (connectionId) {
+      controller.closeConnection(connectionId)
+    }
+  } else if (mode === 'keepAlive') {
+    // Long-lived session: wait for client to disconnect
+    await connectionClosed
   }
 }
 
@@ -241,8 +241,9 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
     const result = await handlers.sse(request, contextResult.sseContext as any)
 
     // Check for forgotten start() detection
-    // Handle case where result is undefined/null (handler forgot to return)
-    if (!result || (result._type !== 'respond' && !contextResult.isStarted())) {
+    // Handler must either start streaming OR send a response
+    // Note: With autoClose mode, handlers return void after start(), which is valid
+    if (!contextResult.isStarted() && (!result || result._type !== 'respond')) {
       throw new Error(
         'SSE handler must either send a response (sse.respond()) ' +
           'or start streaming (sse.start()). Handler returned without doing either.',
@@ -256,6 +257,7 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
       contextResult.getConnectionId(),
       contextResult.connectionClosed,
       reply,
+      contextResult.getMode(),
     )
   } catch (err) {
     // If streaming was started, send error event to client and re-throw for logging
@@ -410,8 +412,9 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         const result = await handlers.sse(request as any, contextResult.sseContext as any)
 
         // Check for forgotten start() detection
-        // Handle case where result is undefined/null (handler forgot to return)
-        if (!result || (result._type !== 'respond' && !contextResult.isStarted())) {
+        // Handler must either start streaming OR send a response
+        // Note: With autoClose mode, handlers return void after start(), which is valid
+        if (!contextResult.isStarted() && (!result || result._type !== 'respond')) {
           throw new Error(
             'SSE handler must either send a response (sse.respond()) ' +
               'or start streaming (sse.start()). Handler returned without doing either.',
@@ -425,6 +428,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
           contextResult.getConnectionId(),
           contextResult.connectionClosed,
           reply,
+          contextResult.getMode(),
         )
       } catch (err) {
         // If streaming was started, send error event to client and re-throw for logging
@@ -521,9 +525,9 @@ export function buildFastifyRoute<
  *       if (!entity) {
  *         return sse.respond(404, { error: 'Not found' })
  *       }
- *       const session = sse.start()
+ *       // 'keepAlive' keeps session open after handler returns
+ *       const session = sse.start('keepAlive')
  *       await session.send('notification', { message: 'Hello!' })
- *       return session.keepAlive()
  *     },
  *   },
  * })
@@ -536,10 +540,10 @@ export function buildFastifyRoute<
  *       return { reply: 'Hello', usage: { tokens: 1 } }
  *     },
  *     sse: async (request, sse) => {
- *       const session = sse.start()
+ *       // 'autoClose' closes session after handler returns
+ *       const session = sse.start('autoClose')
  *       await session.send('chunk', { delta: 'Hello' })
  *       await session.send('done', { usage: { total: 1 } })
- *       return session.close()
  *     },
  *   },
  * })

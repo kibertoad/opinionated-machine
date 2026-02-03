@@ -305,9 +305,9 @@ describe('Multi-Format Response Validation', () => {
           'text/plain': () => 'Valid response',
         },
         sse: async (_req, sse) => {
-          const connection = sse.start()
+          const connection = sse.start('autoClose')
           await connection.send('done', { ok: true })
-          return connection.close()
+          // autoClose mode
         },
       },
     })
@@ -382,9 +382,9 @@ describe('Multi-Format Response Validation', () => {
           'text/plain': () => 'plain-text-response',
         },
         sse: async (_req, sse) => {
-          const connection = sse.start()
+          const connection = sse.start('autoClose')
           await connection.send('done', { ok: true })
-          return connection.close()
+          // autoClose mode
         },
       },
     })

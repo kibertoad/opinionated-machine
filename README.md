@@ -508,14 +508,15 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
   }
 
   // Handler with automatic type inference from contract
-  // sse.start() returns a session with type-safe event sending
+  // sse.start(mode) returns a session with type-safe event sending
   private handleStream = buildHandler(notificationsContract, {
     sse: async (request, sse) => {
       // request.query is typed from contract: { userId?: string }
       const userId = request.query.userId ?? 'anonymous'
 
-      // Start streaming - sends HTTP 200 + SSE headers
-      const session = sse.start({ context: { userId } })
+      // Start streaming with 'keepAlive' mode - stays open for external events
+      // Sends HTTP 200 + SSE headers immediately
+      const session = sse.start('keepAlive', { context: { userId } })
 
       // For external triggers (subscriptions, timers, message queues), use sendEventInternal.
       // session.send is only available within this handler's scope - external callbacks
@@ -533,8 +534,8 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
       // It provides stricter per-route typing (only events from this specific contract).
       await session.send('notification', { id: 'welcome', message: 'Connected!' })
 
-      // Keep session open for subscription events (client closes when done)
-      return session.keepAlive()
+      // 'keepAlive' mode: handler returns, but connection stays open for subscription events
+      // Connection closes when client disconnects or server calls closeConnection()
     },
   })
 
@@ -572,23 +573,23 @@ class ChatSSEController extends AbstractSSEController<Contracts> {
   }
 
   // Handler with automatic type inference from contract
-  // sse.start() returns session with fully typed send()
+  // sse.start(mode) returns session with fully typed send()
   private handleChatCompletion = buildHandler(chatCompletionContract, {
     sse: async (request, sse) => {
       // request.body is typed as { message: string; stream: true }
       // request.query, request.params, request.headers all typed from contract
       const words = request.body.message.split(' ')
 
-      // Start streaming - sends HTTP 200 + SSE headers
-      const session = sse.start()
+      // Start streaming with 'autoClose' mode - closes after handler completes
+      // Sends HTTP 200 + SSE headers immediately
+      const session = sse.start('autoClose')
 
       for (const word of words) {
         // session.send() provides compile-time type checking for event names and data
         await session.send('chunk', { content: word })
       }
 
-      // Gracefully end the stream - all sent data is flushed before session closes
-      return session.close()
+      // 'autoClose' mode: connection closes automatically when handler returns
     },
   })
 
@@ -613,10 +614,10 @@ private handleStream = async (
   sse: SSEContext<typeof chatCompletionContract['events']>,
 ) => {
   // request.body, request.params, etc. all typed from contract
-  const session = sse.start()
+  const session = sse.start('autoClose')
   // session.send() is typed based on contract events
   await session.send('chunk', { content: 'hello' })
-  return session.close()
+  // 'autoClose' mode: connection closes when handler returns
 }
 ```
 
@@ -769,7 +770,7 @@ public buildSSERoutes() {
 | `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages |
 
 **onClose reason parameter:**
-- `'server'`: Server explicitly closed the session (via `closeConnection()` or `session.close()`)
+- `'server'`: Server explicitly closed the session (via `closeConnection()` or `autoClose` mode)
 - `'client'`: Client closed the session (EventSource.close(), navigation, network failure)
 
 ```ts
@@ -786,12 +787,12 @@ options: {
 
 ### SSE Session Methods
 
-The `session` object returned by `sse.start()` provides several useful methods:
+The `session` object returned by `sse.start(mode)` provides several useful methods:
 
 ```ts
 private handleStream = buildHandler(streamContract, {
   sse: async (request, sse) => {
-    const session = sse.start()
+    const session = sse.start('autoClose')
 
     // Check if session is still active
     if (session.isConnected()) {
@@ -808,7 +809,7 @@ private handleStream = buildHandler(streamContract, {
     }
     await session.sendStream(generateMessages())
 
-    return session.close()
+    // 'autoClose' mode: connection closes when handler returns
   },
 })
 ```
@@ -864,16 +865,16 @@ public buildSSERoutes() {
 
 ### Long-lived Connections vs Request-Response Streaming
 
-SSE handlers must return an `SSEHandlerResult` to explicitly indicate session management:
+SSE session lifetime is determined by the mode passed to `sse.start(mode)`:
 
 ```ts
-// Return sse.respond(code, body) - send HTTP response before streaming (early return)
-// Return session.close() - close session after handler completes
-// Return session.keepAlive() - keep session open for external events
+// sse.start('autoClose') - close connection when handler returns (request-response pattern)
+// sse.start('keepAlive') - keep connection open for external events (subscription pattern)
+// sse.respond(code, body) - send HTTP response before streaming (early return)
 ```
 
 **Long-lived sessions** (notifications, live updates):
-- Handler starts streaming and returns `session.keepAlive()`
+- Handler starts streaming with `sse.start('keepAlive')`
 - Session stays open indefinitely after handler returns
 - Events are sent later via callbacks using `sendEventInternal()`
 - **Client closes session** when done (e.g., `eventSource.close()` or navigating away)
@@ -882,15 +883,14 @@ SSE handlers must return an `SSEHandlerResult` to explicitly indicate session ma
 ```ts
 private handleStream = buildHandler(streamContract, {
   sse: async (request, sse) => {
-    // Start streaming - sends HTTP 200 + SSE headers
-    const session = sse.start()
+    // Start streaming with 'keepAlive' mode - stays open for external events
+    const session = sse.start('keepAlive')
 
     // Set up subscription - events sent via callback AFTER handler returns
     this.service.subscribe(session.id, (data) => {
       this.sendEventInternal(session.id, { event: 'update', data })
     })
-    // Keep session open until CLIENT disconnects
-    return session.keepAlive()
+    // 'keepAlive' mode: handler returns, but connection stays open
   },
 })
 
@@ -901,15 +901,15 @@ protected onConnectionClosed(session: SSESession): void {
 ```
 
 **Request-response streaming** (AI completions):
-- Handler starts streaming, sends all events, then returns `session.close()`
+- Handler starts streaming with `sse.start('autoClose')`
 - Use `session.send()` for type-safe event sending within the handler
 - Session automatically closes when handler returns
 
 ```ts
 private handleChatCompletion = buildHandler(chatCompletionContract, {
   sse: async (request, sse) => {
-    // Start streaming - sends HTTP 200 + SSE headers
-    const session = sse.start()
+    // Start streaming with 'autoClose' mode - closes when handler returns
+    const session = sse.start('autoClose')
 
     const words = request.body.message.split(' ')
     for (const word of words) {
@@ -917,8 +917,7 @@ private handleChatCompletion = buildHandler(chatCompletionContract, {
     }
     await session.send('done', { totalTokens: words.length })
 
-    // Signal that streaming is complete and session should close
-    return session.close()
+    // 'autoClose' mode: connection closes automatically when handler returns
   },
 })
 ```
@@ -936,10 +935,10 @@ private handleStream = buildHandler(streamContract, {
       return sse.respond(404, { error: 'Entity not found' })
     }
 
-    // Validation passed - start streaming
-    const session = sse.start()
+    // Validation passed - start streaming with autoClose mode
+    const session = sse.start('autoClose')
     await session.send('data', entity)
-    return session.close()
+    // Connection closes automatically when handler returns
   },
 })
 
@@ -1500,9 +1499,9 @@ handlers: {
     return { result: 'success' }
   },
   sse: async (request, sse) => {
-    const session = sse.start()
+    const session = sse.start('autoClose')
     // ... send events ...
-    return session.close()
+    // Connection closes automatically when handler returns
   },
 }
 ```
@@ -1559,9 +1558,9 @@ handlers: buildHandler(exportContract, {
   },
   sse: async (request, sse) => {
     // SSE streaming handler
-    const session = sse.start()
+    const session = sse.start('autoClose')
     await session.send('done', { totalItems: request.body.data.length })
-    return session.close()
+    // Connection closes automatically when handler returns
   },
 })
 ```
@@ -1624,14 +1623,14 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
           },
           // SSE mode - stream response chunks
           sse: async (request, sse) => {
-            const session = sse.start()
+            const session = sse.start('autoClose')
             let totalTokens = 0
             for await (const chunk of this.aiService.stream(request.body.message)) {
               await session.send('chunk', { delta: chunk.text })
               totalTokens += chunk.tokenCount ?? 0
             }
             await session.send('done', { usage: { total: totalTokens } })
-            return session.close()
+            // Connection closes automatically when handler returns
           },
         }),
         options: {
@@ -1660,7 +1659,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 | `json` | `(request, reply) => Response` |
 | `sse` | `(request, sse) => SSEHandlerResult` |
 
-The `json` handler must return a value matching `jsonResponse` schema. The `sse` handler uses `sse.start()` to begin streaming and `session.send()` for type-safe event sending.
+The `json` handler must return a value matching `jsonResponse` schema. The `sse` handler uses `sse.start(mode)` to begin streaming (`'autoClose'` for request-response, `'keepAlive'` for long-lived sessions) and `session.send()` for type-safe event sending.
 
 ### Registering Dual-Mode Controllers
 

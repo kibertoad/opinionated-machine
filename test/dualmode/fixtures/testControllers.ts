@@ -41,13 +41,13 @@ export class TestChatDualModeController extends AbstractDualModeController<TestC
             }
           },
           sse: async (request, sse) => {
-            const connection = sse.start()
+            const connection = sse.start('autoClose')
             const words = request.body.message.split(' ')
             for (const word of words) {
               await connection.send('chunk', { delta: word })
             }
             await connection.send('done', { usage: { total: words.length } })
-            return connection.close()
+            // autoClose mode
           },
         }),
       },
@@ -77,7 +77,7 @@ export class TestConversationDualModeController extends AbstractDualModeControll
             conversationId: request.params.conversationId,
           }),
           sse: async (request, sse) => {
-            const connection = sse.start()
+            const connection = sse.start('autoClose')
             const words = request.body.message.split(' ')
             for (const word of words) {
               await connection.send('chunk', { delta: word })
@@ -85,7 +85,7 @@ export class TestConversationDualModeController extends AbstractDualModeControll
             await connection.send('done', {
               conversationId: request.params.conversationId,
             })
-            return connection.close()
+            // autoClose mode
           },
         }),
         options: {
@@ -144,11 +144,11 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
             }
           },
           sse: async (request, sse) => {
-            const connection = sse.start()
+            const connection = sse.start('autoClose')
             const state = this.jobStates.get(request.params.jobId)
             if (!state) {
               await connection.send('progress', { percent: 0 })
-              return connection.close()
+              return // autoClose mode - early return for no state
             }
 
             // Simulate progress updates
@@ -164,8 +164,7 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
             } else if (state.status === 'failed') {
               await connection.send('error', { code: 'JOB_FAILED', message: 'Job failed' })
             }
-
-            return connection.close()
+            // autoClose mode
           },
         }),
       },
@@ -195,12 +194,12 @@ export class TestAuthenticatedDualModeController extends AbstractDualModeControl
             data: `Processed: ${request.body.data}`,
           }),
           sse: async (request, sse) => {
-            const connection = sse.start()
+            const connection = sse.start('autoClose')
             await connection.send('result', {
               success: true,
               data: `Processed: ${request.body.data}`,
             })
-            return connection.close()
+            // autoClose mode
           },
         }),
         options: {
@@ -238,9 +237,9 @@ export class TestDefaultModeDualModeController extends AbstractDualModeControlle
             output: `JSON: ${request.body.input}`,
           }),
           sse: async (request, sse) => {
-            const connection = sse.start()
+            const connection = sse.start('autoClose')
             await connection.send('output', { value: `SSE: ${request.body.input}` })
-            return connection.close()
+            // autoClose mode
           },
         }),
         options: {
@@ -272,12 +271,12 @@ export class TestErrorDualModeController extends AbstractDualModeController<Test
             success: !request.body.shouldThrow,
           }),
           sse: async (request, sse) => {
-            const connection = sse.start()
+            const connection = sse.start('autoClose')
             if (request.body.shouldThrow) {
               throw new Error('Test error in SSE handler')
             }
             await connection.send('result', { success: true })
-            return connection.close()
+            // autoClose mode
           },
         }),
       },
@@ -306,9 +305,9 @@ export class TestDefaultMethodDualModeController extends AbstractDualModeControl
             result: `Processed: ${request.body.value}`,
           }),
           sse: async (request, sse) => {
-            const connection = sse.start()
+            const connection = sse.start('autoClose')
             await connection.send('data', { value: request.body.value })
-            return connection.close()
+            // autoClose mode
           },
         }),
       },
@@ -342,9 +341,9 @@ export class TestJsonValidationDualModeController extends AbstractDualModeContro
             return { requiredField: 'valid', count: 42 }
           },
           sse: async (_request, sse) => {
-            const connection = sse.start()
+            const connection = sse.start('autoClose')
             await connection.send('result', { success: true })
-            return connection.close()
+            // autoClose mode
           },
         }),
       },
@@ -396,13 +395,13 @@ export class TestMultiFormatExportController extends AbstractDualModeController<
               `name,value\n${request.body.data.map((item) => `${item.name},${item.value}`).join('\n')}`,
           },
           sse: async (request, sse) => {
-            const connection = sse.start()
+            const connection = sse.start('autoClose')
             const items = request.body.data
             for (let i = 0; i < items.length; i++) {
               await connection.send('progress', { percent: ((i + 1) / items.length) * 100 })
             }
             await connection.send('done', { totalItems: items.length })
-            return connection.close()
+            // autoClose mode
           },
         }),
       },
@@ -437,12 +436,12 @@ export class TestMultiFormatReportController extends AbstractDualModeController<
               `Report: ${request.params.reportId}\nDetailed: ${request.query.detailed ?? 'false'}`,
           },
           sse: async (request, sse) => {
-            const connection = sse.start()
+            const connection = sse.start('autoClose')
             await connection.send('chunk', {
               content: `Streaming report ${request.params.reportId}`,
             })
             await connection.send('done', { totalSize: 100 })
-            return connection.close()
+            // autoClose mode
           },
         }),
       },

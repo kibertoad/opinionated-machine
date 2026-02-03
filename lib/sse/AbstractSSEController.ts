@@ -19,12 +19,11 @@ export type {
   FastifySSEPreHandler,
   FastifySSERouteOptions,
   InferSSERequest,
-  SSECloseResult,
   SSEContext,
   SSEHandlerResult,
-  SSEKeepAliveResult,
   SSERespondResult,
   SSESession,
+  SSESessionMode,
   SSEStartOptions,
 } from '../routes/fastifyRouteTypes.ts'
 // Re-export types for backwards compatibility

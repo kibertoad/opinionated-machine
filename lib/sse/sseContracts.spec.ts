@@ -79,10 +79,10 @@ describe('sseContracts', () => {
     it('allows valid event names and payloads', () => {
       const handlers = buildHandler(testContract, {
         sse: async (_request, sse) => {
-          const connection = sse.start()
+          const connection = sse.start('autoClose')
           await connection.send('chunk', { content: 'hello' })
           await connection.send('done', { totalTokens: 42 })
-          return connection.close()
+          // autoClose mode
         },
       })
 
@@ -92,10 +92,10 @@ describe('sseContracts', () => {
     it('rejects invalid event name at compile time', () => {
       buildHandler(testContract, {
         sse: async (_request, sse) => {
-          const connection = sse.start()
+          const connection = sse.start('autoClose')
           // @ts-expect-error - 'invalid' is not a valid event name
           await connection.send('invalid', { content: 'test' })
-          return connection.close()
+          // autoClose mode
         },
       })
 
@@ -105,10 +105,10 @@ describe('sseContracts', () => {
     it('rejects wrong payload at compile time', () => {
       buildHandler(testContract, {
         sse: async (_request, sse) => {
-          const connection = sse.start()
+          const connection = sse.start('autoClose')
           // @ts-expect-error - chunk expects { content: string }, not { totalTokens: number }
           await connection.send('chunk', { totalTokens: 42 })
-          return connection.close()
+          // autoClose mode
         },
       })
 
@@ -118,10 +118,10 @@ describe('sseContracts', () => {
     it('rejects missing required field at compile time', () => {
       buildHandler(testContract, {
         sse: async (_request, sse) => {
-          const connection = sse.start()
+          const connection = sse.start('autoClose')
           // @ts-expect-error - done requires totalTokens field
           await connection.send('done', {})
-          return connection.close()
+          // autoClose mode
         },
       })
 
@@ -131,10 +131,10 @@ describe('sseContracts', () => {
     it('rejects wrong field type at compile time', () => {
       buildHandler(testContract, {
         sse: async (_request, sse) => {
-          const connection = sse.start()
+          const connection = sse.start('autoClose')
           // @ts-expect-error - totalTokens should be number, not string
           await connection.send('done', { totalTokens: 'not a number' })
-          return connection.close()
+          // autoClose mode
         },
       })
 
@@ -152,7 +152,7 @@ describe('sseContracts', () => {
 
           expect(message).toBeDefined()
           expect(count).toBeDefined()
-          return sse.start().close()
+          sse.start('autoClose')
         },
       })
 
@@ -168,7 +168,7 @@ describe('sseContracts', () => {
           const _invalid = request.params.nonExistent
 
           expect(id).toBeDefined()
-          return sse.start().close()
+          sse.start('autoClose')
         },
       })
 

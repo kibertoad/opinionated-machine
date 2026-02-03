@@ -5,11 +5,10 @@ import type { z } from 'zod'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
 import type {
-  SSECloseResult,
   SSEContext,
-  SSEKeepAliveResult,
   SSERespondResult,
   SSESession,
+  SSESessionMode,
   SSEStartOptions,
   SSEStreamMessage,
 } from './fastifyRouteTypes.ts'
@@ -231,10 +230,6 @@ function createSSESessionInternal<Events extends SSEEventSchemas, Context = unkn
     }
   }
 
-  // Helper functions for handler return values
-  const close = (): SSECloseResult => ({ _type: 'close' })
-  const keepAlive = (): SSEKeepAliveResult => ({ _type: 'keepAlive' })
-
   return {
     id: connectionId,
     request,
@@ -245,8 +240,6 @@ function createSSESessionInternal<Events extends SSEEventSchemas, Context = unkn
     isConnected: () => sseReply.sse.isConnected,
     getStream: () => sseReply.sse.stream(),
     sendStream,
-    close,
-    keepAlive,
     eventSchemas,
   }
 }
@@ -266,8 +259,10 @@ export type SSEContextResult<Events extends SSEEventSchemas = SSEEventSchemas> =
   getConnectionId: () => string | undefined
   /** Check if streaming was started */
   isStarted: () => boolean
-  /** Check if an error was returned */
-  hasError: () => boolean
+  /** Check if a response was returned */
+  hasResponse: () => boolean
+  /** Get the session mode if streaming was started */
+  getMode: () => SSESessionMode | undefined
 }
 
 /**
@@ -300,8 +295,9 @@ export function createSSEContext<Events extends SSEEventSchemas>(
 
   // State tracking
   let started = false
-  let errorSent = false
+  let responseSent = false
   let connection: SSESession<Events> | undefined
+  let sessionMode: SSESessionMode | undefined
   let onCloseCalled = false
 
   // Helper to call onClose exactly once
@@ -347,16 +343,18 @@ export function createSSEContext<Events extends SSEEventSchemas>(
   // The SSE context object passed to handlers
   const sseContext: SSEContext<Events> = {
     start: <Context = unknown>(
+      mode: SSESessionMode,
       startOptions?: SSEStartOptions<Context>,
     ): SSESession<Events, Context> => {
       if (started) {
         throw new Error('SSE streaming already started. Cannot call start() multiple times.')
       }
-      if (errorSent) {
+      if (responseSent) {
         throw new Error('Cannot start streaming after sending a response.')
       }
 
       started = true
+      sessionMode = mode
 
       // Register callback for when server explicitly closes via reply.sse.close()
       sseReply.sse.onClose(async () => {
@@ -421,7 +419,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
       if (started) {
         throw new Error('Cannot send response after streaming has started.')
       }
-      errorSent = true
+      responseSent = true
       return { _type: 'respond', code, body }
     },
 
@@ -429,7 +427,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
       if (started) {
         throw new Error('Headers already sent via start().')
       }
-      if (errorSent) {
+      if (responseSent) {
         throw new Error('Cannot send headers after sending a response.')
       }
       sseReply.sse.keepAlive()
@@ -447,7 +445,8 @@ export function createSSEContext<Events extends SSEEventSchemas>(
     getConnection: () => connection,
     getConnectionId: () => (started ? connectionId : undefined),
     isStarted: () => started,
-    hasError: () => errorSent,
+    hasResponse: () => responseSent,
+    getMode: () => sessionMode,
   }
 }
 
@@ -475,8 +474,8 @@ export async function setupSSESession<Events extends SSEEventSchemas>(
   // Use the new context-based approach internally
   const result = createSSEContext(controller, request, reply, eventSchemas, options, logPrefix)
 
-  // Auto-start the connection (old behavior)
-  const connection = result.sseContext.start()
+  // Auto-start the connection (old behavior - keepAlive by default)
+  const connection = result.sseContext.start('keepAlive')
 
   // Wait for onConnect to complete (old behavior was awaited)
   // Note: In the new API, onConnect is not awaited, but for backwards compat we simulate it
