@@ -473,48 +473,26 @@ export function buildFastifyRoute(
     | DualModeRouteHandler<AnyDualModeContractDefinition>
     | SSERouteHandler<AnySSEContractDefinition>,
 ): RouteOptions {
-  // Check for branded container types first (new pattern)
-  if ('__type' in handler) {
-    if (handler.__type === 'DualModeRouteHandler') {
-      const dualModeHandler = handler as DualModeRouteHandler<AnyDualModeContractDefinition>
-      return buildDualModeRouteInternal(
-        controller as AbstractDualModeController<Record<string, AnyDualModeContractDefinition>>,
-        {
-          contract: dualModeHandler.contract,
-          handlers: dualModeHandler.handlers,
-          options: dualModeHandler.options,
-        },
-      )
-    }
-
-    // SSERouteHandler
-    const sseHandler = handler as SSERouteHandler<AnySSEContractDefinition>
-    return buildSSERouteInternal(
-      controller as AbstractSSEController<Record<string, AnySSEContractDefinition>>,
+  if (handler.__type === 'DualModeRouteHandler') {
+    const dualModeHandler = handler as DualModeRouteHandler<AnyDualModeContractDefinition>
+    return buildDualModeRouteInternal(
+      controller as AbstractDualModeController<Record<string, AnyDualModeContractDefinition>>,
       {
-        contract: sseHandler.contract,
-        handlers: sseHandler.handlers,
-        options: sseHandler.options,
+        contract: dualModeHandler.contract,
+        handlers: dualModeHandler.handlers,
+        options: dualModeHandler.options,
       },
     )
   }
 
-  // Legacy: handle old config format (for backwards compatibility)
-  const config = handler as unknown as
-    | FastifyDualModeHandlerConfig<AnyDualModeContractDefinition>
-    | FastifySSEHandlerConfig<AnySSEContractDefinition>
-
-  // Discriminate by checking for dual-mode handlers (has 'sync' property)
-  if ('handlers' in config && 'sync' in config.handlers) {
-    return buildDualModeRouteInternal(
-      controller as AbstractDualModeController<Record<string, AnyDualModeContractDefinition>>,
-      config as FastifyDualModeHandlerConfig<AnyDualModeContractDefinition>,
-    )
-  }
-
-  // SSE-only config has handlers with just sse
+  // SSERouteHandler
+  const sseHandler = handler as SSERouteHandler<AnySSEContractDefinition>
   return buildSSERouteInternal(
     controller as AbstractSSEController<Record<string, AnySSEContractDefinition>>,
-    config as FastifySSEHandlerConfig<AnySSEContractDefinition>,
+    {
+      contract: sseHandler.contract,
+      handlers: sseHandler.handlers,
+      options: sseHandler.options,
+    },
   )
 }
