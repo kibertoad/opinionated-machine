@@ -1,10 +1,10 @@
-import type { SSEConnection } from './AbstractSSEController.ts'
+import type { SSESession } from './AbstractSSEController.ts'
 
 type ConnectionWaiter = {
-  resolve: (connection: SSEConnection) => void
+  resolve: (connection: SSESession) => void
   reject: (error: Error) => void
   timeoutId: ReturnType<typeof setTimeout>
-  predicate?: (connection: SSEConnection) => boolean
+  predicate?: (connection: SSESession) => boolean
 }
 
 type DisconnectionWaiter = {
@@ -14,25 +14,25 @@ type DisconnectionWaiter = {
   timeoutId: ReturnType<typeof setTimeout>
 }
 
-export type SSEConnectionEvent = {
+export type SSESessionEvent = {
   type: 'connect' | 'disconnect'
   connectionId: string
-  connection?: SSEConnection
+  connection?: SSESession
 }
 
 /**
  * Connection spy for testing SSE controllers.
  * Tracks connection and disconnection events separately.
  */
-export class SSEConnectionSpy {
-  private events: SSEConnectionEvent[] = []
+export class SSESessionSpy {
+  private events: SSESessionEvent[] = []
   private activeConnections: Set<string> = new Set()
   private claimedConnections: Set<string> = new Set()
   private connectionWaiters: ConnectionWaiter[] = []
   private disconnectionWaiters: DisconnectionWaiter[] = []
 
   /** @internal Called when a connection is established */
-  addConnection(connection: SSEConnection): void {
+  addConnection(connection: SSESession): void {
     this.events.push({ type: 'connect', connectionId: connection.id, connection })
     this.activeConnections.add(connection.id)
 
@@ -88,8 +88,8 @@ export class SSEConnectionSpy {
    */
   waitForConnection(options?: {
     timeout?: number
-    predicate?: (connection: SSEConnection) => boolean
-  }): Promise<SSEConnection> {
+    predicate?: (connection: SSESession) => boolean
+  }): Promise<SSESession> {
     const timeout = options?.timeout ?? 5000
     const predicate = options?.predicate
 
@@ -108,7 +108,7 @@ export class SSEConnectionSpy {
     }
 
     // No matching connection yet, create a waiter
-    return new Promise<SSEConnection>((resolve, reject) => {
+    return new Promise<SSESession>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         const index = this.connectionWaiters.findIndex((w) => w.resolve === resolve)
         if (index !== -1) {
@@ -158,7 +158,7 @@ export class SSEConnectionSpy {
   }
 
   /** Get all connection events in order, optionally filtered by connectionId */
-  getEvents(connectionId?: string): SSEConnectionEvent[] {
+  getEvents(connectionId?: string): SSESessionEvent[] {
     if (connectionId === undefined) {
       return [...this.events]
     }
@@ -172,11 +172,11 @@ export class SSEConnectionSpy {
     this.claimedConnections.clear()
     for (const waiter of this.connectionWaiters) {
       clearTimeout(waiter.timeoutId)
-      waiter.reject(new Error('ConnectionSpy was cleared'))
+      waiter.reject(new Error('SessionSpy was cleared'))
     }
     for (const waiter of this.disconnectionWaiters) {
       clearTimeout(waiter.timeoutId)
-      waiter.reject(new Error('ConnectionSpy was cleared'))
+      waiter.reject(new Error('SessionSpy was cleared'))
     }
     this.connectionWaiters = []
     this.disconnectionWaiters = []

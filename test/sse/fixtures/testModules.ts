@@ -12,6 +12,10 @@ import {
   TestAsyncReconnectSSEController,
   TestAuthSSEController,
   TestChannelSSEController,
+  TestDeferredHeaders404Controller,
+  TestDeferredHeaders422Controller,
+  TestErrorAfterStartController,
+  TestForgottenStartController,
   TestGetStreamSSEController,
   TestIsConnectedSSEController,
   TestLargeContentSSEController,
@@ -411,6 +415,94 @@ export class TestGetStreamSSEModule extends AbstractModule<TestGetStreamSSEModul
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testGetStreamSSEController: asSSEControllerClass(TestGetStreamSSEController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+// ============================================================================
+// Deferred Headers Test Modules
+// ============================================================================
+
+/**
+ * Module with deferred headers 404 test controller
+ */
+export type TestDeferredHeaders404ModuleDependencies = Record<string, never>
+
+export class TestDeferredHeaders404Module extends AbstractModule<TestDeferredHeaders404ModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestDeferredHeaders404ModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testDeferredHeaders404Controller: asSSEControllerClass(TestDeferredHeaders404Controller, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with deferred headers 422 test controller
+ */
+export type TestDeferredHeaders422ModuleDependencies = Record<string, never>
+
+export class TestDeferredHeaders422Module extends AbstractModule<TestDeferredHeaders422ModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestDeferredHeaders422ModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testDeferredHeaders422Controller: asSSEControllerClass(TestDeferredHeaders422Controller, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with forgotten start test controller
+ */
+export type TestForgottenStartModuleDependencies = Record<string, never>
+
+export class TestForgottenStartModule extends AbstractModule<TestForgottenStartModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestForgottenStartModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testForgottenStartController: asSSEControllerClass(TestForgottenStartController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with error after start test controller
+ */
+export type TestErrorAfterStartModuleDependencies = Record<string, never>
+
+export class TestErrorAfterStartModule extends AbstractModule<TestErrorAfterStartModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestErrorAfterStartModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testErrorAfterStartController: asSSEControllerClass(TestErrorAfterStartController, {
         diOptions,
       }),
     }

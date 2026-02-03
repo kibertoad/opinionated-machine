@@ -2,8 +2,8 @@ import type { SSEReplyInterface } from '@fastify/sse'
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import type { z } from 'zod'
-import type { BuildFastifySSERoutesReturnType, SSEConnection } from '../routes/fastifyRouteTypes.ts'
-import { SSEConnectionSpy } from './SSEConnectionSpy.ts'
+import type { BuildFastifySSERoutesReturnType, SSESession } from '../routes/fastifyRouteTypes.ts'
+import { SSESessionSpy } from './SSESessionSpy.ts'
 import type { AnySSEContractDefinition } from './sseContracts.ts'
 import type {
   AllContractEventNames,
@@ -19,11 +19,16 @@ export type {
   FastifySSEPreHandler,
   FastifySSERouteOptions,
   InferSSERequest,
-  SSEConnection,
+  SSEContext,
+  SSEHandlerResult,
+  SSERespondResult,
+  SSESession,
+  SSESessionMode,
+  SSEStartOptions,
 } from '../routes/fastifyRouteTypes.ts'
 // Re-export types for backwards compatibility
-export type { SSEConnectionEvent } from './SSEConnectionSpy.ts'
-export { SSEConnectionSpy } from './SSEConnectionSpy.ts'
+export type { SSESessionEvent } from './SSESessionSpy.ts'
+export { SSESessionSpy } from './SSESessionSpy.ts'
 // Re-export framework-agnostic types
 export type {
   AllContractEventNames,
@@ -76,10 +81,10 @@ export abstract class AbstractSSEController<
   APIContracts extends Record<string, AnySSEContractDefinition>,
 > {
   /** Map of connection ID to connection object */
-  protected connections: Map<string, SSEConnection> = new Map()
+  protected connections: Map<string, SSESession> = new Map()
 
   /** Private storage for connection spy */
-  private readonly _connectionSpy?: SSEConnectionSpy
+  private readonly _connectionSpy?: SSESessionSpy
 
   /**
    * SSE controllers must override this constructor and call super with their
@@ -102,7 +107,7 @@ export abstract class AbstractSSEController<
    */
   constructor(_dependencies: object, sseConfig?: SSEControllerConfig) {
     if (sseConfig?.enableConnectionSpy) {
-      this._connectionSpy = new SSEConnectionSpy()
+      this._connectionSpy = new SSESessionSpy()
     }
   }
 
@@ -126,7 +131,7 @@ export abstract class AbstractSSEController<
    *
    * @throws Error if connection spy is not enabled
    */
-  public get connectionSpy(): SSEConnectionSpy {
+  public get connectionSpy(): SSESessionSpy {
     if (!this._connectionSpy) {
       throw new Error(
         'Connection spy is not enabled. Pass { enableConnectionSpy: true } to the constructor. ' +
@@ -149,7 +154,7 @@ export abstract class AbstractSSEController<
    *
    * @param connection - The newly established connection
    */
-  protected onConnectionEstablished?(connection: SSEConnection): void
+  protected onConnectionEstablished?(connection: SSESession): void
 
   /**
    * Controller-level hook called when any connection is closed.
@@ -158,7 +163,7 @@ export abstract class AbstractSSEController<
    *
    * @param connection - The connection being closed
    */
-  protected onConnectionClosed?(connection: SSEConnection): void
+  protected onConnectionClosed?(connection: SSESession): void
 
   /**
    * Send an event to a specific connection.
@@ -289,7 +294,7 @@ export abstract class AbstractSSEController<
    */
   protected async broadcastIf<T>(
     message: SSEMessage<T>,
-    predicate: (connection: SSEConnection) => boolean,
+    predicate: (connection: SSESession) => boolean,
   ): Promise<number> {
     let sent = 0
     for (const [id, connection] of this.connections) {
@@ -303,7 +308,7 @@ export abstract class AbstractSSEController<
   /**
    * Get all active connections.
    */
-  protected getConnections(): SSEConnection[] {
+  protected getConnections(): SSESession[] {
     return Array.from(this.connections.values())
   }
 
@@ -360,7 +365,7 @@ export abstract class AbstractSSEController<
    * Triggers the onConnectionEstablished hook and spy if defined.
    * @internal
    */
-  public registerConnection(connection: SSEConnection): void {
+  public registerConnection(connection: SSESession): void {
     this.connections.set(connection.id, connection)
     this.onConnectionEstablished?.(connection)
     // Notify spy after hook (so hook can set context before spy sees it)

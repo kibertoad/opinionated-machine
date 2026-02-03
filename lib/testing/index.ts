@@ -1,5 +1,5 @@
 export {
-  type HasConnectionSpy,
+  type HasSessionSpy,
   SSEHttpClient,
   type SSEHttpConnectOptions,
   type SSEHttpConnectResult,

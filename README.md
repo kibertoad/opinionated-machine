@@ -45,8 +45,8 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [parseSSEBuffer](#parsessebuffer)
     - [ParsedSSEEvent Type](#parsedsseevent-type)
   - [Testing SSE Controllers](#testing-sse-controllers)
-  - [SSEConnectionSpy API](#sseconnectionspy-api)
-  - [Connection Monitoring](#connection-monitoring)
+  - [SSESessionSpy API](#ssesessionspy-api)
+  - [Session Monitoring](#session-monitoring)
   - [SSE Test Utilities](#sse-test-utilities)
     - [Quick Reference](#quick-reference)
     - [Inject vs HTTP Comparison](#inject-vs-http-comparison)
@@ -469,9 +469,8 @@ SSE controllers extend `AbstractSSEController` and must implement a two-paramete
 import {
   AbstractSSEController,
   buildHandler,
-  success,
   type SSEControllerConfig,
-  type SSEConnection
+  type SSESession
 } from 'opinionated-machine'
 
 type Contracts = {
@@ -501,50 +500,53 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
         contract: NotificationsSSEController.contracts.notificationsStream,
         handlers: this.handleStream,
         options: {
-          onConnect: (conn) => this.onConnect(conn),
-          onClose: (conn, reason) => this.onClose(conn, reason),
+          onConnect: (session) => this.onConnect(session),
+          onClose: (session, reason) => this.onClose(session, reason),
         },
       },
     }
   }
 
   // Handler with automatic type inference from contract
-  // connection.send provides type-safe event sending
+  // sse.start(mode) returns a session with type-safe event sending
   private handleStream = buildHandler(notificationsContract, {
-    sse: async (request, connection) => {
+    sse: async (request, sse) => {
       // request.query is typed from contract: { userId?: string }
       const userId = request.query.userId ?? 'anonymous'
-      connection.context = { userId }
+
+      // Start streaming with 'keepAlive' mode - stays open for external events
+      // Sends HTTP 200 + SSE headers immediately
+      const session = sse.start('keepAlive', { context: { userId } })
 
       // For external triggers (subscriptions, timers, message queues), use sendEventInternal.
-      // connection.send is only available within this handler's scope - external callbacks
-      // like subscription handlers execute later, outside this function, so they can't access connection.
+      // session.send is only available within this handler's scope - external callbacks
+      // like subscription handlers execute later, outside this function, so they can't access session.
       // sendEventInternal is a controller method, so it's accessible from any callback.
       // It provides autocomplete for all event names defined in the controller's contracts.
       this.notificationService.subscribe(userId, async (notification) => {
-        await this.sendEventInternal(connection.id, {
+        await this.sendEventInternal(session.id, {
           event: 'notification',
           data: notification,
         })
       })
 
-      // For direct sending within the handler, use the connection's send method.
+      // For direct sending within the handler, use the session's send method.
       // It provides stricter per-route typing (only events from this specific contract).
-      await connection.send('notification', { id: 'welcome', message: 'Connected!' })
+      await session.send('notification', { id: 'welcome', message: 'Connected!' })
 
-      // Keep connection open for subscription events (client closes when done)
-      return success('maintain_connection')
+      // 'keepAlive' mode: handler returns, but connection stays open for subscription events
+      // Connection closes when client disconnects or server calls closeConnection()
     },
   })
 
-  private onConnect = (connection: SSEConnection) => {
-    console.log('Client connected:', connection.id)
+  private onConnect = (session: SSESession) => {
+    console.log('Client connected:', session.id)
   }
 
-  private onClose = (connection: SSEConnection, reason: SSECloseReason) => {
-    const userId = connection.context?.userId as string
+  private onClose = (session: SSESession, reason: SSECloseReason) => {
+    const userId = session.context?.userId as string
     this.notificationService.unsubscribe(userId)
-    console.log(`Client disconnected (${reason}):`, connection.id)
+    console.log(`Client disconnected (${reason}):`, session.id)
   }
 }
 ```
@@ -558,7 +560,7 @@ import {
   AbstractSSEController,
   buildHandler,
   type SSEControllerConfig,
-  type SSEConnection
+  type SSESession
 } from 'opinionated-machine'
 
 class ChatSSEController extends AbstractSSEController<Contracts> {
@@ -571,20 +573,23 @@ class ChatSSEController extends AbstractSSEController<Contracts> {
   }
 
   // Handler with automatic type inference from contract
-  // connection.send is fully typed per-route
+  // sse.start(mode) returns session with fully typed send()
   private handleChatCompletion = buildHandler(chatCompletionContract, {
-    sse: async (request, connection) => {
+    sse: async (request, sse) => {
       // request.body is typed as { message: string; stream: true }
       // request.query, request.params, request.headers all typed from contract
       const words = request.body.message.split(' ')
 
+      // Start streaming with 'autoClose' mode - closes after handler completes
+      // Sends HTTP 200 + SSE headers immediately
+      const session = sse.start('autoClose')
+
       for (const word of words) {
-        // connection.send() provides compile-time type checking for event names and data
-        await connection.send('chunk', { content: word })
+        // session.send() provides compile-time type checking for event names and data
+        await session.send('chunk', { content: word })
       }
 
-      // Gracefully end the stream - all sent data is flushed before connection closes
-      return success('disconnect')
+      // 'autoClose' mode: connection closes automatically when handler returns
     },
   })
 
@@ -602,15 +607,17 @@ class ChatSSEController extends AbstractSSEController<Contracts> {
 You can also use `InferSSERequest<Contract>` for manual type annotation when needed:
 
 ```ts
-import { type InferSSERequest, type SSEConnection } from 'opinionated-machine'
+import { type InferSSERequest, type SSEContext, type SSESession } from 'opinionated-machine'
 
 private handleStream = async (
   request: InferSSERequest<typeof chatCompletionContract>,
-  connection: SSEConnection<typeof chatCompletionContract['events']>,
+  sse: SSEContext<typeof chatCompletionContract['events']>,
 ) => {
   // request.body, request.params, etc. all typed from contract
-  // connection.send() is typed based on contract events
-  await connection.send('chunk', { content: 'hello' })
+  const session = sse.start('autoClose')
+  // session.send() is typed based on contract events
+  await session.send('chunk', { content: 'hello' })
+  // 'autoClose' mode: connection closes when handler returns
 }
 ```
 
@@ -691,10 +698,10 @@ await this.broadcast({
   data: { message: 'Server maintenance in 5 minutes' },
 })
 
-// Broadcast to connections matching a predicate
+// Broadcast to sessions matching a predicate
 await this.broadcastIf(
   { event: 'channel-update', data: { channelId: '123', newMessage: msg } },
-  (connection) => connection.context.channelId === '123',
+  (session) => session.context.channelId === '123',
 )
 ```
 
@@ -702,17 +709,17 @@ Both methods return the number of clients the message was successfully sent to.
 
 ### Controller-Level Hooks
 
-Override these optional methods on your controller for global connection handling:
+Override these optional methods on your controller for global session handling:
 
 ```ts
 class MySSEController extends AbstractSSEController<Contracts> {
-  // Called AFTER connection is registered (for all routes)
-  protected onConnectionEstablished(connection: SSEConnection): void {
+  // Called AFTER session is registered (for all routes)
+  protected onConnectionEstablished(session: SSESession): void {
     this.metrics.incrementConnections()
   }
 
-  // Called BEFORE connection is unregistered (for all routes)
-  protected onConnectionClosed(connection: SSEConnection): void {
+  // Called BEFORE session is unregistered (for all routes)
+  protected onConnectionClosed(session: SSESession): void {
     this.metrics.decrementConnections()
   }
 }
@@ -735,10 +742,10 @@ public buildSSERoutes() {
             reply.code(403).send({ error: 'Forbidden' })
           }
         },
-        onConnect: (conn) => console.log('Admin connected'),
-        onClose: (conn, reason) => console.log(`Admin disconnected (${reason})`),
+        onConnect: (session) => console.log('Admin connected'),
+        onClose: (session, reason) => console.log(`Admin disconnected (${reason})`),
         // Handle client reconnection with Last-Event-ID
-        onReconnect: async (conn, lastEventId) => {
+        onReconnect: async (session, lastEventId) => {
           // Return events to replay, or handle manually
           return this.getEventsSince(lastEventId)
         },
@@ -754,23 +761,23 @@ public buildSSERoutes() {
 
 | Option | Description |
 | -------- | ------------- |
-| `preHandler` | Authentication/authorization hook that runs before SSE connection |
+| `preHandler` | Authentication/authorization hook that runs before SSE session |
 | `onConnect` | Called after client connects (SSE handshake complete) |
-| `onClose` | Called when connection closes (client disconnect, network failure, or server close). Receives `(connection, reason)` where reason is `'server'` or `'client'` |
+| `onClose` | Called when session closes (client disconnect, network failure, or server close). Receives `(session, reason)` where reason is `'server'` or `'client'` |
 | `onReconnect` | Handle Last-Event-ID reconnection, return events to replay |
 | `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
 | `serializer` | Custom serializer for SSE data (e.g., for custom JSON encoding) |
 | `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages |
 
 **onClose reason parameter:**
-- `'server'`: Server explicitly closed the connection (via `closeConnection()` or `success('disconnect')`)
-- `'client'`: Client closed the connection (EventSource.close(), navigation, network failure)
+- `'server'`: Server explicitly closed the session (via `closeConnection()` or `autoClose` mode)
+- `'client'`: Client closed the session (EventSource.close(), navigation, network failure)
 
 ```ts
 options: {
-  onConnect: (conn) => console.log('Client connected'),
-  onClose: (conn, reason) => {
-    console.log(`Connection closed (${reason}):`, conn.id)
+  onConnect: (session) => console.log('Client connected'),
+  onClose: (session, reason) => {
+    console.log(`Session closed (${reason}):`, session.id)
     // reason is 'server' or 'client'
   },
   serializer: (data) => JSON.stringify(data, null, 2), // Pretty-print JSON
@@ -778,29 +785,31 @@ options: {
 }
 ```
 
-### SSE Connection Methods
+### SSE Session Methods
 
-The `connection` object in SSE handlers provides several useful methods:
+The `session` object returned by `sse.start(mode)` provides several useful methods:
 
 ```ts
 private handleStream = buildHandler(streamContract, {
-  sse: async (request, connection) => {
-    // Check if connection is still active
-    if (connection.isConnected()) {
-      await connection.send('status', { connected: true })
+  sse: async (request, sse) => {
+    const session = sse.start('autoClose')
+
+    // Check if session is still active
+    if (session.isConnected()) {
+      await session.send('status', { connected: true })
     }
 
     // Get raw writable stream for advanced use cases (e.g., pipeline)
-    const stream = connection.getStream()
+    const stream = session.getStream()
 
     // Stream messages from an async iterable with automatic validation
     async function* generateMessages() {
       yield { event: 'message' as const, data: { text: 'Hello' } }
       yield { event: 'message' as const, data: { text: 'World' } }
     }
-    await connection.sendStream(generateMessages())
+    await session.sendStream(generateMessages())
 
-    return success('disconnect')
+    // 'autoClose' mode: connection closes when handler returns
   },
 })
 ```
@@ -808,7 +817,7 @@ private handleStream = buildHandler(streamContract, {
 | Method | Description |
 | -------- | ------------- |
 | `send(event, data, options?)` | Send a typed event (validates against contract schema) |
-| `isConnected()` | Check if the connection is still active |
+| `isConnected()` | Check if the session is still active |
 | `getStream()` | Get the underlying `WritableStream` for advanced use cases |
 | `sendStream(messages)` | Stream messages from an `AsyncIterable` with validation |
 
@@ -835,7 +844,7 @@ if (!sent) {
 - All lifecycle hooks are wrapped in try/catch to prevent crashes
 - If a `logger` is provided in route options, errors are logged with context
 - If no logger is provided, errors are silently ignored
-- The connection lifecycle continues even if a hook throws
+- The session lifecycle continues even if a hook throws
 
 ```ts
 // Provide a logger to capture lifecycle errors
@@ -846,8 +855,8 @@ public buildSSERoutes() {
       handlers: this.handleStream,
       options: {
         logger: this.logger, // pino-compatible logger
-        onConnect: (conn) => { /* may throw */ },
-        onClose: (conn, reason) => { /* may throw */ },
+        onConnect: (session) => { /* may throw */ },
+        onClose: (session, reason) => { /* may throw */ },
       },
     },
   }
@@ -856,84 +865,80 @@ public buildSSERoutes() {
 
 ### Long-lived Connections vs Request-Response Streaming
 
-SSE handlers must return an `Either<Error, SSEHandlerResult>` to explicitly indicate connection management.
-
-The `Either` type along with the `success` and `failure` helper functions are re-exported from `@lokalise/node-core` for convenience, so you don't need to add `@lokalise/node-core` as a direct dependency:
+SSE session lifetime is determined by the mode passed to `sse.start(mode)`:
 
 ```ts
-import { type Either, success, failure } from 'opinionated-machine'
-
-// Return success('disconnect') - close connection after handler completes
-// Return success('maintain_connection') - keep connection open for external events
-// Return failure(error) - handle error and close connection
+// sse.start('autoClose') - close connection when handler returns (request-response pattern)
+// sse.start('keepAlive') - keep connection open for external events (subscription pattern)
+// sse.respond(code, body) - send HTTP response before streaming (early return)
 ```
 
-**Long-lived connections** (notifications, live updates):
-- Handler sets up subscriptions and returns `success('maintain_connection')`
-- Connection stays open indefinitely after handler returns
+**Long-lived sessions** (notifications, live updates):
+- Handler starts streaming with `sse.start('keepAlive')`
+- Session stays open indefinitely after handler returns
 - Events are sent later via callbacks using `sendEventInternal()`
-- **Client closes connection** when done (e.g., `eventSource.close()` or navigating away)
+- **Client closes session** when done (e.g., `eventSource.close()` or navigating away)
 - Server cleans up via `onConnectionClosed()` hook
 
 ```ts
-import { success } from 'opinionated-machine'
-
 private handleStream = buildHandler(streamContract, {
-  sse: async (request, connection) => {
+  sse: async (request, sse) => {
+    // Start streaming with 'keepAlive' mode - stays open for external events
+    const session = sse.start('keepAlive')
+
     // Set up subscription - events sent via callback AFTER handler returns
-    this.service.subscribe(connection.id, (data) => {
-      this.sendEventInternal(connection.id, { event: 'update', data })
+    this.service.subscribe(session.id, (data) => {
+      this.sendEventInternal(session.id, { event: 'update', data })
     })
-    // Keep connection open until CLIENT disconnects
-    return success('maintain_connection')
+    // 'keepAlive' mode: handler returns, but connection stays open
   },
 })
 
 // Clean up when client disconnects
-protected onConnectionClosed(connection: SSEConnection): void {
-  this.service.unsubscribe(connection.id)
+protected onConnectionClosed(session: SSESession): void {
+  this.service.unsubscribe(session.id)
 }
 ```
 
 **Request-response streaming** (AI completions):
-- Handler sends all events synchronously, then returns `success('disconnect')`
-- Use `connection.send()` for type-safe event sending within the handler
-- Connection automatically closes when handler returns with `'disconnect'`
+- Handler starts streaming with `sse.start('autoClose')`
+- Use `session.send()` for type-safe event sending within the handler
+- Session automatically closes when handler returns
 
 ```ts
-import { success } from 'opinionated-machine'
-
 private handleChatCompletion = buildHandler(chatCompletionContract, {
-  sse: async (request, connection) => {
+  sse: async (request, sse) => {
+    // Start streaming with 'autoClose' mode - closes when handler returns
+    const session = sse.start('autoClose')
+
     const words = request.body.message.split(' ')
-
     for (const word of words) {
-      await connection.send('chunk', { content: word })
+      await session.send('chunk', { content: word })
     }
-    await connection.send('done', { totalTokens: words.length })
+    await session.send('done', { totalTokens: words.length })
 
-    // Signal that streaming is complete and connection should close
-    return success('disconnect')
+    // 'autoClose' mode: connection closes automatically when handler returns
   },
 })
 ```
 
-**Error handling:**
+**Error handling before streaming:**
 
-Return `failure(error)` to signal an error occurred. The framework will send an error event and close the connection:
+Use `sse.respond(code, body)` to return an HTTP response before streaming starts. This is useful for any early return: validation errors, not found, redirects, etc.
 
 ```ts
-import { success, failure } from 'opinionated-machine'
-
 private handleStream = buildHandler(streamContract, {
-  sse: async (request, connection) => {
-    try {
-      const data = await this.service.getData(request.params.id)
-      await connection.send('data', data)
-      return success('disconnect')
-    } catch (err) {
-      return failure(err instanceof Error ? err : new Error(String(err)))
+  sse: async (request, sse) => {
+    // Early return BEFORE starting stream - can return any HTTP response
+    const entity = await this.service.find(request.params.id)
+    if (!entity) {
+      return sse.respond(404, { error: 'Entity not found' })
     }
+
+    // Validation passed - start streaming with autoClose mode
+    const session = sse.start('autoClose')
+    await session.send('data', entity)
+    // Connection closes automatically when handler returns
   },
 })
 
@@ -1109,47 +1114,47 @@ describe('NotificationsSSEController', () => {
 })
 ```
 
-### SSEConnectionSpy API
+### SSESessionSpy API
 
 The `connectionSpy` is available when `isTestMode: true` is passed to `asSSEControllerClass`:
 
 ```ts
-// Wait for a connection to be established (with timeout)
-const connection = await controller.connectionSpy.waitForConnection({ timeout: 5000 })
+// Wait for a session to be established (with timeout)
+const session = await controller.connectionSpy.waitForConnection({ timeout: 5000 })
 
-// Wait for a connection matching a predicate (useful for multiple connections)
-const connection = await controller.connectionSpy.waitForConnection({
+// Wait for a session matching a predicate (useful for multiple sessions)
+const session = await controller.connectionSpy.waitForConnection({
   timeout: 5000,
-  predicate: (conn) => conn.request.url.includes('/api/notifications'),
+  predicate: (s) => s.request.url.includes('/api/notifications'),
 })
 
-// Check if a specific connection is active
-const isConnected = controller.connectionSpy.isConnected(connectionId)
+// Check if a specific session is active
+const isConnected = controller.connectionSpy.isConnected(sessionId)
 
-// Wait for a specific connection to disconnect
-await controller.connectionSpy.waitForDisconnection(connectionId, { timeout: 5000 })
+// Wait for a specific session to disconnect
+await controller.connectionSpy.waitForDisconnection(sessionId, { timeout: 5000 })
 
-// Get all connection events (connect/disconnect history)
+// Get all session events (connect/disconnect history)
 const events = controller.connectionSpy.getEvents()
 
-// Clear event history and claimed connections between tests
+// Clear event history and claimed sessions between tests
 controller.connectionSpy.clear()
 ```
 
-**Note**: `waitForConnection` tracks "claimed" connections internally. Each call returns a unique unclaimed connection, allowing sequential waits for the same URL path without returning the same connection twice. This is used internally by `SSEHttpClient.connect()` with `awaitServerConnection`.
+**Note**: `waitForConnection` tracks "claimed" sessions internally. Each call returns a unique unclaimed session, allowing sequential waits for the same URL path without returning the same session twice. This is used internally by `SSEHttpClient.connect()` with `awaitServerConnection`.
 
-### Connection Monitoring
+### Session Monitoring
 
-Controllers have access to utility methods for monitoring connections:
+Controllers have access to utility methods for monitoring sessions:
 
 ```ts
-// Get count of active connections
+// Get count of active sessions
 const count = this.getConnectionCount()
 
-// Get all active connections (for iteration/inspection)
-const connections = this.getConnections()
+// Get all active sessions (for iteration/inspection)
+const sessions = this.getConnections()
 
-// Check if connection spy is enabled (useful for conditional logic)
+// Check if session spy is enabled (useful for conditional logic)
 if (this.hasConnectionSpy()) {
   // ...
 }
@@ -1159,9 +1164,9 @@ if (this.hasConnectionSpy()) {
 
 The library provides utilities for testing SSE endpoints.
 
-**Two connection methods:**
-- **Inject** - Uses Fastify's built-in `inject()` to simulate HTTP requests directly in-memory, without network overhead. No `listen()` required. Handler must close the connection for the request to complete.
-- **Real HTTP** - Actual HTTP connection via `fetch()`. Requires the server to be listening. Supports long-lived connections.
+**Two transport methods:**
+- **Inject** - Uses Fastify's built-in `inject()` to simulate HTTP requests directly in-memory, without network overhead. No `listen()` required. Handler must close the session for the request to complete.
+- **Real HTTP** - Actual HTTP via `fetch()`. Requires the server to be listening. Supports long-lived sessions.
 
 #### Quick Reference
 
@@ -1493,7 +1498,11 @@ handlers: {
     reply.header('x-ratelimit-reset', '1640000000')
     return { result: 'success' }
   },
-  sse: async (request, connection) => { /* ... */ },
+  sse: async (request, sse) => {
+    const session = sse.start('autoClose')
+    // ... send events ...
+    // Connection closes automatically when handler returns
+  },
 }
 ```
 
@@ -1547,10 +1556,11 @@ handlers: buildHandler(exportContract, {
     'text/csv': (request) =>
       `name,value\n${request.body.data.map((item) => `${item.name},${item.value}`).join('\n')}`,
   },
-  sse: async (request, connection) => {
+  sse: async (request, sse) => {
     // SSE streaming handler
-    await connection.send('done', { totalItems: request.body.data.length })
-    return success('disconnect')
+    const session = sse.start('autoClose')
+    await session.send('done', { totalItems: request.body.data.length })
+    // Connection closes automatically when handler returns
   },
 })
 ```
@@ -1612,14 +1622,15 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
             }
           },
           // SSE mode - stream response chunks
-          sse: async (request, connection) => {
+          sse: async (request, sse) => {
+            const session = sse.start('autoClose')
             let totalTokens = 0
             for await (const chunk of this.aiService.stream(request.body.message)) {
-              await connection.send('chunk', { delta: chunk.text })
+              await session.send('chunk', { delta: chunk.text })
               totalTokens += chunk.tokenCount ?? 0
             }
-            await connection.send('done', { usage: { total: totalTokens } })
-            return success('disconnect')
+            await session.send('done', { usage: { total: totalTokens } })
+            // Connection closes automatically when handler returns
           },
         }),
         options: {
@@ -1632,8 +1643,8 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
             }
           },
           // Optional: SSE lifecycle hooks
-          onConnect: (conn) => console.log('Client connected:', conn.id),
-          onClose: (conn, reason) => console.log(`Client disconnected (${reason}):`, conn.id),
+          onConnect: (session) => console.log('Client connected:', session.id),
+          onClose: (session, reason) => console.log(`Client disconnected (${reason}):`, session.id),
         },
       },
     }
@@ -1646,9 +1657,9 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 | Mode | Signature |
 | ---- | --------- |
 | `json` | `(request, reply) => Response` |
-| `sse` | `(request, connection) => Either<Error, SSEHandlerResult>` |
+| `sse` | `(request, sse) => SSEHandlerResult` |
 
-The `json` handler must return a value matching `jsonResponse` schema. The `sse` handler uses `connection.send()` for type-safe event streaming.
+The `json` handler must return a value matching `jsonResponse` schema. The `sse` handler uses `sse.start(mode)` to begin streaming (`'autoClose'` for request-response, `'keepAlive'` for long-lived sessions) and `session.send()` for type-safe event sending.
 
 ### Registering Dual-Mode Controllers
 

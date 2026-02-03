@@ -4,7 +4,14 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
-import type { SSEConnection, SSEStreamMessage } from './fastifyRouteTypes.ts'
+import type {
+  SSEContext,
+  SSERespondResult,
+  SSESession,
+  SSESessionMode,
+  SSEStartOptions,
+  SSEStreamMessage,
+} from './fastifyRouteTypes.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
@@ -17,7 +24,7 @@ export type SSEReply = FastifyReply & { sse: SSEReplyInterface }
  */
 export type SSEControllerLike = {
   _sendEventRaw(connectionId: string, message: SSEMessage): Promise<boolean>
-  registerConnection(connection: SSEConnection): void
+  registerConnection(connection: SSESession): void
   unregisterConnection(connectionId: string): void
 }
 
@@ -31,7 +38,7 @@ export type SSECloseReason = 'server' | 'client'
 /**
  * Options for SSE connection lifecycle hooks.
  */
-export type SSELifecycleOptions<TConnection = SSEConnection> = {
+export type SSELifecycleOptions<TConnection = SSESession> = {
   onConnect?: (connection: TConnection) => void | Promise<void>
   /**
    * Called when the SSE connection closes for any reason (client disconnect,
@@ -115,7 +122,7 @@ export async function sendReplayEvents(
  */
 export async function handleReconnection(
   sseReply: SSEReply,
-  connection: SSEConnection,
+  connection: SSESession,
   lastEventId: string,
   options: SSELifecycleOptions | undefined,
   logPrefix = 'SSE',
@@ -163,36 +170,35 @@ export async function handleSSEError(
 /**
  * Result of setting up an SSE connection.
  */
-export type SSEConnectionSetupResult<Events extends SSEEventSchemas = SSEEventSchemas> = {
+export type SSESessionSetupResult<Events extends SSEEventSchemas = SSEEventSchemas> = {
   connectionId: string
-  connection: SSEConnection<Events>
+  connection: SSESession<Events>
   connectionClosed: Promise<void>
   sseReply: SSEReply
 }
 
 /**
- * Setup an SSE connection with all the boilerplate:
- * - Create connection object with typed event sender
- * - Register with controller
- * - Setup disconnect handler
- * - Initialize SSE reply (keepAlive, sendHeaders, flushHeaders)
- * - Handle reconnection
- * - Call onConnect hook
+ * Create an SSE connection object with all helpers.
+ * This is an internal helper used by createSSEContext.
  *
- * @returns Connection setup result with connection object and closed promise
+ * @internal
  */
-export async function setupSSEConnection<Events extends SSEEventSchemas>(
-  controller: SSEControllerLike,
+function createSSESessionInternal<Events extends SSEEventSchemas, Context = unknown>(
+  connectionId: string,
   request: FastifyRequest,
   reply: FastifyReply,
+  sseReply: SSEReply,
   eventSchemas: Events,
-  options: SSELifecycleOptions | undefined,
-  logPrefix = 'SSE',
-): Promise<SSEConnectionSetupResult<Events>> {
-  const connectionId = randomUUID()
-
+  controller: SSEControllerLike,
+  initialContext?: Context,
+  reconnectionPromise?: Promise<void>,
+): SSESession<Events, Context> {
   // Create type-safe event sender for the handler
-  const send: SSEEventSender<Events> = (eventName, data, sendOptions) => {
+  // If reconnection is in progress, wait for it before sending to maintain event ordering
+  const send: SSEEventSender<Events> = async (eventName, data, sendOptions) => {
+    if (reconnectionPromise) {
+      await reconnectionPromise
+    }
     return controller._sendEventRaw(connectionId, {
       event: eventName,
       data,
@@ -200,8 +206,6 @@ export async function setupSSEConnection<Events extends SSEEventSchemas>(
       retry: sendOptions?.retry,
     })
   }
-
-  const sseReply = reply as SSEReply
 
   // Create sendStream function that validates and sends messages from async iterable
   const sendStream = async (messages: AsyncIterable<SSEStreamMessage<Events>>): Promise<void> => {
@@ -226,12 +230,11 @@ export async function setupSSEConnection<Events extends SSEEventSchemas>(
     }
   }
 
-  // Create connection wrapper with event schemas for validation and typed send
-  const connection: SSEConnection<Events> = {
+  return {
     id: connectionId,
     request,
     reply,
-    context: {},
+    context: (initialContext ?? {}) as Context,
     connectedAt: new Date(),
     send,
     isConnected: () => sseReply.sse.isConnected,
@@ -239,73 +242,269 @@ export async function setupSSEConnection<Events extends SSEEventSchemas>(
     sendStream,
     eventSchemas,
   }
+}
 
-  // Track whether onClose has been called to avoid double-calling
+/**
+ * Result of creating an SSE context.
+ */
+export type SSEContextResult<Events extends SSEEventSchemas = SSEEventSchemas> = {
+  sseContext: SSEContext<Events>
+  /** Promise that resolves when client disconnects */
+  connectionClosed: Promise<void>
+  /** The SSE reply object for advanced operations */
+  sseReply: SSEReply
+  /** Get the connection if streaming was started */
+  getConnection: () => SSESession<Events> | undefined
+  /** Get the connection ID if streaming was started */
+  getConnectionId: () => string | undefined
+  /** Check if streaming was started */
+  isStarted: () => boolean
+  /** Check if a response was returned */
+  hasResponse: () => boolean
+  /** Get the session mode if streaming was started */
+  getMode: () => SSESessionMode | undefined
+}
+
+/**
+ * Create an SSEContext for deferred header sending.
+ *
+ * This factory creates the `sse` parameter passed to SSE handlers, allowing:
+ * - Validation before headers are sent
+ * - Proper HTTP error responses (404, 422, etc.)
+ * - Explicit streaming start via `sse.start()`
+ *
+ * @param controller - The SSE controller for connection management
+ * @param request - The Fastify request
+ * @param reply - The Fastify reply
+ * @param eventSchemas - Event schemas for type-safe event sending
+ * @param options - Lifecycle hooks and options
+ * @param logPrefix - Prefix for log messages
+ *
+ * @returns SSEContext result with context object and state accessors
+ */
+export function createSSEContext<Events extends SSEEventSchemas>(
+  controller: SSEControllerLike,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  eventSchemas: Events,
+  options: SSELifecycleOptions | undefined,
+  logPrefix = 'SSE',
+): SSEContextResult<Events> {
+  const connectionId = randomUUID()
+  const sseReply = reply as SSEReply
+
+  // State tracking
+  let started = false
+  let responseSent = false
+  let headersSent = false
+  let connection: SSESession<Events> | undefined
+  let sessionMode: SSESessionMode | undefined
   let onCloseCalled = false
 
   // Helper to call onClose exactly once
   const callOnClose = async (reason: SSECloseReason) => {
-    if (onCloseCalled) return
+    if (onCloseCalled || !connection) return
     onCloseCalled = true
     try {
       if (options?.onClose) {
-        await options.onClose(connection as unknown as SSEConnection, reason)
+        await options.onClose(connection as unknown as SSESession, reason)
       }
     } catch (err) {
       options?.logger?.error({ err }, `Error in ${logPrefix} onClose handler`)
     }
   }
 
-  // Register callback for when server explicitly closes via reply.sse.close()
-  // This fires when the server calls closeConnection() or returns success('disconnect')
-  sseReply.sse.onClose(async () => {
-    await callOnClose('server')
-  })
+  // Helper to fire onConnect hook (not awaited, errors logged)
+  const fireOnConnect = (conn: SSESession<Events>) => {
+    if (!options?.onConnect) return
+    try {
+      const maybePromise = options.onConnect(conn as unknown as SSESession)
+      if (maybePromise && typeof maybePromise.catch === 'function') {
+        maybePromise.catch((err: unknown) => {
+          options?.logger?.error({ err }, `Error in ${logPrefix} onConnect handler`)
+        })
+      }
+    } catch (err) {
+      options?.logger?.error({ err }, `Error in ${logPrefix} onConnect handler`)
+    }
+  }
 
   // Create a promise that will resolve when the connection closes
   const connectionClosed = new Promise<void>((resolve) => {
     request.socket.on('close', async () => {
       // Call onClose for client-initiated closures (if not already called by server close)
       await callOnClose('client')
-      controller.unregisterConnection(connectionId)
+      if (connection) {
+        controller.unregisterConnection(connectionId)
+      }
       resolve()
     })
   })
 
-  // Register connection with controller
-  controller.registerConnection(connection as unknown as SSEConnection)
+  // The SSE context object passed to handlers
+  const sseContext: SSEContext<Events> = {
+    start: <Context = unknown>(
+      mode: SSESessionMode,
+      startOptions?: SSEStartOptions<Context>,
+    ): SSESession<Events, Context> => {
+      if (started) {
+        throw new Error('SSE streaming already started. Cannot call start() multiple times.')
+      }
+      if (responseSent) {
+        throw new Error('Cannot start streaming after sending a response.')
+      }
 
-  // Tell @fastify/sse to keep the connection open after handler returns
-  sseReply.sse.keepAlive()
+      started = true
+      sessionMode = mode
 
-  // Send headers and flush them to establish the stream
-  sseReply.sse.sendHeaders()
-  reply.raw.flushHeaders()
+      // Register callback for when server explicitly closes via reply.sse.close()
+      sseReply.sse.onClose(async () => {
+        await callOnClose('server')
+      })
 
-  // Handle reconnection with Last-Event-ID
-  const lastEventId = request.headers['last-event-id']
-  if (lastEventId) {
-    await handleReconnection(
-      sseReply,
-      connection as unknown as SSEConnection,
-      lastEventId as string,
-      options,
-      logPrefix,
-    )
-  }
+      // Send headers if not already sent via sendHeaders()
+      if (!headersSent) {
+        // Tell @fastify/sse to keep the connection open after handler returns
+        sseReply.sse.keepAlive()
 
-  // Notify connection established
-  try {
-    await options?.onConnect?.(connection as unknown as SSEConnection)
-  } catch (err) {
-    options?.logger?.error({ err }, `Error in ${logPrefix} onConnect handler`)
+        // Send headers and flush them to establish the stream
+        sseReply.sse.sendHeaders()
+        reply.raw.flushHeaders()
+        headersSent = true
+      }
+
+      // Handle reconnection with Last-Event-ID
+      // Create a deferred promise so we can pass it to the connection before starting reconnection
+      const lastEventId = request.headers['last-event-id']
+      let reconnectionResolve: (() => void) | undefined
+      const reconnectionPromise =
+        lastEventId && options?.onReconnect
+          ? new Promise<void>((resolve) => {
+              reconnectionResolve = resolve
+            })
+          : undefined
+
+      // Create connection with the reconnection promise
+      // The send() method will await this promise to ensure event ordering
+      connection = createSSESessionInternal(
+        connectionId,
+        request,
+        reply,
+        sseReply,
+        eventSchemas,
+        controller,
+        startOptions?.context,
+        reconnectionPromise,
+      ) as SSESession<Events>
+
+      // Register connection with controller
+      controller.registerConnection(connection as unknown as SSESession)
+
+      // Now that connection exists, handle reconnection with a valid SSESession
+      if (lastEventId && options?.onReconnect && reconnectionResolve) {
+        // Start reconnection asynchronously - connection.send() will wait for it
+        ;(async () => {
+          try {
+            const replayEvents = await options.onReconnect?.(
+              connection as unknown as SSESession,
+              lastEventId as string,
+            )
+            if (replayEvents) {
+              await sendReplayEvents(sseReply, replayEvents)
+            }
+          } catch (err) {
+            options?.logger?.error(
+              { err, lastEventId },
+              `Error in ${logPrefix} onReconnect handler`,
+            )
+          } finally {
+            reconnectionResolve?.()
+          }
+        })()
+      }
+
+      // Fire onConnect hook (not awaited per plan)
+      fireOnConnect(connection)
+
+      return connection as SSESession<Events, Context>
+    },
+
+    respond: (code: number, body: unknown): SSERespondResult => {
+      if (started) {
+        throw new Error('Cannot send response after streaming has started.')
+      }
+      responseSent = true
+      return { _type: 'respond', code, body }
+    },
+
+    sendHeaders: (): void => {
+      if (headersSent) {
+        throw new Error('Headers already sent. Cannot call sendHeaders() multiple times.')
+      }
+      if (started) {
+        throw new Error('Headers already sent via start().')
+      }
+      if (responseSent) {
+        throw new Error('Cannot send headers after sending a response.')
+      }
+      sseReply.sse.keepAlive()
+      sseReply.sse.sendHeaders()
+      reply.raw.flushHeaders()
+      headersSent = true
+    },
+
+    reply,
   }
 
   return {
-    connectionId,
-    connection,
+    sseContext,
     connectionClosed,
     sseReply,
+    getConnection: () => connection,
+    getConnectionId: () => (started ? connectionId : undefined),
+    isStarted: () => started,
+    hasResponse: () => responseSent,
+    getMode: () => sessionMode,
+  }
+}
+
+/**
+ * Setup an SSE connection with all the boilerplate:
+ * - Create connection object with typed event sender
+ * - Register with controller
+ * - Setup disconnect handler
+ * - Initialize SSE reply (keepAlive, sendHeaders, flushHeaders)
+ * - Handle reconnection
+ * - Call onConnect hook
+ *
+ * @deprecated Use createSSEContext for new code. This function is kept for backwards compatibility.
+ *
+ * @returns Connection setup result with connection object and closed promise
+ */
+export async function setupSSESession<Events extends SSEEventSchemas>(
+  controller: SSEControllerLike,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  eventSchemas: Events,
+  options: SSELifecycleOptions | undefined,
+  logPrefix = 'SSE',
+): Promise<SSESessionSetupResult<Events>> {
+  // Use the new context-based approach internally
+  const result = createSSEContext(controller, request, reply, eventSchemas, options, logPrefix)
+
+  // Auto-start the connection (old behavior - keepAlive by default)
+  const connection = result.sseContext.start('keepAlive')
+
+  // Wait for onConnect to complete (old behavior was awaited)
+  // Note: In the new API, onConnect is not awaited, but for backwards compat we simulate it
+  // by giving it a tick to run
+  await new Promise((resolve) => setImmediate(resolve))
+
+  return {
+    connectionId: connection.id,
+    connection,
+    connectionClosed: result.connectionClosed,
+    sseReply: result.sseReply,
   }
 }
 

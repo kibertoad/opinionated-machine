@@ -10,8 +10,8 @@ export {
   type FastifySSERouteOptions,
   type InferSSERequest,
   type RegisterSSERoutesOptions,
-  type SSEConnection,
   type SSEOnlyHandlers,
+  type SSESession,
 } from '../routes/index.js'
 export {
   AbstractSSEController,
@@ -24,7 +24,7 @@ export {
   type SSELogger,
   type SSEMessage,
 } from './AbstractSSEController.js'
-export { type SSEConnectionEvent, SSEConnectionSpy } from './SSEConnectionSpy.js'
+export { type SSESessionEvent, SSESessionSpy } from './SSESessionSpy.js'
 export type {
   AnySSEContractDefinition,
   SSEContractDefinition,

@@ -1,12 +1,12 @@
 import { stringify } from 'fast-querystring'
-import type { SSEConnection } from '../routes/fastifyRouteTypes.ts'
-import type { SSEConnectionSpy } from '../sse/SSEConnectionSpy.ts'
+import type { SSESession } from '../routes/fastifyRouteTypes.ts'
+import type { SSESessionSpy } from '../sse/SSESessionSpy.ts'
 import { type ParsedSSEEvent, parseSSEBuffer } from '../sse/sseParser.ts'
 
 /**
- * Interface for objects that have a connectionSpy (e.g., SSE controllers in test mode).
+ * Interface for objects that have a sessionSpy (e.g., SSE controllers in test mode).
  */
-export type HasConnectionSpy = { connectionSpy: SSEConnectionSpy }
+export type HasSessionSpy = { connectionSpy: SSESessionSpy }
 
 /**
  * Options for connecting to an SSE endpoint via HTTP.
@@ -29,7 +29,7 @@ export type SSEHttpConnectWithSpyOptions = SSEHttpConnectOptions & {
    */
   awaitServerConnection: {
     /** The SSE controller (must have connectionSpy enabled via isTestMode) */
-    controller: HasConnectionSpy
+    controller: HasSessionSpy
     /** Timeout in milliseconds (default: 5000) */
     timeout?: number
   }
@@ -40,7 +40,7 @@ export type SSEHttpConnectWithSpyOptions = SSEHttpConnectOptions & {
  */
 export type SSEHttpConnectResult = {
   client: SSEHttpClient
-  serverConnection: SSEConnection
+  serverConnection: SSESession
 }
 
 /**
