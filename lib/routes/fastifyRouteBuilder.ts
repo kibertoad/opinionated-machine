@@ -190,26 +190,26 @@ async function processSSEHandlerResult(
   reply: FastifyReply,
 ): Promise<void> {
   switch (result._type) {
-    case 'error':
-      // Send HTTP error response (headers not sent yet).
+    case 'respond':
+      // Send HTTP response (early return before streaming started).
       // Clean up SSE-specific headers that @fastify/sse sets early in the lifecycle.
-      // Not strictly necessary, but avoids confusing headers on JSON error responses.
+      // Not strictly necessary, but avoids confusing headers on JSON responses.
       reply.removeHeader('cache-control')
       reply.removeHeader('x-accel-buffering')
       // Critical: override content-type from text/event-stream to application/json,
-      // otherwise the zod serializer compiler won't serialize the error body correctly.
+      // otherwise the zod serializer compiler won't serialize the body correctly.
       reply.type('application/json').code(result.code).send(result.body)
       break
 
     case 'close':
-      // Request-response streaming: close connection after handler completes
+      // Request-response streaming: close session after handler completes
       if (connectionId) {
         controller.closeConnection(connectionId)
       }
       break
 
     case 'keepAlive':
-      // Long-lived connection: wait for client to disconnect
+      // Long-lived session: wait for client to disconnect
       await connectionClosed
       break
   }
@@ -242,9 +242,9 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
 
     // Check for forgotten start() detection
     // Handle case where result is undefined/null (handler forgot to return)
-    if (!result || (result._type !== 'error' && !contextResult.isStarted())) {
+    if (!result || (result._type !== 'respond' && !contextResult.isStarted())) {
       throw new Error(
-        'SSE handler must either send an error response (sse.error()) ' +
+        'SSE handler must either send a response (sse.respond()) ' +
           'or start streaming (sse.start()). Handler returned without doing either.',
       )
     }
@@ -411,9 +411,9 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
 
         // Check for forgotten start() detection
         // Handle case where result is undefined/null (handler forgot to return)
-        if (!result || (result._type !== 'error' && !contextResult.isStarted())) {
+        if (!result || (result._type !== 'respond' && !contextResult.isStarted())) {
           throw new Error(
-            'SSE handler must either send an error response (sse.error()) ' +
+            'SSE handler must either send a response (sse.respond()) ' +
               'or start streaming (sse.start()). Handler returned without doing either.',
           )
         }
@@ -512,18 +512,18 @@ export function buildFastifyRoute<
  *
  * @example
  * ```typescript
- * // SSE-only route with deferred headers (can return HTTP errors)
+ * // SSE-only route with deferred headers (can return early)
  * const sseRoute = buildFastifyRoute(notificationsController, {
  *   contract: notificationsContract,
  *   handlers: {
  *     sse: async (request, sse) => {
  *       const entity = await db.find(request.params.id)
  *       if (!entity) {
- *         return sse.error(404, { error: 'Not found' })
+ *         return sse.respond(404, { error: 'Not found' })
  *       }
- *       const connection = sse.start()
- *       await connection.send('notification', { message: 'Hello!' })
- *       return connection.keepAlive()
+ *       const session = sse.start()
+ *       await session.send('notification', { message: 'Hello!' })
+ *       return session.keepAlive()
  *     },
  *   },
  * })
@@ -536,10 +536,10 @@ export function buildFastifyRoute<
  *       return { reply: 'Hello', usage: { tokens: 1 } }
  *     },
  *     sse: async (request, sse) => {
- *       const connection = sse.start()
- *       await connection.send('chunk', { delta: 'Hello' })
- *       await connection.send('done', { usage: { total: 1 } })
- *       return connection.close()
+ *       const session = sse.start()
+ *       await session.send('chunk', { delta: 'Hello' })
+ *       await session.send('done', { usage: { total: 1 } })
+ *       return session.close()
  *     },
  *   },
  * })

@@ -964,16 +964,16 @@ describe('SSE Inject E2E (getStream method)', () => {
  * Tests for SSE Deferred Headers feature.
  *
  * The key capability: handlers can perform validation BEFORE HTTP headers are sent,
- * enabling proper HTTP error codes (404, 422) for validation failures instead of
+ * enabling proper HTTP responses (404, 422, etc.) for early returns instead of
  * always returning 200 and then sending an SSE error event.
  *
  * API pattern:
- * 1. Handler receives `sse` context (not connection)
+ * 1. Handler receives `sse` context (not session)
  * 2. Handler performs validation
- * 3. If validation fails: `return sse.error(code, body)` - sends HTTP error
- * 4. If validation passes: `const connection = sse.start()` - sends 200 + SSE headers
- * 5. Stream events via `connection.send()`
- * 6. Return `connection.close()` or `connection.keepAlive()`
+ * 3. If validation fails: `return sse.respond(code, body)` - sends HTTP response
+ * 4. If validation passes: `const session = sse.start()` - sends 200 + SSE headers
+ * 5. Stream events via `session.send()`
+ * 6. Return `session.close()` or `session.keepAlive()`
  */
 describe('SSE Inject E2E (deferred headers - HTTP error before streaming)', () => {
   let server: SSETestServer<{ context: DIContext<object, object> }>
@@ -1345,7 +1345,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
     await server.close()
   })
 
-  it('hasError() returns true after sse.error() is called', { timeout: 10000 }, async () => {
+  it('hasError() returns true after sse.respond() is called', { timeout: 10000 }, async () => {
     const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
     const { z } = await import('zod/v4')
 
@@ -1366,14 +1366,14 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
             const eventSchemas = { message: z.object({ text: z.string() }) }
             const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
 
-            // Call error
-            const errorResult = result.sseContext.error(400, { error: 'test' })
+            // Call respond
+            const respondResult = result.sseContext.respond(400, { error: 'test' })
 
             // Check hasError
             hasErrorResult = result.hasError()
 
-            // Process the error result
-            reply.code(errorResult.code).send(errorResult.body)
+            // Process the respond result
+            reply.code(respondResult.code).send(respondResult.body)
           },
         })
       },
@@ -1458,7 +1458,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
     await server.close()
   })
 
-  it('sendHeaders() throws if called after error()', { timeout: 10000 }, async () => {
+  it('sendHeaders() throws if called after respond()', { timeout: 10000 }, async () => {
     const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
     const { z } = await import('zod/v4')
 
@@ -1473,14 +1473,14 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
       (app) => {
         app.route({
           method: 'GET',
-          url: '/test/send-headers-after-error',
+          url: '/test/send-headers-after-respond',
           sse: true,
           handler: (request, reply) => {
             const eventSchemas = { message: z.object({ text: z.string() }) }
             const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
 
-            // First send error
-            const errorResult = result.sseContext.error(400, { error: 'test' })
+            // First send response
+            const respondResult = result.sseContext.respond(400, { error: 'test' })
 
             // Then try sendHeaders - should throw
             try {
@@ -1489,7 +1489,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
               thrownError = e as Error
             }
 
-            reply.code(errorResult.code).send(errorResult.body)
+            reply.code(respondResult.code).send(respondResult.body)
           },
         })
       },
@@ -1504,12 +1504,12 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
 
     await server.app.inject({
       method: 'GET',
-      url: '/test/send-headers-after-error',
+      url: '/test/send-headers-after-respond',
       headers: { accept: 'text/event-stream' },
     })
 
     expect(thrownError).not.toBeNull()
-    expect(thrownError!.message).toContain('Cannot send headers after sending an error')
+    expect(thrownError!.message).toContain('Cannot send headers after sending a response')
 
     await context.destroy()
     await server.close()
@@ -1574,7 +1574,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
     await server.close()
   })
 
-  it('start() throws if called after error()', { timeout: 10000 }, async () => {
+  it('start() throws if called after respond()', { timeout: 10000 }, async () => {
     const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
     const { z } = await import('zod/v4')
 
@@ -1589,14 +1589,14 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
       (app) => {
         app.route({
           method: 'GET',
-          url: '/test/start-after-error',
+          url: '/test/start-after-respond',
           sse: true,
           handler: (request, reply) => {
             const eventSchemas = { message: z.object({ text: z.string() }) }
             const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
 
-            // First send error
-            const errorResult = result.sseContext.error(400, { error: 'test' })
+            // First send response
+            const respondResult = result.sseContext.respond(400, { error: 'test' })
 
             // Try to start - should throw
             try {
@@ -1605,7 +1605,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
               thrownError = e as Error
             }
 
-            reply.code(errorResult.code).send(errorResult.body)
+            reply.code(respondResult.code).send(respondResult.body)
           },
         })
       },
@@ -1620,18 +1620,18 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
 
     await server.app.inject({
       method: 'GET',
-      url: '/test/start-after-error',
+      url: '/test/start-after-respond',
       headers: { accept: 'text/event-stream' },
     })
 
     expect(thrownError).not.toBeNull()
-    expect(thrownError!.message).toContain('Cannot start streaming after sending an error')
+    expect(thrownError!.message).toContain('Cannot start streaming after sending a response')
 
     await context.destroy()
     await server.close()
   })
 
-  it('error() throws if called after start()', { timeout: 10000 }, async () => {
+  it('respond() throws if called after start()', { timeout: 10000 }, async () => {
     const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
     const { z } = await import('zod/v4')
 
@@ -1646,23 +1646,23 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
       (app) => {
         app.route({
           method: 'GET',
-          url: '/test/error-after-start',
+          url: '/test/respond-after-start',
           sse: true,
           handler: async (request, reply) => {
             const eventSchemas = { message: z.object({ text: z.string() }) }
             const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
 
             // First start streaming
-            const connection = result.sseContext.start()
+            const session = result.sseContext.start()
 
-            // Then try error - should throw
+            // Then try respond - should throw
             try {
-              result.sseContext.error(400, { error: 'test' })
+              result.sseContext.respond(400, { error: 'test' })
             } catch (e) {
               thrownError = e as Error
             }
 
-            await connection.send('message', { text: 'test' })
+            await session.send('message', { text: 'test' })
             result.sseReply.sse.close()
             await result.connectionClosed
           },
@@ -1679,12 +1679,12 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
 
     await server.app.inject({
       method: 'GET',
-      url: '/test/error-after-start',
+      url: '/test/respond-after-start',
       headers: { accept: 'text/event-stream' },
     })
 
     expect(thrownError).not.toBeNull()
-    expect(thrownError!.message).toContain('Cannot send error response after streaming')
+    expect(thrownError!.message).toContain('Cannot send response after streaming')
 
     await context.destroy()
     await server.close()

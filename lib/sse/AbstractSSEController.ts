@@ -21,9 +21,9 @@ export type {
   InferSSERequest,
   SSECloseResult,
   SSEContext,
-  SSEErrorResult,
   SSEHandlerResult,
   SSEKeepAliveResult,
+  SSERespondResult,
   SSESession,
   SSEStartOptions,
 } from '../routes/fastifyRouteTypes.ts'

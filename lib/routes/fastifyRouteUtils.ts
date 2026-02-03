@@ -7,8 +7,8 @@ import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../
 import type {
   SSECloseResult,
   SSEContext,
-  SSEErrorResult,
   SSEKeepAliveResult,
+  SSERespondResult,
   SSESession,
   SSEStartOptions,
   SSEStreamMessage,
@@ -353,7 +353,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
         throw new Error('SSE streaming already started. Cannot call start() multiple times.')
       }
       if (errorSent) {
-        throw new Error('Cannot start streaming after sending an error response.')
+        throw new Error('Cannot start streaming after sending a response.')
       }
 
       started = true
@@ -417,12 +417,12 @@ export function createSSEContext<Events extends SSEEventSchemas>(
       return connection as SSESession<Events, Context>
     },
 
-    error: (code: number, body: unknown): SSEErrorResult => {
+    respond: (code: number, body: unknown): SSERespondResult => {
       if (started) {
-        throw new Error('Cannot send error response after streaming has started.')
+        throw new Error('Cannot send response after streaming has started.')
       }
       errorSent = true
-      return { _type: 'error', code, body }
+      return { _type: 'respond', code, body }
     },
 
     sendHeaders: (): void => {
@@ -430,7 +430,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
         throw new Error('Headers already sent via start().')
       }
       if (errorSent) {
-        throw new Error('Cannot send headers after sending an error response.')
+        throw new Error('Cannot send headers after sending a response.')
       }
       sseReply.sse.keepAlive()
       sseReply.sse.sendHeaders()

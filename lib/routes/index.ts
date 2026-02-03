@@ -26,12 +26,12 @@ export {
   // SSE types
   type SSECloseResult,
   type SSEContext,
-  type SSEErrorResult,
   // SSE handler result types
   type SSEHandlerResult,
   type SSEKeepAliveResult,
   type SSEModeHandler,
   type SSEOnlyHandlers,
+  type SSERespondResult,
   type SSESession,
   type SSEStartOptions,
   // SSE stream message type

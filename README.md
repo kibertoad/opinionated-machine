@@ -867,7 +867,7 @@ public buildSSERoutes() {
 SSE handlers must return an `SSEHandlerResult` to explicitly indicate session management:
 
 ```ts
-// Return sse.error(code, body) - send HTTP error before streaming starts
+// Return sse.respond(code, body) - send HTTP response before streaming (early return)
 // Return session.close() - close session after handler completes
 // Return session.keepAlive() - keep session open for external events
 ```
@@ -925,15 +925,15 @@ private handleChatCompletion = buildHandler(chatCompletionContract, {
 
 **Error handling before streaming:**
 
-Use `sse.error(code, body)` to return proper HTTP error codes before streaming starts. This is ideal for validation failures:
+Use `sse.respond(code, body)` to return an HTTP response before streaming starts. This is useful for any early return: validation errors, not found, redirects, etc.
 
 ```ts
 private handleStream = buildHandler(streamContract, {
   sse: async (request, sse) => {
-    // Validate BEFORE starting stream - can return proper HTTP errors
+    // Early return BEFORE starting stream - can return any HTTP response
     const entity = await this.service.find(request.params.id)
     if (!entity) {
-      return sse.error(404, { error: 'Entity not found' })
+      return sse.respond(404, { error: 'Entity not found' })
     }
 
     // Validation passed - start streaming

@@ -939,15 +939,15 @@ export class TestDeferredHeaders404Controller extends AbstractSSEController<Test
     sse: async (request, sse) => {
       const { id } = request.params
 
-      // Validation BEFORE headers are sent - can return proper HTTP error
+      // Early return BEFORE headers are sent - can return any HTTP response
       if (!this.existingIds.has(id)) {
-        return sse.error(404, { error: 'Entity not found', id })
+        return sse.respond(404, { error: 'Entity not found', id })
       }
 
       // Entity exists - start streaming
-      const connection = sse.start()
-      await connection.send('message', { text: `Found entity ${id}` })
-      return connection.close()
+      const session = sse.start()
+      await session.send('message', { text: `Found entity ${id}` })
+      return session.close()
     },
   })
 
@@ -985,7 +985,7 @@ export class TestDeferredHeaders422Controller extends AbstractSSEController<Test
 
       // Custom validation beyond schema validation
       if (value < 0) {
-        return sse.error(422, {
+        return sse.respond(422, {
           error: 'Validation failed',
           details: 'Value must be non-negative',
           received: value,
@@ -993,7 +993,7 @@ export class TestDeferredHeaders422Controller extends AbstractSSEController<Test
       }
 
       if (value > 1000) {
-        return sse.error(422, {
+        return sse.respond(422, {
           error: 'Validation failed',
           details: 'Value must be at most 1000',
           received: value,
@@ -1001,16 +1001,16 @@ export class TestDeferredHeaders422Controller extends AbstractSSEController<Test
       }
 
       // Valid - start streaming
-      const connection = sse.start()
-      await connection.send('result', { computed: value * 2 })
-      return connection.close()
+      const session = sse.start()
+      await session.send('result', { computed: value * 2 })
+      return session.close()
     },
   })
 }
 
 /**
  * Test SSE controller for forgotten start() detection.
- * Handler doesn't call start() or error() - framework should detect this.
+ * Handler doesn't call start() or respond() - framework should detect this.
  */
 export type TestForgottenStartContracts = {
   forgottenStart: typeof forgottenStartContract
