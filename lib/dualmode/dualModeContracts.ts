@@ -22,25 +22,40 @@ export type DualModeMethod = 'GET' | 'POST' | 'PUT' | 'PATCH'
 export type PathResolver<Params> = (params: Params) => string
 
 /**
- * Definition for a dual-mode route with type-safe contracts.
- * Supports both JSON responses and SSE streaming on the same path.
+ * Multi-format response schemas.
+ * Maps Content-Type to Zod schema for each supported format.
+ *
+ * @example
+ * ```typescript
+ * {
+ *   'application/json': z.object({ reply: z.string() }),
+ *   'text/plain': z.string(),
+ *   'text/csv': z.string(),
+ * }
+ * ```
+ */
+export type MultiFormatResponses = Record<string, z.ZodTypeAny>
+
+/**
+ * Definition for a simplified dual-mode route (single JSON format).
+ * Use `jsonResponse` for the recommended simplified approach.
  *
  * @template Method - HTTP method (GET, POST, PUT, PATCH)
  * @template Params - Path parameters schema
  * @template Query - Query string parameters schema
  * @template RequestHeaders - Request headers schema
- * @template Body - Request body schema (for POST/PUT/PATCH)
- * @template SyncResponse - Sync response schema (for Accept: application/json)
+ * @template Body - Request requestBody schema (for POST/PUT/PATCH)
+ * @template JsonResponse - JSON response schema (for Accept: application/json)
  * @template Events - SSE event schemas (for Accept: text/event-stream)
  * @template ResponseHeaders - Response headers schema (for JSON mode)
  */
-export type DualModeContractDefinition<
+export type SimplifiedDualModeContractDefinition<
   Method extends DualModeMethod = DualModeMethod,
   Params extends z.ZodTypeAny = z.ZodTypeAny,
   Query extends z.ZodTypeAny = z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny = z.ZodTypeAny,
   Body extends z.ZodTypeAny | undefined = undefined,
-  SyncResponse extends z.ZodTypeAny = z.ZodTypeAny,
+  JsonResponse extends z.ZodTypeAny = z.ZodTypeAny,
   Events extends SSEEventSchemas = SSEEventSchemas,
   ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
 > = {
@@ -49,11 +64,54 @@ export type DualModeContractDefinition<
   params: Params
   query: Query
   requestHeaders: RequestHeaders
-  body: Body
-  syncResponse: SyncResponse
+  requestBody: Body
+  /** Single JSON response schema - use with `json` handler */
+  jsonResponse: JsonResponse
+  /** Explicitly forbidden when using jsonResponse */
+  multiFormatResponses?: never
   responseHeaders?: ResponseHeaders
   events: Events
   isDualMode: true
+  isSimplified: true
+}
+
+/**
+ * Definition for a verbose dual-mode route (multi-format support).
+ * Use `multiFormatResponses` when you need to support multiple response formats.
+ *
+ * @template Method - HTTP method (GET, POST, PUT, PATCH)
+ * @template Params - Path parameters schema
+ * @template Query - Query string parameters schema
+ * @template RequestHeaders - Request headers schema
+ * @template Body - Request requestBody schema (for POST/PUT/PATCH)
+ * @template Formats - Multi-format response schemas
+ * @template Events - SSE event schemas (for Accept: text/event-stream)
+ * @template ResponseHeaders - Response headers schema (for JSON mode)
+ */
+export type VerboseDualModeContractDefinition<
+  Method extends DualModeMethod = DualModeMethod,
+  Params extends z.ZodTypeAny = z.ZodTypeAny,
+  Query extends z.ZodTypeAny = z.ZodTypeAny,
+  RequestHeaders extends z.ZodTypeAny = z.ZodTypeAny,
+  Body extends z.ZodTypeAny | undefined = undefined,
+  Formats extends MultiFormatResponses = MultiFormatResponses,
+  Events extends SSEEventSchemas = SSEEventSchemas,
+  ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
+> = {
+  method: Method
+  pathResolver: PathResolver<z.infer<Params>>
+  params: Params
+  query: Query
+  requestHeaders: RequestHeaders
+  requestBody: Body
+  /** Explicitly forbidden when using multiFormatResponses */
+  jsonResponse?: never
+  /** Multi-format response schemas - use with `sync` handlers */
+  multiFormatResponses: Formats
+  responseHeaders?: ResponseHeaders
+  events: Events
+  isDualMode: true
+  isVerbose: true
 }
 
 /**
@@ -67,9 +125,30 @@ export type AnyDualModeContractDefinition = {
   params: z.ZodTypeAny
   query: z.ZodTypeAny
   requestHeaders: z.ZodTypeAny
-  body: z.ZodTypeAny | undefined
-  syncResponse: z.ZodTypeAny
+  requestBody: z.ZodTypeAny | undefined
+  /** Single JSON response schema */
+  jsonResponse?: z.ZodTypeAny
+  /** Multi-format response schemas */
+  multiFormatResponses?: MultiFormatResponses
   responseHeaders?: z.ZodTypeAny
   events: SSEEventSchemas
   isDualMode: true
+}
+
+/**
+ * Type guard to check if a contract uses simplified (single JSON) format.
+ */
+export function isSimplifiedContract(
+  contract: AnyDualModeContractDefinition,
+): contract is AnyDualModeContractDefinition & { jsonResponse: z.ZodTypeAny } {
+  return 'jsonResponse' in contract && contract.jsonResponse !== undefined
+}
+
+/**
+ * Type guard to check if a contract uses verbose (multi-format) format.
+ */
+export function isVerboseContract(
+  contract: AnyDualModeContractDefinition,
+): contract is AnyDualModeContractDefinition & { multiFormatResponses: MultiFormatResponses } {
+  return 'multiFormatResponses' in contract && contract.multiFormatResponses !== undefined
 }

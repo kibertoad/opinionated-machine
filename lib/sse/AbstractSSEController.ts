@@ -154,7 +154,7 @@ export abstract class AbstractSSEController<
   /**
    * Controller-level hook called when any connection is closed.
    * Override this method to add global disconnect handling logic.
-   * This is called BEFORE the connection is unregistered and route-level onDisconnect.
+   * This is called BEFORE the connection is unregistered and route-level onClose.
    *
    * @param connection - The connection being closed
    */

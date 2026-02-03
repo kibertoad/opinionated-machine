@@ -11,8 +11,8 @@ export const chatCompletionContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ message: z.string() }),
-  syncResponse: z.object({
+  requestBody: z.object({ message: z.string() }),
+  jsonResponse: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
@@ -31,8 +31,8 @@ export const conversationCompletionContract = buildContract({
   params: z.object({ conversationId: z.string().uuid() }),
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
-  body: z.object({ message: z.string() }),
-  syncResponse: z.object({
+  requestBody: z.object({ message: z.string() }),
+  jsonResponse: z.object({
     reply: z.string(),
     conversationId: z.string(),
   }),
@@ -50,7 +50,7 @@ export const jobStatusContract = buildContract({
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
   requestHeaders: z.object({}),
-  syncResponse: z.object({
+  jsonResponse: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
@@ -75,8 +75,8 @@ export const authenticatedDualModeContract = buildContract({
   requestHeaders: z.object({
     authorization: z.string().optional(),
   }),
-  body: z.object({ data: z.string() }),
-  syncResponse: z.object({
+  requestBody: z.object({ data: z.string() }),
+  jsonResponse: z.object({
     success: z.boolean(),
     data: z.string(),
   }),
@@ -94,8 +94,8 @@ export const defaultModeTestContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ input: z.string() }),
-  syncResponse: z.object({ output: z.string() }),
+  requestBody: z.object({ input: z.string() }),
+  jsonResponse: z.object({ output: z.string() }),
   events: {
     output: z.object({ value: z.string() }),
   },
@@ -110,8 +110,8 @@ export const errorTestContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ shouldThrow: z.boolean() }),
-  syncResponse: z.object({ success: z.boolean() }),
+  requestBody: z.object({ shouldThrow: z.boolean() }),
+  jsonResponse: z.object({ success: z.boolean() }),
   events: {
     result: z.object({ success: z.boolean() }),
   },
@@ -127,8 +127,8 @@ export const defaultMethodContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ value: z.string() }),
-  syncResponse: z.object({ result: z.string() }),
+  requestBody: z.object({ value: z.string() }),
+  jsonResponse: z.object({ result: z.string() }),
   events: {
     data: z.object({ value: z.string() }),
   },
@@ -136,7 +136,7 @@ export const defaultMethodContract = buildContract({
 
 /**
  * POST dual-mode route for testing JSON response validation failure.
- * The syncResponse schema is strict, but the handler will return mismatched data.
+ * The jsonResponse schema is strict, but the handler will return mismatched data.
  */
 export const jsonValidationContract = buildContract({
   method: 'POST',
@@ -144,12 +144,61 @@ export const jsonValidationContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ returnInvalid: z.boolean() }),
-  syncResponse: z.object({
+  requestBody: z.object({ returnInvalid: z.boolean() }),
+  jsonResponse: z.object({
     requiredField: z.string(),
     count: z.number().int().positive(),
   }),
   events: {
     result: z.object({ success: z.boolean() }),
+  },
+})
+
+/**
+ * POST dual-mode route with multi-format responses (verbose format).
+ * Supports JSON, plain text, and CSV output formats.
+ */
+export const multiFormatExportContract = buildContract({
+  method: 'POST',
+  pathResolver: () => '/api/export',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  requestBody: z.object({
+    data: z.array(z.object({ name: z.string(), value: z.number() })),
+  }),
+  multiFormatResponses: {
+    'application/json': z.object({
+      items: z.array(z.object({ name: z.string(), value: z.number() })),
+      count: z.number(),
+    }),
+    'text/plain': z.string(),
+    'text/csv': z.string(),
+  },
+  events: {
+    progress: z.object({ percent: z.number() }),
+    done: z.object({ totalItems: z.number() }),
+  },
+})
+
+/**
+ * GET dual-mode route with multi-format responses.
+ */
+export const multiFormatReportContract = buildContract({
+  pathResolver: (params) => `/api/reports/${params.reportId}`,
+  params: z.object({ reportId: z.string() }),
+  query: z.object({ detailed: z.string().optional() }),
+  requestHeaders: z.object({}),
+  multiFormatResponses: {
+    'application/json': z.object({
+      id: z.string(),
+      title: z.string(),
+      data: z.unknown(),
+    }),
+    'text/plain': z.string(),
+  },
+  events: {
+    chunk: z.object({ content: z.string() }),
+    done: z.object({ totalSize: z.number() }),
   },
 })

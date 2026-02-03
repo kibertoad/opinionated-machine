@@ -1419,10 +1419,10 @@ describe('SSE HTTP E2E (logger error handling)', () => {
   })
 
   it(
-    'logs error when onDisconnect throws and still cleans up connection',
+    'logs error when onClose throws and still cleans up connection',
     { timeout: 10000 },
     async () => {
-      // Connect to the endpoint that throws in onDisconnect
+      // Connect to the endpoint that throws in onClose
       const client = await SSEHttpClient.connect(server.baseUrl, '/api/logger-test/stream')
 
       expect(client.response.ok).toBe(true)
@@ -1432,24 +1432,24 @@ describe('SSE HTTP E2E (logger error handling)', () => {
       expect(events).toHaveLength(1)
       expect(JSON.parse(events[0]!.data)).toEqual({ text: 'Hello from logger test' })
 
-      // Close the client (this triggers onDisconnect which throws)
+      // Close the client (this triggers onClose which throws)
       client.close()
 
-      // Wait for the disconnect to be processed
+      // Wait for the close to be processed
       await delay(100)
 
       // Verify the logger was called with the error
       expect(mockLogger.error).toHaveBeenCalledTimes(1)
       expect(mockLogger.error).toHaveBeenCalledWith(
         { err: expect.any(Error) },
-        'Error in SSE onDisconnect handler',
+        'Error in SSE onClose handler',
       )
 
       // Verify the error message is correct
       const errorArg = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
         err: Error
       }
-      expect(errorArg.err.message).toBe('Test error in onDisconnect')
+      expect(errorArg.err.message).toBe('Test error in onClose')
     },
   )
 })

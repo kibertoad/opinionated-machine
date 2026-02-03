@@ -1,10 +1,14 @@
 import type { Either } from '@lokalise/node-core'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
-import type { AnyDualModeContractDefinition } from '../dualmode/dualModeContracts.ts'
+import type {
+  AnyDualModeContractDefinition,
+  MultiFormatResponses,
+} from '../dualmode/dualModeContracts.ts'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
+import type { SSECloseReason } from './fastifyRouteUtils.ts'
 
 // ============================================================================
 // SSE Handler Result Types
@@ -35,6 +39,32 @@ export type SSEHandlerResult = SSEHandlerDisconnect | SSEHandlerMaintainConnecti
 // ============================================================================
 
 /**
+ * Message format for use with SSEConnection.sendStream().
+ * Allows sending typed events through an async iterable.
+ *
+ * @template Events - Event schemas for type-safe event names and data
+ *
+ * @example
+ * ```typescript
+ * async function* generateMessages(): AsyncIterable<SSEStreamMessage<typeof contract.events>> {
+ *   yield { event: 'chunk', data: { delta: 'Hello' } }
+ *   yield { event: 'chunk', data: { delta: ' world' } }
+ *   yield { event: 'done', data: { usage: { total: 2 } } }
+ * }
+ *
+ * await connection.sendStream(generateMessages())
+ * ```
+ */
+export type SSEStreamMessage<Events extends SSEEventSchemas = SSEEventSchemas> = {
+  [K in keyof Events & string]: {
+    event: K
+    data: z.input<Events[K]>
+    id?: string
+    retry?: number
+  }
+}[keyof Events & string]
+
+/**
  * Represents an active SSE connection with typed event sending.
  *
  * @template Events - Event schemas for type-safe sending
@@ -56,6 +86,48 @@ export type SSEConnection<Events extends SSEEventSchemas = SSEEventSchemas, Cont
    * Event names and data are validated against the contract's event schemas.
    */
   send: SSEEventSender<Events>
+  /**
+   * Check if the SSE connection is still open.
+   * Queries the underlying @fastify/sse connection state.
+   *
+   * @returns true if the connection is still open, false if closed
+   */
+  isConnected: () => boolean
+  /**
+   * Get the underlying writable stream for advanced streaming operations.
+   * Useful for piping data directly or using Node.js stream utilities.
+   *
+   * @returns The underlying NodeJS.WritableStream from @fastify/sse
+   *
+   * @example
+   * ```typescript
+   * import { pipeline } from 'node:stream/promises'
+   *
+   * // Pipe data from a readable stream to SSE
+   * const readable = createReadableStream()
+   * await pipeline(readable, connection.getStream())
+   * ```
+   */
+  getStream: () => NodeJS.WritableStream
+  /**
+   * Send multiple SSE messages from an async iterable with validation.
+   * Each message is validated against the contract's event schemas before sending.
+   *
+   * @param messages - Async iterable of SSE messages to send
+   * @returns Promise that resolves when all messages have been sent
+   *
+   * @example
+   * ```typescript
+   * async function* generateMessages() {
+   *   yield { event: 'chunk', data: { delta: 'Hello' } }
+   *   yield { event: 'chunk', data: { delta: ' world' } }
+   *   yield { event: 'done', data: { usage: { total: 2 } } }
+   * }
+   *
+   * await connection.sendStream(generateMessages())
+   * ```
+   */
+  sendStream: (messages: AsyncIterable<SSEStreamMessage<Events>>) => Promise<void>
   /**
    * Zod schemas for validating event data.
    * Map of event name to Zod schema. Used by sendEvent for runtime validation.
@@ -113,9 +185,17 @@ export type FastifySSERouteOptions = {
    */
   onConnect?: (connection: SSEConnection) => void | Promise<void>
   /**
-   * Called when client disconnects.
+   * Called when the SSE connection closes for any reason (client disconnect,
+   * network failure, or server explicitly closing via closeConnection()).
+   *
+   * @param connection - The connection that was closed
+   * @param reason - Why the connection was closed:
+   *   - 'server': Server explicitly closed (closeConnection() or success('disconnect'))
+   *   - 'client': Client closed (EventSource.close(), navigation, network failure)
+   *
+   * Use this for cleanup like unsubscribing from events or removing from tracking.
    */
-  onDisconnect?: (connection: SSEConnection) => void | Promise<void>
+  onClose?: (connection: SSEConnection, reason: SSECloseReason) => void | Promise<void>
   /**
    * Handler for Last-Event-ID reconnection.
    * Return an iterable of events to replay, or handle replay manually.
@@ -131,6 +211,19 @@ export type FastifySSERouteOptions = {
    * Compatible with CommonLogger from @lokalise/node-core and pino loggers.
    */
   logger?: SSELogger
+  /**
+   * Custom serializer for SSE message data on this route.
+   * Overrides the global serializer if set.
+   * @default JSON.stringify
+   */
+  serializer?: (data: unknown) => string
+  /**
+   * Heartbeat interval in milliseconds for this route.
+   * Overrides the global heartbeat interval if set.
+   * Set to 0 to disable heartbeats.
+   * @default 30000
+   */
+  heartbeatInterval?: number
 }
 
 /**
@@ -147,7 +240,7 @@ export type FastifySSEHandlerConfig<Contract extends AnySSEContractDefinition> =
     z.infer<Contract['params']>,
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
-    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+    Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
   >
   /** Optional route configuration */
   options?: FastifySSERouteOptions
@@ -183,7 +276,7 @@ export type InferSSERequest<Contract extends AnySSEContractDefinition> = Fastify
   Params: z.infer<Contract['params']>
   Querystring: z.infer<Contract['query']>
   Headers: z.infer<Contract['requestHeaders']>
-  Body: Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+  Body: Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
 }>
 
 // ============================================================================
@@ -198,7 +291,7 @@ export type InferSSERequest<Contract extends AnySSEContractDefinition> = Fastify
  * @template Query - Query string parameters type
  * @template Headers - Request headers type
  * @template Body - Request body type
- * @template SyncResponse - Response type that must match contract's syncResponse schema
+ * @template SyncResponse - Response type that must match contract's jsonResponse schema
  */
 export type JsonModeHandler<
   Params = unknown,
@@ -278,6 +371,73 @@ export type DualModeHandlers<
 }
 
 /**
+ * Handler function for a specific format in multi-format mode.
+ * @template Params - Path parameters type
+ * @template Query - Query string parameters type
+ * @template Headers - Request headers type
+ * @template Body - Request body type
+ * @template Response - Response type for this format
+ */
+export type FormatHandler<
+  Params = unknown,
+  Query = unknown,
+  Headers = unknown,
+  Body = unknown,
+  Response = unknown,
+> = (
+  request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
+  reply: FastifyReply,
+) => Response | Promise<Response>
+
+/**
+ * Handler object for multi-format sync responses.
+ * Maps Content-Type to handler function.
+ *
+ * @template Formats - The multi-format response schemas from the contract
+ * @template Params - Path parameters type
+ * @template Query - Query string parameters type
+ * @template Headers - Request headers type
+ * @template Body - Request body type
+ */
+export type SyncHandlers<
+  Formats extends MultiFormatResponses,
+  Params = unknown,
+  Query = unknown,
+  Headers = unknown,
+  Body = unknown,
+> = {
+  [ContentType in keyof Formats & string]: FormatHandler<
+    Params,
+    Query,
+    Headers,
+    Body,
+    z.infer<Formats[ContentType]>
+  >
+}
+
+/**
+ * Combined handlers for verbose multi-format dual-mode routes.
+ *
+ * @template Formats - Multi-format response schemas
+ * @template Params - Path parameters type
+ * @template Query - Query string parameters type
+ * @template Headers - Request headers type
+ * @template Body - Request body type
+ * @template Events - SSE event schemas
+ */
+export type VerboseDualModeHandlers<
+  Formats extends MultiFormatResponses,
+  Params = unknown,
+  Query = unknown,
+  Headers = unknown,
+  Body = unknown,
+  Events extends SSEEventSchemas = SSEEventSchemas,
+> = {
+  sync: SyncHandlers<Formats, Params, Query, Headers, Body>
+  sse: SSEModeHandler<Events, Params, Query, Headers, Body>
+}
+
+/**
  * Options for configuring a dual-mode route.
  * Extends SSE route options with JSON-specific options.
  */
@@ -290,6 +450,76 @@ export type FastifyDualModeRouteOptions = FastifySSERouteOptions & {
 }
 
 /**
+ * Infer handlers type based on contract type - simplified vs verbose.
+ * - Simplified contracts (jsonResponse): `{ json: handler, sse: handler }`
+ * - Verbose contracts (multiFormatResponses): `{ sync: { format: handler, ... }, sse: handler }`
+ *
+ * When the contract type is the generic AnyDualModeContractDefinition (where multiFormatResponses
+ * is optional), we return a union of both handler types to allow either style.
+ */
+export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition> =
+  // Check if multiFormatResponses is definitely defined (not optional)
+  undefined extends Contract['multiFormatResponses']
+    ? // multiFormatResponses is optional - could be either simplified or verbose
+      Contract['jsonResponse'] extends z.ZodTypeAny
+      ? // jsonResponse is defined - simplified handlers
+        DualModeHandlers<
+          z.infer<Contract['params']>,
+          z.infer<Contract['query']>,
+          z.infer<Contract['requestHeaders']>,
+          Contract['requestBody'] extends z.ZodTypeAny
+            ? z.infer<Contract['requestBody']>
+            : undefined,
+          z.infer<Contract['jsonResponse']>,
+          Contract['events']
+        >
+      : // Neither is definitely defined - accept both handler styles (for AnyDualModeContractDefinition)
+          | DualModeHandlers<
+              z.infer<Contract['params']>,
+              z.infer<Contract['query']>,
+              z.infer<Contract['requestHeaders']>,
+              Contract['requestBody'] extends z.ZodTypeAny
+                ? z.infer<Contract['requestBody']>
+                : undefined,
+              unknown,
+              Contract['events']
+            >
+          | VerboseDualModeHandlers<
+              MultiFormatResponses,
+              z.infer<Contract['params']>,
+              z.infer<Contract['query']>,
+              z.infer<Contract['requestHeaders']>,
+              Contract['requestBody'] extends z.ZodTypeAny
+                ? z.infer<Contract['requestBody']>
+                : undefined,
+              Contract['events']
+            >
+    : // multiFormatResponses is definitely defined - verbose handlers
+      Contract['multiFormatResponses'] extends MultiFormatResponses
+      ? VerboseDualModeHandlers<
+          Contract['multiFormatResponses'],
+          z.infer<Contract['params']>,
+          z.infer<Contract['query']>,
+          z.infer<Contract['requestHeaders']>,
+          Contract['requestBody'] extends z.ZodTypeAny
+            ? z.infer<Contract['requestBody']>
+            : undefined,
+          Contract['events']
+        >
+      : DualModeHandlers<
+          z.infer<Contract['params']>,
+          z.infer<Contract['query']>,
+          z.infer<Contract['requestHeaders']>,
+          Contract['requestBody'] extends z.ZodTypeAny
+            ? z.infer<Contract['requestBody']>
+            : undefined,
+          Contract['jsonResponse'] extends z.ZodTypeAny
+            ? z.infer<Contract['jsonResponse']>
+            : unknown,
+          Contract['events']
+        >
+
+/**
  * Handler configuration returned by buildDualModeRoutes().
  *
  * @template Contract - The dual-mode route definition
@@ -297,15 +527,8 @@ export type FastifyDualModeRouteOptions = FastifySSERouteOptions & {
 export type FastifyDualModeHandlerConfig<Contract extends AnyDualModeContractDefinition> = {
   /** The dual-mode route contract */
   contract: Contract
-  /** Handlers for JSON and SSE modes */
-  handlers: DualModeHandlers<
-    z.infer<Contract['params']>,
-    z.infer<Contract['query']>,
-    z.infer<Contract['requestHeaders']>,
-    Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-    z.infer<Contract['syncResponse']>,
-    Contract['events']
-  >
+  /** Handlers for sync and SSE modes - type depends on contract style */
+  handlers: InferDualModeHandlers<Contract>
   /** Optional route configuration */
   options?: FastifyDualModeRouteOptions
 }
@@ -342,24 +565,18 @@ export type SSEOnlyHandlers<
 /**
  * Infer the handler type based on contract type.
  * - SSE-only contracts: `{ sse: handler }`
- * - Dual-mode contracts: `{ json: handler, sse: handler }`
+ * - Simplified dual-mode contracts: `{ json: handler, sse: handler }`
+ * - Verbose dual-mode contracts: `{ sync: { format: handler, ... }, sse: handler }`
  */
 export type InferHandlers<Contract> = Contract extends AnyDualModeContractDefinition
-  ? DualModeHandlers<
-      z.infer<Contract['params']>,
-      z.infer<Contract['query']>,
-      z.infer<Contract['requestHeaders']>,
-      Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-      z.infer<Contract['syncResponse']>,
-      Contract['events']
-    >
+  ? InferDualModeHandlers<Contract>
   : Contract extends AnySSEContractDefinition
     ? SSEOnlyHandlers<
         Contract['events'],
         z.infer<Contract['params']>,
         z.infer<Contract['query']>,
         z.infer<Contract['requestHeaders']>,
-        Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+        Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
       >
     : never
 
@@ -367,21 +584,14 @@ export type InferHandlers<Contract> = Contract extends AnyDualModeContractDefini
  * Helper type to infer the correct handlers type based on contract.
  */
 type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinition
-  ? DualModeHandlers<
-      z.infer<Contract['params']>,
-      z.infer<Contract['query']>,
-      z.infer<Contract['requestHeaders']>,
-      Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined,
-      z.infer<Contract['syncResponse']>,
-      Contract['events']
-    >
+  ? InferDualModeHandlers<Contract>
   : Contract extends AnySSEContractDefinition
     ? SSEOnlyHandlers<
         Contract['events'],
         z.infer<Contract['params']>,
         z.infer<Contract['query']>,
         z.infer<Contract['requestHeaders']>,
-        Contract['body'] extends z.ZodTypeAny ? z.infer<Contract['body']> : undefined
+        Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
       >
     : never
 

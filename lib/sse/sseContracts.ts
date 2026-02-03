@@ -29,7 +29,7 @@ export type SSEPathResolver<Params> = (params: Params) => string
  * @template Params - Path parameters schema
  * @template Query - Query string parameters schema
  * @template RequestHeaders - Request headers schema
- * @template Body - Request body schema (for POST/PUT/PATCH)
+ * @template Body - Request requestBody schema (for POST/PUT/PATCH)
  * @template Events - Map of event name to event data schema
  */
 export type SSEContractDefinition<
@@ -49,7 +49,7 @@ export type SSEContractDefinition<
   params: Params
   query: Query
   requestHeaders: RequestHeaders
-  body: Body
+  requestBody: Body
   events: Events
   isSSE: true
 }
@@ -65,7 +65,7 @@ export type AnySSEContractDefinition = {
   params: z.ZodTypeAny
   query: z.ZodTypeAny
   requestHeaders: z.ZodTypeAny
-  body: z.ZodTypeAny | undefined
+  requestBody: z.ZodTypeAny | undefined
   events: SSEEventSchemas
   isSSE: true
 }

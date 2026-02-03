@@ -11,7 +11,7 @@ describe('sseContracts', () => {
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
-      body: z.object({ message: z.string() }),
+      requestBody: z.object({ message: z.string() }),
       events: {
         data: z.object({ value: z.string() }),
       },
@@ -59,7 +59,7 @@ describe('sseContracts', () => {
       expect(route.method).toBe('GET')
       expect(route.pathResolver({})).toBe('/api/stream')
       expect(route.isSSE).toBe(true)
-      expect(route.body).toBeUndefined()
+      expect(route.requestBody).toBeUndefined()
     })
   })
 
@@ -70,7 +70,7 @@ describe('sseContracts', () => {
       params: z.object({ id: z.string() }),
       query: z.object({ filter: z.string().optional() }),
       requestHeaders: z.object({ authorization: z.string() }),
-      body: z.object({ message: z.string(), count: z.number() }),
+      requestBody: z.object({ message: z.string(), count: z.number() }),
       events: {
         chunk: z.object({ content: z.string() }),
         done: z.object({ totalTokens: z.number() }),

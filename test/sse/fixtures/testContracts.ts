@@ -39,7 +39,7 @@ export const chatCompletionContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     message: z.string(),
     stream: z.literal(true),
   }),
@@ -137,7 +137,7 @@ export const largeContentStreamContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     chunkCount: z.number(),
     chunkSize: z.number(),
   }),
@@ -154,7 +154,7 @@ export const largeContentStreamContract = buildContract({
 })
 
 /**
- * GET SSE route for testing logger error handling in onDisconnect
+ * GET SSE route for testing logger error handling in onClose
  */
 export const loggerTestStreamContract = buildContract({
   pathResolver: () => '/api/logger-test/stream',
@@ -205,7 +205,7 @@ export const validationTestStreamContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     // The event data to send - passed through to sendEvent
     eventData: z.object({
       id: z.string(),
@@ -243,7 +243,7 @@ export const openaiStyleStreamContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     prompt: z.string(),
     stream: z.literal(true),
   }),
@@ -260,5 +260,63 @@ export const openaiStyleStreamContract = buildContract({
     }),
     // Plain string terminator - not JSON encoded
     done: z.string(),
+  },
+})
+
+/**
+ * GET SSE route for testing logger error handling in onClose
+ */
+export const onCloseErrorStreamContract = buildContract({
+  pathResolver: () => '/api/on-close-error/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    message: z.object({ text: z.string() }),
+  },
+})
+
+/**
+ * GET SSE route for testing isConnected() method
+ */
+export const isConnectedTestStreamContract = buildContract({
+  pathResolver: () => '/api/is-connected-test/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    status: z.object({ connected: z.boolean() }),
+    done: z.object({ ok: z.boolean() }),
+  },
+})
+
+/**
+ * POST SSE route for testing sendStream() method with validation
+ */
+export const sendStreamTestContract = buildContract({
+  method: 'POST',
+  pathResolver: () => '/api/send-stream-test/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  requestBody: z.object({
+    sendInvalid: z.boolean().optional(),
+  }),
+  events: {
+    message: z.object({ text: z.string() }),
+    done: z.object({ ok: z.boolean() }),
+  },
+})
+
+/**
+ * GET SSE route for testing getStream() method
+ */
+export const getStreamTestContract = buildContract({
+  pathResolver: () => '/api/get-stream-test/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    message: z.object({ text: z.string() }),
   },
 })

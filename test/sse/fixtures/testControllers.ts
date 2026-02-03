@@ -3,6 +3,7 @@ import {
   AbstractSSEController,
   type BuildFastifySSERoutesReturnType,
   buildHandler,
+  type SSECloseReason,
   type SSEConnection,
   type SSEControllerConfig,
   type SSELogger,
@@ -12,13 +13,17 @@ import {
   authenticatedStreamContract,
   channelStreamContract,
   chatCompletionContract,
+  getStreamTestContract,
+  isConnectedTestStreamContract,
   largeContentStreamContract,
   loggerTestStreamContract,
   notificationsStreamContract,
+  onCloseErrorStreamContract,
   onConnectErrorStreamContract,
   onReconnectErrorStreamContract,
   openaiStyleStreamContract,
   reconnectStreamContract,
+  sendStreamTestContract,
   streamContract,
   validationTestStreamContract,
 } from './testContracts.js'
@@ -49,7 +54,7 @@ export class StreamController extends AbstractSSEController<{
           onConnect: (conn) => {
             this.connectionEvents.push({ type: 'connect', connectionId: conn.id })
           },
-          onDisconnect: (conn) => {
+          onClose: (conn) => {
             this.connectionEvents.push({ type: 'disconnect', connectionId: conn.id })
             this.eventService.unsubscribe(conn.id)
           },
@@ -115,7 +120,7 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
         handlers: this.handleStream,
         options: {
           onConnect: this.onConnect,
-          onDisconnect: this.onDisconnect,
+          onClose: this.onClose,
         },
       },
     }
@@ -139,8 +144,8 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
     // Setup subscription when connected
   }
 
-  private onDisconnect = (connection: SSEConnection) => {
-    // Cleanup when disconnected
+  private onClose = (connection: SSEConnection, _reason: SSECloseReason) => {
+    // Cleanup when connection closes
     // Resolve any pending handler resolver for this connection so completeHandler won't hang
     const resolve = this.handlerDoneResolvers.get(connection.id)
     if (resolve) {
@@ -492,7 +497,7 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
 
 /**
  * Test SSE controller for logger error handling.
- * The onDisconnect handler throws an error to test that:
+ * The onClose handler throws an error to test that:
  * 1. The logger is called with the error
  * 2. The connection is still properly unregistered despite the error
  */
@@ -519,9 +524,9 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
         handlers: this.handleStream,
         options: {
           logger: this.logger,
-          onDisconnect: () => {
+          onClose: () => {
             // Intentionally throw to test error handling
-            throw new Error('Test error in onDisconnect')
+            throw new Error('Test error in onClose')
           },
         },
       },
@@ -531,7 +536,7 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
   private handleStream = buildHandler(loggerTestStreamContract, {
     sse: async (_request, connection) => {
       await connection.send('message', { text: 'Hello from logger test' })
-      // Don't close connection - let client close to trigger onDisconnect
+      // Don't close connection - let client close to trigger onClose
       return success('maintain_connection')
     },
   })
@@ -722,6 +727,162 @@ export class TestOnConnectErrorSSEController extends AbstractSSEController<TestO
     sse: async (_request, connection) => {
       // Send message to verify connection still works after onConnect error
       await connection.send('message', { text: 'Hello after onConnect error' })
+      return success('disconnect')
+    },
+  })
+}
+
+/**
+ * Test SSE controller for logger error handling in onClose.
+ * The onClose handler throws an error to test that:
+ * 1. The logger is called with the error
+ * 2. The connection closes properly despite the error
+ */
+export type TestOnCloseErrorSSEContracts = {
+  onCloseErrorStream: typeof onCloseErrorStreamContract
+}
+
+export class TestOnCloseErrorSSEController extends AbstractSSEController<TestOnCloseErrorSSEContracts> {
+  public static contracts = {
+    onCloseErrorStream: onCloseErrorStreamContract,
+  } as const
+
+  private readonly logger: SSELogger
+
+  constructor(deps: { logger: SSELogger }, sseConfig?: SSEControllerConfig) {
+    super(deps, sseConfig)
+    this.logger = deps.logger
+  }
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestOnCloseErrorSSEContracts> {
+    return {
+      onCloseErrorStream: {
+        contract: TestOnCloseErrorSSEController.contracts.onCloseErrorStream,
+        handlers: this.handleStream,
+        options: {
+          logger: this.logger,
+          onClose: () => {
+            // Intentionally throw to test error handling
+            throw new Error('Test error in onClose')
+          },
+        },
+      },
+    }
+  }
+
+  private handleStream = buildHandler(onCloseErrorStreamContract, {
+    sse: async (_request, connection) => {
+      // Send message then signal disconnect to trigger onClose
+      await connection.send('message', { text: 'Hello before close' })
+      return success('disconnect')
+    },
+  })
+}
+
+/**
+ * Test SSE controller for testing isConnected() method.
+ */
+export type TestIsConnectedSSEContracts = {
+  isConnectedTestStream: typeof isConnectedTestStreamContract
+}
+
+export class TestIsConnectedSSEController extends AbstractSSEController<TestIsConnectedSSEContracts> {
+  public static contracts = {
+    isConnectedTestStream: isConnectedTestStreamContract,
+  } as const
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestIsConnectedSSEContracts> {
+    return {
+      isConnectedTestStream: {
+        contract: TestIsConnectedSSEController.contracts.isConnectedTestStream,
+        handlers: this.handleStream,
+      },
+    }
+  }
+
+  private handleStream = buildHandler(isConnectedTestStreamContract, {
+    sse: async (_request, connection) => {
+      // Check if connected at start
+      const wasConnected = connection.isConnected()
+      await connection.send('status', { connected: wasConnected })
+      await connection.send('done', { ok: true })
+      return success('disconnect')
+    },
+  })
+}
+
+/**
+ * Test SSE controller for testing sendStream() method with validation.
+ */
+export type TestSendStreamSSEContracts = {
+  sendStreamTestStream: typeof sendStreamTestContract
+}
+
+export class TestSendStreamSSEController extends AbstractSSEController<TestSendStreamSSEContracts> {
+  public static contracts = {
+    sendStreamTestStream: sendStreamTestContract,
+  } as const
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestSendStreamSSEContracts> {
+    return {
+      sendStreamTestStream: {
+        contract: TestSendStreamSSEController.contracts.sendStreamTestStream,
+        handlers: this.handleStream,
+      },
+    }
+  }
+
+  private handleStream = buildHandler(sendStreamTestContract, {
+    sse: async (request, connection) => {
+      // Create an async generator that produces messages
+      // biome-ignore lint/suspicious/useAwait: we need this for tests
+      async function* generateMessages(sendInvalid: boolean) {
+        yield { event: 'message' as const, data: { text: 'First message' } }
+        if (sendInvalid) {
+          // This will fail validation because 'text' should be string, not number
+          yield { event: 'message' as const, data: { text: 123 as unknown as string } }
+        }
+        yield { event: 'done' as const, data: { ok: true } }
+      }
+
+      await connection.sendStream(generateMessages(request.body.sendInvalid ?? false))
+      return success('disconnect')
+    },
+  })
+}
+
+/**
+ * Test SSE controller for testing getStream() method.
+ */
+export type TestGetStreamSSEContracts = {
+  getStreamTestStream: typeof getStreamTestContract
+}
+
+export class TestGetStreamSSEController extends AbstractSSEController<TestGetStreamSSEContracts> {
+  public static contracts = {
+    getStreamTestStream: getStreamTestContract,
+  } as const
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestGetStreamSSEContracts> {
+    return {
+      getStreamTestStream: {
+        contract: TestGetStreamSSEController.contracts.getStreamTestStream,
+        handlers: this.handleStream,
+      },
+    }
+  }
+
+  private handleStream = buildHandler(getStreamTestContract, {
+    sse: async (_request, connection) => {
+      // Get the raw stream and verify it exists
+      const stream = connection.getStream()
+      const hasStream = stream !== null && stream !== undefined
+
+      // Send a message confirming stream access
+      await connection.send('message', {
+        text: hasStream ? 'Got stream successfully' : 'Failed to get stream',
+      })
+
       return success('disconnect')
     },
   })

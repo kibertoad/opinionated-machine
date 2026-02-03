@@ -1,15 +1,16 @@
 import type { z } from 'zod'
 import type {
-  DualModeContractDefinition,
-  DualModeMethod,
+  MultiFormatResponses,
   PathResolver,
+  SimplifiedDualModeContractDefinition,
+  VerboseDualModeContractDefinition,
 } from '../dualmode/dualModeContracts.ts'
-import type { SSEContractDefinition, SSEMethod, SSEPathResolver } from '../sse/sseContracts.ts'
+import type { SSEContractDefinition, SSEPathResolver } from '../sse/sseContracts.ts'
 import type { SSEEventSchemas } from '../sse/sseTypes.ts'
 
 /**
  * Configuration for building a GET SSE route.
- * Forbids body for GET variants.
+ * Forbids requestBody for GET variants.
  */
 export type SSEGetContractConfig<
   Params extends z.ZodTypeAny,
@@ -22,13 +23,14 @@ export type SSEGetContractConfig<
   query: Query
   requestHeaders: RequestHeaders
   events: Events
-  body?: never
-  syncResponse?: never
+  requestBody?: never
+  jsonResponse?: never
+  multiFormatResponses?: never
 }
 
 /**
- * Configuration for building a POST/PUT/PATCH SSE route with request body.
- * Requires body for payload variants.
+ * Configuration for building a POST/PUT/PATCH SSE route with request requestBody.
+ * Requires requestBody for payload variants.
  */
 export type SSEPayloadContractConfig<
   Params extends z.ZodTypeAny,
@@ -42,20 +44,21 @@ export type SSEPayloadContractConfig<
   params: Params
   query: Query
   requestHeaders: RequestHeaders
-  body: Body
+  requestBody: Body
   events: Events
-  syncResponse?: never
+  jsonResponse?: never
+  multiFormatResponses?: never
 }
 
 /**
- * Configuration for building a GET dual-mode route.
- * Has syncResponse, forbids body.
+ * Configuration for building a GET dual-mode route (simplified - single JSON format).
+ * Requires jsonResponse, forbids requestBody.
  */
 export type DualModeGetContractConfig<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
-  SyncResponse extends z.ZodTypeAny,
+  JsonResponse extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
   ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
 > = {
@@ -63,7 +66,9 @@ export type DualModeGetContractConfig<
   params: Params
   query: Query
   requestHeaders: RequestHeaders
-  syncResponse: SyncResponse
+  /** Single JSON response schema */
+  jsonResponse: JsonResponse
+  multiFormatResponses?: never
   /**
    * Schema for validating response headers (JSON mode only).
    * Used to define and validate headers that the server will send in the response.
@@ -78,19 +83,19 @@ export type DualModeGetContractConfig<
    */
   responseHeaders?: ResponseHeaders
   events: Events
-  body?: never
+  requestBody?: never
 }
 
 /**
- * Configuration for building a POST/PUT/PATCH dual-mode route with request body.
- * Has both body and syncResponse.
+ * Configuration for building a POST/PUT/PATCH dual-mode route with request requestBody (simplified).
+ * Requires both requestBody and jsonResponse.
  */
 export type DualModePayloadContractConfig<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Body extends z.ZodTypeAny,
-  SyncResponse extends z.ZodTypeAny,
+  JsonResponse extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
   ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
 > = {
@@ -99,8 +104,10 @@ export type DualModePayloadContractConfig<
   params: Params
   query: Query
   requestHeaders: RequestHeaders
-  body: Body
-  syncResponse: SyncResponse
+  requestBody: Body
+  /** Single JSON response schema */
+  jsonResponse: JsonResponse
+  multiFormatResponses?: never
   /**
    * Schema for validating response headers (JSON mode only).
    * Used to define and validate headers that the server will send in the response.
@@ -118,86 +125,193 @@ export type DualModePayloadContractConfig<
 }
 
 /**
- * Unified contract builder with 4 overloads.
+ * Configuration for building a GET dual-mode route with multi-format responses.
+ * Has multiFormatResponses, forbids requestBody and jsonResponse.
+ */
+export type MultiFormatGetContractConfig<
+  Params extends z.ZodTypeAny,
+  Query extends z.ZodTypeAny,
+  RequestHeaders extends z.ZodTypeAny,
+  Formats extends MultiFormatResponses,
+  Events extends SSEEventSchemas,
+  ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
+> = {
+  pathResolver: PathResolver<z.infer<Params>>
+  params: Params
+  query: Query
+  requestHeaders: RequestHeaders
+  jsonResponse?: never
+  /** Multi-format response schemas */
+  multiFormatResponses: Formats
+  responseHeaders?: ResponseHeaders
+  events: Events
+  requestBody?: never
+}
+
+/**
+ * Configuration for building a POST/PUT/PATCH dual-mode route with multi-format responses.
+ * Has both requestBody and multiFormatResponses.
+ */
+export type MultiFormatPayloadContractConfig<
+  Params extends z.ZodTypeAny,
+  Query extends z.ZodTypeAny,
+  RequestHeaders extends z.ZodTypeAny,
+  Body extends z.ZodTypeAny,
+  Formats extends MultiFormatResponses,
+  Events extends SSEEventSchemas,
+  ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
+> = {
+  method?: 'POST' | 'PUT' | 'PATCH'
+  pathResolver: PathResolver<z.infer<Params>>
+  params: Params
+  query: Query
+  requestHeaders: RequestHeaders
+  requestBody: Body
+  jsonResponse?: never
+  /** Multi-format response schemas */
+  multiFormatResponses: Formats
+  responseHeaders?: ResponseHeaders
+  events: Events
+}
+
+/**
+ * Unified contract builder with overloads for SSE-only, simplified dual-mode, and verbose dual-mode contracts.
  *
- * Automatically determines the contract type based on the presence of `body` and `syncResponse`:
+ * Automatically determines the contract type based on the presence of `requestBody`, `jsonResponse`, and `multiFormatResponses`:
  *
- * | syncResponse | body | Result |
- * |--------------|------|--------|
- * | ❌ absent | ❌ absent | SSE GET |
- * | ❌ absent | ✅ present | SSE POST/PUT/PATCH |
- * | ✅ present | ❌ absent | Dual-mode GET |
- * | ✅ present | ✅ present | Dual-mode POST/PUT/PATCH |
+ * | Response Config | requestBody | Result |
+ * |-----------------|------|--------|
+ * | none | ❌ | SSE GET |
+ * | none | ✅ | SSE POST/PUT/PATCH |
+ * | jsonResponse | ❌ | Simplified Dual-mode GET |
+ * | jsonResponse | ✅ | Simplified Dual-mode POST/PUT/PATCH |
+ * | multiFormatResponses | ❌ | Verbose Dual-mode GET |
+ * | multiFormatResponses | ✅ | Verbose Dual-mode POST/PUT/PATCH |
  *
  * @example
  * ```typescript
- * // SSE GET - no body, no syncResponse
+ * // SSE GET - no requestBody, no jsonResponse/multiFormatResponses
  * const notificationsStream = buildContract({
  *   pathResolver: () => '/api/notifications/stream',
  *   params: z.object({}),
  *   query: z.object({ userId: z.string().optional() }),
  *   requestHeaders: z.object({}),
- *   events: {
- *     notification: z.object({ id: z.string(), message: z.string() }),
- *   },
+ *   events: { notification: z.object({ id: z.string(), message: z.string() }) },
  * })
  *
- * // SSE POST - has body, no syncResponse
- * const chatCompletionStream = buildContract({
- *   method: 'POST',
- *   pathResolver: () => '/api/chat/completions',
- *   params: z.object({}),
- *   query: z.object({}),
- *   requestHeaders: z.object({}),
- *   body: z.object({ message: z.string(), stream: z.literal(true) }),
- *   events: {
- *     chunk: z.object({ content: z.string() }),
- *     done: z.object({ totalTokens: z.number() }),
- *   },
- * })
- *
- * // Dual-mode GET - has syncResponse, no body
- * const jobStatus = buildContract({
- *   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
- *   params: z.object({ jobId: z.string().uuid() }),
- *   query: z.object({}),
- *   requestHeaders: z.object({}),
- *   syncResponse: z.object({
- *     status: z.enum(['pending', 'running', 'completed']),
- *     progress: z.number(),
- *   }),
- *   events: {
- *     progress: z.object({ percent: z.number() }),
- *     done: z.object({ result: z.string() }),
- *   },
- * })
- *
- * // Dual-mode POST - has both body and syncResponse
+ * // Simplified dual-mode POST (recommended) - single JSON format
  * const chatCompletion = buildContract({
  *   method: 'POST',
  *   pathResolver: () => '/api/chat/completions',
  *   params: z.object({}),
  *   query: z.object({}),
- *   requestHeaders: z.object({ authorization: z.string() }),
- *   body: z.object({ message: z.string() }),
- *   syncResponse: z.object({
- *     reply: z.string(),
- *     usage: z.object({ tokens: z.number() }),
- *   }),
- *   events: {
- *     chunk: z.object({ delta: z.string() }),
- *     done: z.object({ usage: z.object({ total: z.number() }) }),
+ *   requestHeaders: z.object({}),
+ *   requestBody: z.object({ message: z.string() }),
+ *   jsonResponse: z.object({ reply: z.string(), usage: z.object({ tokens: z.number() }) }),
+ *   events: { chunk: z.object({ delta: z.string() }), done: z.object({ usage: z.object({ total: z.number() }) }) },
+ * })
+ *
+ * // Verbose dual-mode POST - multiple format support
+ * const exportData = buildContract({
+ *   method: 'POST',
+ *   pathResolver: () => '/api/export',
+ *   params: z.object({}),
+ *   query: z.object({}),
+ *   requestHeaders: z.object({}),
+ *   requestBody: z.object({ format: z.string() }),
+ *   multiFormatResponses: {
+ *     'application/json': z.object({ data: z.array(z.unknown()) }),
+ *     'text/csv': z.string(),
+ *     'text/plain': z.string(),
  *   },
+ *   events: { progress: z.object({ percent: z.number() }), done: z.object({ rowCount: z.number() }) },
  * })
  * ```
  */
-// Overload 1: Dual-mode with body (most specific - has both discriminants)
+
+// Helper to build base contract fields
+// biome-ignore lint/suspicious/noExplicitAny: Config union type
+function buildBaseFields(config: any, hasBody: boolean) {
+  return {
+    pathResolver: config.pathResolver,
+    params: config.params,
+    query: config.query,
+    requestHeaders: config.requestHeaders,
+    requestBody: hasBody ? config.requestBody : undefined,
+    events: config.events,
+  }
+}
+
+// Helper to determine method
+function determineMethod(config: { method?: string }, hasBody: boolean, defaultMethod: string) {
+  return hasBody ? (config.method ?? defaultMethod) : 'GET'
+}
+
+// Overload 1: Multi-format with requestBody (most specific - has multiFormatResponses + requestBody)
 export function buildContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
   Body extends z.ZodTypeAny,
-  SyncResponse extends z.ZodTypeAny,
+  Formats extends MultiFormatResponses,
+  Events extends SSEEventSchemas,
+  ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
+>(
+  config: MultiFormatPayloadContractConfig<
+    Params,
+    Query,
+    RequestHeaders,
+    Body,
+    Formats,
+    Events,
+    ResponseHeaders
+  >,
+): VerboseDualModeContractDefinition<
+  'POST' | 'PUT' | 'PATCH',
+  Params,
+  Query,
+  RequestHeaders,
+  Body,
+  Formats,
+  Events,
+  ResponseHeaders
+>
+
+// Overload 2: Multi-format GET (has multiFormatResponses, requestBody?: never)
+export function buildContract<
+  Params extends z.ZodTypeAny,
+  Query extends z.ZodTypeAny,
+  RequestHeaders extends z.ZodTypeAny,
+  Formats extends MultiFormatResponses,
+  Events extends SSEEventSchemas,
+  ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
+>(
+  config: MultiFormatGetContractConfig<
+    Params,
+    Query,
+    RequestHeaders,
+    Formats,
+    Events,
+    ResponseHeaders
+  >,
+): VerboseDualModeContractDefinition<
+  'GET',
+  Params,
+  Query,
+  RequestHeaders,
+  undefined,
+  Formats,
+  Events,
+  ResponseHeaders
+>
+
+// Overload 3: Simplified dual-mode with requestBody (has jsonResponse + requestBody)
+export function buildContract<
+  Params extends z.ZodTypeAny,
+  Query extends z.ZodTypeAny,
+  RequestHeaders extends z.ZodTypeAny,
+  Body extends z.ZodTypeAny,
+  JsonResponse extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
   ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
 >(
@@ -206,27 +320,27 @@ export function buildContract<
     Query,
     RequestHeaders,
     Body,
-    SyncResponse,
+    JsonResponse,
     Events,
     ResponseHeaders
   >,
-): DualModeContractDefinition<
+): SimplifiedDualModeContractDefinition<
   'POST' | 'PUT' | 'PATCH',
   Params,
   Query,
   RequestHeaders,
   Body,
-  SyncResponse,
+  JsonResponse,
   Events,
   ResponseHeaders
 >
 
-// Overload 2: Dual-mode GET (has syncResponse, body?: never)
+// Overload 4: Simplified dual-mode GET (has jsonResponse, requestBody?: never)
 export function buildContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
   RequestHeaders extends z.ZodTypeAny,
-  SyncResponse extends z.ZodTypeAny,
+  JsonResponse extends z.ZodTypeAny,
   Events extends SSEEventSchemas,
   ResponseHeaders extends z.ZodTypeAny | undefined = undefined,
 >(
@@ -234,22 +348,22 @@ export function buildContract<
     Params,
     Query,
     RequestHeaders,
-    SyncResponse,
+    JsonResponse,
     Events,
     ResponseHeaders
   >,
-): DualModeContractDefinition<
+): SimplifiedDualModeContractDefinition<
   'GET',
   Params,
   Query,
   RequestHeaders,
   undefined,
-  SyncResponse,
+  JsonResponse,
   Events,
   ResponseHeaders
 >
 
-// Overload 3: SSE with body (has body, syncResponse?: never)
+// Overload 5: SSE with requestBody (has requestBody, no response configs)
 export function buildContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
@@ -260,7 +374,7 @@ export function buildContract<
   config: SSEPayloadContractConfig<Params, Query, RequestHeaders, Body, Events>,
 ): SSEContractDefinition<'POST' | 'PUT' | 'PATCH', Params, Query, RequestHeaders, Body, Events>
 
-// Overload 4: SSE GET (neither body nor syncResponse)
+// Overload 6: SSE GET (no requestBody, no response configs)
 export function buildContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
@@ -273,6 +387,10 @@ export function buildContract<
 // Implementation
 export function buildContract(
   config: // biome-ignore lint/suspicious/noExplicitAny: Union of all config types
+    | MultiFormatPayloadContractConfig<any, any, any, any, any, any, any>
+    // biome-ignore lint/suspicious/noExplicitAny: Union of all config types
+    | MultiFormatGetContractConfig<any, any, any, any, any, any>
+    // biome-ignore lint/suspicious/noExplicitAny: Union of all config types
     | DualModePayloadContractConfig<any, any, any, any, any, any, any>
     // biome-ignore lint/suspicious/noExplicitAny: Union of all config types
     | DualModeGetContractConfig<any, any, any, any, any, any>
@@ -282,32 +400,40 @@ export function buildContract(
     | SSEGetContractConfig<any, any, any, any>,
   // biome-ignore lint/suspicious/noExplicitAny: Return type depends on overload
 ): any {
-  const hasDualMode = 'syncResponse' in config && config.syncResponse !== undefined
-  const hasBody = 'body' in config && config.body !== undefined
+  const hasMultiFormat =
+    'multiFormatResponses' in config && config.multiFormatResponses !== undefined
+  const hasJsonResponse = 'jsonResponse' in config && config.jsonResponse !== undefined
+  const hasBody = 'requestBody' in config && config.requestBody !== undefined
+  const base = buildBaseFields(config, hasBody)
 
-  if (hasDualMode) {
+  if (hasMultiFormat) {
+    // Verbose multi-format contract
     return {
-      method: hasBody ? ((config as { method?: DualModeMethod }).method ?? 'POST') : 'GET',
-      pathResolver: config.pathResolver,
-      params: config.params,
-      query: config.query,
-      requestHeaders: config.requestHeaders,
-      body: hasBody ? (config as { body: unknown }).body : undefined,
-      syncResponse: (config as { syncResponse: unknown }).syncResponse,
+      ...base,
+      method: determineMethod(config as { method?: string }, hasBody, 'POST'),
+      multiFormatResponses: (config as { multiFormatResponses: unknown }).multiFormatResponses,
       responseHeaders: (config as { responseHeaders?: unknown }).responseHeaders,
-      events: config.events,
       isDualMode: true,
+      isVerbose: true,
     }
   }
 
+  if (hasJsonResponse) {
+    // Simplified single-JSON-format contract
+    return {
+      ...base,
+      method: determineMethod(config as { method?: string }, hasBody, 'POST'),
+      jsonResponse: (config as { jsonResponse: unknown }).jsonResponse,
+      responseHeaders: (config as { responseHeaders?: unknown }).responseHeaders,
+      isDualMode: true,
+      isSimplified: true,
+    }
+  }
+
+  // SSE-only contract
   return {
-    method: hasBody ? ((config as { method?: SSEMethod }).method ?? 'POST') : 'GET',
-    pathResolver: config.pathResolver,
-    params: config.params,
-    query: config.query,
-    requestHeaders: config.requestHeaders,
-    body: hasBody ? (config as { body: unknown }).body : undefined,
-    events: config.events,
+    ...base,
+    method: determineMethod(config as { method?: string }, hasBody, 'POST'),
     isSSE: true,
   }
 }

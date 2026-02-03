@@ -398,7 +398,7 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildContract` to define SSE routes. The contract type is automatically determined based on the presence of `body` and `syncResponse` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
+Use `buildContract` to define SSE routes. The contract type is automatically determined based on the presence of `requestBody` and `jsonResponse` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
@@ -429,14 +429,14 @@ export const notificationsContract = buildContract({
   },
 })
 
-// POST-based SSE stream (e.g., AI chat completions) - has body = POST/PUT/PATCH
+// POST-based SSE stream (e.g., AI chat completions) - has requestBody = POST/PUT/PATCH
 export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: () => '/api/chat/completions',
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({
+  requestBody: z.object({
     message: z.string(),
     stream: z.literal(true),
   }),
@@ -502,7 +502,7 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
         handlers: this.handleStream,
         options: {
           onConnect: (conn) => this.onConnect(conn),
-          onDisconnect: (conn) => this.onDisconnect(conn),
+          onClose: (conn, reason) => this.onClose(conn, reason),
         },
       },
     }
@@ -541,10 +541,10 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
     console.log('Client connected:', connection.id)
   }
 
-  private onDisconnect = (connection: SSEConnection) => {
+  private onClose = (connection: SSEConnection, reason: SSECloseReason) => {
     const userId = connection.context?.userId as string
     this.notificationService.unsubscribe(userId)
-    console.log('Client disconnected:', connection.id)
+    console.log(`Client disconnected (${reason}):`, connection.id)
   }
 }
 ```
@@ -736,7 +736,7 @@ public buildSSERoutes() {
           }
         },
         onConnect: (conn) => console.log('Admin connected'),
-        onDisconnect: (conn) => console.log('Admin disconnected'),
+        onClose: (conn, reason) => console.log(`Admin disconnected (${reason})`),
         // Handle client reconnection with Last-Event-ID
         onReconnect: async (conn, lastEventId) => {
           // Return events to replay, or handle manually
@@ -753,12 +753,64 @@ public buildSSERoutes() {
 **Available route options:**
 
 | Option | Description |
-|--------|-------------|
+| -------- | ------------- |
 | `preHandler` | Authentication/authorization hook that runs before SSE connection |
 | `onConnect` | Called after client connects (SSE handshake complete) |
-| `onDisconnect` | Called when client disconnects |
+| `onClose` | Called when connection closes (client disconnect, network failure, or server close). Receives `(connection, reason)` where reason is `'server'` or `'client'` |
 | `onReconnect` | Handle Last-Event-ID reconnection, return events to replay |
 | `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
+| `serializer` | Custom serializer for SSE data (e.g., for custom JSON encoding) |
+| `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages |
+
+**onClose reason parameter:**
+- `'server'`: Server explicitly closed the connection (via `closeConnection()` or `success('disconnect')`)
+- `'client'`: Client closed the connection (EventSource.close(), navigation, network failure)
+
+```ts
+options: {
+  onConnect: (conn) => console.log('Client connected'),
+  onClose: (conn, reason) => {
+    console.log(`Connection closed (${reason}):`, conn.id)
+    // reason is 'server' or 'client'
+  },
+  serializer: (data) => JSON.stringify(data, null, 2), // Pretty-print JSON
+  heartbeatInterval: 30000, // Send heartbeat every 30 seconds
+}
+```
+
+### SSE Connection Methods
+
+The `connection` object in SSE handlers provides several useful methods:
+
+```ts
+private handleStream = buildHandler(streamContract, {
+  sse: async (request, connection) => {
+    // Check if connection is still active
+    if (connection.isConnected()) {
+      await connection.send('status', { connected: true })
+    }
+
+    // Get raw writable stream for advanced use cases (e.g., pipeline)
+    const stream = connection.getStream()
+
+    // Stream messages from an async iterable with automatic validation
+    async function* generateMessages() {
+      yield { event: 'message' as const, data: { text: 'Hello' } }
+      yield { event: 'message' as const, data: { text: 'World' } }
+    }
+    await connection.sendStream(generateMessages())
+
+    return success('disconnect')
+  },
+})
+```
+
+| Method | Description |
+| -------- | ------------- |
+| `send(event, data, options?)` | Send a typed event (validates against contract schema) |
+| `isConnected()` | Check if the connection is still active |
+| `getStream()` | Get the underlying `WritableStream` for advanced use cases |
+| `sendStream(messages)` | Stream messages from an `AsyncIterable` with validation |
 
 ### Graceful Shutdown
 
@@ -779,7 +831,7 @@ if (!sent) {
 }
 ```
 
-**Lifecycle hook errors** (`onConnect`, `onReconnect`, `onDisconnect`):
+**Lifecycle hook errors** (`onConnect`, `onReconnect`, `onClose`):
 - All lifecycle hooks are wrapped in try/catch to prevent crashes
 - If a `logger` is provided in route options, errors are logged with context
 - If no logger is provided, errors are silently ignored
@@ -795,7 +847,7 @@ public buildSSERoutes() {
       options: {
         logger: this.logger, // pino-compatible logger
         onConnect: (conn) => { /* may throw */ },
-        onDisconnect: (conn) => { /* may throw */ },
+        onClose: (conn, reason) => { /* may throw */ },
       },
     },
   }
@@ -1142,7 +1194,7 @@ import { SSETestServer, SSEHttpClient } from 'opinionated-machine'
 const server = await SSETestServer.create(async (app) => {
   app.get('/api/events', async (request, reply) => {
     reply.sse({ event: 'message', data: { hello: 'world' } })
-    reply.sseClose()
+    reply.sse.close()
   })
 })
 
@@ -1360,21 +1412,21 @@ Dual-mode contracts define endpoints that can return **either** a complete JSON 
 - You're building OpenAI-style APIs where `stream: true` triggers SSE
 - You need polling fallback for clients that don't support SSE
 
-To create a dual-mode contract, include a `syncResponse` schema in your `buildContract` call:
-- Has `syncResponse` but no `body` → GET dual-mode route
-- Has both `syncResponse` and `body` → POST/PUT/PATCH dual-mode route
+To create a dual-mode contract, include a `jsonResponse` schema in your `buildContract` call:
+- Has `jsonResponse` but no `requestBody` → GET dual-mode route
+- Has both `jsonResponse` and `requestBody` → POST/PUT/PATCH dual-mode route
 
 ```ts
 import { z } from 'zod'
 import { buildContract } from 'opinionated-machine'
 
-// GET dual-mode route (polling or streaming job status) - has syncResponse, no body
+// GET dual-mode route (polling or streaming job status) - has jsonResponse, no requestBody
 export const jobStatusContract = buildContract({
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
   requestHeaders: z.object({}),
-  syncResponse: z.object({
+  jsonResponse: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
@@ -1385,15 +1437,15 @@ export const jobStatusContract = buildContract({
   },
 })
 
-// POST dual-mode route (OpenAI-style chat completion) - has both syncResponse and body
+// POST dual-mode route (OpenAI-style chat completion) - has both jsonResponse and requestBody
 export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
   params: z.object({ chatId: z.string().uuid() }),
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
-  body: z.object({ message: z.string() }),
-  syncResponse: z.object({
+  requestBody: z.object({ message: z.string() }),
+  jsonResponse: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
@@ -1417,8 +1469,8 @@ export const rateLimitedContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  body: z.object({ data: z.string() }),
-  syncResponse: z.object({ result: z.string() }),
+  requestBody: z.object({ data: z.string() }),
+  jsonResponse: z.object({ result: z.string() }),
   // Define expected response headers
   responseHeaders: z.object({
     'x-ratelimit-limit': z.string(),
@@ -1446,6 +1498,73 @@ handlers: {
 ```
 
 If the handler doesn't set the required headers, validation will fail with a `RESPONSE_HEADERS_VALIDATION_FAILED` error.
+
+### Multi-Format Responses (Verbose Mode)
+
+For endpoints that need to return multiple response formats (JSON, plain text, CSV, etc.), use `multiFormatResponses` instead of `jsonResponse`. This enables content negotiation based on the `Accept` header:
+
+```ts
+import { z } from 'zod'
+import { buildContract } from 'opinionated-machine'
+
+// Multi-format export endpoint
+export const exportContract = buildContract({
+  method: 'POST',
+  pathResolver: () => '/api/export',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  requestBody: z.object({
+    data: z.array(z.object({ name: z.string(), value: z.number() })),
+  }),
+  // Define multiple response formats
+  multiFormatResponses: {
+    'application/json': z.object({
+      items: z.array(z.object({ name: z.string(), value: z.number() })),
+      count: z.number(),
+    }),
+    'text/plain': z.string(),
+    'text/csv': z.string(),
+  },
+  events: {
+    progress: z.object({ percent: z.number() }),
+    done: z.object({ format: z.string() }),
+  },
+})
+```
+
+The handler structure changes to `sync` with per-format handlers:
+
+```ts
+handlers: buildHandler(exportContract, {
+  sync: {
+    'application/json': (request) => ({
+      items: request.body.data,
+      count: request.body.data.length,
+    }),
+    'text/plain': (request) =>
+      request.body.data.map((item) => `${item.name}: ${item.value}`).join('\n'),
+    'text/csv': (request) =>
+      `name,value\n${request.body.data.map((item) => `${item.name},${item.value}`).join('\n')}`,
+  },
+  sse: async (request, connection) => {
+    // SSE streaming handler
+    await connection.send('done', { totalItems: request.body.data.length })
+    return success('disconnect')
+  },
+})
+```
+
+**Contract styles comparison:**
+
+| Style | Contract Field | Handler Key | Use Case |
+|-------|---------------|-------------|----------|
+| Simplified | `jsonResponse` | `json` | Single JSON format (recommended) |
+| Verbose | `multiFormatResponses` | `sync` | Multiple formats (JSON, text, CSV, etc.) |
+
+TypeScript enforces the correct handler structure based on your contract:
+- `jsonResponse` contracts must use `json` handler
+- `multiFormatResponses` contracts must use `sync` handlers for all declared formats
 
 ### Implementing Dual-Mode Controllers
 
@@ -1514,7 +1633,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
           },
           // Optional: SSE lifecycle hooks
           onConnect: (conn) => console.log('Client connected:', conn.id),
-          onDisconnect: (conn) => console.log('Client disconnected:', conn.id),
+          onClose: (conn, reason) => console.log(`Client disconnected (${reason}):`, conn.id),
         },
       },
     }
@@ -1529,7 +1648,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 | `json` | `(request, reply) => Response` |
 | `sse` | `(request, connection) => Either<Error, SSEHandlerResult>` |
 
-The `json` handler must return a value matching `syncResponse` schema. The `sse` handler uses `connection.send()` for type-safe event streaming.
+The `json` handler must return a value matching `jsonResponse` schema. The `sse` handler uses `connection.send()` for type-safe event streaming.
 
 ### Registering Dual-Mode Controllers
 
@@ -1611,6 +1730,21 @@ curl -H "Accept: text/event-stream;q=0.5, application/json;q=1.0" ...
 # Prefer SSE (higher quality value)
 curl -H "Accept: application/json;q=0.5, text/event-stream;q=1.0" ...
 ```
+
+**Subtype wildcards** are supported for flexible content negotiation:
+
+```bash
+# Accept any text format (matches text/plain, text/csv, etc.)
+curl -H "Accept: text/*" ...
+
+# Accept any application format (matches application/json, application/xml, etc.)
+curl -H "Accept: application/*" ...
+
+# Combine with quality values
+curl -H "Accept: text/event-stream;q=0.9, application/*;q=0.5" ...
+```
+
+The matching priority is: `text/event-stream` (SSE) > exact matches > subtype wildcards > `*/*` > fallback.
 
 ### Testing Dual-Mode Controllers
 
