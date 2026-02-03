@@ -45,7 +45,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [parseSSEBuffer](#parsessebuffer)
     - [ParsedSSEEvent Type](#parsedsseevent-type)
   - [Testing SSE Controllers](#testing-sse-controllers)
-  - [SSEConnectionSpy API](#sseconnectionspy-api)
+  - [SSESessionSpy API](#ssesessionspy-api)
   - [Connection Monitoring](#connection-monitoring)
   - [SSE Test Utilities](#sse-test-utilities)
     - [Quick Reference](#quick-reference)
@@ -471,7 +471,7 @@ import {
   buildHandler,
   success,
   type SSEControllerConfig,
-  type SSEConnection
+  type SSESession
 } from 'opinionated-machine'
 
 type Contracts = {
@@ -537,11 +537,11 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
     },
   })
 
-  private onConnect = (connection: SSEConnection) => {
+  private onConnect = (connection: SSESession) => {
     console.log('Client connected:', connection.id)
   }
 
-  private onClose = (connection: SSEConnection, reason: SSECloseReason) => {
+  private onClose = (connection: SSESession, reason: SSECloseReason) => {
     const userId = connection.context?.userId as string
     this.notificationService.unsubscribe(userId)
     console.log(`Client disconnected (${reason}):`, connection.id)
@@ -558,7 +558,7 @@ import {
   AbstractSSEController,
   buildHandler,
   type SSEControllerConfig,
-  type SSEConnection
+  type SSESession
 } from 'opinionated-machine'
 
 class ChatSSEController extends AbstractSSEController<Contracts> {
@@ -602,11 +602,11 @@ class ChatSSEController extends AbstractSSEController<Contracts> {
 You can also use `InferSSERequest<Contract>` for manual type annotation when needed:
 
 ```ts
-import { type InferSSERequest, type SSEConnection } from 'opinionated-machine'
+import { type InferSSERequest, type SSESession } from 'opinionated-machine'
 
 private handleStream = async (
   request: InferSSERequest<typeof chatCompletionContract>,
-  connection: SSEConnection<typeof chatCompletionContract['events']>,
+  connection: SSESession<typeof chatCompletionContract['events']>,
 ) => {
   // request.body, request.params, etc. all typed from contract
   // connection.send() is typed based on contract events
@@ -707,12 +707,12 @@ Override these optional methods on your controller for global connection handlin
 ```ts
 class MySSEController extends AbstractSSEController<Contracts> {
   // Called AFTER connection is registered (for all routes)
-  protected onConnectionEstablished(connection: SSEConnection): void {
+  protected onConnectionEstablished(connection: SSESession): void {
     this.metrics.incrementConnections()
   }
 
   // Called BEFORE connection is unregistered (for all routes)
-  protected onConnectionClosed(connection: SSEConnection): void {
+  protected onConnectionClosed(connection: SSESession): void {
     this.metrics.decrementConnections()
   }
 }
@@ -890,7 +890,7 @@ private handleStream = buildHandler(streamContract, {
 })
 
 // Clean up when client disconnects
-protected onConnectionClosed(connection: SSEConnection): void {
+protected onConnectionClosed(connection: SSESession): void {
   this.service.unsubscribe(connection.id)
 }
 ```
@@ -1109,7 +1109,7 @@ describe('NotificationsSSEController', () => {
 })
 ```
 
-### SSEConnectionSpy API
+### SSESessionSpy API
 
 The `connectionSpy` is available when `isTestMode: true` is passed to `asSSEControllerClass`:
 
