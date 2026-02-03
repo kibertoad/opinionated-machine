@@ -8,17 +8,19 @@ export {
   // Unified handler builder
   buildHandler,
   type DualModeHandlers,
+  // Handler container types (new pattern)
+  type DualModeRouteHandler,
   type FastifyDualModeHandlerConfig,
   type FastifyDualModeRouteOptions,
   type FastifySSEHandlerConfig,
   type FastifySSEPreHandler,
   type FastifySSERouteOptions,
-  // Multi-format handler types
+  // Multi-format handler types (deprecated)
   type FormatHandler,
   type InferDualModeHandlers,
   type InferHandlers,
   type InferSSERequest,
-  // Dual-mode types
+  // Dual-mode types (deprecated alias)
   type JsonModeHandler,
   type RegisterDualModeRoutesOptions,
   // Registration options
@@ -30,13 +32,17 @@ export {
   type SSEModeHandler,
   type SSEOnlyHandlers,
   type SSERespondResult,
+  // Handler container type (new pattern)
+  type SSERouteHandler,
   type SSESession,
   type SSESessionMode,
   type SSEStartOptions,
   // SSE stream message type
   type SSEStreamMessage,
-  // Multi-format sync handlers type
+  // Multi-format sync handlers type (deprecated)
   type SyncHandlers,
+  // Sync mode handler type (renamed from JsonModeHandler)
+  type SyncModeHandler,
   type VerboseDualModeHandlers,
 } from './fastifyRouteTypes.js'
 

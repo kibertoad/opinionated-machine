@@ -1,11 +1,7 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { describe, expect, it } from 'vitest'
-import {
-  DIContext,
-  parseSSEEvents,
-  SSETestServer,
-} from '../../index.js'
+import { DIContext, parseSSEEvents, SSETestServer } from '../../index.js'
 import type { TestSSEController } from './fixtures/testControllers.js'
 import { TestSSEModule } from './fixtures/testModules.js'
 

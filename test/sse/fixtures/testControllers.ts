@@ -51,37 +51,37 @@ export class StreamController extends AbstractSSEController<{
 
   buildSSERoutes(): BuildFastifySSERoutesReturnType<{ stream: typeof streamContract }> {
     return {
-      stream: {
-        contract: StreamController.contracts.stream,
-        handlers: this.handleStream,
-        options: {
-          onConnect: (conn) => {
-            this.connectionEvents.push({ type: 'connect', connectionId: conn.id })
-          },
-          onClose: (conn) => {
-            this.connectionEvents.push({ type: 'disconnect', connectionId: conn.id })
-            this.eventService.unsubscribe(conn.id)
-          },
-        },
-      },
+      stream: this.handleStream,
     }
   }
 
-  private handleStream = buildHandler(streamContract, {
-    sse: (request, sse) => {
-      const userId = request.query.userId ?? 'anonymous'
-      const connection = sse.start('keepAlive', { context: { userId } })
+  private handleStream = buildHandler(
+    streamContract,
+    {
+      sse: (request, sse) => {
+        const userId = request.query.userId ?? 'anonymous'
+        const connection = sse.start('keepAlive', { context: { userId } })
 
-      // Subscribe to events for this connection
-      // Uses sendEventInternal for external event sources (subscriptions, timers, etc.)
-      this.eventService.subscribe(connection.id, async (data) => {
-        await this.sendEventInternal(connection.id, {
-          event: 'message',
-          data: { text: String(data) },
+        // Subscribe to events for this connection
+        // Uses sendEventInternal for external event sources (subscriptions, timers, etc.)
+        this.eventService.subscribe(connection.id, async (data) => {
+          await this.sendEventInternal(connection.id, {
+            event: 'message',
+            data: { text: String(data) },
+          })
         })
-      })
+      },
     },
-  })
+    {
+      onConnect: (conn) => {
+        this.connectionEvents.push({ type: 'connect', connectionId: conn.id })
+      },
+      onClose: (conn) => {
+        this.connectionEvents.push({ type: 'disconnect', connectionId: conn.id })
+        this.eventService.unsubscribe(conn.id)
+      },
+    },
+  )
 
   // Testing helper - uses sendEventInternal which is public but @internal
   // Now properly typed to match the contract's message event schema
@@ -115,31 +115,7 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
     this._notificationService = deps.notificationService
   }
 
-  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestSSEContracts> {
-    return {
-      notificationsStream: {
-        contract: TestSSEController.contracts.notificationsStream,
-        handlers: this.handleStream,
-        options: {
-          onConnect: this.onConnect,
-          onClose: this.onClose,
-        },
-      },
-    }
-  }
-
-  private handleStream = buildHandler(notificationsStreamContract, {
-    sse: async (request, sse) => {
-      const userId = request.query.userId ?? 'default'
-      const connection = sse.start('keepAlive', { context: { userId } })
-
-      // Wait for test to signal completion
-      await new Promise<void>((resolve) => {
-        this.handlerDoneResolvers.set(connection.id, resolve)
-      })
-    },
-  })
-
+  // Note: callback methods must be defined before they are referenced in buildHandler
   private onConnect = (_connection: SSESession) => {
     // Setup subscription when connected
   }
@@ -153,6 +129,31 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
       this.handlerDoneResolvers.delete(connection.id)
     }
   }
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestSSEContracts> {
+    return {
+      notificationsStream: this.handleStream,
+    }
+  }
+
+  private handleStream = buildHandler(
+    notificationsStreamContract,
+    {
+      sse: async (request, sse) => {
+        const userId = request.query.userId ?? 'default'
+        const connection = sse.start('keepAlive', { context: { userId } })
+
+        // Wait for test to signal completion
+        await new Promise<void>((resolve) => {
+          this.handlerDoneResolvers.set(connection.id, resolve)
+        })
+      },
+    },
+    {
+      onConnect: this.onConnect,
+      onClose: this.onClose,
+    },
+  )
 
   /** Call this from tests to signal the handler can complete */
   public completeHandler(connectionId: string): void {
@@ -210,10 +211,7 @@ export class TestPostSSEController extends AbstractSSEController<TestPostSSECont
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestPostSSEContracts> {
     return {
-      chatCompletion: {
-        contract: TestPostSSEController.contracts.chatCompletion,
-        handlers: this.handleChatCompletion,
-      },
+      chatCompletion: this.handleChatCompletion,
     }
   }
 
@@ -244,28 +242,28 @@ export class TestAuthSSEController extends AbstractSSEController<TestAuthSSECont
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestAuthSSEContracts> {
     return {
-      authenticatedStream: {
-        contract: TestAuthSSEController.contracts.authenticatedStream,
-        handlers: this.handleAuthenticatedStream,
-        options: {
-          preHandler: (request, reply) => {
-            const auth = request.headers.authorization
-            if (!auth || !auth.startsWith('Bearer ')) {
-              return Promise.resolve(reply.code(401).send({ error: 'Unauthorized' }))
-            }
-            return Promise.resolve()
-          },
-        },
-      },
+      authenticatedStream: this.handleAuthenticatedStream,
     }
   }
 
-  private handleAuthenticatedStream = buildHandler(authenticatedStreamContract, {
-    sse: async (_request, sse) => {
-      const connection = sse.start('autoClose')
-      await connection.send('data', { value: 'authenticated data' })
+  private handleAuthenticatedStream = buildHandler(
+    authenticatedStreamContract,
+    {
+      sse: async (_request, sse) => {
+        const connection = sse.start('autoClose')
+        await connection.send('data', { value: 'authenticated data' })
+      },
     },
-  })
+    {
+      preHandler: (request, reply) => {
+        const auth = request.headers.authorization
+        if (!auth || !auth.startsWith('Bearer ')) {
+          return Promise.resolve(reply.code(401).send({ error: 'Unauthorized' }))
+        }
+        return Promise.resolve()
+      },
+    },
+  )
 }
 
 /**
@@ -282,10 +280,7 @@ export class TestChannelSSEController extends AbstractSSEController<TestChannelS
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestChannelSSEContracts> {
     return {
-      channelStream: {
-        contract: TestChannelSSEController.contracts.channelStream,
-        handlers: this.handleChannelStream,
-      },
+      channelStream: this.handleChannelStream,
     }
   }
 
@@ -330,26 +325,7 @@ export class TestReconnectSSEController extends AbstractSSEController<TestReconn
     ]
   }
 
-  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestReconnectSSEContracts> {
-    return {
-      reconnectStream: {
-        contract: TestReconnectSSEController.contracts.reconnectStream,
-        handlers: this.handleReconnectStream,
-        options: {
-          onReconnect: this.handleReconnect,
-        },
-      },
-    }
-  }
-
-  private handleReconnectStream = buildHandler(reconnectStreamContract, {
-    sse: async (_request, sse) => {
-      const connection = sse.start('autoClose')
-      // Send a new event after connection
-      await connection.send('event', { id: '6', data: 'New event after reconnect' }, { id: '6' })
-    },
-  })
-
+  // Note: callback methods must be defined before they are referenced in buildHandler
   private handleReconnect = (
     _connection: SSESession,
     lastEventId: string,
@@ -365,6 +341,26 @@ export class TestReconnectSSEController extends AbstractSSEController<TestReconn
       id: event.id,
     }))
   }
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestReconnectSSEContracts> {
+    return {
+      reconnectStream: this.handleReconnectStream,
+    }
+  }
+
+  private handleReconnectStream = buildHandler(
+    reconnectStreamContract,
+    {
+      sse: async (_request, sse) => {
+        const connection = sse.start('autoClose')
+        // Send a new event after connection
+        await connection.send('event', { id: '6', data: 'New event after reconnect' }, { id: '6' })
+      },
+    },
+    {
+      onReconnect: this.handleReconnect,
+    },
+  )
 
   // For testing: add an event to history
   public addEvent(id: string, data: string): void {
@@ -397,30 +393,7 @@ export class TestAsyncReconnectSSEController extends AbstractSSEController<TestA
     ]
   }
 
-  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestAsyncReconnectSSEContracts> {
-    return {
-      asyncReconnectStream: {
-        contract: TestAsyncReconnectSSEController.contracts.asyncReconnectStream,
-        handlers: this.handleReconnectStream,
-        options: {
-          onReconnect: this.handleReconnect,
-        },
-      },
-    }
-  }
-
-  private handleReconnectStream = buildHandler(asyncReconnectStreamContract, {
-    sse: async (_request, sse) => {
-      const connection = sse.start('autoClose')
-      // Send a new event after connection
-      await connection.send(
-        'event',
-        { id: '4', data: 'Async new event after reconnect' },
-        { id: '4' },
-      )
-    },
-  })
-
+  // Note: callback methods must be defined before they are referenced in buildHandler
   // Async generator for replay - simulates fetching from database
   private handleReconnect = (
     _connection: SSESession,
@@ -444,6 +417,30 @@ export class TestAsyncReconnectSSEController extends AbstractSSEController<TestA
 
     return generateEvents()
   }
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestAsyncReconnectSSEContracts> {
+    return {
+      asyncReconnectStream: this.handleReconnectStream,
+    }
+  }
+
+  private handleReconnectStream = buildHandler(
+    asyncReconnectStreamContract,
+    {
+      sse: async (_request, sse) => {
+        const connection = sse.start('autoClose')
+        // Send a new event after connection
+        await connection.send(
+          'event',
+          { id: '4', data: 'Async new event after reconnect' },
+          { id: '4' },
+        )
+      },
+    },
+    {
+      onReconnect: this.handleReconnect,
+    },
+  )
 }
 
 /**
@@ -461,10 +458,7 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestLargeContentSSEContracts> {
     return {
-      largeContentStream: {
-        contract: TestLargeContentSSEController.contracts.largeContentStream,
-        handlers: this.handleLargeContentStream,
-      },
+      largeContentStream: this.handleLargeContentStream,
     }
   }
 
@@ -519,27 +513,25 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestLoggerSSEContracts> {
     return {
-      loggerTestStream: {
-        contract: TestLoggerSSEController.contracts.loggerTestStream,
-        handlers: this.handleStream,
-        options: {
+      loggerTestStream: buildHandler(
+        loggerTestStreamContract,
+        {
+          sse: async (_request, sse) => {
+            const connection = sse.start('keepAlive')
+            await connection.send('message', { text: 'Hello from logger test' })
+            // Don't close connection - let client close to trigger onClose
+          },
+        },
+        {
           logger: this.logger,
           onClose: () => {
             // Intentionally throw to test error handling
             throw new Error('Test error in onClose')
           },
         },
-      },
+      ),
     }
   }
-
-  private handleStream = buildHandler(loggerTestStreamContract, {
-    sse: async (_request, sse) => {
-      const connection = sse.start('keepAlive')
-      await connection.send('message', { text: 'Hello from logger test' })
-      // Don't close connection - let client close to trigger onClose
-    },
-  })
 }
 
 /**
@@ -561,10 +553,7 @@ export class TestValidationSSEController extends AbstractSSEController<TestValid
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestValidationSSEContracts> {
     return {
-      validationTestStream: {
-        contract: TestValidationSSEController.contracts.validationTestStream,
-        handlers: this.handleStream,
-      },
+      validationTestStream: this.handleStream,
     }
   }
 
@@ -605,10 +594,7 @@ export class TestOpenAIStyleSSEController extends AbstractSSEController<TestOpen
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestOpenAIStyleSSEContracts> {
     return {
-      openaiStyleStream: {
-        contract: TestOpenAIStyleSSEController.contracts.openaiStyleStream,
-        handlers: this.handleOpenAIStyleStream,
-      },
+      openaiStyleStream: this.handleOpenAIStyleStream,
     }
   }
 
@@ -661,27 +647,25 @@ export class TestOnReconnectErrorSSEController extends AbstractSSEController<Tes
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestOnReconnectErrorSSEContracts> {
     return {
-      onReconnectErrorStream: {
-        contract: TestOnReconnectErrorSSEController.contracts.onReconnectErrorStream,
-        handlers: this.handleStream,
-        options: {
+      onReconnectErrorStream: buildHandler(
+        onReconnectErrorStreamContract,
+        {
+          sse: async (_request, sse) => {
+            const connection = sse.start('autoClose')
+            // Send message to verify connection still works after onReconnect error
+            await connection.send('event', { id: 'new', data: 'Hello after onReconnect error' })
+          },
+        },
+        {
           logger: this.logger,
           onReconnect: () => {
             // Intentionally throw to test error handling
             throw new Error('Test error in onReconnect')
           },
         },
-      },
+      ),
     }
   }
-
-  private handleStream = buildHandler(onReconnectErrorStreamContract, {
-    sse: async (_request, sse) => {
-      const connection = sse.start('autoClose')
-      // Send message to verify connection still works after onReconnect error
-      await connection.send('event', { id: 'new', data: 'Hello after onReconnect error' })
-    },
-  })
 }
 
 /**
@@ -708,27 +692,25 @@ export class TestOnConnectErrorSSEController extends AbstractSSEController<TestO
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestOnConnectErrorSSEContracts> {
     return {
-      onConnectErrorStream: {
-        contract: TestOnConnectErrorSSEController.contracts.onConnectErrorStream,
-        handlers: this.handleStream,
-        options: {
+      onConnectErrorStream: buildHandler(
+        onConnectErrorStreamContract,
+        {
+          sse: async (_request, sse) => {
+            const connection = sse.start('autoClose')
+            // Send message to verify connection still works after onConnect error
+            await connection.send('message', { text: 'Hello after onConnect error' })
+          },
+        },
+        {
           logger: this.logger,
           onConnect: () => {
             // Intentionally throw to test error handling
             throw new Error('Test error in onConnect')
           },
         },
-      },
+      ),
     }
   }
-
-  private handleStream = buildHandler(onConnectErrorStreamContract, {
-    sse: async (_request, sse) => {
-      const connection = sse.start('autoClose')
-      // Send message to verify connection still works after onConnect error
-      await connection.send('message', { text: 'Hello after onConnect error' })
-    },
-  })
 }
 
 /**
@@ -755,27 +737,25 @@ export class TestOnCloseErrorSSEController extends AbstractSSEController<TestOnC
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestOnCloseErrorSSEContracts> {
     return {
-      onCloseErrorStream: {
-        contract: TestOnCloseErrorSSEController.contracts.onCloseErrorStream,
-        handlers: this.handleStream,
-        options: {
+      onCloseErrorStream: buildHandler(
+        onCloseErrorStreamContract,
+        {
+          sse: async (_request, sse) => {
+            const connection = sse.start('autoClose')
+            // Send message then signal disconnect to trigger onClose
+            await connection.send('message', { text: 'Hello before close' })
+          },
+        },
+        {
           logger: this.logger,
           onClose: () => {
             // Intentionally throw to test error handling
             throw new Error('Test error in onClose')
           },
         },
-      },
+      ),
     }
   }
-
-  private handleStream = buildHandler(onCloseErrorStreamContract, {
-    sse: async (_request, sse) => {
-      const connection = sse.start('autoClose')
-      // Send message then signal disconnect to trigger onClose
-      await connection.send('message', { text: 'Hello before close' })
-    },
-  })
 }
 
 /**
@@ -792,10 +772,7 @@ export class TestIsConnectedSSEController extends AbstractSSEController<TestIsCo
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestIsConnectedSSEContracts> {
     return {
-      isConnectedTestStream: {
-        contract: TestIsConnectedSSEController.contracts.isConnectedTestStream,
-        handlers: this.handleStream,
-      },
+      isConnectedTestStream: this.handleStream,
     }
   }
 
@@ -824,10 +801,7 @@ export class TestSendStreamSSEController extends AbstractSSEController<TestSendS
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestSendStreamSSEContracts> {
     return {
-      sendStreamTestStream: {
-        contract: TestSendStreamSSEController.contracts.sendStreamTestStream,
-        handlers: this.handleStream,
-      },
+      sendStreamTestStream: this.handleStream,
     }
   }
 
@@ -864,10 +838,7 @@ export class TestGetStreamSSEController extends AbstractSSEController<TestGetStr
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestGetStreamSSEContracts> {
     return {
-      getStreamTestStream: {
-        contract: TestGetStreamSSEController.contracts.getStreamTestStream,
-        handlers: this.handleStream,
-      },
+      getStreamTestStream: this.handleStream,
     }
   }
 
@@ -908,10 +879,7 @@ export class TestDeferredHeaders404Controller extends AbstractSSEController<Test
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestDeferredHeaders404Contracts> {
     return {
-      deferred404: {
-        contract: TestDeferredHeaders404Controller.contracts.deferred404,
-        handlers: this.handleStream,
-      },
+      deferred404: this.handleStream,
     }
   }
 
@@ -951,10 +919,7 @@ export class TestDeferredHeaders422Controller extends AbstractSSEController<Test
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestDeferredHeaders422Contracts> {
     return {
-      validate: {
-        contract: TestDeferredHeaders422Controller.contracts.validate,
-        handlers: this.handleStream,
-      },
+      validate: this.handleStream,
     }
   }
 
@@ -1001,10 +966,7 @@ export class TestForgottenStartController extends AbstractSSEController<TestForg
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestForgottenStartContracts> {
     return {
-      forgottenStart: {
-        contract: TestForgottenStartController.contracts.forgottenStart,
-        handlers: this.handleStream,
-      },
+      forgottenStart: this.handleStream,
     }
   }
 
@@ -1032,10 +994,7 @@ export class TestErrorAfterStartController extends AbstractSSEController<TestErr
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestErrorAfterStartContracts> {
     return {
-      errorAfterStart: {
-        contract: TestErrorAfterStartController.contracts.errorAfterStart,
-        handlers: this.handleStream,
-      },
+      errorAfterStart: this.handleStream,
     }
   }
 

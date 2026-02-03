@@ -1,141 +1,72 @@
 import { describe, expectTypeOf, it } from 'vitest'
 import { z } from 'zod/v4'
 import { buildContract } from '../contracts/contractBuilders.ts'
-import type { InferDualModeHandlers, VerboseDualModeHandlers } from './fastifyRouteTypes.ts'
+import type { InferDualModeHandlers } from './fastifyRouteTypes.ts'
 import { buildHandler } from './fastifyRouteTypes.ts'
 
 describe('Handler Type Enforcement', () => {
-  describe('Verbose contracts (multiFormatResponses)', () => {
-    const verboseContract = buildContract({
-      method: 'POST',
-      pathResolver: () => '/api/export',
-      params: z.object({}),
-      query: z.object({}),
-      requestHeaders: z.object({}),
-      requestBody: z.object({ data: z.string() }),
-      multiFormatResponses: {
-        'application/json': z.object({ result: z.string() }),
-        'text/plain': z.string(),
-      },
-      events: { done: z.object({ ok: z.boolean() }) },
-    })
-
-    it('requires sync handlers, not json handler', () => {
-      type VerboseHandlers = InferDualModeHandlers<typeof verboseContract>
-
-      // Should be VerboseDualModeHandlers, not DualModeHandlers
-      expectTypeOf<VerboseHandlers>().toExtend<
-        VerboseDualModeHandlers<
-          {
-            'application/json': z.ZodObject<{ result: z.ZodString }>
-            'text/plain': z.ZodString
-          },
-          Record<string, never>,
-          Record<string, never>,
-          Record<string, never>,
-          { data: string },
-          { done: z.ZodObject<{ ok: z.ZodBoolean }> }
-        >
-      >()
-
-      // VerboseHandlers should have 'sync' property
-      expectTypeOf<VerboseHandlers>().toHaveProperty('sync')
-      expectTypeOf<VerboseHandlers>().toHaveProperty('sse')
-
-      // VerboseHandlers should NOT have 'json' property
-      expectTypeOf<VerboseHandlers>().not.toHaveProperty('json')
-    })
-
-    it('requires all format handlers in sync', () => {
-      type VerboseHandlers = InferDualModeHandlers<typeof verboseContract>
-      type SyncHandlers = VerboseHandlers['sync']
-
-      // sync should have handlers for each format
-      expectTypeOf<SyncHandlers>().toHaveProperty('application/json')
-      expectTypeOf<SyncHandlers>().toHaveProperty('text/plain')
-    })
-  })
-
-  describe('Simplified contracts (jsonResponse)', () => {
-    const simplifiedContract = buildContract({
+  describe('Dual-mode contracts (syncResponse)', () => {
+    const dualModeContract = buildContract({
       method: 'POST',
       pathResolver: () => '/api/chat',
       params: z.object({}),
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ message: z.string() }),
-      jsonResponse: z.object({ reply: z.string() }),
+      syncResponse: z.object({ reply: z.string() }),
       events: { chunk: z.object({ delta: z.string() }) },
     })
 
-    it('requires json handler, not sync handlers', () => {
-      type SimplifiedHandlers = InferDualModeHandlers<typeof simplifiedContract>
+    it('requires sync handler, not json handler', () => {
+      type Handlers = InferDualModeHandlers<typeof dualModeContract>
 
-      // SimplifiedHandlers should have 'json' property
-      expectTypeOf<SimplifiedHandlers>().toHaveProperty('json')
-      expectTypeOf<SimplifiedHandlers>().toHaveProperty('sse')
+      // Handlers should have 'sync' property
+      expectTypeOf<Handlers>().toHaveProperty('sync')
+      expectTypeOf<Handlers>().toHaveProperty('sse')
 
-      // SimplifiedHandlers should NOT have 'sync' property
-      expectTypeOf<SimplifiedHandlers>().not.toHaveProperty('sync')
+      // Handlers should NOT have 'json' property (deprecated)
+      expectTypeOf<Handlers>().not.toHaveProperty('json')
     })
 
-    it('types json handler return value correctly', () => {
-      type SimplifiedHandlers = InferDualModeHandlers<typeof simplifiedContract>
-      type JsonHandler = SimplifiedHandlers['json']
+    it('types sync handler return value correctly', () => {
+      type Handlers = InferDualModeHandlers<typeof dualModeContract>
+      type SyncHandler = Handlers['sync']
 
-      // JsonHandler should return { reply: string }
-      expectTypeOf<Awaited<ReturnType<JsonHandler>>>().toExtend<{ reply: string }>()
+      // SyncHandler should return { reply: string }
+      expectTypeOf<Awaited<ReturnType<SyncHandler>>>().toExtend<{ reply: string }>()
+    })
+
+    it('has sync and sse properties', () => {
+      type Handlers = InferDualModeHandlers<typeof dualModeContract>
+
+      // Handlers should have sync and sse properties that are functions
+      expectTypeOf<Handlers>().toHaveProperty('sync')
+      expectTypeOf<Handlers>().toHaveProperty('sse')
+
+      // Verify both are callable
+      type SyncHandler = Handlers['sync']
+      type SSEHandler = Handlers['sse']
+      expectTypeOf<SyncHandler>().toBeFunction()
+      expectTypeOf<SSEHandler>().toBeFunction()
     })
   })
 
   describe('buildHandler enforces correct handler structure', () => {
-    it('accepts valid verbose handlers', () => {
-      const verboseContract = buildContract({
-        method: 'POST',
-        pathResolver: () => '/api/export',
-        params: z.object({}),
-        query: z.object({}),
-        requestHeaders: z.object({}),
-        requestBody: z.object({ data: z.string() }),
-        multiFormatResponses: {
-          'application/json': z.object({ result: z.string() }),
-          'text/plain': z.string(),
-        },
-        events: { done: z.object({ ok: z.boolean() }) },
-      })
-
-      // This should compile without errors
-      const handlers = buildHandler(verboseContract, {
-        sync: {
-          'application/json': () => ({ result: 'test' }),
-          'text/plain': () => 'plain text',
-        },
-        sse: async (_req, sse) => {
-          const connection = sse.start('autoClose')
-          await connection.send('done', { ok: true })
-          // autoClose mode
-        },
-      })
-
-      expectTypeOf(handlers).toHaveProperty('sync')
-      expectTypeOf(handlers).toHaveProperty('sse')
-    })
-
-    it('accepts valid simplified handlers', () => {
-      const simplifiedContract = buildContract({
+    it('accepts valid dual-mode handlers', () => {
+      const dualModeContract = buildContract({
         method: 'POST',
         pathResolver: () => '/api/chat',
         params: z.object({}),
         query: z.object({}),
         requestHeaders: z.object({}),
         requestBody: z.object({ message: z.string() }),
-        jsonResponse: z.object({ reply: z.string() }),
+        syncResponse: z.object({ reply: z.string() }),
         events: { chunk: z.object({ delta: z.string() }) },
       })
 
       // This should compile without errors
-      const handlers = buildHandler(simplifiedContract, {
-        json: () => ({ reply: 'hello' }),
+      const container = buildHandler(dualModeContract, {
+        sync: () => ({ reply: 'hello' }),
         sse: async (_req, sse) => {
           const connection = sse.start('autoClose')
           await connection.send('chunk', { delta: 'hi' })
@@ -143,8 +74,39 @@ describe('Handler Type Enforcement', () => {
         },
       })
 
-      expectTypeOf(handlers).toHaveProperty('json')
-      expectTypeOf(handlers).toHaveProperty('sse')
+      // Container has __type, contract, handlers, options
+      expectTypeOf(container).toHaveProperty('__type')
+      expectTypeOf(container).toHaveProperty('contract')
+      expectTypeOf(container).toHaveProperty('handlers')
+      // The actual handlers are in container.handlers
+      expectTypeOf(container.handlers).toHaveProperty('sync')
+      expectTypeOf(container.handlers).toHaveProperty('sse')
+    })
+
+    it('accepts valid SSE-only handlers', () => {
+      const sseContract = buildContract({
+        pathResolver: () => '/api/stream',
+        params: z.object({}),
+        query: z.object({}),
+        requestHeaders: z.object({}),
+        events: { data: z.object({ value: z.string() }) },
+      })
+
+      // This should compile without errors
+      const container = buildHandler(sseContract, {
+        sse: async (_req, sse) => {
+          const connection = sse.start('autoClose')
+          await connection.send('data', { value: 'test' })
+          // autoClose mode
+        },
+      })
+
+      // Container has __type, contract, handlers, options
+      expectTypeOf(container).toHaveProperty('__type')
+      expectTypeOf(container).toHaveProperty('contract')
+      expectTypeOf(container).toHaveProperty('handlers')
+      // The actual handlers are in container.handlers
+      expectTypeOf(container.handlers).toHaveProperty('sse')
     })
   })
 })

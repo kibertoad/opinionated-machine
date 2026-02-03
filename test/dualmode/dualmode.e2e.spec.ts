@@ -5,6 +5,7 @@ import { z } from 'zod'
 import {
   buildContract,
   buildFastifyRoute,
+  buildHandler,
   DIContext,
   SSEHttpClient,
   SSEInjectClient,
@@ -856,22 +857,22 @@ describe('Dual-Mode Route Builder Validation', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      jsonResponse: z.object({ result: z.string() }),
+      syncResponse: z.object({ result: z.string() }),
       events: { result: z.object({ success: z.boolean() }) },
       isDualMode: true as const,
       isSimplified: true as const,
     }
 
     expect(() =>
-      buildFastifyRoute(controller, {
-        contract: invalidContract,
-        handlers: {
-          json: async () => ({ result: 'test' }),
+      buildFastifyRoute(
+        controller,
+        buildHandler(invalidContract, {
+          sync: async () => ({ result: 'test' }),
           sse: (_request, sse) => {
             sse.start('autoClose')
           },
-        },
-      }),
+        }),
+      ),
     ).toThrow('Route params schema must be a ZodObject for path template extraction')
 
     await context.destroy()
@@ -896,7 +897,7 @@ describe('Dual-Mode Response Headers', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      jsonResponse: z.object({ result: z.string() }),
+      syncResponse: z.object({ result: z.string() }),
       responseHeaders: z.object({
         'x-request-id': z.string(),
         'x-ratelimit-remaining': z.string(),
@@ -904,10 +905,10 @@ describe('Dual-Mode Response Headers', () => {
       events: { result: z.object({ success: z.boolean() }) },
     })
 
-    const route = buildFastifyRoute(controller, {
-      contract: contractWithHeaders,
-      handlers: {
-        json: (request, reply) => {
+    const route = buildFastifyRoute(
+      controller,
+      buildHandler(contractWithHeaders, {
+        sync: (request, reply) => {
           // Set the required headers
           reply.header('x-request-id', 'req-123')
           reply.header('x-ratelimit-remaining', '99')
@@ -916,8 +917,8 @@ describe('Dual-Mode Response Headers', () => {
         sse: (_request, sse) => {
           sse.start('autoClose')
         },
-      },
-    })
+      }),
+    )
 
     const server = await SSETestServer.create(
       (app) => {
@@ -968,25 +969,25 @@ describe('Dual-Mode Response Headers', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      jsonResponse: z.object({ result: z.string() }),
+      syncResponse: z.object({ result: z.string() }),
       responseHeaders: z.object({
         'x-required-header': z.string(),
       }),
       events: { result: z.object({ success: z.boolean() }) },
     })
 
-    const route = buildFastifyRoute(controller, {
-      contract: contractWithHeaders,
-      handlers: {
-        json: (request) => {
+    const route = buildFastifyRoute(
+      controller,
+      buildHandler(contractWithHeaders, {
+        sync: (request) => {
           // Intentionally NOT setting the required header
           return { result: request.body.data }
         },
         sse: (_request, sse) => {
           sse.start('autoClose')
         },
-      },
-    })
+      }),
+    )
 
     const server = await SSETestServer.create(
       (app) => {
@@ -1036,22 +1037,22 @@ describe('Dual-Mode Response Headers', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      jsonResponse: z.object({ result: z.string() }),
+      syncResponse: z.object({ result: z.string() }),
       // No responseHeaders - should still work
       events: { result: z.object({ success: z.boolean() }) },
     })
 
-    const route = buildFastifyRoute(controller, {
-      contract: contractWithoutHeaders,
-      handlers: {
-        json: (request) => {
+    const route = buildFastifyRoute(
+      controller,
+      buildHandler(contractWithoutHeaders, {
+        sync: (request) => {
           return { result: request.body.data }
         },
         sse: (_request, sse) => {
           sse.start('autoClose')
         },
-      },
-    })
+      }),
+    )
 
     const server = await SSETestServer.create(
       (app) => {

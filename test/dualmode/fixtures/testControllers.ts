@@ -12,8 +12,6 @@ import {
   errorTestContract,
   jobStatusContract,
   jsonValidationContract,
-  multiFormatExportContract,
-  multiFormatReportContract,
 } from './testContracts.js'
 
 /**
@@ -30,29 +28,28 @@ export class TestChatDualModeController extends AbstractDualModeController<TestC
 
   public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestChatContracts> {
     return {
-      chatCompletion: {
-        contract: TestChatDualModeController.contracts.chatCompletion,
-        handlers: buildHandler(chatCompletionContract, {
-          json: (request) => {
-            const words = request.body.message.split(' ')
-            return {
-              reply: `Echo: ${request.body.message}`,
-              usage: { tokens: words.length },
-            }
-          },
-          sse: async (request, sse) => {
-            const connection = sse.start('autoClose')
-            const words = request.body.message.split(' ')
-            for (const word of words) {
-              await connection.send('chunk', { delta: word })
-            }
-            await connection.send('done', { usage: { total: words.length } })
-            // autoClose mode
-          },
-        }),
-      },
+      chatCompletion: this.handleChatCompletion,
     }
   }
+
+  private handleChatCompletion = buildHandler(chatCompletionContract, {
+    sync: (request) => {
+      const words = request.body.message.split(' ')
+      return {
+        reply: `Echo: ${request.body.message}`,
+        usage: { tokens: words.length },
+      }
+    },
+    sse: async (request, sse) => {
+      const connection = sse.start('autoClose')
+      const words = request.body.message.split(' ')
+      for (const word of words) {
+        await connection.send('chunk', { delta: word })
+      }
+      await connection.send('done', { usage: { total: words.length } })
+      // autoClose mode
+    },
+  })
 }
 
 /**
@@ -69,37 +66,39 @@ export class TestConversationDualModeController extends AbstractDualModeControll
 
   public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestConversationContracts> {
     return {
-      conversationCompletion: {
-        contract: TestConversationDualModeController.contracts.conversationCompletion,
-        handlers: buildHandler(conversationCompletionContract, {
-          json: (request) => ({
-            reply: `Response for conversation ${request.params.conversationId}: ${request.body.message}`,
-            conversationId: request.params.conversationId,
-          }),
-          sse: async (request, sse) => {
-            const connection = sse.start('autoClose')
-            const words = request.body.message.split(' ')
-            for (const word of words) {
-              await connection.send('chunk', { delta: word })
-            }
-            await connection.send('done', {
-              conversationId: request.params.conversationId,
-            })
-            // autoClose mode
-          },
-        }),
-        options: {
-          preHandler: (request, reply) => {
-            const auth = request.headers.authorization
-            if (!auth || !auth.startsWith('Bearer ')) {
-              return Promise.resolve(reply.code(401).send({ error: 'Unauthorized' }))
-            }
-            return Promise.resolve()
-          },
-        },
-      },
+      conversationCompletion: this.handleConversationCompletion,
     }
   }
+
+  private handleConversationCompletion = buildHandler(
+    conversationCompletionContract,
+    {
+      sync: (request) => ({
+        reply: `Response for conversation ${request.params.conversationId}: ${request.body.message}`,
+        conversationId: request.params.conversationId,
+      }),
+      sse: async (request, sse) => {
+        const connection = sse.start('autoClose')
+        const words = request.body.message.split(' ')
+        for (const word of words) {
+          await connection.send('chunk', { delta: word })
+        }
+        await connection.send('done', {
+          conversationId: request.params.conversationId,
+        })
+        // autoClose mode
+      },
+    },
+    {
+      preHandler: (request, reply) => {
+        const auth = request.headers.authorization
+        if (!auth || !auth.startsWith('Bearer ')) {
+          return Promise.resolve(reply.code(401).send({ error: 'Unauthorized' }))
+        }
+        return Promise.resolve()
+      },
+    },
+  )
 }
 
 /**
@@ -126,50 +125,49 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
 
   public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestJobStatusContracts> {
     return {
-      jobStatus: {
-        contract: TestJobStatusDualModeController.contracts.jobStatus,
-        handlers: buildHandler(jobStatusContract, {
-          json: (request) => {
-            const state = this.jobStates.get(request.params.jobId)
-            if (!state) {
-              return {
-                status: 'pending' as const,
-                progress: 0,
-              }
-            }
-            return {
-              status: state.status as 'pending' | 'running' | 'completed' | 'failed',
-              progress: state.progress,
-              result: state.result,
-            }
-          },
-          sse: async (request, sse) => {
-            const connection = sse.start('autoClose')
-            const state = this.jobStates.get(request.params.jobId)
-            if (!state) {
-              await connection.send('progress', { percent: 0 })
-              return // autoClose mode - early return for no state
-            }
-
-            // Simulate progress updates
-            for (let i = 0; i <= state.progress; i += 25) {
-              await connection.send('progress', {
-                percent: Math.min(i, state.progress),
-                message: `Processing... ${i}%`,
-              })
-            }
-
-            if (state.status === 'completed' && state.result) {
-              await connection.send('done', { result: state.result })
-            } else if (state.status === 'failed') {
-              await connection.send('error', { code: 'JOB_FAILED', message: 'Job failed' })
-            }
-            // autoClose mode
-          },
-        }),
-      },
+      jobStatus: this.handleJobStatus,
     }
   }
+
+  private handleJobStatus = buildHandler(jobStatusContract, {
+    sync: (request) => {
+      const state = this.jobStates.get(request.params.jobId)
+      if (!state) {
+        return {
+          status: 'pending' as const,
+          progress: 0,
+        }
+      }
+      return {
+        status: state.status as 'pending' | 'running' | 'completed' | 'failed',
+        progress: state.progress,
+        result: state.result,
+      }
+    },
+    sse: async (request, sse) => {
+      const connection = sse.start('autoClose')
+      const state = this.jobStates.get(request.params.jobId)
+      if (!state) {
+        await connection.send('progress', { percent: 0 })
+        return // autoClose mode - early return for no state
+      }
+
+      // Simulate progress updates
+      for (let i = 0; i <= state.progress; i += 25) {
+        await connection.send('progress', {
+          percent: Math.min(i, state.progress),
+          message: `Processing... ${i}%`,
+        })
+      }
+
+      if (state.status === 'completed' && state.result) {
+        await connection.send('done', { result: state.result })
+      } else if (state.status === 'failed') {
+        await connection.send('error', { code: 'JOB_FAILED', message: 'Job failed' })
+      }
+      // autoClose mode
+    },
+  })
 }
 
 /**
@@ -186,34 +184,36 @@ export class TestAuthenticatedDualModeController extends AbstractDualModeControl
 
   public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestAuthenticatedContracts> {
     return {
-      protectedAction: {
-        contract: TestAuthenticatedDualModeController.contracts.protectedAction,
-        handlers: buildHandler(authenticatedDualModeContract, {
-          json: (request) => ({
-            success: true,
-            data: `Processed: ${request.body.data}`,
-          }),
-          sse: async (request, sse) => {
-            const connection = sse.start('autoClose')
-            await connection.send('result', {
-              success: true,
-              data: `Processed: ${request.body.data}`,
-            })
-            // autoClose mode
-          },
-        }),
-        options: {
-          preHandler: (request, reply) => {
-            const auth = request.headers.authorization
-            if (!auth || !auth.startsWith('Bearer ')) {
-              return Promise.resolve(reply.code(401).send({ error: 'Unauthorized' }))
-            }
-            return Promise.resolve()
-          },
-        },
-      },
+      protectedAction: this.handleProtectedAction,
     }
   }
+
+  private handleProtectedAction = buildHandler(
+    authenticatedDualModeContract,
+    {
+      sync: (request) => ({
+        success: true,
+        data: `Processed: ${request.body.data}`,
+      }),
+      sse: async (request, sse) => {
+        const connection = sse.start('autoClose')
+        await connection.send('result', {
+          success: true,
+          data: `Processed: ${request.body.data}`,
+        })
+        // autoClose mode
+      },
+    },
+    {
+      preHandler: (request, reply) => {
+        const auth = request.headers.authorization
+        if (!auth || !auth.startsWith('Bearer ')) {
+          return Promise.resolve(reply.code(401).send({ error: 'Unauthorized' }))
+        }
+        return Promise.resolve()
+      },
+    },
+  )
 }
 
 /**
@@ -230,24 +230,26 @@ export class TestDefaultModeDualModeController extends AbstractDualModeControlle
 
   public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestDefaultModeContracts> {
     return {
-      defaultModeTest: {
-        contract: TestDefaultModeDualModeController.contracts.defaultModeTest,
-        handlers: buildHandler(defaultModeTestContract, {
-          json: (request) => ({
-            output: `JSON: ${request.body.input}`,
-          }),
-          sse: async (request, sse) => {
-            const connection = sse.start('autoClose')
-            await connection.send('output', { value: `SSE: ${request.body.input}` })
-            // autoClose mode
-          },
-        }),
-        options: {
-          defaultMode: 'sse', // Set SSE as default mode
-        },
-      },
+      defaultModeTest: this.handleDefaultModeTest,
     }
   }
+
+  private handleDefaultModeTest = buildHandler(
+    defaultModeTestContract,
+    {
+      sync: (request) => ({
+        output: `JSON: ${request.body.input}`,
+      }),
+      sse: async (request, sse) => {
+        const connection = sse.start('autoClose')
+        await connection.send('output', { value: `SSE: ${request.body.input}` })
+        // autoClose mode
+      },
+    },
+    {
+      defaultMode: 'sse', // Set SSE as default mode
+    },
+  )
 }
 
 /**
@@ -264,24 +266,23 @@ export class TestErrorDualModeController extends AbstractDualModeController<Test
 
   public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestErrorContracts> {
     return {
-      errorTest: {
-        contract: TestErrorDualModeController.contracts.errorTest,
-        handlers: buildHandler(errorTestContract, {
-          json: (request) => ({
-            success: !request.body.shouldThrow,
-          }),
-          sse: async (request, sse) => {
-            const connection = sse.start('autoClose')
-            if (request.body.shouldThrow) {
-              throw new Error('Test error in SSE handler')
-            }
-            await connection.send('result', { success: true })
-            // autoClose mode
-          },
-        }),
-      },
+      errorTest: this.handleErrorTest,
     }
   }
+
+  private handleErrorTest = buildHandler(errorTestContract, {
+    sync: (request) => ({
+      success: !request.body.shouldThrow,
+    }),
+    sse: async (request, sse) => {
+      const connection = sse.start('autoClose')
+      if (request.body.shouldThrow) {
+        throw new Error('Test error in SSE handler')
+      }
+      await connection.send('result', { success: true })
+      // autoClose mode
+    },
+  })
 }
 
 /**
@@ -298,26 +299,25 @@ export class TestDefaultMethodDualModeController extends AbstractDualModeControl
 
   public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestDefaultMethodContracts> {
     return {
-      defaultMethodTest: {
-        contract: TestDefaultMethodDualModeController.contracts.defaultMethodTest,
-        handlers: buildHandler(defaultMethodContract, {
-          json: (request) => ({
-            result: `Processed: ${request.body.value}`,
-          }),
-          sse: async (request, sse) => {
-            const connection = sse.start('autoClose')
-            await connection.send('data', { value: request.body.value })
-            // autoClose mode
-          },
-        }),
-      },
+      defaultMethodTest: this.handleDefaultMethodTest,
     }
   }
+
+  private handleDefaultMethodTest = buildHandler(defaultMethodContract, {
+    sync: (request) => ({
+      result: `Processed: ${request.body.value}`,
+    }),
+    sse: async (request, sse) => {
+      const connection = sse.start('autoClose')
+      await connection.send('data', { value: request.body.value })
+      // autoClose mode
+    },
+  })
 }
 
 /**
- * Controller for testing JSON response validation failure.
- * When returnInvalid is true, returns data that doesn't match the jsonResponse schema.
+ * Controller for testing sync response validation failure.
+ * When returnInvalid is true, returns data that doesn't match the syncResponse schema.
  */
 export type TestJsonValidationContracts = {
   jsonValidationTest: typeof jsonValidationContract
@@ -330,25 +330,24 @@ export class TestJsonValidationDualModeController extends AbstractDualModeContro
 
   public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestJsonValidationContracts> {
     return {
-      jsonValidationTest: {
-        contract: TestJsonValidationDualModeController.contracts.jsonValidationTest,
-        handlers: buildHandler(jsonValidationContract, {
-          json: (request): { requiredField: string; count: number } => {
-            if (request.body.returnInvalid) {
-              // @ts-expect-error Intentionally returning invalid data to test validation failure
-              return { wrongField: 'invalid', count: -5 }
-            }
-            return { requiredField: 'valid', count: 42 }
-          },
-          sse: async (_request, sse) => {
-            const connection = sse.start('autoClose')
-            await connection.send('result', { success: true })
-            // autoClose mode
-          },
-        }),
-      },
+      jsonValidationTest: this.handleJsonValidationTest,
     }
   }
+
+  private handleJsonValidationTest = buildHandler(jsonValidationContract, {
+    sync: (request): { requiredField: string; count: number } => {
+      if (request.body.returnInvalid) {
+        // @ts-expect-error Intentionally returning invalid data to test validation failure
+        return { wrongField: 'invalid', count: -5 }
+      }
+      return { requiredField: 'valid', count: 42 }
+    },
+    sse: async (_request, sse) => {
+      const connection = sse.start('autoClose')
+      await connection.send('result', { success: true })
+      // autoClose mode
+    },
+  })
 }
 
 /**
@@ -367,84 +366,4 @@ export class GenericDualModeController extends AbstractDualModeController<Generi
   }
 }
 
-/**
- * Multi-format export controller (verbose format with multiFormatResponses).
- */
-export type TestMultiFormatExportContracts = {
-  export: typeof multiFormatExportContract
-}
-
-export class TestMultiFormatExportController extends AbstractDualModeController<TestMultiFormatExportContracts> {
-  public static contracts = {
-    export: multiFormatExportContract,
-  } as const
-
-  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestMultiFormatExportContracts> {
-    return {
-      export: {
-        contract: TestMultiFormatExportController.contracts.export,
-        handlers: buildHandler(multiFormatExportContract, {
-          sync: {
-            'application/json': (request) => ({
-              items: request.body.data,
-              count: request.body.data.length,
-            }),
-            'text/plain': (request) =>
-              request.body.data.map((item) => `${item.name}: ${item.value}`).join('\n'),
-            'text/csv': (request) =>
-              `name,value\n${request.body.data.map((item) => `${item.name},${item.value}`).join('\n')}`,
-          },
-          sse: async (request, sse) => {
-            const connection = sse.start('autoClose')
-            const items = request.body.data
-            for (let i = 0; i < items.length; i++) {
-              await connection.send('progress', { percent: ((i + 1) / items.length) * 100 })
-            }
-            await connection.send('done', { totalItems: items.length })
-            // autoClose mode
-          },
-        }),
-      },
-    }
-  }
-}
-
-/**
- * Multi-format report controller (GET method with verbose format).
- */
-export type TestMultiFormatReportContracts = {
-  report: typeof multiFormatReportContract
-}
-
-export class TestMultiFormatReportController extends AbstractDualModeController<TestMultiFormatReportContracts> {
-  public static contracts = {
-    report: multiFormatReportContract,
-  } as const
-
-  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestMultiFormatReportContracts> {
-    return {
-      report: {
-        contract: TestMultiFormatReportController.contracts.report,
-        handlers: buildHandler(multiFormatReportContract, {
-          sync: {
-            'application/json': (request) => ({
-              id: request.params.reportId,
-              title: `Report ${request.params.reportId}`,
-              data: { detailed: request.query.detailed === 'true' },
-            }),
-            'text/plain': (request) =>
-              `Report: ${request.params.reportId}\nDetailed: ${request.query.detailed ?? 'false'}`,
-          },
-          sse: async (request, sse) => {
-            const connection = sse.start('autoClose')
-            await connection.send('chunk', {
-              content: `Streaming report ${request.params.reportId}`,
-            })
-            await connection.send('done', { totalSize: 100 })
-            // autoClose mode
-          },
-        }),
-      },
-    }
-  }
-}
+// NOTE: Multi-format controllers removed - multi-format support is deprecated

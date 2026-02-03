@@ -11,6 +11,7 @@ export {
   type InferSSERequest,
   type RegisterSSERoutesOptions,
   type SSEOnlyHandlers,
+  type SSERouteHandler,
   type SSESession,
 } from '../routes/index.js'
 export {

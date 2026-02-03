@@ -1,21 +1,13 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {
-  DIContext,
-  injectPayloadSSE,
-  parseSSEEvents,
-  SSETestServer,
-} from '../../index.js'
+import { DIContext, injectPayloadSSE, parseSSEEvents, SSETestServer } from '../../index.js'
 import {
   chatCompletionContract,
   largeContentStreamContract,
   openaiStyleStreamContract,
 } from './fixtures/testContracts.js'
-import {
-  TestOpenAIStyleSSEModule,
-  TestPostSSEModule,
-} from './fixtures/testModules.js'
+import { TestOpenAIStyleSSEModule, TestPostSSEModule } from './fixtures/testModules.js'
 
 /**
  * SSE E2E tests using Fastify inject helpers (injectSSE, injectPayloadSSE).

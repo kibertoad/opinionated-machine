@@ -350,12 +350,12 @@ export type FastifySSEHandlerConfig<Contract extends AnySSEContractDefinition> =
 }
 
 /**
- * Maps SSE contracts to handler configurations for type checking.
+ * Maps SSE contracts to route handler containers for type checking.
  */
 export type BuildFastifySSERoutesReturnType<
   APIContracts extends Record<string, AnySSEContractDefinition>,
 > = {
-  [K in keyof APIContracts]: FastifySSEHandlerConfig<APIContracts[K]>
+  [K in keyof APIContracts]: SSERouteHandler<APIContracts[K]>
 }
 
 /**
@@ -387,16 +387,16 @@ export type InferSSERequest<Contract extends AnySSEContractDefinition> = Fastify
 // ============================================================================
 
 /**
- * Handler function for JSON mode.
+ * Handler function for sync (non-streaming) mode.
  * Signature matches Fastify's `(request, reply)` pattern.
  *
  * @template Params - Path parameters type
  * @template Query - Query string parameters type
  * @template Headers - Request headers type
  * @template Body - Request body type
- * @template SyncResponse - Response type that must match contract's jsonResponse schema
+ * @template SyncResponse - Response type that must match contract's syncResponse schema
  */
-export type JsonModeHandler<
+export type SyncModeHandler<
   Params = unknown,
   Query = unknown,
   Headers = unknown,
@@ -406,6 +406,17 @@ export type JsonModeHandler<
   request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
   reply: FastifyReply,
 ) => SyncResponse | Promise<SyncResponse>
+
+/**
+ * @deprecated Use SyncModeHandler instead. This alias is kept for backwards compatibility.
+ */
+export type JsonModeHandler<
+  Params = unknown,
+  Query = unknown,
+  Headers = unknown,
+  Body = unknown,
+  SyncResponse = unknown,
+> = SyncModeHandler<Params, Query, Headers, Body, SyncResponse>
 
 /**
  * Handler function for SSE mode with deferred headers.
@@ -466,7 +477,7 @@ export type SSEModeHandler<
  * @template Query - Query string parameters type
  * @template Headers - Request headers type
  * @template Body - Request body type
- * @template SyncResponse - JSON response type
+ * @template SyncResponse - Sync response type
  * @template Events - SSE event schemas
  */
 export type DualModeHandlers<
@@ -477,11 +488,12 @@ export type DualModeHandlers<
   SyncResponse = unknown,
   Events extends SSEEventSchemas = SSEEventSchemas,
 > = {
-  json: JsonModeHandler<Params, Query, Headers, Body, SyncResponse>
+  sync: SyncModeHandler<Params, Query, Headers, Body, SyncResponse>
   sse: SSEModeHandler<Events, Params, Query, Headers, Body>
 }
 
 /**
+ * @deprecated Multi-format handlers are no longer supported. Use single sync handler instead.
  * Handler function for a specific format in multi-format mode.
  * @template Params - Path parameters type
  * @template Query - Query string parameters type
@@ -501,6 +513,7 @@ export type FormatHandler<
 ) => Response | Promise<Response>
 
 /**
+ * @deprecated Multi-format handlers are no longer supported. Use single sync handler instead.
  * Handler object for multi-format sync responses.
  * Maps Content-Type to handler function.
  *
@@ -527,6 +540,7 @@ export type SyncHandlers<
 }
 
 /**
+ * @deprecated Multi-format handlers are no longer supported. Use DualModeHandlers with single sync handler instead.
  * Combined handlers for verbose multi-format dual-mode routes.
  *
  * @template Formats - Multi-format response schemas
@@ -561,74 +575,20 @@ export type FastifyDualModeRouteOptions = FastifySSERouteOptions & {
 }
 
 /**
- * Infer handlers type based on contract type - simplified vs verbose.
- * - Simplified contracts (jsonResponse): `{ json: handler, sse: handler }`
- * - Verbose contracts (multiFormatResponses): `{ sync: { format: handler, ... }, sse: handler }`
+ * Infer handlers type based on contract type.
+ * All dual-mode contracts use `{ sync: handler, sse: handler }` pattern.
  *
- * When the contract type is the generic AnyDualModeContractDefinition (where multiFormatResponses
- * is optional), we return a union of both handler types to allow either style.
+ * @template Contract - The dual-mode contract definition
  */
 export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition> =
-  // Check if multiFormatResponses is definitely defined (not optional)
-  undefined extends Contract['multiFormatResponses']
-    ? // multiFormatResponses is optional - could be either simplified or verbose
-      Contract['jsonResponse'] extends z.ZodTypeAny
-      ? // jsonResponse is defined - simplified handlers
-        DualModeHandlers<
-          z.infer<Contract['params']>,
-          z.infer<Contract['query']>,
-          z.infer<Contract['requestHeaders']>,
-          Contract['requestBody'] extends z.ZodTypeAny
-            ? z.infer<Contract['requestBody']>
-            : undefined,
-          z.infer<Contract['jsonResponse']>,
-          Contract['events']
-        >
-      : // Neither is definitely defined - accept both handler styles (for AnyDualModeContractDefinition)
-          | DualModeHandlers<
-              z.infer<Contract['params']>,
-              z.infer<Contract['query']>,
-              z.infer<Contract['requestHeaders']>,
-              Contract['requestBody'] extends z.ZodTypeAny
-                ? z.infer<Contract['requestBody']>
-                : undefined,
-              unknown,
-              Contract['events']
-            >
-          | VerboseDualModeHandlers<
-              MultiFormatResponses,
-              z.infer<Contract['params']>,
-              z.infer<Contract['query']>,
-              z.infer<Contract['requestHeaders']>,
-              Contract['requestBody'] extends z.ZodTypeAny
-                ? z.infer<Contract['requestBody']>
-                : undefined,
-              Contract['events']
-            >
-    : // multiFormatResponses is definitely defined - verbose handlers
-      Contract['multiFormatResponses'] extends MultiFormatResponses
-      ? VerboseDualModeHandlers<
-          Contract['multiFormatResponses'],
-          z.infer<Contract['params']>,
-          z.infer<Contract['query']>,
-          z.infer<Contract['requestHeaders']>,
-          Contract['requestBody'] extends z.ZodTypeAny
-            ? z.infer<Contract['requestBody']>
-            : undefined,
-          Contract['events']
-        >
-      : DualModeHandlers<
-          z.infer<Contract['params']>,
-          z.infer<Contract['query']>,
-          z.infer<Contract['requestHeaders']>,
-          Contract['requestBody'] extends z.ZodTypeAny
-            ? z.infer<Contract['requestBody']>
-            : undefined,
-          Contract['jsonResponse'] extends z.ZodTypeAny
-            ? z.infer<Contract['jsonResponse']>
-            : unknown,
-          Contract['events']
-        >
+  DualModeHandlers<
+    z.infer<Contract['params']>,
+    z.infer<Contract['query']>,
+    z.infer<Contract['requestHeaders']>,
+    Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
+    Contract['syncResponse'] extends z.ZodTypeAny ? z.infer<Contract['syncResponse']> : unknown,
+    Contract['events']
+  >
 
 /**
  * Handler configuration returned by buildDualModeRoutes().
@@ -645,12 +605,12 @@ export type FastifyDualModeHandlerConfig<Contract extends AnyDualModeContractDef
 }
 
 /**
- * Maps dual-mode contracts to handler configurations for type checking.
+ * Maps dual-mode contracts to route handler containers for type checking.
  */
 export type BuildFastifyDualModeRoutesReturnType<
   APIContracts extends Record<string, AnyDualModeContractDefinition>,
 > = {
-  [K in keyof APIContracts]: FastifyDualModeHandlerConfig<APIContracts[K]>
+  [K in keyof APIContracts]: DualModeRouteHandler<APIContracts[K]>
 }
 
 // ============================================================================
@@ -659,7 +619,7 @@ export type BuildFastifyDualModeRoutesReturnType<
 
 /**
  * SSE-only handler object - just the SSE handler.
- * Explicitly rejects `json` property to distinguish from dual-mode handlers.
+ * Explicitly rejects `sync` property to distinguish from dual-mode handlers.
  */
 export type SSEOnlyHandlers<
   Events extends SSEEventSchemas = SSEEventSchemas,
@@ -669,15 +629,14 @@ export type SSEOnlyHandlers<
   Body = unknown,
 > = {
   sse: SSEModeHandler<Events, Params, Query, Headers, Body>
-  /** SSE-only contracts do not support JSON handlers */
-  json?: never
+  /** SSE-only contracts do not support sync handlers */
+  sync?: never
 }
 
 /**
  * Infer the handler type based on contract type.
  * - SSE-only contracts: `{ sse: handler }`
- * - Simplified dual-mode contracts: `{ json: handler, sse: handler }`
- * - Verbose dual-mode contracts: `{ sync: { format: handler, ... }, sse: handler }`
+ * - Dual-mode contracts: `{ sync: handler, sse: handler }`
  */
 export type InferHandlers<Contract> = Contract extends AnyDualModeContractDefinition
   ? InferDualModeHandlers<Contract>
@@ -706,18 +665,57 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
       >
     : never
 
+// ============================================================================
+// Route Handler Container Types
+// ============================================================================
+
+/**
+ * Branded container for SSE route handlers.
+ * Contains the contract, handlers, and optional route configuration.
+ *
+ * @template Contract - The SSE contract definition
+ */
+export type SSERouteHandler<Contract extends AnySSEContractDefinition> = {
+  readonly __type: 'SSERouteHandler'
+  readonly contract: Contract
+  readonly handlers: SSEOnlyHandlers<
+    Contract['events'],
+    z.infer<Contract['params']>,
+    z.infer<Contract['query']>,
+    z.infer<Contract['requestHeaders']>,
+    Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
+  >
+  readonly options?: FastifySSERouteOptions
+}
+
+/**
+ * Branded container for dual-mode route handlers.
+ * Contains the contract, handlers, and optional route configuration.
+ *
+ * @template Contract - The dual-mode contract definition
+ */
+export type DualModeRouteHandler<Contract extends AnyDualModeContractDefinition> = {
+  readonly __type: 'DualModeRouteHandler'
+  readonly contract: Contract
+  readonly handlers: InferDualModeHandlers<Contract>
+  readonly options?: FastifyDualModeRouteOptions
+}
+
 /**
  * Unified handler builder for both SSE-only and dual-mode contracts.
  *
+ * Returns a branded container with the contract embedded, eliminating the need
+ * to pass the contract separately when building routes.
+ *
  * This function provides automatic type inference based on the contract type:
  * - **SSE-only contracts**: Provide `{ sse: handler }` only
- * - **Dual-mode contracts**: Provide both `{ json: handler, sse: handler }`
+ * - **Dual-mode contracts**: Provide both `{ sync: handler, sse: handler }`
  *
  * ## Handler Signatures
  *
- * **JSON handler** (dual-mode only):
+ * **Sync handler** (dual-mode only):
  * ```typescript
- * json: (request, reply) => SyncResponse | Promise<SyncResponse>
+ * sync: (request, reply) => SyncResponse | Promise<SyncResponse>
  * ```
  *
  * **SSE handler** (both SSE-only and dual-mode):
@@ -737,19 +735,13 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
  * @example
  * ```typescript
  * // SSE-only contract - request-response streaming with early return
- * const sseHandlers = buildHandler(chatStreamContract, {
+ * const sseHandler = buildHandler(chatStreamContract, {
  *   sse: async (request, sse) => {
- *     // Early return before streaming - can return any HTTP response
  *     const entity = await db.find(request.params.id)
  *     if (!entity) {
  *       return sse.respond(404, { error: 'Not found' })
  *     }
- *
- *     // Start streaming (sends 200 + SSE headers)
- *     // 'autoClose' closes session after handler returns
  *     const session = sse.start('autoClose')
- *
- *     // Stream events
  *     for (const word of request.body.message.split(' ')) {
  *       await session.send('chunk', { delta: word })
  *     }
@@ -757,18 +749,17 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
  *   },
  * })
  *
- * // SSE-only contract - long-lived session (e.g., notifications)
- * const notificationHandlers = buildHandler(notificationsContract, {
+ * // SSE-only with options (3rd param)
+ * const notificationHandler = buildHandler(notificationsContract, {
  *   sse: async (request, sse) => {
- *     // 'keepAlive' keeps session open after handler returns
  *     const session = sse.start('keepAlive')
  *     this.subscriptions.set(session.id, request.params.userId)
  *   },
- * })
+ * }, { onConnect: ..., onClose: ... })
  *
- * // Dual-mode contract - supports both JSON and SSE responses
- * const dualModeHandlers = buildHandler(chatCompletionContract, {
- *   json: async (request, reply) => {
+ * // Dual-mode contract - supports both sync and SSE responses
+ * const dualModeHandler = buildHandler(chatCompletionContract, {
+ *   sync: (request, reply) => {
  *     reply.header('x-custom', 'value')
  *     return { reply: 'Hello', usage: { tokens: 5 } }
  *   },
@@ -777,13 +768,45 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
  *     await session.send('chunk', { delta: 'Hello' })
  *     await session.send('done', { usage: { total: 5 } })
  *   },
- * })
+ * }, { preHandler: authHandler })
  * ```
  */
+export function buildHandler<Contract extends AnySSEContractDefinition>(
+  contract: Contract,
+  handlers: HandlersForContract<Contract>,
+  options?: FastifySSERouteOptions,
+): SSERouteHandler<Contract>
+
+export function buildHandler<Contract extends AnyDualModeContractDefinition>(
+  contract: Contract,
+  handlers: HandlersForContract<Contract>,
+  options?: FastifyDualModeRouteOptions,
+): DualModeRouteHandler<Contract>
+
 export function buildHandler<
   Contract extends AnyDualModeContractDefinition | AnySSEContractDefinition,
->(_contract: Contract, handlers: HandlersForContract<Contract>): typeof handlers {
-  return handlers
+>(
+  contract: Contract,
+  handlers: HandlersForContract<Contract>,
+  options?: FastifySSERouteOptions | FastifyDualModeRouteOptions,
+): SSERouteHandler<AnySSEContractDefinition> | DualModeRouteHandler<AnyDualModeContractDefinition> {
+  // Check if this is a dual-mode contract (has syncResponse or isDualMode marker)
+  if ('isDualMode' in contract && contract.isDualMode) {
+    return {
+      __type: 'DualModeRouteHandler',
+      contract: contract as AnyDualModeContractDefinition,
+      handlers: handlers as InferDualModeHandlers<AnyDualModeContractDefinition>,
+      options: options as FastifyDualModeRouteOptions,
+    }
+  }
+
+  // SSE-only contract
+  return {
+    __type: 'SSERouteHandler',
+    contract: contract as AnySSEContractDefinition,
+    handlers: handlers as SSEOnlyHandlers,
+    options: options as FastifySSERouteOptions,
+  }
 }
 
 // ============================================================================

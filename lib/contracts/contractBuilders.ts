@@ -24,7 +24,7 @@ export type SSEGetContractConfig<
   requestHeaders: RequestHeaders
   events: Events
   requestBody?: never
-  jsonResponse?: never
+  syncResponse?: never
   multiFormatResponses?: never
 }
 
@@ -46,13 +46,13 @@ export type SSEPayloadContractConfig<
   requestHeaders: RequestHeaders
   requestBody: Body
   events: Events
-  jsonResponse?: never
+  syncResponse?: never
   multiFormatResponses?: never
 }
 
 /**
  * Configuration for building a GET dual-mode route (simplified - single JSON format).
- * Requires jsonResponse, forbids requestBody.
+ * Requires syncResponse, forbids requestBody.
  */
 export type DualModeGetContractConfig<
   Params extends z.ZodTypeAny,
@@ -67,7 +67,7 @@ export type DualModeGetContractConfig<
   query: Query
   requestHeaders: RequestHeaders
   /** Single JSON response schema */
-  jsonResponse: JsonResponse
+  syncResponse: JsonResponse
   multiFormatResponses?: never
   /**
    * Schema for validating response headers (JSON mode only).
@@ -88,7 +88,7 @@ export type DualModeGetContractConfig<
 
 /**
  * Configuration for building a POST/PUT/PATCH dual-mode route with request requestBody (simplified).
- * Requires both requestBody and jsonResponse.
+ * Requires both requestBody and syncResponse.
  */
 export type DualModePayloadContractConfig<
   Params extends z.ZodTypeAny,
@@ -106,7 +106,7 @@ export type DualModePayloadContractConfig<
   requestHeaders: RequestHeaders
   requestBody: Body
   /** Single JSON response schema */
-  jsonResponse: JsonResponse
+  syncResponse: JsonResponse
   multiFormatResponses?: never
   /**
    * Schema for validating response headers (JSON mode only).
@@ -126,7 +126,7 @@ export type DualModePayloadContractConfig<
 
 /**
  * Configuration for building a GET dual-mode route with multi-format responses.
- * Has multiFormatResponses, forbids requestBody and jsonResponse.
+ * Has multiFormatResponses, forbids requestBody and syncResponse.
  */
 export type MultiFormatGetContractConfig<
   Params extends z.ZodTypeAny,
@@ -140,7 +140,7 @@ export type MultiFormatGetContractConfig<
   params: Params
   query: Query
   requestHeaders: RequestHeaders
-  jsonResponse?: never
+  syncResponse?: never
   /** Multi-format response schemas */
   multiFormatResponses: Formats
   responseHeaders?: ResponseHeaders
@@ -167,7 +167,7 @@ export type MultiFormatPayloadContractConfig<
   query: Query
   requestHeaders: RequestHeaders
   requestBody: Body
-  jsonResponse?: never
+  syncResponse?: never
   /** Multi-format response schemas */
   multiFormatResponses: Formats
   responseHeaders?: ResponseHeaders
@@ -177,20 +177,20 @@ export type MultiFormatPayloadContractConfig<
 /**
  * Unified contract builder with overloads for SSE-only, simplified dual-mode, and verbose dual-mode contracts.
  *
- * Automatically determines the contract type based on the presence of `requestBody`, `jsonResponse`, and `multiFormatResponses`:
+ * Automatically determines the contract type based on the presence of `requestBody`, `syncResponse`, and `multiFormatResponses`:
  *
  * | Response Config | requestBody | Result |
  * |-----------------|------|--------|
  * | none | ❌ | SSE GET |
  * | none | ✅ | SSE POST/PUT/PATCH |
- * | jsonResponse | ❌ | Simplified Dual-mode GET |
- * | jsonResponse | ✅ | Simplified Dual-mode POST/PUT/PATCH |
+ * | syncResponse | ❌ | Simplified Dual-mode GET |
+ * | syncResponse | ✅ | Simplified Dual-mode POST/PUT/PATCH |
  * | multiFormatResponses | ❌ | Verbose Dual-mode GET |
  * | multiFormatResponses | ✅ | Verbose Dual-mode POST/PUT/PATCH |
  *
  * @example
  * ```typescript
- * // SSE GET - no requestBody, no jsonResponse/multiFormatResponses
+ * // SSE GET - no requestBody, no syncResponse/multiFormatResponses
  * const notificationsStream = buildContract({
  *   pathResolver: () => '/api/notifications/stream',
  *   params: z.object({}),
@@ -207,7 +207,7 @@ export type MultiFormatPayloadContractConfig<
  *   query: z.object({}),
  *   requestHeaders: z.object({}),
  *   requestBody: z.object({ message: z.string() }),
- *   jsonResponse: z.object({ reply: z.string(), usage: z.object({ tokens: z.number() }) }),
+ *   syncResponse: z.object({ reply: z.string(), usage: z.object({ tokens: z.number() }) }),
  *   events: { chunk: z.object({ delta: z.string() }), done: z.object({ usage: z.object({ total: z.number() }) }) },
  * })
  *
@@ -305,7 +305,7 @@ export function buildContract<
   ResponseHeaders
 >
 
-// Overload 3: Simplified dual-mode with requestBody (has jsonResponse + requestBody)
+// Overload 3: Simplified dual-mode with requestBody (has syncResponse + requestBody)
 export function buildContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
@@ -335,7 +335,7 @@ export function buildContract<
   ResponseHeaders
 >
 
-// Overload 4: Simplified dual-mode GET (has jsonResponse, requestBody?: never)
+// Overload 4: Simplified dual-mode GET (has syncResponse, requestBody?: never)
 export function buildContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
@@ -402,7 +402,7 @@ export function buildContract(
 ): any {
   const hasMultiFormat =
     'multiFormatResponses' in config && config.multiFormatResponses !== undefined
-  const hasJsonResponse = 'jsonResponse' in config && config.jsonResponse !== undefined
+  const hasSyncResponse = 'syncResponse' in config && config.syncResponse !== undefined
   const hasBody = 'requestBody' in config && config.requestBody !== undefined
   const base = buildBaseFields(config, hasBody)
 
@@ -418,12 +418,12 @@ export function buildContract(
     }
   }
 
-  if (hasJsonResponse) {
-    // Simplified single-JSON-format contract
+  if (hasSyncResponse) {
+    // Simplified single-sync-format contract
     return {
       ...base,
       method: determineMethod(config as { method?: string }, hasBody, 'POST'),
-      jsonResponse: (config as { jsonResponse: unknown }).jsonResponse,
+      syncResponse: (config as { syncResponse: unknown }).syncResponse,
       responseHeaders: (config as { responseHeaders?: unknown }).responseHeaders,
       isDualMode: true,
       isSimplified: true,

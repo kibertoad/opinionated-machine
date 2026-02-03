@@ -6,6 +6,7 @@ export {
   buildFastifyRoute,
   buildHandler,
   type DualModeHandlers,
+  type DualModeRouteHandler,
   determineMode,
   extractPathTemplate,
   type FastifyDualModeHandlerConfig,
@@ -13,6 +14,7 @@ export {
   type JsonModeHandler,
   type RegisterDualModeRoutesOptions,
   type SSEModeHandler,
+  type SyncModeHandler,
 } from '../routes/index.js'
 export {
   AbstractDualModeController,

@@ -1,14 +1,8 @@
 import { createContainer } from 'awilix'
 import { describe, expect, it } from 'vitest'
-import {
-  DIContext,
-  SSEInjectConnection,
-} from '../../index.js'
+import { DIContext, SSEInjectConnection } from '../../index.js'
 import type { TestSSEController } from './fixtures/testControllers.js'
-import {
-  TestSSEModule,
-  type TestSSEModuleDependencies,
-} from './fixtures/testModules.js'
+import { TestSSEModule, type TestSSEModuleDependencies } from './fixtures/testModules.js'
 
 describe('SSE Inject E2E (controller without spy)', () => {
   it('throws error when accessing connectionSpy without enableConnectionSpy', async () => {
