@@ -254,8 +254,7 @@ export function buildContract<
 
 // Implementation
 export function buildContract(
-  config:
-    // biome-ignore lint/suspicious/noExplicitAny: Union of all config types
+  config: // biome-ignore lint/suspicious/noExplicitAny: Union of all config types
     | DualModePayloadContractConfig<any, any, any, any, any, any, any>
     // biome-ignore lint/suspicious/noExplicitAny: Union of all config types
     | DualModeGetContractConfig<any, any, any, any, any, any>
