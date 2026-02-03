@@ -46,7 +46,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [ParsedSSEEvent Type](#parsedsseevent-type)
   - [Testing SSE Controllers](#testing-sse-controllers)
   - [SSESessionSpy API](#ssesessionspy-api)
-  - [Connection Monitoring](#connection-monitoring)
+  - [Session Monitoring](#session-monitoring)
   - [SSE Test Utilities](#sse-test-utilities)
     - [Quick Reference](#quick-reference)
     - [Inject vs HTTP Comparison](#inject-vs-http-comparison)

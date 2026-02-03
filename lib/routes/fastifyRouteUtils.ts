@@ -296,6 +296,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
   // State tracking
   let started = false
   let responseSent = false
+  let headersSent = false
   let connection: SSESession<Events> | undefined
   let sessionMode: SSESessionMode | undefined
   let onCloseCalled = false
@@ -361,40 +362,30 @@ export function createSSEContext<Events extends SSEEventSchemas>(
         await callOnClose('server')
       })
 
-      // Tell @fastify/sse to keep the connection open after handler returns
-      sseReply.sse.keepAlive()
+      // Send headers if not already sent via sendHeaders()
+      if (!headersSent) {
+        // Tell @fastify/sse to keep the connection open after handler returns
+        sseReply.sse.keepAlive()
 
-      // Send headers and flush them to establish the stream
-      sseReply.sse.sendHeaders()
-      reply.raw.flushHeaders()
-
-      // Handle reconnection with Last-Event-ID
-      // The reconnection must complete before handler sends events to maintain event ordering
-      const lastEventId = request.headers['last-event-id']
-      let reconnectionPromise: Promise<void> | undefined
-      if (lastEventId && options?.onReconnect) {
-        // Start reconnection - pass a temporary connection object since we need it for the callback
-        // Note: We'll update the connection reference after creating the real one
-        reconnectionPromise = (async () => {
-          try {
-            const replayEvents = await options.onReconnect?.(
-              connection as unknown as SSESession,
-              lastEventId as string,
-            )
-            if (replayEvents) {
-              await sendReplayEvents(sseReply, replayEvents)
-            }
-          } catch (err) {
-            options?.logger?.error(
-              { err, lastEventId },
-              `Error in ${logPrefix} onReconnect handler`,
-            )
-          }
-        })()
+        // Send headers and flush them to establish the stream
+        sseReply.sse.sendHeaders()
+        reply.raw.flushHeaders()
+        headersSent = true
       }
 
-      // Create connection with initial context and reconnection promise
-      // The send() method will await the reconnection promise to ensure ordering
+      // Handle reconnection with Last-Event-ID
+      // Create a deferred promise so we can pass it to the connection before starting reconnection
+      const lastEventId = request.headers['last-event-id']
+      let reconnectionResolve: (() => void) | undefined
+      const reconnectionPromise =
+        lastEventId && options?.onReconnect
+          ? new Promise<void>((resolve) => {
+              reconnectionResolve = resolve
+            })
+          : undefined
+
+      // Create connection with the reconnection promise
+      // The send() method will await this promise to ensure event ordering
       connection = createSSESessionInternal(
         connectionId,
         request,
@@ -408,6 +399,29 @@ export function createSSEContext<Events extends SSEEventSchemas>(
 
       // Register connection with controller
       controller.registerConnection(connection as unknown as SSESession)
+
+      // Now that connection exists, handle reconnection with a valid SSESession
+      if (lastEventId && options?.onReconnect && reconnectionResolve) {
+        // Start reconnection asynchronously - connection.send() will wait for it
+        ;(async () => {
+          try {
+            const replayEvents = await options.onReconnect?.(
+              connection as unknown as SSESession,
+              lastEventId as string,
+            )
+            if (replayEvents) {
+              await sendReplayEvents(sseReply, replayEvents)
+            }
+          } catch (err) {
+            options?.logger?.error(
+              { err, lastEventId },
+              `Error in ${logPrefix} onReconnect handler`,
+            )
+          } finally {
+            reconnectionResolve?.()
+          }
+        })()
+      }
 
       // Fire onConnect hook (not awaited per plan)
       fireOnConnect(connection)
@@ -424,6 +438,9 @@ export function createSSEContext<Events extends SSEEventSchemas>(
     },
 
     sendHeaders: (): void => {
+      if (headersSent) {
+        throw new Error('Headers already sent. Cannot call sendHeaders() multiple times.')
+      }
       if (started) {
         throw new Error('Headers already sent via start().')
       }
@@ -433,6 +450,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
       sseReply.sse.keepAlive()
       sseReply.sse.sendHeaders()
       reply.raw.flushHeaders()
+      headersSent = true
     },
 
     reply,
