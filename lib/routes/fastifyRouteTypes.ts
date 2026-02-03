@@ -8,6 +8,7 @@ import type {
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
+import type { SSECloseReason } from './fastifyRouteUtils.ts'
 
 // ============================================================================
 // SSE Handler Result Types
@@ -184,18 +185,17 @@ export type FastifySSERouteOptions = {
    */
   onConnect?: (connection: SSEConnection) => void | Promise<void>
   /**
-   * Called when the SSE connection is explicitly closed by the server via reply.sse.close().
-   * This is different from onDisconnect which fires when the underlying socket closes
-   * (client disconnect, network failure, etc.).
+   * Called when the SSE connection closes for any reason (client disconnect,
+   * network failure, or server explicitly closing via closeConnection()).
    *
-   * Use onClose for cleanup when you explicitly close a connection.
-   * Use onDisconnect for cleanup when the client disconnects.
+   * @param connection - The connection that was closed
+   * @param reason - Why the connection was closed:
+   *   - 'server': Server explicitly closed (closeConnection() or success('disconnect'))
+   *   - 'client': Client closed (EventSource.close(), navigation, network failure)
+   *
+   * Use this for cleanup like unsubscribing from events or removing from tracking.
    */
-  onClose?: (connection: SSEConnection) => void | Promise<void>
-  /**
-   * Called when client disconnects.
-   */
-  onDisconnect?: (connection: SSEConnection) => void | Promise<void>
+  onClose?: (connection: SSEConnection, reason: SSECloseReason) => void | Promise<void>
   /**
    * Handler for Last-Event-ID reconnection.
    * Return an iterable of events to replay, or handle replay manually.

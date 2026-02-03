@@ -177,7 +177,7 @@ export const multiFormatExportContract = buildContract({
   },
   events: {
     progress: z.object({ percent: z.number() }),
-    done: z.object({ format: z.string() }),
+    done: z.object({ totalItems: z.number() }),
   },
 })
 

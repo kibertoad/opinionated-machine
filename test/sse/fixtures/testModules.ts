@@ -179,7 +179,7 @@ export class TestReconnectSSEModule extends AbstractModule<TestReconnectSSEModul
 }
 
 /**
- * Module with logger test SSE controller for testing error handling in onDisconnect
+ * Module with logger test SSE controller for testing error handling in onClose
  */
 export type TestLoggerSSEModuleDependencies = {
   logger: SSELogger

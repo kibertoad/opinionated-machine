@@ -502,7 +502,7 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
         handlers: this.handleStream,
         options: {
           onConnect: (conn) => this.onConnect(conn),
-          onDisconnect: (conn) => this.onDisconnect(conn),
+          onClose: (conn, reason) => this.onClose(conn, reason),
         },
       },
     }
@@ -541,10 +541,10 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
     console.log('Client connected:', connection.id)
   }
 
-  private onDisconnect = (connection: SSEConnection) => {
+  private onClose = (connection: SSEConnection, reason: SSECloseReason) => {
     const userId = connection.context?.userId as string
     this.notificationService.unsubscribe(userId)
-    console.log('Client disconnected:', connection.id)
+    console.log(`Client disconnected (${reason}):`, connection.id)
   }
 }
 ```
@@ -736,7 +736,7 @@ public buildSSERoutes() {
           }
         },
         onConnect: (conn) => console.log('Admin connected'),
-        onDisconnect: (conn) => console.log('Admin disconnected'),
+        onClose: (conn, reason) => console.log(`Admin disconnected (${reason})`),
         // Handle client reconnection with Last-Event-ID
         onReconnect: async (conn, lastEventId) => {
           // Return events to replay, or handle manually
@@ -756,22 +756,23 @@ public buildSSERoutes() {
 | -------- | ------------- |
 | `preHandler` | Authentication/authorization hook that runs before SSE connection |
 | `onConnect` | Called after client connects (SSE handshake complete) |
-| `onDisconnect` | Called when underlying socket closes (client disconnect, network failure) |
-| `onClose` | Called when server explicitly closes connection via `reply.sse.close()` |
+| `onClose` | Called when connection closes (client disconnect, network failure, or server close). Receives `(connection, reason)` where reason is `'server'` or `'client'` |
 | `onReconnect` | Handle Last-Event-ID reconnection, return events to replay |
 | `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
 | `serializer` | Custom serializer for SSE data (e.g., for custom JSON encoding) |
 | `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages |
 
-**onClose vs onDisconnect:**
-- `onDisconnect`: Fires when the underlying socket closes (client navigates away, network failure, connection timeout)
-- `onClose`: Fires when the server explicitly closes via `reply.sse.close()` (after `success('disconnect')` or explicit close)
+**onClose reason parameter:**
+- `'server'`: Server explicitly closed the connection (via `closeConnection()` or `success('disconnect')`)
+- `'client'`: Client closed the connection (EventSource.close(), navigation, network failure)
 
 ```ts
 options: {
   onConnect: (conn) => console.log('Client connected'),
-  onDisconnect: (conn) => console.log('Client disconnected (socket closed)'),
-  onClose: (conn) => console.log('Server closed connection'),
+  onClose: (conn, reason) => {
+    console.log(`Connection closed (${reason}):`, conn.id)
+    // reason is 'server' or 'client'
+  },
   serializer: (data) => JSON.stringify(data, null, 2), // Pretty-print JSON
   heartbeatInterval: 30000, // Send heartbeat every 30 seconds
 }
@@ -830,7 +831,7 @@ if (!sent) {
 }
 ```
 
-**Lifecycle hook errors** (`onConnect`, `onReconnect`, `onDisconnect`):
+**Lifecycle hook errors** (`onConnect`, `onReconnect`, `onClose`):
 - All lifecycle hooks are wrapped in try/catch to prevent crashes
 - If a `logger` is provided in route options, errors are logged with context
 - If no logger is provided, errors are silently ignored
@@ -846,7 +847,7 @@ public buildSSERoutes() {
       options: {
         logger: this.logger, // pino-compatible logger
         onConnect: (conn) => { /* may throw */ },
-        onDisconnect: (conn) => { /* may throw */ },
+        onClose: (conn, reason) => { /* may throw */ },
       },
     },
   }
@@ -1548,7 +1549,7 @@ handlers: buildHandler(exportContract, {
   },
   sse: async (request, connection) => {
     // SSE streaming handler
-    await connection.send('done', { format: 'sse' })
+    await connection.send('done', { totalItems: request.body.data.length })
     return success('disconnect')
   },
 })
@@ -1632,7 +1633,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
           },
           // Optional: SSE lifecycle hooks
           onConnect: (conn) => console.log('Client connected:', conn.id),
-          onDisconnect: (conn) => console.log('Client disconnected:', conn.id),
+          onClose: (conn, reason) => console.log(`Client disconnected (${reason}):`, conn.id),
         },
       },
     }

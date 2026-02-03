@@ -151,7 +151,7 @@ describe('Multi-Format Accept Header Routing', () => {
     expect(events.length).toBeGreaterThan(0)
     const doneEvent = events.find((e) => e.event === 'done')
     expect(doneEvent).toBeDefined()
-    expect(JSON.parse(doneEvent!.data)).toEqual({ format: 'sse' })
+    expect(JSON.parse(doneEvent!.data)).toEqual({ totalItems: 2 })
   })
 
   it('uses first format as default when Accept header is */*', async () => {

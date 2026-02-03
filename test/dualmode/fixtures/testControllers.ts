@@ -393,7 +393,7 @@ export class TestMultiFormatExportController extends AbstractDualModeController<
             for (let i = 0; i < items.length; i++) {
               await connection.send('progress', { percent: ((i + 1) / items.length) * 100 })
             }
-            await connection.send('done', { format: 'sse' })
+            await connection.send('done', { totalItems: items.length })
             return success('disconnect')
           },
         }),

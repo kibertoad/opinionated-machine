@@ -3,6 +3,7 @@ import {
   AbstractSSEController,
   type BuildFastifySSERoutesReturnType,
   buildHandler,
+  type SSECloseReason,
   type SSEConnection,
   type SSEControllerConfig,
   type SSELogger,
@@ -53,7 +54,7 @@ export class StreamController extends AbstractSSEController<{
           onConnect: (conn) => {
             this.connectionEvents.push({ type: 'connect', connectionId: conn.id })
           },
-          onDisconnect: (conn) => {
+          onClose: (conn) => {
             this.connectionEvents.push({ type: 'disconnect', connectionId: conn.id })
             this.eventService.unsubscribe(conn.id)
           },
@@ -119,7 +120,7 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
         handlers: this.handleStream,
         options: {
           onConnect: this.onConnect,
-          onDisconnect: this.onDisconnect,
+          onClose: this.onClose,
         },
       },
     }
@@ -143,8 +144,8 @@ export class TestSSEController extends AbstractSSEController<TestSSEContracts> {
     // Setup subscription when connected
   }
 
-  private onDisconnect = (connection: SSEConnection) => {
-    // Cleanup when disconnected
+  private onClose = (connection: SSEConnection, _reason: SSECloseReason) => {
+    // Cleanup when connection closes
     // Resolve any pending handler resolver for this connection so completeHandler won't hang
     const resolve = this.handlerDoneResolvers.get(connection.id)
     if (resolve) {
@@ -496,7 +497,7 @@ export class TestLargeContentSSEController extends AbstractSSEController<TestLar
 
 /**
  * Test SSE controller for logger error handling.
- * The onDisconnect handler throws an error to test that:
+ * The onClose handler throws an error to test that:
  * 1. The logger is called with the error
  * 2. The connection is still properly unregistered despite the error
  */
@@ -523,9 +524,9 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
         handlers: this.handleStream,
         options: {
           logger: this.logger,
-          onDisconnect: () => {
+          onClose: () => {
             // Intentionally throw to test error handling
-            throw new Error('Test error in onDisconnect')
+            throw new Error('Test error in onClose')
           },
         },
       },
@@ -535,7 +536,7 @@ export class TestLoggerSSEController extends AbstractSSEController<TestLoggerSSE
   private handleStream = buildHandler(loggerTestStreamContract, {
     sse: async (_request, connection) => {
       await connection.send('message', { text: 'Hello from logger test' })
-      // Don't close connection - let client close to trigger onDisconnect
+      // Don't close connection - let client close to trigger onClose
       return success('maintain_connection')
     },
   })

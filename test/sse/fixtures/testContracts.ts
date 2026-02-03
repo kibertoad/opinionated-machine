@@ -154,7 +154,7 @@ export const largeContentStreamContract = buildContract({
 })
 
 /**
- * GET SSE route for testing logger error handling in onDisconnect
+ * GET SSE route for testing logger error handling in onClose
  */
 export const loggerTestStreamContract = buildContract({
   pathResolver: () => '/api/logger-test/stream',

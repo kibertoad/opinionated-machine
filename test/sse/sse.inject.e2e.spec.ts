@@ -714,69 +714,68 @@ describe('SSE Inject E2E (onClose error handling)', () => {
     await server.close()
   })
 
-  it('does not fire onDisconnect when onClose is triggered', { timeout: 10000 }, async () => {
-    const onCloseCalled = vi.fn()
-    const onDisconnectCalled = vi.fn()
-    const mockLogger: SSELogger = { error: vi.fn() }
+  it(
+    'passes reason "server" to onClose when server closes connection',
+    { timeout: 10000 },
+    async () => {
+      const onCloseReason = vi.fn()
+      const mockLogger: SSELogger = { error: vi.fn() }
 
-    const container = createContainer({ injectionMode: 'PROXY' })
-    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies(
-      { modules: [new TestOnCloseErrorSSEModule(mockLogger)] },
-      undefined,
-    )
+      const container = createContainer({ injectionMode: 'PROXY' })
+      const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+      context.registerDependencies(
+        { modules: [new TestOnCloseErrorSSEModule(mockLogger)] },
+        undefined,
+      )
 
-    const controller = context.diContainer.resolve(
-      'testOnCloseErrorSSEController',
-    ) as TestOnCloseErrorSSEController
+      const controller = context.diContainer.resolve(
+        'testOnCloseErrorSSEController',
+      ) as TestOnCloseErrorSSEController
 
-    const server = await SSETestServer.create(
-      (app) => {
-        app.route(
-          buildFastifyRoute(controller, {
-            contract: onCloseErrorStreamContract,
-            handlers: {
-              sse: async (_request, connection) => {
-                await connection.send('message', { text: 'Hello' })
-                return success('disconnect')
+      const server = await SSETestServer.create(
+        (app) => {
+          app.route(
+            buildFastifyRoute(controller, {
+              contract: onCloseErrorStreamContract,
+              handlers: {
+                sse: async (_request, connection) => {
+                  await connection.send('message', { text: 'Hello' })
+                  // Server explicitly closes connection
+                  return success('disconnect')
+                },
               },
-            },
-            options: {
-              onClose: () => {
-                onCloseCalled()
-                // Don't throw, just track that it was called
+              options: {
+                onClose: (_conn, reason) => {
+                  onCloseReason(reason)
+                },
               },
-              onDisconnect: () => {
-                onDisconnectCalled()
-              },
-            },
-          }),
-        )
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
+            }),
+          )
         },
-        setup: () => ({ context }),
-      },
-    )
+        {
+          configureApp: (app) => {
+            app.setValidatorCompiler(validatorCompiler)
+            app.setSerializerCompiler(serializerCompiler)
+          },
+          setup: () => ({ context }),
+        },
+      )
 
-    const { closed } = injectSSE(server.app, onCloseErrorStreamContract, {})
+      const { closed } = injectSSE(server.app, onCloseErrorStreamContract, {})
 
-    await closed
+      await closed
 
-    // Wait for async callbacks to complete
-    await new Promise((resolve) => setTimeout(resolve, 100))
+      // Wait for async callbacks to complete
+      await new Promise((resolve) => setTimeout(resolve, 100))
 
-    // onClose should have been called (when handler returns 'disconnect')
-    expect(onCloseCalled).toHaveBeenCalledTimes(1)
-    // onDisconnect should NOT be called when onClose was triggered
-    expect(onDisconnectCalled).not.toHaveBeenCalled()
+      // onClose should have been called with reason 'server'
+      expect(onCloseReason).toHaveBeenCalledTimes(1)
+      expect(onCloseReason).toHaveBeenCalledWith('server')
 
-    await context.destroy()
-    await server.close()
-  })
+      await context.destroy()
+      await server.close()
+    },
+  )
 })
 
 describe('SSE Inject E2E (isConnected method)', () => {

@@ -48,6 +48,7 @@ export {
   handleReconnection,
   handleSSEError,
   isErrorLike,
+  type SSECloseReason,
   type SSEConnectionSetupResult,
   type SSEControllerLike,
   type SSELifecycleOptions,
