@@ -110,9 +110,10 @@ describe('Handler Type Enforcement', () => {
           'application/json': () => ({ result: 'test' }),
           'text/plain': () => 'plain text',
         },
-        sse: async (_req, conn) => {
-          await conn.send('done', { ok: true })
-          return { result: 'disconnect' as const }
+        sse: async (_req, sse) => {
+          const connection = sse.start()
+          await connection.send('done', { ok: true })
+          return connection.close()
         },
       })
 
@@ -135,9 +136,10 @@ describe('Handler Type Enforcement', () => {
       // This should compile without errors
       const handlers = buildHandler(simplifiedContract, {
         json: () => ({ reply: 'hello' }),
-        sse: async (_req, conn) => {
-          await conn.send('chunk', { delta: 'hi' })
-          return { result: 'disconnect' as const }
+        sse: async (_req, sse) => {
+          const connection = sse.start()
+          await connection.send('chunk', { delta: 'hi' })
+          return connection.close()
         },
       })
 

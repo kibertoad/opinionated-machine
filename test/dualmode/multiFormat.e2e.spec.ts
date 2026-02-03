@@ -1,4 +1,3 @@
-import { success } from '@lokalise/node-core'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -305,9 +304,10 @@ describe('Multi-Format Response Validation', () => {
           'application/json': () => ({ result: 'ok', count: 5 }),
           'text/plain': () => 'Valid response',
         },
-        sse: async (_req, conn) => {
-          await conn.send('done', { ok: true })
-          return success('disconnect')
+        sse: async (_req, sse) => {
+          const connection = sse.start()
+          await connection.send('done', { ok: true })
+          return connection.close()
         },
       },
     })
@@ -381,9 +381,10 @@ describe('Multi-Format Response Validation', () => {
           'application/json': () => ({ result: 'json-response' }),
           'text/plain': () => 'plain-text-response',
         },
-        sse: async (_req, conn) => {
-          await conn.send('done', { ok: true })
-          return success('disconnect')
+        sse: async (_req, sse) => {
+          const connection = sse.start()
+          await connection.send('done', { ok: true })
+          return connection.close()
         },
       },
     })

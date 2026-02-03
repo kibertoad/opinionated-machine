@@ -1,4 +1,3 @@
-import { success } from '@lokalise/node-core'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
 import { buildContract } from '../contracts/contractBuilders.ts'
@@ -79,10 +78,11 @@ describe('sseContracts', () => {
 
     it('allows valid event names and payloads', () => {
       const handlers = buildHandler(testContract, {
-        sse: async (_request, connection) => {
+        sse: async (_request, sse) => {
+          const connection = sse.start()
           await connection.send('chunk', { content: 'hello' })
           await connection.send('done', { totalTokens: 42 })
-          return success('disconnect')
+          return connection.close()
         },
       })
 
@@ -91,10 +91,11 @@ describe('sseContracts', () => {
 
     it('rejects invalid event name at compile time', () => {
       buildHandler(testContract, {
-        sse: async (_request, connection) => {
+        sse: async (_request, sse) => {
+          const connection = sse.start()
           // @ts-expect-error - 'invalid' is not a valid event name
           await connection.send('invalid', { content: 'test' })
-          return success('disconnect')
+          return connection.close()
         },
       })
 
@@ -103,10 +104,11 @@ describe('sseContracts', () => {
 
     it('rejects wrong payload at compile time', () => {
       buildHandler(testContract, {
-        sse: async (_request, connection) => {
+        sse: async (_request, sse) => {
+          const connection = sse.start()
           // @ts-expect-error - chunk expects { content: string }, not { totalTokens: number }
           await connection.send('chunk', { totalTokens: 42 })
-          return success('disconnect')
+          return connection.close()
         },
       })
 
@@ -115,10 +117,11 @@ describe('sseContracts', () => {
 
     it('rejects missing required field at compile time', () => {
       buildHandler(testContract, {
-        sse: async (_request, connection) => {
+        sse: async (_request, sse) => {
+          const connection = sse.start()
           // @ts-expect-error - done requires totalTokens field
           await connection.send('done', {})
-          return success('disconnect')
+          return connection.close()
         },
       })
 
@@ -127,10 +130,11 @@ describe('sseContracts', () => {
 
     it('rejects wrong field type at compile time', () => {
       buildHandler(testContract, {
-        sse: async (_request, connection) => {
+        sse: async (_request, sse) => {
+          const connection = sse.start()
           // @ts-expect-error - totalTokens should be number, not string
           await connection.send('done', { totalTokens: 'not a number' })
-          return success('disconnect')
+          return connection.close()
         },
       })
 
@@ -139,7 +143,7 @@ describe('sseContracts', () => {
 
     it('types request body from contract', () => {
       buildHandler(testContract, {
-        sse: (request) => {
+        sse: (request, sse) => {
           const message: string = request.body.message
           const count: number = request.body.count
 
@@ -148,7 +152,7 @@ describe('sseContracts', () => {
 
           expect(message).toBeDefined()
           expect(count).toBeDefined()
-          return success('disconnect')
+          return sse.start().close()
         },
       })
 
@@ -157,14 +161,14 @@ describe('sseContracts', () => {
 
     it('types request params from contract', () => {
       buildHandler(testContract, {
-        sse: (request) => {
+        sse: (request, sse) => {
           const id: string = request.params.id
 
           // @ts-expect-error - nonExistent does not exist on params
           const _invalid = request.params.nonExistent
 
           expect(id).toBeDefined()
-          return success('disconnect')
+          return sse.start().close()
         },
       })
 

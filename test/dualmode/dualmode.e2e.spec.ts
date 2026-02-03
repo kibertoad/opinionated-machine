@@ -1,4 +1,3 @@
-import { success } from '@lokalise/node-core'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -868,7 +867,7 @@ describe('Dual-Mode Route Builder Validation', () => {
         contract: invalidContract,
         handlers: {
           json: async () => ({ result: 'test' }),
-          sse: () => success('disconnect'),
+          sse: (_request, sse) => sse.start().close(),
         },
       }),
     ).toThrow('Route params schema must be a ZodObject for path template extraction')
@@ -912,8 +911,8 @@ describe('Dual-Mode Response Headers', () => {
           reply.header('x-ratelimit-remaining', '99')
           return { result: request.body.data }
         },
-        sse: () => {
-          return success('disconnect')
+        sse: (_request, sse) => {
+          return sse.start().close()
         },
       },
     })
@@ -981,8 +980,8 @@ describe('Dual-Mode Response Headers', () => {
           // Intentionally NOT setting the required header
           return { result: request.body.data }
         },
-        sse: () => {
-          return success('disconnect')
+        sse: (_request, sse) => {
+          return sse.start().close()
         },
       },
     })
@@ -1046,8 +1045,8 @@ describe('Dual-Mode Response Headers', () => {
         json: (request) => {
           return { result: request.body.data }
         },
-        sse: () => {
-          return success('disconnect')
+        sse: (_request, sse) => {
+          return sse.start().close()
         },
       },
     })

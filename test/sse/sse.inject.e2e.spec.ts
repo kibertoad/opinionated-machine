@@ -1,4 +1,3 @@
-import { success } from '@lokalise/node-core'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,6 +7,7 @@ import {
   injectPayloadSSE,
   injectSSE,
   parseSSEEvents,
+  SSEInjectConnection,
   type SSELogger,
   SSETestServer,
 } from '../../index.js'
@@ -16,6 +16,10 @@ import {
   authenticatedStreamContract,
   channelStreamContract,
   chatCompletionContract,
+  deferredHeaders404Contract,
+  deferredHeaders422Contract,
+  errorAfterStartContract,
+  forgottenStartContract,
   getStreamTestContract,
   isConnectedTestStreamContract,
   largeContentStreamContract,
@@ -25,12 +29,20 @@ import {
   sendStreamTestContract,
 } from './fixtures/testContracts.js'
 import type {
+  TestDeferredHeaders404Controller,
+  TestDeferredHeaders422Controller,
+  TestErrorAfterStartController,
+  TestForgottenStartController,
   TestOnCloseErrorSSEController,
   TestSSEController,
 } from './fixtures/testControllers.js'
 import {
   TestAuthSSEModule,
   TestChannelSSEModule,
+  TestDeferredHeaders404Module,
+  TestDeferredHeaders422Module,
+  TestErrorAfterStartModule,
+  TestForgottenStartModule,
   TestGetStreamSSEModule,
   TestIsConnectedSSEModule,
   TestOnCloseErrorSSEModule,
@@ -738,10 +750,11 @@ describe('SSE Inject E2E (onClose error handling)', () => {
             buildFastifyRoute(controller, {
               contract: onCloseErrorStreamContract,
               handlers: {
-                sse: async (_request, connection) => {
+                sse: async (_request, sse) => {
+                  const connection = sse.start()
                   await connection.send('message', { text: 'Hello' })
                   // Server explicitly closes connection
-                  return success('disconnect')
+                  return connection.close()
                 },
               },
               options: {
@@ -940,5 +953,824 @@ describe('SSE Inject E2E (getStream method)', () => {
     const messageEvent = events.find((e) => e.event === 'message')
     expect(messageEvent).toBeDefined()
     expect(JSON.parse(messageEvent!.data)).toEqual({ text: 'Got stream successfully' })
+  })
+})
+
+// ============================================================================
+// SSE Deferred Headers Tests
+// ============================================================================
+
+/**
+ * Tests for SSE Deferred Headers feature.
+ *
+ * The key capability: handlers can perform validation BEFORE HTTP headers are sent,
+ * enabling proper HTTP error codes (404, 422) for validation failures instead of
+ * always returning 200 and then sending an SSE error event.
+ *
+ * API pattern:
+ * 1. Handler receives `sse` context (not connection)
+ * 2. Handler performs validation
+ * 3. If validation fails: `return sse.error(code, body)` - sends HTTP error
+ * 4. If validation passes: `const connection = sse.start()` - sends 200 + SSE headers
+ * 5. Stream events via `connection.send()`
+ * 6. Return `connection.close()` or `connection.keepAlive()`
+ */
+describe('SSE Inject E2E (deferred headers - HTTP error before streaming)', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestDeferredHeaders404Module()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestDeferredHeaders404Controller>(
+      'testDeferredHeaders404Controller',
+    )
+
+    server = await SSETestServer.create(
+      (app) => {
+        app.route(buildFastifyRoute(controller, controller.buildSSERoutes().deferred404))
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await context.destroy()
+    await server.close()
+  })
+
+  it(
+    'returns HTTP 404 when entity not found, before streaming starts',
+    { timeout: 10000 },
+    async () => {
+      // Test: request for non-existent entity
+      const { closed } = injectSSE(server.app, deferredHeaders404Contract, {
+        params: { id: 'not-found' },
+      })
+
+      const response = await closed
+
+      // Should return proper HTTP 404, not 200 with SSE error event
+      expect(response.statusCode).toBe(404)
+      expect(response.headers['content-type']).toContain('application/json')
+
+      // Response body should be our error object (use JSON.parse since error responses aren't SSE)
+      const body = JSON.parse(response.body)
+      expect(body).toEqual({ error: 'Entity not found', id: 'not-found' })
+
+      // Should NOT have SSE content-type (cache-control may be present due to @fastify/sse internals)
+      expect(response.headers['content-type']).not.toContain('text/event-stream')
+    },
+  )
+
+  it('returns HTTP 200 with SSE when entity exists', { timeout: 10000 }, async () => {
+    // Test: request for existing entity (controller has 'existing-123' and 'another-456' pre-added)
+    const { closed } = injectSSE(server.app, deferredHeaders404Contract, {
+      params: { id: 'existing-123' },
+    })
+
+    const response = await closed
+
+    // Should return 200 with SSE
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('text/event-stream')
+
+    const events = parseSSEEvents(response.body)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.event).toBe('message')
+    expect(JSON.parse(events[0]!.data)).toEqual({ text: 'Found entity existing-123' })
+  })
+})
+
+describe('SSE Inject E2E (deferred headers - 422 validation)', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestDeferredHeaders422Module()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestDeferredHeaders422Controller>(
+      'testDeferredHeaders422Controller',
+    )
+
+    server = await SSETestServer.create(
+      (app) => {
+        app.route(buildFastifyRoute(controller, controller.buildSSERoutes().validate))
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await context.destroy()
+    await server.close()
+  })
+
+  it('returns HTTP 422 for negative value', { timeout: 10000 }, async () => {
+    const { closed } = injectPayloadSSE(server.app, deferredHeaders422Contract, {
+      body: { value: -5 },
+    })
+
+    const response = await closed
+    expect(response.statusCode).toBe(422)
+    // Use JSON.parse since error responses aren't SSE
+    expect(JSON.parse(response.body)).toEqual({
+      error: 'Validation failed',
+      details: 'Value must be non-negative',
+      received: -5,
+    })
+  })
+
+  it('returns HTTP 422 for value too large', { timeout: 10000 }, async () => {
+    const { closed } = injectPayloadSSE(server.app, deferredHeaders422Contract, {
+      body: { value: 9999 },
+    })
+
+    const response = await closed
+    expect(response.statusCode).toBe(422)
+    // Use JSON.parse since error responses aren't SSE
+    expect(JSON.parse(response.body)).toEqual({
+      error: 'Validation failed',
+      details: 'Value must be at most 1000',
+      received: 9999,
+    })
+  })
+
+  it('returns HTTP 200 with SSE for valid value', { timeout: 10000 }, async () => {
+    const { closed } = injectPayloadSSE(server.app, deferredHeaders422Contract, {
+      body: { value: 50 },
+    })
+
+    const response = await closed
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('text/event-stream')
+
+    const events = parseSSEEvents(response.body)
+    expect(events).toHaveLength(1)
+    expect(JSON.parse(events[0]!.data)).toEqual({ computed: 100 })
+  })
+})
+
+describe('SSE Inject E2E (deferred headers - error detection)', () => {
+  it(
+    'throws error when handler forgets to call start() or error()',
+    { timeout: 10000 },
+    async () => {
+      const container = createContainer({ injectionMode: 'PROXY' })
+      const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+      context.registerDependencies({ modules: [new TestForgottenStartModule()] }, undefined)
+
+      const controller = context.diContainer.resolve<TestForgottenStartController>(
+        'testForgottenStartController',
+      )
+
+      const server = await SSETestServer.create(
+        (app) => {
+          app.route(buildFastifyRoute(controller, controller.buildSSERoutes().forgottenStart))
+        },
+        {
+          configureApp: (app) => {
+            app.setValidatorCompiler(validatorCompiler)
+            app.setSerializerCompiler(serializerCompiler)
+          },
+          setup: () => ({ context }),
+        },
+      )
+
+      // This should result in an error because handler didn't call start() or error()
+      const { closed } = injectSSE(server.app, forgottenStartContract, {})
+
+      const response = await closed
+
+      // The framework should detect the bug and return an internal server error
+      expect(response.statusCode).toBe(500)
+      // Use JSON.parse since error responses aren't SSE
+      const body = JSON.parse(response.body)
+      expect(body.message).toContain('SSE handler must')
+
+      await context.destroy()
+      await server.close()
+    },
+  )
+
+  it('sends SSE error event when error thrown after start()', { timeout: 10000 }, async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestErrorAfterStartModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestErrorAfterStartController>(
+      'testErrorAfterStartController',
+    )
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route(buildFastifyRoute(controller, controller.buildSSERoutes().errorAfterStart))
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    const { closed } = injectSSE(server.app, errorAfterStartContract, {})
+
+    const response = await closed
+
+    // Should still return 200 because headers were already sent
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('text/event-stream')
+
+    const events = parseSSEEvents(response.body)
+
+    // Should have the first message event
+    const messageEvent = events.find((e) => e.event === 'message')
+    expect(messageEvent).toBeDefined()
+    expect(JSON.parse(messageEvent!.data)).toEqual({ text: 'First message' })
+
+    // Should have an SSE error event
+    const errorEvent = events.find((e) => e.event === 'error')
+    expect(errorEvent).toBeDefined()
+    const errorData = JSON.parse(errorEvent!.data)
+    expect(errorData.message).toContain('Simulated error after streaming started')
+
+    await context.destroy()
+    await server.close()
+  })
+})
+
+describe('SSE Inject E2E (deprecated setupSSESession)', () => {
+  it('setupSSESession backwards compat function works', { timeout: 10000 }, async () => {
+    const { setupSSESession } = await import('../../lib/routes/fastifyRouteUtils.js')
+    const { z } = await import('zod/v4')
+
+    // Create event schemas directly
+    const eventSchemas = {
+      message: z.object({ text: z.string() }),
+    }
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    // Get the controller from the module
+    const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
+
+    const server = await SSETestServer.create(
+      (app) => {
+        // Use the deprecated setupSSESession directly in a custom route
+        app.route({
+          method: 'GET',
+          url: '/test/legacy-setup',
+          sse: true,
+          handler: async (request, reply) => {
+            const result = await setupSSESession(
+              controller,
+              request,
+              reply,
+              eventSchemas,
+              undefined,
+              'LegacyTest',
+            )
+
+            await result.connection.send('message', { text: 'from legacy setup' })
+
+            // Close connection
+            result.sseReply.sse.close()
+            await result.connectionClosed
+          },
+        })
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    const response = await server.app.inject({
+      method: 'GET',
+      url: '/test/legacy-setup',
+      headers: { accept: 'text/event-stream' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('text/event-stream')
+
+    const events = parseSSEEvents(response.body)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.event).toBe('message')
+    expect(JSON.parse(events[0]!.data)).toEqual({ text: 'from legacy setup' })
+
+    await context.destroy()
+    await server.close()
+  })
+})
+
+describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
+  it('sendHeaders() sends SSE headers for manual streaming', { timeout: 10000 }, async () => {
+    const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
+    const { z } = await import('zod/v4')
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route({
+          method: 'GET',
+          url: '/test/send-headers',
+          sse: true,
+          handler: (request, reply) => {
+            const eventSchemas = { message: z.object({ text: z.string() }) }
+            const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
+
+            // Use sendHeaders for manual control
+            result.sseContext.sendHeaders()
+
+            // Use reply.sse directly for manual event sending
+            result.sseReply.sse.send({ event: 'message', data: JSON.stringify({ text: 'manual' }) })
+
+            // Close via reply.sse
+            result.sseReply.sse.close()
+          },
+        })
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    const response = await server.app.inject({
+      method: 'GET',
+      url: '/test/send-headers',
+      headers: { accept: 'text/event-stream' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('text/event-stream')
+
+    const events = parseSSEEvents(response.body)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.event).toBe('message')
+
+    await context.destroy()
+    await server.close()
+  })
+
+  it('hasError() returns true after sse.error() is called', { timeout: 10000 }, async () => {
+    const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
+    const { z } = await import('zod/v4')
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
+    let hasErrorResult = false
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route({
+          method: 'GET',
+          url: '/test/has-error',
+          sse: true,
+          handler: (request, reply) => {
+            const eventSchemas = { message: z.object({ text: z.string() }) }
+            const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
+
+            // Call error
+            const errorResult = result.sseContext.error(400, { error: 'test' })
+
+            // Check hasError
+            hasErrorResult = result.hasError()
+
+            // Process the error result
+            reply.code(errorResult.code).send(errorResult.body)
+          },
+        })
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    const response = await server.app.inject({
+      method: 'GET',
+      url: '/test/has-error',
+      headers: { accept: 'text/event-stream' },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(hasErrorResult).toBe(true)
+
+    await context.destroy()
+    await server.close()
+  })
+
+  it('sendHeaders() throws if called after start()', { timeout: 10000 }, async () => {
+    const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
+    const { z } = await import('zod/v4')
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
+    let thrownError: Error | null = null
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route({
+          method: 'GET',
+          url: '/test/send-headers-after-start',
+          sse: true,
+          handler: async (request, reply) => {
+            const eventSchemas = { message: z.object({ text: z.string() }) }
+            const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
+
+            // First start streaming
+            const connection = result.sseContext.start()
+
+            // Then try sendHeaders - should throw
+            try {
+              result.sseContext.sendHeaders()
+            } catch (e) {
+              thrownError = e as Error
+            }
+
+            await connection.send('message', { text: 'test' })
+            result.sseReply.sse.close()
+            await result.connectionClosed
+          },
+        })
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    await server.app.inject({
+      method: 'GET',
+      url: '/test/send-headers-after-start',
+      headers: { accept: 'text/event-stream' },
+    })
+
+    expect(thrownError).not.toBeNull()
+    expect(thrownError!.message).toContain('Headers already sent')
+
+    await context.destroy()
+    await server.close()
+  })
+
+  it('sendHeaders() throws if called after error()', { timeout: 10000 }, async () => {
+    const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
+    const { z } = await import('zod/v4')
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
+    let thrownError: Error | null = null
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route({
+          method: 'GET',
+          url: '/test/send-headers-after-error',
+          sse: true,
+          handler: (request, reply) => {
+            const eventSchemas = { message: z.object({ text: z.string() }) }
+            const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
+
+            // First send error
+            const errorResult = result.sseContext.error(400, { error: 'test' })
+
+            // Then try sendHeaders - should throw
+            try {
+              result.sseContext.sendHeaders()
+            } catch (e) {
+              thrownError = e as Error
+            }
+
+            reply.code(errorResult.code).send(errorResult.body)
+          },
+        })
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    await server.app.inject({
+      method: 'GET',
+      url: '/test/send-headers-after-error',
+      headers: { accept: 'text/event-stream' },
+    })
+
+    expect(thrownError).not.toBeNull()
+    expect(thrownError!.message).toContain('Cannot send headers after sending an error')
+
+    await context.destroy()
+    await server.close()
+  })
+
+  it('start() throws if called twice', { timeout: 10000 }, async () => {
+    const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
+    const { z } = await import('zod/v4')
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
+    let thrownError: Error | null = null
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route({
+          method: 'GET',
+          url: '/test/start-twice',
+          sse: true,
+          handler: async (request, reply) => {
+            const eventSchemas = { message: z.object({ text: z.string() }) }
+            const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
+
+            // First start
+            const connection = result.sseContext.start()
+
+            // Try to start again - should throw
+            try {
+              result.sseContext.start()
+            } catch (e) {
+              thrownError = e as Error
+            }
+
+            await connection.send('message', { text: 'test' })
+            result.sseReply.sse.close()
+            await result.connectionClosed
+          },
+        })
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    await server.app.inject({
+      method: 'GET',
+      url: '/test/start-twice',
+      headers: { accept: 'text/event-stream' },
+    })
+
+    expect(thrownError).not.toBeNull()
+    expect(thrownError!.message).toContain('SSE streaming already started')
+
+    await context.destroy()
+    await server.close()
+  })
+
+  it('start() throws if called after error()', { timeout: 10000 }, async () => {
+    const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
+    const { z } = await import('zod/v4')
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
+    let thrownError: Error | null = null
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route({
+          method: 'GET',
+          url: '/test/start-after-error',
+          sse: true,
+          handler: (request, reply) => {
+            const eventSchemas = { message: z.object({ text: z.string() }) }
+            const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
+
+            // First send error
+            const errorResult = result.sseContext.error(400, { error: 'test' })
+
+            // Try to start - should throw
+            try {
+              result.sseContext.start()
+            } catch (e) {
+              thrownError = e as Error
+            }
+
+            reply.code(errorResult.code).send(errorResult.body)
+          },
+        })
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    await server.app.inject({
+      method: 'GET',
+      url: '/test/start-after-error',
+      headers: { accept: 'text/event-stream' },
+    })
+
+    expect(thrownError).not.toBeNull()
+    expect(thrownError!.message).toContain('Cannot start streaming after sending an error')
+
+    await context.destroy()
+    await server.close()
+  })
+
+  it('error() throws if called after start()', { timeout: 10000 }, async () => {
+    const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
+    const { z } = await import('zod/v4')
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
+    let thrownError: Error | null = null
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route({
+          method: 'GET',
+          url: '/test/error-after-start',
+          sse: true,
+          handler: async (request, reply) => {
+            const eventSchemas = { message: z.object({ text: z.string() }) }
+            const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
+
+            // First start streaming
+            const connection = result.sseContext.start()
+
+            // Then try error - should throw
+            try {
+              result.sseContext.error(400, { error: 'test' })
+            } catch (e) {
+              thrownError = e as Error
+            }
+
+            await connection.send('message', { text: 'test' })
+            result.sseReply.sse.close()
+            await result.connectionClosed
+          },
+        })
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    await server.app.inject({
+      method: 'GET',
+      url: '/test/error-after-start',
+      headers: { accept: 'text/event-stream' },
+    })
+
+    expect(thrownError).not.toBeNull()
+    expect(thrownError!.message).toContain('Cannot send error response after streaming')
+
+    await context.destroy()
+    await server.close()
+  })
+
+  it('getConnection() returns connection after start()', { timeout: 10000 }, async () => {
+    const { createSSEContext } = await import('../../lib/routes/fastifyRouteUtils.js')
+    const { z } = await import('zod/v4')
+
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
+    let connectionFromGetter: unknown = null
+
+    const server = await SSETestServer.create(
+      (app) => {
+        app.route({
+          method: 'GET',
+          url: '/test/get-connection',
+          sse: true,
+          handler: async (request, reply) => {
+            const eventSchemas = { message: z.object({ text: z.string() }) }
+            const result = createSSEContext(controller, request, reply, eventSchemas, undefined)
+
+            // Start streaming
+            const connection = result.sseContext.start()
+
+            // Get connection from getter
+            connectionFromGetter = result.getConnection()
+
+            await connection.send('message', { text: 'test' })
+            result.sseReply.sse.close()
+            await result.connectionClosed
+          },
+        })
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+
+    const response = await server.app.inject({
+      method: 'GET',
+      url: '/test/get-connection',
+      headers: { accept: 'text/event-stream' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(connectionFromGetter).not.toBeNull()
+    expect((connectionFromGetter as { id: string }).id).toBeDefined()
+
+    await context.destroy()
+    await server.close()
+  })
+})
+
+describe('SSE Inject E2E (SSEInjectConnection timeout paths)', () => {
+  it('waitForEvent throws on timeout', async () => {
+    // Create connection with no events (empty body)
+    const connection = new SSEInjectConnection({
+      statusCode: 200,
+      headers: {},
+      body: '',
+    })
+
+    await expect(connection.waitForEvent('nonexistent', 10)).rejects.toThrow(
+      'Timeout waiting for event: nonexistent',
+    )
+  })
+
+  it('waitForEvents throws on timeout when not enough events', async () => {
+    // Create connection with only 1 event
+    const connection = new SSEInjectConnection({
+      statusCode: 200,
+      headers: {},
+      body: 'event: test\ndata: {}\n\n',
+    })
+
+    await expect(connection.waitForEvents(5, 10)).rejects.toThrow(
+      'Timeout waiting for 5 events, received 1',
+    )
   })
 })

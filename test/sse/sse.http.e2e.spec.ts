@@ -753,7 +753,7 @@ describe('SSE HTTP E2E (connection lifecycle)', () => {
   })
 })
 
-describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
+describe('SSE HTTP E2E (SSESessionSpy edge cases)', () => {
   let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
@@ -828,7 +828,7 @@ describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
     // Clear the spy - should reject the pending waiter
     controller.connectionSpy.clear()
 
-    await expect(waitPromise).rejects.toThrow('ConnectionSpy was cleared')
+    await expect(waitPromise).rejects.toThrow('SessionSpy was cleared')
 
     // Events should be empty after clear
     expect(controller.connectionSpy.getEvents()).toHaveLength(0)
@@ -857,7 +857,7 @@ describe('SSE HTTP E2E (SSEConnectionSpy edge cases)', () => {
     // Clear the spy
     controller.connectionSpy.clear()
 
-    await expect(waitPromise).rejects.toThrow('ConnectionSpy was cleared')
+    await expect(waitPromise).rejects.toThrow('SessionSpy was cleared')
 
     controller.completeHandler(serverConnection.id)
     client.close()

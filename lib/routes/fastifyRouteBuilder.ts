@@ -1,4 +1,4 @@
-import { InternalError, isFailure } from '@lokalise/node-core'
+import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
 import type { z } from 'zod'
 import { ZodObject } from 'zod'
@@ -13,13 +13,15 @@ import type {
   FastifyDualModeHandlerConfig,
   FastifySSEHandlerConfig,
   FastifySSERouteOptions,
+  SSEHandlerResult,
 } from './fastifyRouteTypes.ts'
 import {
+  createSSEContext,
   determineMode,
   determineSyncFormat,
   extractPathTemplate,
   handleSSEError,
-  setupSSEConnection,
+  isErrorLike,
 } from './fastifyRouteUtils.ts'
 
 // Re-export for convenience
@@ -176,6 +178,42 @@ async function handleSyncMode<Contract extends AnyDualModeContractDefinition>(
 }
 
 /**
+ * Process SSE handler result and manage connection lifecycle.
+ */
+async function processSSEHandlerResult(
+  result: SSEHandlerResult,
+  controller:
+    | AbstractDualModeController<Record<string, AnyDualModeContractDefinition>>
+    | AbstractSSEController<Record<string, AnySSEContractDefinition>>,
+  connectionId: string | undefined,
+  connectionClosed: Promise<void>,
+  reply: FastifyReply,
+): Promise<void> {
+  switch (result._type) {
+    case 'error':
+      // Send HTTP error response (headers not sent yet)
+      // Note: With the zod serializer compiler and @fastify/sse, we must explicitly
+      // override content-type and remove SSE-specific headers for error responses
+      reply.removeHeader('cache-control')
+      reply.removeHeader('x-accel-buffering')
+      reply.type('application/json').code(result.code).send(result.body)
+      break
+
+    case 'close':
+      // Request-response streaming: close connection after handler completes
+      if (connectionId) {
+        controller.closeConnection(connectionId)
+      }
+      break
+
+    case 'keepAlive':
+      // Long-lived connection: wait for client to disconnect
+      await connectionClosed
+      break
+  }
+}
+
+/**
  * Handle SSE mode request for dual-mode routes.
  */
 async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
@@ -187,7 +225,7 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
   reply: FastifyReply,
   options: FastifyDualModeHandlerConfig<Contract>['options'],
 ) {
-  const { connectionId, connection, connectionClosed, sseReply } = await setupSSEConnection(
+  const contextResult = createSSEContext(
     controller,
     request,
     reply,
@@ -197,30 +235,47 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
   )
 
   try {
-    // biome-ignore lint/suspicious/noExplicitAny: Connection types are validated by FastifyDualModeHandlerConfig
-    const result = await handlers.sse(request, connection as any)
+    // biome-ignore lint/suspicious/noExplicitAny: SSEContext types are validated by FastifyDualModeHandlerConfig
+    const result = await handlers.sse(request, contextResult.sseContext as any)
 
-    if (isFailure(result)) {
-      // Handler returned an error - treat as handler error
-      throw result.error
+    // Check for forgotten start() detection
+    // Handle case where result is undefined/null (handler forgot to return)
+    if (!result || (result._type !== 'error' && !contextResult.isStarted())) {
+      throw new Error(
+        'SSE handler must either send an error response (sse.error()) ' +
+          'or start streaming (sse.start()). Handler returned without doing either.',
+      )
     }
 
-    // Handle connection based on result
-    if (result.result === 'disconnect') {
-      // Request-response streaming: close connection after handler completes
-      controller.closeConnection(connectionId)
-    } else {
-      // Long-lived connection: wait for client to disconnect
-      await connectionClosed
-    }
+    // Process the result
+    await processSSEHandlerResult(
+      result,
+      controller,
+      contextResult.getConnectionId(),
+      contextResult.connectionClosed,
+      reply,
+    )
   } catch (err) {
-    await handleSSEError(sseReply, controller, connectionId, err)
-    // Re-throw the error intentionally to let Fastify's error handler and onError hooks
-    // run for logging/monitoring purposes. Although headers are already sent at this point
-    // (so the HTTP status code cannot be changed), propagating the error ensures that
-    // application-level error tracking, metrics, and logging infrastructure can observe
-    // and record the failure.
-    throw err
+    // If streaming was started, send error event to client and re-throw for logging
+    if (contextResult.isStarted()) {
+      const connectionId = contextResult.getConnectionId()
+      if (connectionId) {
+        await handleSSEError(contextResult.sseReply, controller, connectionId, err)
+      }
+      // Re-throw for Fastify's onError hooks (status can't change after headers sent)
+      throw err
+    }
+
+    // Streaming not started - explicitly send HTTP error response
+    // We must handle this ourselves because the zod serializer compiler
+    // interferes with Fastify's default error handler for SSE routes,
+    // causing thrown errors to return 200 with empty SSE response instead of 500
+    const message = isErrorLike(err) ? err.message : 'Internal Server Error'
+    reply.code(500).type('application/json').send({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message,
+    })
   }
 }
 
@@ -334,9 +389,10 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
       headers: contract.requestHeaders,
       ...(contract.requestBody && { body: contract.requestBody }),
     },
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Core SSE route handler must coordinate context, error handling, and result processing
     handler: async (request, reply) => {
-      // Setup SSE connection with all boilerplate
-      const { connectionId, connection, connectionClosed, sseReply } = await setupSSEConnection(
+      // Create SSE context for deferred header sending
+      const contextResult = createSSEContext(
         controller,
         request,
         reply,
@@ -345,32 +401,50 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         'SSE',
       )
 
-      // Call user handler with flat (request, connection) signature
-      // Handler returns Either<Error, SSEHandlerResult> indicating how to manage connection
+      // Call user handler with (request, sse) signature
+      // Handler returns SSEHandlerResult indicating how to manage response
       try {
-        // biome-ignore lint/suspicious/noExplicitAny: Request and connection types are validated by FastifySSEHandlerConfig
-        const result = await handlers.sse(request as any, connection as any)
+        // biome-ignore lint/suspicious/noExplicitAny: Request and SSEContext types are validated by FastifySSEHandlerConfig
+        const result = await handlers.sse(request as any, contextResult.sseContext as any)
 
-        if (isFailure(result)) {
-          // Handler returned an error - treat as handler error
-          throw result.error
+        // Check for forgotten start() detection
+        // Handle case where result is undefined/null (handler forgot to return)
+        if (!result || (result._type !== 'error' && !contextResult.isStarted())) {
+          throw new Error(
+            'SSE handler must either send an error response (sse.error()) ' +
+              'or start streaming (sse.start()). Handler returned without doing either.',
+          )
         }
 
-        // Handle connection based on result
-        if (result.result === 'disconnect') {
-          // Request-response streaming: close connection after handler completes
-          controller.closeConnection(connectionId)
-        } else {
-          // Long-lived connection: wait for client to disconnect
-          await connectionClosed
-        }
+        // Process the result
+        await processSSEHandlerResult(
+          result,
+          controller,
+          contextResult.getConnectionId(),
+          contextResult.connectionClosed,
+          reply,
+        )
       } catch (err) {
-        await handleSSEError(sseReply, controller, connectionId, err)
+        // If streaming was started, send error event to client and re-throw for logging
+        if (contextResult.isStarted()) {
+          const connectionId = contextResult.getConnectionId()
+          if (connectionId) {
+            await handleSSEError(contextResult.sseReply, controller, connectionId, err)
+          }
+          // Re-throw for Fastify's onError hooks (status can't change after headers sent)
+          throw err
+        }
 
-        // Re-throw to let Fastify's error handler process it (for logging, onError hooks, etc.)
-        // Note: Since headers are already sent, Fastify can't change the response status,
-        // but error hooks will still fire for monitoring/logging purposes
-        throw err
+        // Streaming not started - explicitly send HTTP error response
+        // We must handle this ourselves because the zod serializer compiler
+        // interferes with Fastify's default error handler for SSE routes,
+        // causing thrown errors to return 200 with empty SSE response instead of 500
+        const message = isErrorLike(err) ? err.message : 'Internal Server Error'
+        reply.code(500).type('application/json').send({
+          statusCode: 500,
+          error: 'Internal Server Error',
+          message,
+        })
       }
     },
   }
@@ -436,12 +510,18 @@ export function buildFastifyRoute<
  *
  * @example
  * ```typescript
- * // SSE-only route
+ * // SSE-only route with deferred headers (can return HTTP errors)
  * const sseRoute = buildFastifyRoute(notificationsController, {
  *   contract: notificationsContract,
  *   handlers: {
- *     sse: async (request, connection) => {
+ *     sse: async (request, sse) => {
+ *       const entity = await db.find(request.params.id)
+ *       if (!entity) {
+ *         return sse.error(404, { error: 'Not found' })
+ *       }
+ *       const connection = sse.start()
  *       await connection.send('notification', { message: 'Hello!' })
+ *       return connection.keepAlive()
  *     },
  *   },
  * })
@@ -453,9 +533,11 @@ export function buildFastifyRoute<
  *     json: async (request, reply) => {
  *       return { reply: 'Hello', usage: { tokens: 1 } }
  *     },
- *     sse: async (request, connection) => {
+ *     sse: async (request, sse) => {
+ *       const connection = sse.start()
  *       await connection.send('chunk', { delta: 'Hello' })
  *       await connection.send('done', { usage: { total: 1 } })
+ *       return connection.close()
  *     },
  *   },
  * })

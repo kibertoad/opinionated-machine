@@ -1,4 +1,3 @@
-import { success } from '@lokalise/node-core'
 import {
   AbstractDualModeController,
   type BuildFastifyDualModeRoutesReturnType,
@@ -41,13 +40,14 @@ export class TestChatDualModeController extends AbstractDualModeController<TestC
               usage: { tokens: words.length },
             }
           },
-          sse: async (request, connection) => {
+          sse: async (request, sse) => {
+            const connection = sse.start()
             const words = request.body.message.split(' ')
             for (const word of words) {
               await connection.send('chunk', { delta: word })
             }
             await connection.send('done', { usage: { total: words.length } })
-            return success('disconnect')
+            return connection.close()
           },
         }),
       },
@@ -76,7 +76,8 @@ export class TestConversationDualModeController extends AbstractDualModeControll
             reply: `Response for conversation ${request.params.conversationId}: ${request.body.message}`,
             conversationId: request.params.conversationId,
           }),
-          sse: async (request, connection) => {
+          sse: async (request, sse) => {
+            const connection = sse.start()
             const words = request.body.message.split(' ')
             for (const word of words) {
               await connection.send('chunk', { delta: word })
@@ -84,7 +85,7 @@ export class TestConversationDualModeController extends AbstractDualModeControll
             await connection.send('done', {
               conversationId: request.params.conversationId,
             })
-            return success('disconnect')
+            return connection.close()
           },
         }),
         options: {
@@ -142,11 +143,12 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
               result: state.result,
             }
           },
-          sse: async (request, connection) => {
+          sse: async (request, sse) => {
+            const connection = sse.start()
             const state = this.jobStates.get(request.params.jobId)
             if (!state) {
               await connection.send('progress', { percent: 0 })
-              return success('disconnect')
+              return connection.close()
             }
 
             // Simulate progress updates
@@ -163,7 +165,7 @@ export class TestJobStatusDualModeController extends AbstractDualModeController<
               await connection.send('error', { code: 'JOB_FAILED', message: 'Job failed' })
             }
 
-            return success('disconnect')
+            return connection.close()
           },
         }),
       },
@@ -192,12 +194,13 @@ export class TestAuthenticatedDualModeController extends AbstractDualModeControl
             success: true,
             data: `Processed: ${request.body.data}`,
           }),
-          sse: async (request, connection) => {
+          sse: async (request, sse) => {
+            const connection = sse.start()
             await connection.send('result', {
               success: true,
               data: `Processed: ${request.body.data}`,
             })
-            return success('disconnect')
+            return connection.close()
           },
         }),
         options: {
@@ -234,9 +237,10 @@ export class TestDefaultModeDualModeController extends AbstractDualModeControlle
           json: (request) => ({
             output: `JSON: ${request.body.input}`,
           }),
-          sse: async (request, connection) => {
+          sse: async (request, sse) => {
+            const connection = sse.start()
             await connection.send('output', { value: `SSE: ${request.body.input}` })
-            return success('disconnect')
+            return connection.close()
           },
         }),
         options: {
@@ -267,12 +271,13 @@ export class TestErrorDualModeController extends AbstractDualModeController<Test
           json: (request) => ({
             success: !request.body.shouldThrow,
           }),
-          sse: async (request, connection) => {
+          sse: async (request, sse) => {
+            const connection = sse.start()
             if (request.body.shouldThrow) {
               throw new Error('Test error in SSE handler')
             }
             await connection.send('result', { success: true })
-            return success('disconnect')
+            return connection.close()
           },
         }),
       },
@@ -300,9 +305,10 @@ export class TestDefaultMethodDualModeController extends AbstractDualModeControl
           json: (request) => ({
             result: `Processed: ${request.body.value}`,
           }),
-          sse: async (request, connection) => {
+          sse: async (request, sse) => {
+            const connection = sse.start()
             await connection.send('data', { value: request.body.value })
-            return success('disconnect')
+            return connection.close()
           },
         }),
       },
@@ -335,9 +341,10 @@ export class TestJsonValidationDualModeController extends AbstractDualModeContro
             }
             return { requiredField: 'valid', count: 42 }
           },
-          sse: async (_request, connection) => {
+          sse: async (_request, sse) => {
+            const connection = sse.start()
             await connection.send('result', { success: true })
-            return success('disconnect')
+            return connection.close()
           },
         }),
       },
@@ -388,13 +395,14 @@ export class TestMultiFormatExportController extends AbstractDualModeController<
             'text/csv': (request) =>
               `name,value\n${request.body.data.map((item) => `${item.name},${item.value}`).join('\n')}`,
           },
-          sse: async (request, connection) => {
+          sse: async (request, sse) => {
+            const connection = sse.start()
             const items = request.body.data
             for (let i = 0; i < items.length; i++) {
               await connection.send('progress', { percent: ((i + 1) / items.length) * 100 })
             }
             await connection.send('done', { totalItems: items.length })
-            return success('disconnect')
+            return connection.close()
           },
         }),
       },
@@ -428,12 +436,13 @@ export class TestMultiFormatReportController extends AbstractDualModeController<
             'text/plain': (request) =>
               `Report: ${request.params.reportId}\nDetailed: ${request.query.detailed ?? 'false'}`,
           },
-          sse: async (request, connection) => {
+          sse: async (request, sse) => {
+            const connection = sse.start()
             await connection.send('chunk', {
               content: `Streaming report ${request.params.reportId}`,
             })
             await connection.send('done', { totalSize: 100 })
-            return success('disconnect')
+            return connection.close()
           },
         }),
       },

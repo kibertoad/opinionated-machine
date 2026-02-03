@@ -320,3 +320,65 @@ export const getStreamTestContract = buildContract({
     message: z.object({ text: z.string() }),
   },
 })
+
+// ============================================================================
+// Deferred Headers Test Contracts
+// ============================================================================
+
+/**
+ * GET SSE route for testing deferred headers - 404 before streaming
+ */
+export const deferredHeaders404Contract = buildContract({
+  pathResolver: (params) => `/api/deferred/${params.id}/stream`,
+  params: z.object({
+    id: z.string(),
+  }),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    message: z.object({ text: z.string() }),
+  },
+})
+
+/**
+ * POST SSE route for testing deferred headers - 422 validation error
+ */
+export const deferredHeaders422Contract = buildContract({
+  method: 'POST',
+  pathResolver: () => '/api/deferred/validate/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  requestBody: z.object({
+    value: z.number(),
+  }),
+  events: {
+    result: z.object({ computed: z.number() }),
+  },
+})
+
+/**
+ * GET SSE route for testing forgotten start() detection
+ */
+export const forgottenStartContract = buildContract({
+  pathResolver: () => '/api/deferred/forgotten-start/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    message: z.object({ text: z.string() }),
+  },
+})
+
+/**
+ * GET SSE route for testing error thrown after start()
+ */
+export const errorAfterStartContract = buildContract({
+  pathResolver: () => '/api/deferred/error-after-start/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  events: {
+    message: z.object({ text: z.string() }),
+  },
+})

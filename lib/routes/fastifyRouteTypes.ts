@@ -1,4 +1,3 @@
-import type { Either } from '@lokalise/node-core'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
 import type {
@@ -15,31 +14,45 @@ import type { SSECloseReason } from './fastifyRouteUtils.ts'
 // ============================================================================
 
 /**
- * Result indicating the SSE handler completed and the connection should be closed.
- * Use this for request-response streaming patterns (e.g., AI completions).
+ * Result indicating the handler returned an HTTP error before streaming started.
+ * Created via `sse.error(code, body)`.
  */
-export type SSEHandlerDisconnect = 'disconnect'
+export type SSEErrorResult = {
+  _type: 'error'
+  code: number
+  body: unknown
+}
+
+/**
+ * Result indicating the SSE handler completed and the connection should be closed.
+ * Created via `connection.close()`.
+ */
+export type SSECloseResult = {
+  _type: 'close'
+}
 
 /**
  * Result indicating the SSE handler completed but the connection should stay open.
- * Use this for long-lived connection patterns (e.g., notifications).
- * The connection will remain open until the client disconnects.
+ * Created via `connection.keepAlive()`.
  */
-export type SSEHandlerMaintainConnection = 'maintain_connection'
+export type SSEKeepAliveResult = {
+  _type: 'keepAlive'
+}
 
 /**
- * Possible success results from an SSE handler.
- * - `'disconnect'`: Close connection after handler completes (request-response streaming)
- * - `'maintain_connection'`: Keep connection open (long-lived connections)
+ * Possible results from an SSE handler.
+ * - `{ _type: 'error', code, body }`: Send HTTP error before streaming (via sse.error())
+ * - `{ _type: 'close' }`: Close connection after handler completes (via connection.close())
+ * - `{ _type: 'keepAlive' }`: Keep connection open (via connection.keepAlive())
  */
-export type SSEHandlerResult = SSEHandlerDisconnect | SSEHandlerMaintainConnection
+export type SSEHandlerResult = SSEErrorResult | SSECloseResult | SSEKeepAliveResult
 
 // ============================================================================
-// SSE Connection Types
+// SSE Session Types
 // ============================================================================
 
 /**
- * Message format for use with SSEConnection.sendStream().
+ * Message format for use with SSESession.sendStream().
  * Allows sending typed events through an async iterable.
  *
  * @template Events - Event schemas for type-safe event names and data
@@ -70,7 +83,7 @@ export type SSEStreamMessage<Events extends SSEEventSchemas = SSEEventSchemas> =
  * @template Events - Event schemas for type-safe sending
  * @template Context - Custom context data stored per connection
  */
-export type SSEConnection<Events extends SSEEventSchemas = SSEEventSchemas, Context = unknown> = {
+export type SSESession<Events extends SSEEventSchemas = SSEEventSchemas, Context = unknown> = {
   /** Unique identifier for this connection */
   id: string
   /** The original Fastify request */
@@ -129,11 +142,135 @@ export type SSEConnection<Events extends SSEEventSchemas = SSEEventSchemas, Cont
    */
   sendStream: (messages: AsyncIterable<SSEStreamMessage<Events>>) => Promise<void>
   /**
+   * Signal that the connection should be closed after the handler completes.
+   * Use this for request-response streaming patterns (e.g., AI completions).
+   *
+   * @returns SSEHandlerResult to return from the handler
+   *
+   * @example
+   * ```typescript
+   * sse: async (request, sse) => {
+   *   const connection = sse.start()
+   *   await connection.send('chunk', { delta: 'Hello' })
+   *   return connection.close() // Close after handler
+   * }
+   * ```
+   */
+  close: () => SSECloseResult
+  /**
+   * Signal that the connection should stay open after the handler completes.
+   * Use this for long-lived connection patterns (e.g., notifications).
+   * The connection will remain open until the client disconnects.
+   *
+   * @returns SSEHandlerResult to return from the handler
+   *
+   * @example
+   * ```typescript
+   * sse: async (request, sse) => {
+   *   const connection = sse.start()
+   *   this.subscriptions.set(connection.id, request.params.userId)
+   *   return connection.keepAlive() // Keep open for external events
+   * }
+   * ```
+   */
+  keepAlive: () => SSEKeepAliveResult
+  /**
    * Zod schemas for validating event data.
    * Map of event name to Zod schema. Used by sendEvent for runtime validation.
    * @internal
    */
   eventSchemas?: SSEEventSchemas
+}
+
+// ============================================================================
+// SSE Context Types (New API)
+// ============================================================================
+
+/**
+ * Options for starting an SSE connection.
+ */
+export type SSEStartOptions<Context = unknown> = {
+  /** Initial context data for the connection */
+  context?: Context
+}
+
+/**
+ * Context object passed to SSE handlers for deferred header sending.
+ *
+ * This abstraction allows handlers to:
+ * 1. Perform validation before any headers are sent
+ * 2. Return proper HTTP error codes (404, 422, etc.) for validation failures
+ * 3. Explicitly start streaming when ready
+ *
+ * @template Events - Event schemas for type-safe sending
+ * @template ErrorBody - Error response body type
+ *
+ * @example
+ * ```typescript
+ * sse: async (request, sse) => {
+ *   // Phase 1: Validation (headers NOT sent yet)
+ *   const entity = await db.find(request.params.id)
+ *   if (!entity) {
+ *     return sse.error(404, { error: 'Entity not found' })
+ *   }
+ *
+ *   // Phase 2: Start streaming (sends 200 + SSE headers)
+ *   const connection = sse.start({ context: { entity } })
+ *
+ *   // Phase 3: Stream events
+ *   await connection.send('data', { item: entity })
+ *
+ *   // Phase 4: Signal completion
+ *   return connection.close()
+ * }
+ * ```
+ */
+export type SSEContext<Events extends SSEEventSchemas = SSEEventSchemas, ErrorBody = unknown> = {
+  /**
+   * Start streaming - sends HTTP 200 + SSE headers, returns typed connection.
+   *
+   * After calling this method, you can no longer send HTTP error responses.
+   * Use `error()` before `start()` for validation failures.
+   *
+   * @param options - Optional configuration for the connection
+   * @returns SSESession for sending events
+   */
+  start: <Context = unknown>(options?: SSEStartOptions<Context>) => SSESession<Events, Context>
+
+  /**
+   * Send an HTTP error response before streaming starts.
+   *
+   * Must be called BEFORE `start()`. After calling `error()`, the handler
+   * should return immediately with the result.
+   *
+   * @param code - HTTP status code (e.g., 404, 422)
+   * @param body - Error response body
+   * @returns SSEHandlerResult to return from the handler
+   *
+   * @example
+   * ```typescript
+   * if (!entity) {
+   *   return sse.error(404, { error: 'Entity not found' })
+   * }
+   * ```
+   */
+  error: (code: number, body: ErrorBody) => SSEErrorResult
+
+  /**
+   * Advanced: send headers without creating a full connection.
+   *
+   * Use this only for advanced streaming scenarios where you need headers
+   * sent early but will manage streaming manually via `sse.reply.sse`.
+   *
+   * Most handlers should use `start()` instead.
+   */
+  sendHeaders: () => void
+
+  /**
+   * Escape hatch to raw Fastify reply if needed.
+   * Use with caution - prefer the typed methods above.
+   */
+  reply: FastifyReply
 }
 
 // ============================================================================
@@ -183,7 +320,7 @@ export type FastifySSERouteOptions = {
   /**
    * Called when client connects (after SSE handshake).
    */
-  onConnect?: (connection: SSEConnection) => void | Promise<void>
+  onConnect?: (connection: SSESession) => void | Promise<void>
   /**
    * Called when the SSE connection closes for any reason (client disconnect,
    * network failure, or server explicitly closing via closeConnection()).
@@ -195,14 +332,14 @@ export type FastifySSERouteOptions = {
    *
    * Use this for cleanup like unsubscribing from events or removing from tracking.
    */
-  onClose?: (connection: SSEConnection, reason: SSECloseReason) => void | Promise<void>
+  onClose?: (connection: SSESession, reason: SSECloseReason) => void | Promise<void>
   /**
    * Handler for Last-Event-ID reconnection.
    * Return an iterable of events to replay, or handle replay manually.
    * Supports both sync iterables (arrays, generators) and async iterables.
    */
   onReconnect?: (
-    connection: SSEConnection,
+    connection: SSESession,
     lastEventId: string,
   ) => Iterable<SSEMessage> | AsyncIterable<SSEMessage> | void | Promise<void>
   /**
@@ -265,7 +402,7 @@ export type BuildFastifySSERoutesReturnType<
  * ```typescript
  * const handler = async (
  *   request: InferSSERequest<typeof chatCompletionContract>,
- *   connection: SSEConnection,
+ *   connection: SSESession,
  * ) => {
  *   // request.body is typed as { message: string; stream: true }
  *   const { message } = request.body
@@ -305,27 +442,38 @@ export type JsonModeHandler<
 ) => SyncResponse | Promise<SyncResponse>
 
 /**
- * Handler function for SSE mode.
- * Returns an Either indicating success with connection action, or failure with error.
+ * Handler function for SSE mode with deferred headers.
  *
- * @returns Either<Error, SSEHandlerResult> where:
- * - `success('disconnect')`: Close connection after handler completes
- * - `success('maintain_connection')`: Keep connection open for long-lived streaming
- * - `failure(error)`: Handle error and close connection
+ * The handler receives an SSEContext object that allows:
+ * 1. Validation before headers are sent (return proper HTTP errors)
+ * 2. Explicit streaming start via `sse.start()`
+ * 3. Type-safe event sending via the returned connection
+ *
+ * @returns SSEHandlerResult indicating how to handle the response:
+ * - `sse.error(code, body)`: Send HTTP error before streaming
+ * - `connection.close()`: Close connection after handler completes
+ * - `connection.keepAlive()`: Keep connection open for external events
  *
  * @example
  * ```typescript
  * // Request-response streaming (AI completions)
- * sse: async (request, connection) => {
+ * sse: async (request, sse) => {
+ *   const entity = await db.find(request.params.id)
+ *   if (!entity) {
+ *     return sse.error(404, { error: 'Not found' })
+ *   }
+ *
+ *   const connection = sse.start()
  *   await connection.send('chunk', { delta: 'Hello' })
  *   await connection.send('done', { usage: { total: 5 } })
- *   return success('disconnect')
+ *   return connection.close()
  * }
  *
  * // Long-lived connection (notifications)
- * sse: async (request, connection) => {
+ * sse: async (request, sse) => {
+ *   const connection = sse.start()
  *   this.subscriptions.set(connection.id, request.params.userId)
- *   return success('maintain_connection')
+ *   return connection.keepAlive()
  * }
  * ```
  *
@@ -334,7 +482,6 @@ export type JsonModeHandler<
  * @template Query - Query string parameters type
  * @template Headers - Request headers type
  * @template Body - Request body type
- * @template Context - Custom context data type stored per connection
  */
 export type SSEModeHandler<
   Events extends SSEEventSchemas = SSEEventSchemas,
@@ -342,11 +489,10 @@ export type SSEModeHandler<
   Query = unknown,
   Headers = unknown,
   Body = unknown,
-  Context = unknown,
 > = (
   request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
-  connection: SSEConnection<Events, Context>,
-) => Either<Error, SSEHandlerResult> | Promise<Either<Error, SSEHandlerResult>>
+  sse: SSEContext<Events>,
+) => SSEHandlerResult | Promise<SSEHandlerResult>
 
 /**
  * Combined handlers for dual-mode routes.
@@ -611,37 +757,48 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
  *
  * **SSE handler** (both SSE-only and dual-mode):
  * ```typescript
- * sse: (request, connection) => Either<Error, SSEHandlerResult> | Promise<Either<Error, SSEHandlerResult>>
+ * sse: (request, sse) => SSEHandlerResult | Promise<SSEHandlerResult>
  * ```
  *
- * The SSE handler must return an `Either` from `@lokalise/node-core`:
- * - `success('disconnect')` - Close connection after handler completes (request-response streaming)
- * - `success('maintain_connection')` - Keep connection open until client disconnects (long-lived)
- * - `failure(error)` - Signal an error; the framework sends an error event and closes the connection
+ * The SSE handler receives an SSEContext that allows deferred header sending:
+ * - `sse.error(code, body)` - Return HTTP error before streaming starts
+ * - `sse.start()` - Start streaming (sends 200 + SSE headers), returns connection
+ * - `connection.close()` - Signal to close connection after handler completes
+ * - `connection.keepAlive()` - Signal to keep connection open for external events
  *
- * @see SSEHandlerResult for the possible success values
- * @see Either from `@lokalise/node-core` for the result wrapper
+ * @see SSEContext for the sse parameter API
+ * @see SSEHandlerResult for the possible return values
  *
  * @example
  * ```typescript
- * import { success, failure } from '@lokalise/node-core'
- *
- * // SSE-only contract - request-response streaming (e.g., AI completions)
+ * // SSE-only contract - request-response streaming with validation
  * const sseHandlers = buildHandler(chatStreamContract, {
- *   sse: async (request, connection) => {
+ *   sse: async (request, sse) => {
+ *     // Validation before headers sent - can return proper HTTP errors
+ *     const entity = await db.find(request.params.id)
+ *     if (!entity) {
+ *       return sse.error(404, { error: 'Not found' })
+ *     }
+ *
+ *     // Start streaming (sends 200 + SSE headers)
+ *     const connection = sse.start()
+ *
+ *     // Stream events
  *     for (const word of request.body.message.split(' ')) {
  *       await connection.send('chunk', { delta: word })
  *     }
  *     await connection.send('done', { usage: { total: 5 } })
- *     return success('disconnect')
+ *
+ *     return connection.close()
  *   },
  * })
  *
  * // SSE-only contract - long-lived connection (e.g., notifications)
  * const notificationHandlers = buildHandler(notificationsContract, {
- *   sse: async (request, connection) => {
+ *   sse: async (request, sse) => {
+ *     const connection = sse.start()
  *     this.subscriptions.set(connection.id, request.params.userId)
- *     return success('maintain_connection')
+ *     return connection.keepAlive()
  *   },
  * })
  *
@@ -651,10 +808,11 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
  *     reply.header('x-custom', 'value')
  *     return { reply: 'Hello', usage: { tokens: 5 } }
  *   },
- *   sse: async (request, connection) => {
+ *   sse: async (request, sse) => {
+ *     const connection = sse.start()
  *     await connection.send('chunk', { delta: 'Hello' })
  *     await connection.send('done', { usage: { total: 5 } })
- *     return success('disconnect')
+ *     return connection.close()
  *   },
  * })
  * ```
