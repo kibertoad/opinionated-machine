@@ -82,7 +82,8 @@ function validateSyncResponseBody(
 /**
  * Validate response body against responseSchemasByStatusCode for a specific HTTP status code.
  *
- * Used for error responses (non-2xx) in dual-mode sync handlers and for sse.respond() in SSE handlers.
+ * Used for non-2xx responses in dual-mode sync handlers and for sse.respond() in SSE handlers.
+ * Typically used for error responses, but can validate any status code with a defined schema.
  * Only validates if the contract defines a schema for the given status code.
  * Validation errors are not exposed to clients - only logged internally.
  *

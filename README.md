@@ -58,7 +58,7 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Overview](#overview)
   - [Defining Dual-Mode Contracts](#defining-dual-mode-contracts)
   - [Response Headers (Sync Mode)](#response-headers-sync-mode)
-  - [Error Response Schemas (responseSchemasByStatusCode)](#error-response-schemas-responseschemasbystatuscode)
+  - [Status-Specific Response Schemas (responseSchemasByStatusCode)](#status-specific-response-schemas-responseschemasbystatuscode)
   - [Implementing Dual-Mode Controllers](#implementing-dual-mode-controllers)
   - [Registering Dual-Mode Controllers](#registering-dual-mode-controllers)
   - [Accept Header Routing](#accept-header-routing)
@@ -1504,9 +1504,9 @@ handlers: buildHandler(rateLimitedContract, {
 
 If the handler doesn't set the required headers, validation will fail with a `RESPONSE_HEADERS_VALIDATION_FAILED` error.
 
-### Error Response Schemas (responseSchemasByStatusCode)
+### Status-Specific Response Schemas (responseSchemasByStatusCode)
 
-Dual-mode and SSE contracts support `responseSchemasByStatusCode` to define and validate error responses for specific HTTP status codes. This enables type-safe error handling where different status codes can have different response shapes:
+Dual-mode and SSE contracts support `responseSchemasByStatusCode` to define and validate responses for specific HTTP status codes. This is typically used for error responses (4xx, 5xx), but can define schemas for any status code where you need a different response shape:
 
 ```ts
 export const resourceContract = buildSseContract({
@@ -1521,7 +1521,7 @@ export const resourceContract = buildSseContract({
     success: z.boolean(),
     data: z.string(),
   }),
-  // Error responses by status code
+  // Responses by status code (typically used for errors)
   responseSchemasByStatusCode: {
     400: z.object({ error: z.string(), details: z.array(z.string()) }),
     404: z.object({ error: z.string(), resourceId: z.string() }),
@@ -1532,7 +1532,7 @@ export const resourceContract = buildSseContract({
 })
 ```
 
-In your handler, use `reply.code()` to set the status code and return the appropriate response shape. TypeScript includes all error response types in the return type union, so no casting is needed:
+In your handler, use `reply.code()` to set the status code and return the appropriate response shape. TypeScript includes all response types in the return type union, so no casting is needed:
 
 ```ts
 handlers: buildHandler(resourceContract, {
@@ -1569,7 +1569,7 @@ handlers: buildHandler(resourceContract, {
 **Validation behavior:**
 
 - **Success responses (2xx)**: Validated against `syncResponseBody` schema
-- **Error responses (non-2xx)**: Validated against the matching schema in `responseSchemasByStatusCode`
+- **Non-2xx responses**: Validated against the matching schema in `responseSchemasByStatusCode` (if defined)
 - **Validation failures**: Return 500 Internal Server Error (validation details are logged internally, not exposed to clients)
 
 **TypeScript support:**
@@ -1583,7 +1583,40 @@ The `InferErrorResponses` helper type extracts error response types from `respon
 // | { error: string; resourceId: string }      // from responseSchemasByStatusCode[404]
 ```
 
-**Note**: TypeScript cannot enforce that a specific status code matches its corresponding schema (e.g., that `reply.code(404)` must return the 404 schema specifically). The union type ensures all returned responses match *one of* the defined schemas, with runtime validation catching any mismatches.
+**Strict typing for `sse.respond()`:**
+
+Unlike sync handlers where `reply.code()` and `return` are separate statements, `sse.respond(code, body)` takes both values together, enabling strict compile-time type enforcement:
+
+```ts
+sse: async (request, sse) => {
+  // TypeScript enforces the exact schema for each status code
+  sse.respond(404, { error: 'Not Found', resourceId: '123' })  // ✓ OK
+  sse.respond(404, { error: 'Not Found' })                     // ✗ Error - missing resourceId
+  sse.respond(404, { error: 'Not Found', details: [] })        // ✗ Error - wrong schema
+  sse.respond(500, { message: 'error' })                       // ✗ Error - 500 not defined
+}
+```
+
+Only status codes defined in `responseSchemasByStatusCode` are allowed. To use an undefined status code, either add it to the schema or use a type assertion.
+
+**Sync handlers (union typing):**
+
+For sync handlers, TypeScript uses a union of all response types since `reply.code()` and `return` are separate:
+
+```ts
+sync: (request, reply) => {
+  reply.code(404)
+  return { error: 'Not Found', resourceId: '123' }  // ✓ OK - matches one of the schemas
+}
+```
+
+Runtime validation catches mismatches - invalid responses return 500 Internal Server Error.
+
+**Validation priority for 2xx status codes:**
+
+- All 2xx responses (200, 201, 204, etc.) are validated against `syncResponseBody`
+- `responseSchemasByStatusCode` is only used for non-2xx status codes
+- If you define the same 2xx code in both, `syncResponseBody` takes precedence
 
 ### Single Sync Handler
 

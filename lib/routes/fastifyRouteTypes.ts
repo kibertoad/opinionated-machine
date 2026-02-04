@@ -15,7 +15,8 @@ import type { SSECloseReason } from './fastifyRouteUtils.ts'
 
 /**
  * Infer the union of all response body types from responseSchemasByStatusCode.
- * This allows handlers to return error responses with proper typing.
+ * This allows handlers to return responses for specific status codes with proper typing.
+ * Typically used for error responses, but can define schemas for any HTTP status code.
  *
  * @example
  * ```typescript
@@ -33,6 +34,41 @@ export type InferErrorResponses<
           : never
       }[keyof ResponseSchemas]
     : never
+
+/**
+ * Type for responseSchemasByStatusCode - maps HTTP status codes to Zod schemas.
+ */
+export type ResponseSchemasByStatusCode = Partial<Record<HttpStatusCode, z.ZodTypeAny>>
+
+/**
+ * Strictly typed respond function for sse.respond().
+ *
+ * When responseSchemasByStatusCode is defined, this provides strict typing:
+ * - For defined status codes: body must match the corresponding schema
+ * - For undefined status codes: use respondRaw() or cast to bypass strict typing
+ *
+ * @example
+ * ```typescript
+ * // With responseSchemasByStatusCode: { 400: z.object({ error: string, details: string[] }), 404: z.object({ error: string, resourceId: string }) }
+ * sse.respond(404, { error: 'Not Found', resourceId: '123' })  // ✓ OK - matches 404 schema
+ * sse.respond(404, { error: 'Not Found' })                     // ✗ Error - missing resourceId
+ * sse.respond(400, { error: 'Bad', resourceId: '123' })        // ✗ Error - wrong schema for 400
+ * ```
+ */
+export type StrictRespondFunction<ResponseSchemas extends ResponseSchemasByStatusCode | undefined> =
+  ResponseSchemas extends ResponseSchemasByStatusCode
+    ? keyof ResponseSchemas & number extends never
+      ? // No numeric keys defined - accept any
+        (code: number, body: unknown) => SSERespondResult
+      : // Has defined status codes - strict typing
+        <Code extends keyof ResponseSchemas & number>(
+          code: Code,
+          body: ResponseSchemas[Code] extends z.ZodTypeAny
+            ? z.infer<ResponseSchemas[Code]>
+            : unknown,
+        ) => SSERespondResult
+    : // No responseSchemasByStatusCode - accept any
+      (code: number, body: unknown) => SSERespondResult
 
 // ============================================================================
 // SSE Handler Result Types
@@ -251,7 +287,10 @@ export type SSEStartOptions<Context = unknown> = {
  * }
  * ```
  */
-export type SSEContext<Events extends SSEEventSchemas = SSEEventSchemas, ResponseBody = unknown> = {
+export type SSEContext<
+  Events extends SSEEventSchemas = SSEEventSchemas,
+  ResponseSchemas extends ResponseSchemasByStatusCode | undefined = undefined,
+> = {
   /**
    * Start streaming - sends HTTP 200 + SSE headers, returns typed session.
    *
@@ -278,30 +317,28 @@ export type SSEContext<Events extends SSEEventSchemas = SSEEventSchemas, Respons
    * Must be called BEFORE `start()`. You can either return the result or just call it
    * (useful in try/catch blocks). Both patterns work:
    *
+   * When `responseSchemasByStatusCode` is defined in the contract, this method provides
+   * strict typing - the body must match the schema for the given status code.
+   *
    * @param code - HTTP status code (e.g., 200, 404, 422)
-   * @param body - Response body
+   * @param body - Response body (strictly typed when status code has a defined schema)
    * @returns SSERespondResult (can be returned or ignored)
    *
    * @example Return pattern (simple cases)
    * ```typescript
    * if (!entity) {
-   *   return sse.respond(404, { error: 'Entity not found' })
+   *   return sse.respond(404, { error: 'Entity not found', resourceId: id })
    * }
    * ```
    *
-   * @example No-return pattern (try/catch blocks)
+   * @example Strict typing with responseSchemasByStatusCode
    * ```typescript
-   * try {
-   *   const entity = await db.getById(id)
-   *   const session = sse.start('autoClose')
-   *   await session.send('data', entity)
-   * } catch (e) {
-   *   // No need to return - just calling sse.respond() is enough
-   *   sse.respond(404, { error: 'Entity not found' })
-   * }
+   * // Contract defines: responseSchemasByStatusCode: { 404: z.object({ error: string, resourceId: string }) }
+   * sse.respond(404, { error: 'Not Found', resourceId: '123' })  // OK
+   * sse.respond(404, { error: 'Not Found' })                     // TypeScript error - missing resourceId
    * ```
    */
-  respond: (code: number, body: ResponseBody) => SSERespondResult
+  respond: StrictRespondFunction<ResponseSchemas>
 
   /**
    * Advanced: send headers without creating a full connection.
@@ -424,7 +461,8 @@ export type FastifySSEHandlerConfig<Contract extends AnySSEContractDefinition> =
     z.infer<Contract['params']>,
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
-    Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
+    Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
+    Contract['responseSchemasByStatusCode']
   >
   /** Optional route configuration */
   options?: FastifySSERouteOptions
@@ -550,9 +588,10 @@ export type SSEModeHandler<
   Query = unknown,
   Headers = unknown,
   Body = unknown,
+  ResponseSchemas extends ResponseSchemasByStatusCode | undefined = undefined,
 > = (
   request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
-  sse: SSEContext<Events>,
+  sse: SSEContext<Events, ResponseSchemas>,
 ) => SSEHandlerResult | Promise<SSEHandlerResult>
 
 /**
@@ -564,6 +603,7 @@ export type SSEModeHandler<
  * @template Body - Request body type
  * @template SyncResponse - Sync response type
  * @template Events - SSE event schemas
+ * @template ResponseSchemas - Response schemas by status code for strict sse.respond() typing
  */
 export type DualModeHandlers<
   Params = unknown,
@@ -572,9 +612,10 @@ export type DualModeHandlers<
   Body = unknown,
   SyncResponse = unknown,
   Events extends SSEEventSchemas = SSEEventSchemas,
+  ResponseSchemas extends ResponseSchemasByStatusCode | undefined = undefined,
 > = {
   sync: SyncModeHandler<Params, Query, Headers, Body, SyncResponse>
-  sse: SSEModeHandler<Events, Params, Query, Headers, Body>
+  sse: SSEModeHandler<Events, Params, Query, Headers, Body, ResponseSchemas>
 }
 
 /**
@@ -597,6 +638,9 @@ export type FastifyDualModeRouteOptions = FastifySSERouteOptions & {
  * - The success response type (from syncResponseBody)
  * - Error response types (from responseSchemasByStatusCode)
  *
+ * The SSE handler's `sse.respond()` method is strictly typed when `responseSchemasByStatusCode`
+ * is defined - the body must match the schema for the given status code.
+ *
  * This allows returning error responses without type casting:
  * ```typescript
  * sync: (request, reply) => {
@@ -605,6 +649,13 @@ export type FastifyDualModeRouteOptions = FastifySSERouteOptions & {
  *     return { error: 'Not found', resourceId: '123' } // No cast needed!
  *   }
  *   return { success: true, data: 'OK' }
+ * }
+ *
+ * sse: (request, sse) => {
+ *   if (notFound) {
+ *     return sse.respond(404, { error: 'Not found', resourceId: '123' }) // Strictly typed!
+ *   }
+ *   // ...
  * }
  * ```
  *
@@ -621,7 +672,9 @@ export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition
         ? z.infer<Contract['syncResponseBody']>
         : unknown)
     | InferErrorResponses<Contract['responseSchemasByStatusCode']>,
-    Contract['sseEvents']
+    Contract['sseEvents'],
+    // Pass responseSchemasByStatusCode for strict sse.respond() typing
+    Contract['responseSchemasByStatusCode']
   >
 
 /**
@@ -661,8 +714,9 @@ export type SSEOnlyHandlers<
   Query = unknown,
   Headers = unknown,
   Body = unknown,
+  ResponseSchemas extends ResponseSchemasByStatusCode | undefined = undefined,
 > = {
-  sse: SSEModeHandler<Events, Params, Query, Headers, Body>
+  sse: SSEModeHandler<Events, Params, Query, Headers, Body, ResponseSchemas>
   /** SSE-only contracts do not support sync handlers */
   sync?: never
 }
@@ -680,7 +734,8 @@ export type InferHandlers<Contract> = Contract extends AnyDualModeContractDefini
         z.infer<Contract['params']>,
         z.infer<Contract['query']>,
         z.infer<Contract['requestHeaders']>,
-        Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
+        Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
+        Contract['responseSchemasByStatusCode']
       >
     : never
 
@@ -695,7 +750,8 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
         z.infer<Contract['params']>,
         z.infer<Contract['query']>,
         z.infer<Contract['requestHeaders']>,
-        Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
+        Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
+        Contract['responseSchemasByStatusCode']
       >
     : never
 
@@ -717,7 +773,8 @@ export type SSERouteHandler<Contract extends AnySSEContractDefinition> = {
     z.infer<Contract['params']>,
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
-    Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
+    Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
+    Contract['responseSchemasByStatusCode']
   >
   readonly options?: FastifySSERouteOptions
 }
@@ -838,7 +895,8 @@ export function buildHandler<
   return {
     __type: 'SSERouteHandler',
     contract: contract as AnySSEContractDefinition,
-    handlers: handlers as SSEOnlyHandlers,
+    // biome-ignore lint/suspicious/noExplicitAny: Cast needed to handle varying ResponseSchemas type parameters
+    handlers: handlers as any,
     options: options as FastifySSERouteOptions,
   }
 }
