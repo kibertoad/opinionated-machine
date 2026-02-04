@@ -599,11 +599,11 @@ import { type InferSSERequest, type SSEContext, type SSESession } from 'opiniona
 
 private handleStream = async (
   request: InferSSERequest<typeof chatCompletionContract>,
-  sse: SSEContext<typeof chatCompletionContract['events']>,
+  sse: SSEContext<typeof chatCompletionContract['sseEvents']>,
 ) => {
   // request.body, request.params, etc. all typed from contract
   const session = sse.start('autoClose')
-  // session.send() is typed based on contract events
+  // session.send() is typed based on contract sseEvents
   await session.send('chunk', { content: 'hello' })
   // 'autoClose' mode: connection closes when handler returns
 }

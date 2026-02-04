@@ -495,7 +495,7 @@ describe('Dual-Mode Contract Type Safety', () => {
     })
 
     it('SSE contracts do not have responseHeaders', () => {
-      // SSE contract (no syncResponse)
+      // SSE contract (no syncResponseBody)
       const sseContract = buildContract({
         method: 'POST',
         pathResolver: () => '/api/sse',
@@ -702,7 +702,7 @@ describe('Dual-Mode Handler Type Safety', () => {
           return {
             chatCompletion: buildHandler(chatCompletionContract, {
               sync: (request) => {
-                // Valid: return matches syncResponse schema
+                // Valid: return matches syncResponseBody schema
                 return {
                   reply: request.body.message,
                   usage: { tokens: 10 },
@@ -964,7 +964,7 @@ describe('Dual-Mode Handler Type Safety', () => {
           return {
             jobStatus: buildHandler(jobStatusContract, {
               sync: (request) => {
-                // Valid: return matches syncResponse schema
+                // Valid: return matches syncResponseBody schema
                 const _jobId = request.params.jobId
                 return { status: 'running' as const, progress: 50 }
               },
