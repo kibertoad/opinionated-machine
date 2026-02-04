@@ -25,6 +25,7 @@ import {
   TestOnReconnectErrorSSEController,
   TestOpenAIStyleSSEController,
   TestPostSSEController,
+  TestPublicErrorController,
   TestReconnectSSEController,
   TestSendStreamSSEController,
   TestSSEController,
@@ -503,6 +504,27 @@ export class TestErrorAfterStartModule extends AbstractModule<TestErrorAfterStar
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testErrorAfterStartController: asSSEControllerClass(TestErrorAfterStartController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with PublicNonRecoverableError test controller
+ */
+export type TestPublicErrorModuleDependencies = Record<string, never>
+
+export class TestPublicErrorModule extends AbstractModule<TestPublicErrorModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestPublicErrorModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testPublicErrorController: asSSEControllerClass(TestPublicErrorController, {
         diOptions,
       }),
     }

@@ -98,6 +98,19 @@ export function isErrorLike(err: unknown): err is { message: string } {
 }
 
 /**
+ * Check if an error has an httpStatusCode property (like PublicNonRecoverableError).
+ * Uses duck typing instead of instanceof for reliability across realms.
+ */
+export function hasHttpStatusCode(err: unknown): err is { httpStatusCode: number } {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'httpStatusCode' in err &&
+    typeof (err as { httpStatusCode: unknown }).httpStatusCode === 'number'
+  )
+}
+
+/**
  * Send replay events from either sync or async iterables.
  */
 export async function sendReplayEvents(

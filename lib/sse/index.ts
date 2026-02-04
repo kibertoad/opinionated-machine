@@ -18,6 +18,7 @@ export {
   type FastifySSERouteOptions,
   type InferSSERequest,
   type RegisterSSERoutesOptions,
+  type SSEContext,
   type SSEOnlyHandlers,
   type SSERouteHandler,
   type SSESession,

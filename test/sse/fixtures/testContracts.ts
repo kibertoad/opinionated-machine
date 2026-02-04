@@ -382,3 +382,18 @@ export const errorAfterStartContract = buildContract({
     message: z.object({ text: z.string() }),
   },
 })
+
+/**
+ * GET SSE route for testing PublicNonRecoverableError with custom status code
+ */
+export const publicErrorContract = buildContract({
+  pathResolver: (params) => `/api/deferred/public-error/${params.statusCode}/stream`,
+  params: z.object({
+    statusCode: z.string(),
+  }),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  sseEvents: {
+    message: z.object({ text: z.string() }),
+  },
+})

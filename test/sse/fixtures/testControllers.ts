@@ -1,3 +1,4 @@
+import { PublicNonRecoverableError } from '@lokalise/node-core'
 import {
   AbstractSSEController,
   type BuildFastifySSERoutesReturnType,
@@ -26,6 +27,7 @@ import {
   onConnectErrorStreamContract,
   onReconnectErrorStreamContract,
   openaiStyleStreamContract,
+  publicErrorContract,
   reconnectStreamContract,
   sendStreamTestContract,
   streamContract,
@@ -1008,6 +1010,40 @@ export class TestErrorAfterStartController extends AbstractSSEController<TestErr
 
       // Then throw an error (simulating unexpected failure)
       throw new Error('Simulated error after streaming started')
+    },
+  })
+}
+
+/**
+ * Test SSE controller for PublicNonRecoverableError with custom status code.
+ * Throws the error BEFORE streaming starts to test proper HTTP response codes.
+ */
+export type TestPublicErrorContracts = {
+  publicError: typeof publicErrorContract
+}
+
+export class TestPublicErrorController extends AbstractSSEController<TestPublicErrorContracts> {
+  public static contracts = {
+    publicError: publicErrorContract,
+  } as const
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestPublicErrorContracts> {
+    return {
+      publicError: this.handleStream,
+    }
+  }
+
+  private handleStream = buildHandler(publicErrorContract, {
+    sse: (request, _sse) => {
+      const statusCode = Number.parseInt(request.params.statusCode, 10)
+
+      // Throw PublicNonRecoverableError BEFORE calling sse.start()
+      // This tests that the framework respects the httpStatusCode property
+      throw new PublicNonRecoverableError({
+        message: `Custom error with status ${statusCode}`,
+        errorCode: 'TEST_ERROR',
+        httpStatusCode: statusCode,
+      })
     },
   })
 }

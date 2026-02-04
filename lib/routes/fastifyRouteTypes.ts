@@ -163,7 +163,7 @@ export type SSEStartOptions<Context = unknown> = {
  * @template Events - Event schemas for type-safe sending
  * @template ResponseBody - Response body type for early returns
  *
- * @example
+ * @example Basic usage in handler
  * ```typescript
  * sse: async (request, sse) => {
  *   // Phase 1: Validation (headers NOT sent yet)
@@ -178,6 +178,36 @@ export type SSEStartOptions<Context = unknown> = {
  *
  *   // Phase 3: Stream events
  *   await session.send('data', { item: entity })
+ * }
+ * ```
+ *
+ * @example Passing to internal helper methods
+ * ```typescript
+ * import { SSEContext } from '@anthropic-ai/codemesh'
+ * import { chatStreamContract } from './contracts'
+ *
+ * class ChatController extends AbstractSSEController<{ chat: typeof chatStreamContract }> {
+ *   buildSSERoutes() {
+ *     return {
+ *       chat: buildHandler(chatStreamContract, {
+ *         sse: async (request, sse) => {
+ *           // Delegate to internal method with full type safety
+ *           await this.handleChatStream(request.body.message, sse)
+ *         },
+ *       }),
+ *     }
+ *   }
+ *
+ *   // Type the sse parameter using SSEContext with the contract's event schemas
+ *   private async handleChatStream(
+ *     message: string,
+ *     sse: SSEContext<typeof chatStreamContract.sseEvents>,
+ *   ) {
+ *     const session = sse.start('autoClose')
+ *     // session.send() is fully typed based on contract's sseEvents
+ *     await session.send('chunk', { delta: 'Hello' })
+ *     await session.send('done', { usage: { total: 5 } })
+ *   }
  * }
  * ```
  */

@@ -21,6 +21,7 @@ import {
   determineMode,
   extractPathTemplate,
   handleSSEError,
+  hasHttpStatusCode,
   isErrorLike,
 } from './fastifyRouteUtils.ts'
 
@@ -216,9 +217,12 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
     // interferes with Fastify's default error handler for SSE routes,
     // causing thrown errors to return 200 with empty SSE response instead of 500
     const message = isErrorLike(err) ? err.message : 'Internal Server Error'
-    reply.code(500).type('application/json').send({
-      statusCode: 500,
-      error: 'Internal Server Error',
+    // Respect httpStatusCode from errors like PublicNonRecoverableError
+    const statusCode = hasHttpStatusCode(err) ? err.httpStatusCode : 500
+    const statusText = statusCode >= 500 ? 'Internal Server Error' : 'Error'
+    reply.code(statusCode).type('application/json').send({
+      statusCode,
+      error: statusText,
       message,
     })
   }
@@ -371,9 +375,12 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         // interferes with Fastify's default error handler for SSE routes,
         // causing thrown errors to return 200 with empty SSE response instead of 500
         const message = isErrorLike(err) ? err.message : 'Internal Server Error'
-        reply.code(500).type('application/json').send({
-          statusCode: 500,
-          error: 'Internal Server Error',
+        // Respect httpStatusCode from errors like PublicNonRecoverableError
+        const statusCode = hasHttpStatusCode(err) ? err.httpStatusCode : 500
+        const statusText = statusCode >= 500 ? 'Internal Server Error' : 'Error'
+        reply.code(statusCode).type('application/json').send({
+          statusCode,
+          error: statusText,
           message,
         })
       }
