@@ -1,6 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { SSERoomManager } from './SSERoomManager.ts'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { InMemoryAdapter } from './adapters/InMemoryAdapter.ts'
+import { SSERoomManager } from './SSERoomManager.ts'
 import type { SSERoomAdapter } from './types.ts'
 
 describe('SSERoomManager', () => {
@@ -14,18 +14,6 @@ describe('SSERoomManager', () => {
       const customAdapter = new InMemoryAdapter()
       const manager = new SSERoomManager({ adapter: customAdapter })
       expect(manager.adapter).toBe(customAdapter)
-    })
-
-    it('should enable autoJoinSelfRoom by default', () => {
-      const manager = new SSERoomManager()
-      manager.onConnectionRegistered('conn-1')
-      expect(manager.getRooms('conn-1')).toContain('conn-1')
-    })
-
-    it('should respect autoJoinSelfRoom: false', () => {
-      const manager = new SSERoomManager({ autoJoinSelfRoom: false })
-      manager.onConnectionRegistered('conn-1')
-      expect(manager.getRooms('conn-1')).toHaveLength(0)
     })
 
     it('should generate nodeId if not provided', () => {
@@ -44,7 +32,7 @@ describe('SSERoomManager', () => {
     let manager: SSERoomManager
 
     beforeEach(() => {
-      manager = new SSERoomManager({ autoJoinSelfRoom: false })
+      manager = new SSERoomManager({})
     })
 
     it('should add connection to a single room', () => {
@@ -85,7 +73,7 @@ describe('SSERoomManager', () => {
         publish: vi.fn().mockResolvedValue(undefined),
         onMessage: vi.fn(),
       }
-      manager = new SSERoomManager({ adapter, autoJoinSelfRoom: false })
+      manager = new SSERoomManager({ adapter })
 
       manager.join('conn-1', 'room-a')
       await vi.waitFor(() => expect(adapter.subscribe).toHaveBeenCalledWith('room-a'))
@@ -100,7 +88,7 @@ describe('SSERoomManager', () => {
     let manager: SSERoomManager
 
     beforeEach(() => {
-      manager = new SSERoomManager({ autoJoinSelfRoom: false })
+      manager = new SSERoomManager({})
       manager.join('conn-1', ['room-a', 'room-b', 'room-c'])
     })
 
@@ -139,7 +127,7 @@ describe('SSERoomManager', () => {
         publish: vi.fn().mockResolvedValue(undefined),
         onMessage: vi.fn(),
       }
-      manager = new SSERoomManager({ adapter, autoJoinSelfRoom: false })
+      manager = new SSERoomManager({ adapter })
       manager.join('conn-1', 'room-a')
       manager.join('conn-2', 'room-a')
 
@@ -157,7 +145,7 @@ describe('SSERoomManager', () => {
     let manager: SSERoomManager
 
     beforeEach(() => {
-      manager = new SSERoomManager({ autoJoinSelfRoom: false })
+      manager = new SSERoomManager({})
     })
 
     it('should remove connection from all rooms', () => {
@@ -183,7 +171,7 @@ describe('SSERoomManager', () => {
     let manager: SSERoomManager
 
     beforeEach(() => {
-      manager = new SSERoomManager({ autoJoinSelfRoom: false })
+      manager = new SSERoomManager({})
     })
 
     it('should return all rooms for a connection', () => {
@@ -201,7 +189,7 @@ describe('SSERoomManager', () => {
     let manager: SSERoomManager
 
     beforeEach(() => {
-      manager = new SSERoomManager({ autoJoinSelfRoom: false })
+      manager = new SSERoomManager({})
     })
 
     it('should return all connections in a room', () => {
@@ -221,7 +209,7 @@ describe('SSERoomManager', () => {
     let manager: SSERoomManager
 
     beforeEach(() => {
-      manager = new SSERoomManager({ autoJoinSelfRoom: false })
+      manager = new SSERoomManager({})
     })
 
     it('should return count of connections in a room', () => {
@@ -241,7 +229,7 @@ describe('SSERoomManager', () => {
     let manager: SSERoomManager
 
     beforeEach(() => {
-      manager = new SSERoomManager({ autoJoinSelfRoom: false })
+      manager = new SSERoomManager({})
     })
 
     it('should return true if connection is in room', () => {
@@ -265,7 +253,7 @@ describe('SSERoomManager', () => {
     let manager: SSERoomManager
 
     beforeEach(() => {
-      manager = new SSERoomManager({ autoJoinSelfRoom: false })
+      manager = new SSERoomManager({})
     })
 
     it('should return all rooms with connections', () => {
@@ -301,7 +289,7 @@ describe('SSERoomManager', () => {
         publish: vi.fn().mockResolvedValue(undefined),
         onMessage: vi.fn(),
       }
-      const manager = new SSERoomManager({ adapter, autoJoinSelfRoom: false })
+      const manager = new SSERoomManager({ adapter })
 
       const message = { event: 'test', data: { foo: 'bar' } }
       await manager.publish('room-a', message)
@@ -318,10 +306,27 @@ describe('SSERoomManager', () => {
         publish: vi.fn().mockResolvedValue(undefined),
         onMessage: vi.fn(),
       }
-      const manager = new SSERoomManager({ adapter, autoJoinSelfRoom: false })
+      const manager = new SSERoomManager({ adapter })
 
       const message = { event: 'test', data: { foo: 'bar' } }
       await manager.publish('room-a', message, { except: 'conn-1' })
+
+      expect(adapter.publish).toHaveBeenCalledWith('room-a', message, 'conn-1')
+    })
+
+    it('should pass first element when except is an array', async () => {
+      const adapter: SSERoomAdapter = {
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+        subscribe: vi.fn().mockResolvedValue(undefined),
+        unsubscribe: vi.fn().mockResolvedValue(undefined),
+        publish: vi.fn().mockResolvedValue(undefined),
+        onMessage: vi.fn(),
+      }
+      const manager = new SSERoomManager({ adapter })
+
+      const message = { event: 'test', data: { foo: 'bar' } }
+      await manager.publish('room-a', message, { except: ['conn-1', 'conn-2'] })
 
       expect(adapter.publish).toHaveBeenCalledWith('room-a', message, 'conn-1')
     })
@@ -335,7 +340,7 @@ describe('SSERoomManager', () => {
         publish: vi.fn().mockResolvedValue(undefined),
         onMessage: vi.fn(),
       }
-      const manager = new SSERoomManager({ adapter, autoJoinSelfRoom: false })
+      const manager = new SSERoomManager({ adapter })
 
       const message = { event: 'test', data: { foo: 'bar' } }
       await manager.publish('room-a', message, { local: true })
@@ -354,7 +359,7 @@ describe('SSERoomManager', () => {
         publish: vi.fn().mockResolvedValue(undefined),
         onMessage: vi.fn(),
       }
-      const manager = new SSERoomManager({ adapter, nodeId: 'node-1', autoJoinSelfRoom: false })
+      const manager = new SSERoomManager({ adapter, nodeId: 'node-1' })
 
       const handler = vi.fn()
       manager.onRemoteMessage(handler)
@@ -383,7 +388,7 @@ describe('SSERoomManager', () => {
         publish: vi.fn().mockResolvedValue(undefined),
         onMessage: vi.fn(),
       }
-      const manager = new SSERoomManager({ adapter, nodeId: 'node-1', autoJoinSelfRoom: false })
+      const manager = new SSERoomManager({ adapter, nodeId: 'node-1' })
 
       const handler = vi.fn()
       manager.onRemoteMessage(handler)
@@ -414,7 +419,7 @@ describe('SSERoomManager', () => {
         publish: vi.fn().mockResolvedValue(undefined),
         onMessage: vi.fn(),
       }
-      const manager = new SSERoomManager({ adapter, autoJoinSelfRoom: false })
+      const manager = new SSERoomManager({ adapter })
 
       await manager.connect()
 
@@ -430,7 +435,7 @@ describe('SSERoomManager', () => {
         publish: vi.fn().mockResolvedValue(undefined),
         onMessage: vi.fn(),
       }
-      const manager = new SSERoomManager({ adapter, autoJoinSelfRoom: false })
+      const manager = new SSERoomManager({ adapter })
 
       await manager.disconnect()
 

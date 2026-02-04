@@ -63,11 +63,12 @@ export class RedisAdapter implements SSERoomAdapter {
     this.nodeId = config.nodeId ?? randomUUID()
   }
 
-  async connect(): Promise<void> {
+  connect(): Promise<void> {
     // Set up message handler on subscriber client
     this.subClient.on('message', (channel: string, message: string) => {
       this.handleMessage(channel, message)
     })
+    return Promise.resolve()
   }
 
   async disconnect(): Promise<void> {

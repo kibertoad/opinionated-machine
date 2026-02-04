@@ -394,9 +394,6 @@ export abstract class AbstractSSEController<
   public registerConnection(connection: SSESession): void {
     this.connections.set(connection.id, connection)
 
-    // Notify room manager of new connection (handles auto-join self room)
-    this._roomManager?.onConnectionRegistered(connection.id)
-
     this.onConnectionEstablished?.(connection)
     // Notify spy after hook (so hook can set context before spy sees it)
     this._connectionSpy?.addConnection(connection)
@@ -493,21 +490,8 @@ export abstract class AbstractSSEController<
     }
 
     const rooms = Array.isArray(room) ? room : [room]
-    const except = options?.except
-      ? Array.isArray(options.except)
-        ? new Set(options.except)
-        : new Set([options.except])
-      : new Set<string>()
-
-    // Collect unique connection IDs from all rooms
-    const connectionIds = new Set<string>()
-    for (const r of rooms) {
-      for (const connId of this._roomManager.getConnectionsInRoom(r)) {
-        if (!except.has(connId)) {
-          connectionIds.add(connId)
-        }
-      }
-    }
+    const except = this.buildExceptSet(options?.except)
+    const connectionIds = this.collectRoomConnections(this._roomManager, rooms, except)
 
     // Send to all local connections
     let sent = 0
@@ -525,6 +509,35 @@ export abstract class AbstractSSEController<
     }
 
     return sent
+  }
+
+  /**
+   * Build a Set of connection IDs to exclude from broadcasts.
+   */
+  private buildExceptSet(except: string | string[] | undefined): Set<string> {
+    if (!except) {
+      return new Set<string>()
+    }
+    return Array.isArray(except) ? new Set(except) : new Set([except])
+  }
+
+  /**
+   * Collect unique connection IDs from multiple rooms, excluding specified IDs.
+   */
+  private collectRoomConnections(
+    roomManager: SSERoomManager,
+    rooms: string[],
+    except: Set<string>,
+  ): Set<string> {
+    const connectionIds = new Set<string>()
+    for (const r of rooms) {
+      for (const connId of roomManager.getConnectionsInRoom(r)) {
+        if (!except.has(connId)) {
+          connectionIds.add(connId)
+        }
+      }
+    }
+    return connectionIds
   }
 
   /**

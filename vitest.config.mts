@@ -19,6 +19,9 @@ export default defineConfig({
         'lib/AbstractController.ts', // Types and abstract class only
         'lib/sse/sseTypes.ts',
         'lib/testing/sseTestTypes.ts',
+        'lib/**/index.ts', // Barrel exports
+        'lib/**/*Types.ts', // Type definitions
+        'lib/**/types.ts', // Type definitions
       ],
       reporter: ['text', 'lcov'],
       thresholds: {

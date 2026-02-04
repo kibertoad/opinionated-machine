@@ -75,19 +75,6 @@ describe('SSE Rooms E2E', () => {
       client.close()
     })
 
-    it('should auto-join self room by default', { timeout: 10000 }, async () => {
-      const { client, serverConnection } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/general/stream',
-        { awaitServerConnection: { controller } },
-      )
-
-      // Connection should be in self-room (same as connection ID)
-      expect(controller.testGetRooms(serverConnection.id)).toContain(serverConnection.id)
-
-      client.close()
-    })
-
     it('should join multiple rooms', { timeout: 10000 }, async () => {
       const { client, serverConnection } = await SSEHttpClient.connect(
         server.baseUrl,
@@ -234,10 +221,10 @@ describe('SSE Rooms E2E', () => {
       controller.testJoinRoom(conn.id, ['premium', 'beta'])
 
       // Broadcast to both rooms - should only send once to this user
-      const count = await controller.testBroadcastToRoom(
-        ['premium', 'beta'],
-        { event: 'message', data: { from: 'system', text: 'Feature update!' } },
-      )
+      const count = await controller.testBroadcastToRoom(['premium', 'beta'], {
+        event: 'message',
+        data: { from: 'system', text: 'Feature update!' },
+      })
 
       expect(count).toBe(1) // De-duplicated
 
@@ -246,29 +233,33 @@ describe('SSE Rooms E2E', () => {
   })
 
   describe('auto-leave on disconnect', () => {
-    it('should automatically leave all rooms when connection closes', { timeout: 10000 }, async () => {
-      const { client, serverConnection: conn } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/test-room/stream',
-        { awaitServerConnection: { controller } },
-      )
+    it(
+      'should automatically leave all rooms when connection closes',
+      { timeout: 10000 },
+      async () => {
+        const { client, serverConnection: conn } = await SSEHttpClient.connect(
+          server.baseUrl,
+          '/api/rooms/test-room/stream',
+          { awaitServerConnection: { controller } },
+        )
 
-      controller.testJoinRoom(conn.id, ['room2', 'room3'])
-      expect(controller.testGetConnectionCountInRoom('test-room')).toBe(1)
-      expect(controller.testGetConnectionCountInRoom('room2')).toBe(1)
-      expect(controller.testGetConnectionCountInRoom('room3')).toBe(1)
+        controller.testJoinRoom(conn.id, ['room2', 'room3'])
+        expect(controller.testGetConnectionCountInRoom('test-room')).toBe(1)
+        expect(controller.testGetConnectionCountInRoom('room2')).toBe(1)
+        expect(controller.testGetConnectionCountInRoom('room3')).toBe(1)
 
-      // Close the connection
-      client.close()
+        // Close the connection
+        client.close()
 
-      // Wait for disconnect
-      await controller.connectionSpy.waitForDisconnection(conn.id)
+        // Wait for disconnect
+        await controller.connectionSpy.waitForDisconnection(conn.id)
 
-      // All rooms should be empty
-      expect(controller.testGetConnectionCountInRoom('test-room')).toBe(0)
-      expect(controller.testGetConnectionCountInRoom('room2')).toBe(0)
-      expect(controller.testGetConnectionCountInRoom('room3')).toBe(0)
-    })
+        // All rooms should be empty
+        expect(controller.testGetConnectionCountInRoom('test-room')).toBe(0)
+        expect(controller.testGetConnectionCountInRoom('room2')).toBe(0)
+        expect(controller.testGetConnectionCountInRoom('room3')).toBe(0)
+      },
+    )
   })
 
   describe('room queries', () => {
@@ -331,7 +322,7 @@ describe('SSE Rooms E2E', () => {
   describe('room broadcast delivery', () => {
     it('should deliver broadcast messages to connections in room', { timeout: 10000 }, async () => {
       // Connect a client and collect events
-      const { client, serverConnection } = await SSEHttpClient.connect(
+      const { client } = await SSEHttpClient.connect(
         server.baseUrl,
         '/api/rooms/delivery-test/stream',
         {

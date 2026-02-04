@@ -10,8 +10,6 @@ import type { SSERoomAdapter, SSERoomMessageHandler } from '../types.ts'
  * For multi-node deployments, use RedisAdapter or a custom adapter.
  */
 export class InMemoryAdapter implements SSERoomAdapter {
-  private handler?: SSERoomMessageHandler
-
   async connect(): Promise<void> {
     // No-op for in-memory adapter
   }
@@ -33,7 +31,7 @@ export class InMemoryAdapter implements SSERoomAdapter {
     // The controller handles local delivery directly
   }
 
-  onMessage(handler: SSERoomMessageHandler): void {
-    this.handler = handler
+  onMessage(_handler: SSERoomMessageHandler): void {
+    // No-op for in-memory adapter - messages are only local
   }
 }

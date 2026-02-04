@@ -1187,9 +1187,7 @@ resolveControllers(diOptions: DependencyInjectionOptions) {
   return {
     dashboardController: asSSEControllerClass(DashboardSSEController, {
       diOptions,
-      rooms: {
-        autoJoinSelfRoom: true, // Default: true - each connection joins a room named after its ID
-      },
+      rooms: {}, // Enable rooms with default config
     }),
   }
 }
@@ -1213,7 +1211,7 @@ private handleDashboardStream = buildHandler(dashboardStreamContract, {
 
     // Get all rooms this connection is in
     const rooms = session.rooms.getRooms()
-    // ['dashboard:123', 'org:acme', 'abc-def-123'] (includes self-room if autoJoinSelfRoom is true)
+    // ['dashboard:123', 'org:acme']
   },
 })
 ```

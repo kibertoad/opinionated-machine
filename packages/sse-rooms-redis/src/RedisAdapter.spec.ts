@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { RedisAdapter } from './RedisAdapter.ts'
 import type { RedisClientLike, RedisRoomMessage } from './types.ts'
 
@@ -82,10 +82,7 @@ describe('RedisAdapter', () => {
 
       await adapter.disconnect()
 
-      expect(subClient.unsubscribe).toHaveBeenCalledWith(
-        'sse:room:room-1',
-        'sse:room:room-2',
-      )
+      expect(subClient.unsubscribe).toHaveBeenCalledWith('sse:room:room-1', 'sse:room:room-2')
     })
 
     it('should handle disconnect with no subscriptions', async () => {
@@ -143,10 +140,7 @@ describe('RedisAdapter', () => {
 
       await adapter.publish('my-room', message)
 
-      expect(pubClient.publish).toHaveBeenCalledWith(
-        'sse:room:my-room',
-        expect.any(String),
-      )
+      expect(pubClient.publish).toHaveBeenCalledWith('sse:room:my-room', expect.any(String))
 
       // Verify the published JSON
       const publishedJson = (pubClient.publish as ReturnType<typeof vi.fn>).mock.calls[0][1]
@@ -223,12 +217,7 @@ describe('RedisAdapter', () => {
       }
       subClient.simulateMessage('sse:room:my-room', JSON.stringify(payload))
 
-      expect(handler).toHaveBeenCalledWith(
-        'my-room',
-        expect.any(Object),
-        'other-node',
-        'conn-456',
-      )
+      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node', 'conn-456')
     })
 
     it('should ignore messages with unknown protocol version', async () => {
@@ -298,12 +287,7 @@ describe('RedisAdapter', () => {
       }
       subClient.simulateMessage('custom:prefix:my-room', JSON.stringify(payload))
 
-      expect(handler).toHaveBeenCalledWith(
-        'my-room',
-        expect.any(Object),
-        'other-node',
-        undefined,
-      )
+      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node', undefined)
     })
   })
 })

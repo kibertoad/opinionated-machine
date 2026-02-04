@@ -93,13 +93,6 @@ export type SSERoomManagerConfig = {
   adapter?: SSERoomAdapter
 
   /**
-   * Automatically join a room named after the connection ID.
-   * Useful for sending messages to specific connections by ID.
-   * @default true
-   */
-  autoJoinSelfRoom?: boolean
-
-  /**
    * Unique identifier for this server node.
    * Used to prevent echo when receiving messages from the adapter.
    * @default crypto.randomUUID()

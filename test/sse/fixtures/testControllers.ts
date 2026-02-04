@@ -1227,9 +1227,8 @@ export class TestRoomSSEController extends AbstractSSEController<TestRoomContrac
       },
     },
     {
-      onClose: (connection) => {
-        // Auto-leave is handled by the controller, but we can notify others
-        const ctx = connection.context as { userId: string; roomId: string }
+      onClose: (_connection) => {
+        // Auto-leave is handled by the controller
         // Note: We can't broadcast here because the connection is already being removed
         // In real apps, you'd store userId->connectionId mapping and handle this differently
       },

@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import Redis from 'ioredis'
-import { RedisAdapter } from './RedisAdapter.ts'
 import type { SSEMessage } from 'opinionated-machine'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { RedisAdapter } from './RedisAdapter.ts'
 
 /**
  * Integration tests for RedisAdapter using real Redis.
@@ -31,12 +31,7 @@ describe('RedisAdapter Integration', () => {
   })
 
   afterAll(async () => {
-    await Promise.all([
-      pubClient1.quit(),
-      subClient1.quit(),
-      pubClient2.quit(),
-      subClient2.quit(),
-    ])
+    await Promise.all([pubClient1.quit(), subClient1.quit(), pubClient2.quit(), subClient2.quit()])
   })
 
   describe('cross-node communication', () => {
@@ -121,11 +116,7 @@ describe('RedisAdapter Integration', () => {
       await adapter2.subscribe('test-room')
       await new Promise((resolve) => setTimeout(resolve, 100))
 
-      await adapter1.publish(
-        'test-room',
-        { event: 'update', data: {} },
-        'conn-to-exclude',
-      )
+      await adapter1.publish('test-room', { event: 'update', data: {} }, 'conn-to-exclude')
 
       await new Promise((resolve) => setTimeout(resolve, 100))
 

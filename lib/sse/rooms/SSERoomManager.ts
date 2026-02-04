@@ -54,9 +54,6 @@ export class SSERoomManager {
   /** Adapter for cross-node communication */
   readonly adapter: SSERoomAdapter
 
-  /** Whether to auto-join a room named after connection ID */
-  private readonly autoJoinSelfRoom: boolean
-
   /** Unique identifier for this node */
   readonly nodeId: string
 
@@ -65,7 +62,6 @@ export class SSERoomManager {
 
   constructor(config: SSERoomManagerConfig = {}) {
     this.adapter = config.adapter ?? new InMemoryAdapter()
-    this.autoJoinSelfRoom = config.autoJoinSelfRoom ?? true
     this.nodeId = config.nodeId ?? randomUUID()
 
     // Set up adapter message handler
@@ -270,17 +266,5 @@ export class SSERoomManager {
 
     const except = Array.isArray(options?.except) ? options.except[0] : options?.except
     await this.adapter.publish(room, message, except)
-  }
-
-  /**
-   * Called when a new connection is registered.
-   * Handles auto-join of self room if enabled.
-   *
-   * @param connectionId - The new connection ID
-   */
-  onConnectionRegistered(connectionId: string): void {
-    if (this.autoJoinSelfRoom) {
-      this.join(connectionId, connectionId)
-    }
   }
 }
