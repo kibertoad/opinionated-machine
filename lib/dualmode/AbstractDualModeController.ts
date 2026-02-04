@@ -1,12 +1,14 @@
+import type {
+  AnyDualModeContractDefinition,
+  AnySSEContractDefinition,
+} from '@lokalise/api-contracts'
 import type { z } from 'zod'
 import type {
   BuildFastifyDualModeRoutesReturnType,
   BuildFastifySSERoutesReturnType,
 } from '../routes/fastifyRouteTypes.ts'
 import { AbstractSSEController } from '../sse/AbstractSSEController.ts'
-import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { SSEControllerConfig } from '../sse/sseTypes.ts'
-import type { AnyDualModeContractDefinition } from './dualModeContracts.ts'
 import type { DualModeControllerConfig } from './dualModeTypes.ts'
 
 /**

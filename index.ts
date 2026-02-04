@@ -9,8 +9,6 @@ export {
   type CreateTestContextParams,
 } from './lib/AbstractTestContextFactory.js'
 export type { NestedPartial } from './lib/configUtils.js'
-// Contracts (unified builder)
-export * from './lib/contracts/index.js'
 export {
   type DependencyInjectionOptions,
   DIContext,

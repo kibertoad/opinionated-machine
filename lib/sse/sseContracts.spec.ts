@@ -1,6 +1,6 @@
+import { buildSseContract as buildContract } from '@lokalise/api-contracts'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
-import { buildContract } from '../contracts/contractBuilders.ts'
 import { buildHandler } from '../routes/fastifyRouteTypes.ts'
 
 describe('sseContracts', () => {
@@ -16,10 +16,10 @@ describe('sseContracts', () => {
       },
     }
 
-    it('defaults method to POST when not specified', () => {
+    it('defaults method to post when not specified', () => {
       const route = buildContract(baseConfig)
 
-      expect(route.method).toBe('POST')
+      expect(route.method).toBe('post')
       expect(route.pathResolver({})).toBe('/api/test')
       expect(route.isSSE).toBe(true)
     })
@@ -27,24 +27,24 @@ describe('sseContracts', () => {
     it('uses specified method when provided', () => {
       const route = buildContract({
         ...baseConfig,
-        method: 'PUT',
+        method: 'put',
       })
 
-      expect(route.method).toBe('PUT')
+      expect(route.method).toBe('put')
     })
 
-    it('supports PATCH method', () => {
+    it('supports patch method', () => {
       const route = buildContract({
         ...baseConfig,
-        method: 'PATCH',
+        method: 'patch',
       })
 
-      expect(route.method).toBe('PATCH')
+      expect(route.method).toBe('patch')
     })
   })
 
   describe('buildContract (SSE GET)', () => {
-    it('creates GET SSE route', () => {
+    it('creates get SSE route', () => {
       const route = buildContract({
         pathResolver: () => '/api/stream',
         params: z.object({}),
@@ -55,7 +55,7 @@ describe('sseContracts', () => {
         },
       })
 
-      expect(route.method).toBe('GET')
+      expect(route.method).toBe('get')
       expect(route.pathResolver({})).toBe('/api/stream')
       expect(route.isSSE).toBe(true)
       expect(route.requestBody).toBeUndefined()
@@ -64,7 +64,7 @@ describe('sseContracts', () => {
 
   describe('buildHandler type checking', () => {
     const testContract = buildContract({
-      method: 'POST',
+      method: 'post',
       pathResolver: (params) => `/api/test/${params.id}/stream`,
       params: z.object({ id: z.string() }),
       query: z.object({ filter: z.string().optional() }),

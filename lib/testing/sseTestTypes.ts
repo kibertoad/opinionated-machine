@@ -1,6 +1,6 @@
+import type { AnySSEContractDefinition } from '@lokalise/api-contracts'
 import type { FastifyInstance } from 'fastify'
 import type { z } from 'zod'
-import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { ParsedSSEEvent } from '../sse/sseParser.ts'
 
 /**

@@ -1,16 +1,15 @@
 import type { SSEReplyInterface } from '@fastify/sse'
+import type {
+  AllContractEventNames,
+  AnySSEContractDefinition,
+  ExtractEventSchema,
+} from '@lokalise/api-contracts'
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import type { z } from 'zod'
 import type { BuildFastifySSERoutesReturnType, SSESession } from '../routes/fastifyRouteTypes.ts'
 import { SSESessionSpy } from './SSESessionSpy.ts'
-import type { AnySSEContractDefinition } from './sseContracts.ts'
-import type {
-  AllContractEventNames,
-  ExtractEventSchema,
-  SSEControllerConfig,
-  SSEMessage,
-} from './sseTypes.ts'
+import type { SSEControllerConfig, SSEMessage } from './sseTypes.ts'
 
 // Re-export Fastify-specific types
 export type {

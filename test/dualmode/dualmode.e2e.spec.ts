@@ -1,9 +1,9 @@
+import { buildSseContract as buildContract } from '@lokalise/api-contracts'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
-  buildContract,
   buildFastifyRoute,
   buildHandler,
   DIContext,
@@ -73,7 +73,7 @@ describe('Dual-Mode Accept Header Routing', () => {
 
   it('returns JSON for Accept: application/json', { timeout: 10000 }, async () => {
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/chat/completions',
       headers: {
         'content-type': 'application/json',
@@ -114,7 +114,7 @@ describe('Dual-Mode Accept Header Routing', () => {
 
   it('defaults to JSON when no Accept header', { timeout: 10000 }, async () => {
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/chat/completions',
       headers: {
         'content-type': 'application/json',
@@ -129,7 +129,7 @@ describe('Dual-Mode Accept Header Routing', () => {
 
   it('defaults to JSON for Accept: */*', { timeout: 10000 }, async () => {
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/chat/completions',
       headers: {
         'content-type': 'application/json',
@@ -153,7 +153,7 @@ describe('Dual-Mode Accept Header Routing', () => {
 
     // JSON has higher quality value
     const jsonResponse = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/chat/completions',
       headers: {
         'content-type': 'application/json',
@@ -167,7 +167,7 @@ describe('Dual-Mode Accept Header Routing', () => {
   it('falls back to default for unsupported Accept header', { timeout: 10000 }, async () => {
     // Accept: text/html is not supported, should fall back to JSON (default)
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/chat/completions',
       headers: {
         'content-type': 'application/json',
@@ -214,7 +214,7 @@ describe('Dual-Mode Path Parameters', () => {
   it('extracts path parameters correctly in JSON mode', { timeout: 10000 }, async () => {
     const conversationId = '550e8400-e29b-41d4-a716-446655440000'
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: `/api/conversations/${conversationId}/completions`,
       headers: {
         'content-type': 'application/json',
@@ -350,7 +350,7 @@ describe('Dual-Mode Authentication', () => {
 
   it('rejects unauthenticated JSON requests', { timeout: 10000 }, async () => {
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/protected/action',
       headers: {
         'content-type': 'application/json',
@@ -364,7 +364,7 @@ describe('Dual-Mode Authentication', () => {
 
   it('accepts authenticated JSON requests', { timeout: 10000 }, async () => {
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/protected/action',
       headers: {
         'content-type': 'application/json',
@@ -443,7 +443,7 @@ describe('Dual-Mode Default Mode Override', () => {
 
   it('still respects explicit Accept: application/json', { timeout: 10000 }, async () => {
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/default-mode-test',
       headers: {
         'content-type': 'application/json',
@@ -599,11 +599,11 @@ describe('Dual-Mode Default Method', () => {
 
   it('uses POST as default when method is not specified', { timeout: 10000 }, async () => {
     // Verify the contract has POST method (default)
-    expect(defaultMethodContract.method).toBe('POST')
+    expect(defaultMethodContract.method).toBe('post')
 
     // Test the endpoint works with POST
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/default-method-test',
       headers: {
         'content-type': 'application/json',
@@ -661,7 +661,7 @@ describe('Dual-Mode JSON Response Validation', () => {
 
   it('returns 500 when JSON response validation fails', { timeout: 10000 }, async () => {
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/json-validation-test',
       headers: {
         'content-type': 'application/json',
@@ -678,7 +678,7 @@ describe('Dual-Mode JSON Response Validation', () => {
 
   it('returns 200 when JSON response is valid', { timeout: 10000 }, async () => {
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/json-validation-test',
       headers: {
         'content-type': 'application/json',
@@ -851,7 +851,7 @@ describe('Dual-Mode Route Builder Validation', () => {
 
     // Create an invalid contract where params is a ZodString instead of ZodObject
     const invalidContract = {
-      method: 'POST' as const,
+      method: 'post' as const,
       pathResolver: () => '/api/invalid',
       params: z.string(), // Invalid: should be ZodObject
       query: z.object({}),
@@ -860,7 +860,6 @@ describe('Dual-Mode Route Builder Validation', () => {
       syncResponseBody: z.object({ result: z.string() }),
       sseEvents: { result: z.object({ success: z.boolean() }) },
       isDualMode: true as const,
-      isSimplified: true as const,
     }
 
     expect(() =>
@@ -938,7 +937,7 @@ describe('Dual-Mode Response Headers', () => {
 
     // Create a contract with responseHeaders schema
     const contractWithHeaders = buildContract({
-      method: 'POST',
+      method: 'post',
       pathResolver: () => '/api/with-headers',
       params: z.object({}),
       query: z.object({}),
@@ -981,7 +980,7 @@ describe('Dual-Mode Response Headers', () => {
     )
 
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/with-headers',
       headers: {
         'content-type': 'application/json',
@@ -1010,7 +1009,7 @@ describe('Dual-Mode Response Headers', () => {
 
     // Create a contract with responseHeaders schema
     const contractWithHeaders = buildContract({
-      method: 'POST',
+      method: 'post',
       pathResolver: () => '/api/missing-headers',
       params: z.object({}),
       query: z.object({}),
@@ -1050,7 +1049,7 @@ describe('Dual-Mode Response Headers', () => {
     )
 
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/missing-headers',
       headers: {
         'content-type': 'application/json',
@@ -1078,7 +1077,7 @@ describe('Dual-Mode Response Headers', () => {
 
     // Create a contract WITHOUT responseHeaders schema
     const contractWithoutHeaders = buildContract({
-      method: 'POST',
+      method: 'post',
       pathResolver: () => '/api/no-headers',
       params: z.object({}),
       query: z.object({}),
@@ -1115,7 +1114,7 @@ describe('Dual-Mode Response Headers', () => {
     )
 
     const response = await server.app.inject({
-      method: 'POST',
+      method: 'post',
       url: '/api/no-headers',
       headers: {
         'content-type': 'application/json',

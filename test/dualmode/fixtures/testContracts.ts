@@ -1,12 +1,12 @@
+import { buildSseContract as buildContract } from '@lokalise/api-contracts'
 import { z } from 'zod'
-import { buildContract } from '../../../index.js'
 
 /**
  * Simple POST dual-mode route without path params.
  * Used for basic Accept header routing tests.
  */
 export const chatCompletionContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/chat/completions',
   params: z.object({}),
   query: z.object({}),
@@ -26,7 +26,7 @@ export const chatCompletionContract = buildContract({
  * POST dual-mode route with path params demonstrating type-safe pathResolver.
  */
 export const conversationCompletionContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: (params) => `/api/conversations/${params.conversationId}/completions`,
   params: z.object({ conversationId: z.string().uuid() }),
   query: z.object({}),
@@ -68,7 +68,7 @@ export const jobStatusContract = buildContract({
  * unauthenticated requests - the preHandler handles 401 responses.
  */
 export const authenticatedDualModeContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/protected/action',
   params: z.object({}),
   query: z.object({}),
@@ -89,7 +89,7 @@ export const authenticatedDualModeContract = buildContract({
  * Simple POST dual-mode route for testing default mode behavior.
  */
 export const defaultModeTestContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/default-mode-test',
   params: z.object({}),
   query: z.object({}),
@@ -105,7 +105,7 @@ export const defaultModeTestContract = buildContract({
  * POST dual-mode route for testing error handling in SSE mode.
  */
 export const errorTestContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/error-test',
   params: z.object({}),
   query: z.object({}),
@@ -119,7 +119,7 @@ export const errorTestContract = buildContract({
 
 /**
  * POST dual-mode route WITHOUT explicit method - tests the default POST behavior.
- * This covers the `config.method ?? 'POST'` branch in buildContract.
+ * This covers the `config.method ?? 'post'` branch in buildContract.
  */
 export const defaultMethodContract = buildContract({
   // method is intentionally omitted to test default behavior
@@ -139,7 +139,7 @@ export const defaultMethodContract = buildContract({
  * The syncResponseBody schema is strict, but the handler will return mismatched data.
  */
 export const jsonValidationContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/json-validation-test',
   params: z.object({}),
   query: z.object({}),

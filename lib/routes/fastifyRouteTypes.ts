@@ -1,8 +1,10 @@
+import type {
+  AnyDualModeContractDefinition,
+  AnySSEContractDefinition,
+} from '@lokalise/api-contracts'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
-import type { AnyDualModeContractDefinition } from '../dualmode/dualModeContracts.ts'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
-import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
 import type { SSECloseReason } from './fastifyRouteUtils.ts'
 
