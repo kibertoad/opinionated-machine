@@ -857,8 +857,8 @@ describe('Dual-Mode Route Builder Validation', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      syncResponse: z.object({ result: z.string() }),
-      events: { result: z.object({ success: z.boolean() }) },
+      syncResponseBody: z.object({ result: z.string() }),
+      sseEvents: { result: z.object({ success: z.boolean() }) },
       isDualMode: true as const,
       isSimplified: true as const,
     }
@@ -897,12 +897,12 @@ describe('Dual-Mode Response Headers', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      syncResponse: z.object({ result: z.string() }),
+      syncResponseBody: z.object({ result: z.string() }),
       responseHeaders: z.object({
         'x-request-id': z.string(),
         'x-ratelimit-remaining': z.string(),
       }),
-      events: { result: z.object({ success: z.boolean() }) },
+      sseEvents: { result: z.object({ success: z.boolean() }) },
     })
 
     const route = buildFastifyRoute(
@@ -969,11 +969,11 @@ describe('Dual-Mode Response Headers', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      syncResponse: z.object({ result: z.string() }),
+      syncResponseBody: z.object({ result: z.string() }),
       responseHeaders: z.object({
         'x-required-header': z.string(),
       }),
-      events: { result: z.object({ success: z.boolean() }) },
+      sseEvents: { result: z.object({ success: z.boolean() }) },
     })
 
     const route = buildFastifyRoute(
@@ -1037,9 +1037,9 @@ describe('Dual-Mode Response Headers', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      syncResponse: z.object({ result: z.string() }),
+      syncResponseBody: z.object({ result: z.string() }),
       // No responseHeaders - should still work
-      events: { result: z.object({ success: z.boolean() }) },
+      sseEvents: { result: z.object({ success: z.boolean() }) },
     })
 
     const route = buildFastifyRoute(

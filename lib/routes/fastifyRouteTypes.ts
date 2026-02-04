@@ -48,7 +48,7 @@ export type SSEHandlerResult = SSERespondResult | void
  *
  * @example
  * ```typescript
- * async function* generateMessages(): AsyncIterable<SSEStreamMessage<typeof contract.events>> {
+ * async function* generateMessages(): AsyncIterable<SSEStreamMessage<typeof contract.sseEvents>> {
  *   yield { event: 'chunk', data: { delta: 'Hello' } }
  *   yield { event: 'chunk', data: { delta: ' world' } }
  *   yield { event: 'done', data: { usage: { total: 2 } } }
@@ -336,7 +336,7 @@ export type FastifySSEHandlerConfig<Contract extends AnySSEContractDefinition> =
   contract: Contract
   /** Handlers object containing the SSE handler */
   handlers: SSEOnlyHandlers<
-    Contract['events'],
+    Contract['sseEvents'],
     z.infer<Contract['params']>,
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
@@ -391,7 +391,7 @@ export type InferSSERequest<Contract extends AnySSEContractDefinition> = Fastify
  * @template Query - Query string parameters type
  * @template Headers - Request headers type
  * @template Body - Request body type
- * @template SyncResponse - Response type that must match contract's syncResponse schema
+ * @template SyncResponse - Response type that must match contract's syncResponseBody schema
  */
 export type SyncModeHandler<
   Params = unknown,
@@ -502,8 +502,10 @@ export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
     Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
-    Contract['syncResponse'] extends z.ZodTypeAny ? z.infer<Contract['syncResponse']> : unknown,
-    Contract['events']
+    Contract['syncResponseBody'] extends z.ZodTypeAny
+      ? z.infer<Contract['syncResponseBody']>
+      : unknown,
+    Contract['sseEvents']
   >
 
 /**
@@ -558,7 +560,7 @@ export type InferHandlers<Contract> = Contract extends AnyDualModeContractDefini
   ? InferDualModeHandlers<Contract>
   : Contract extends AnySSEContractDefinition
     ? SSEOnlyHandlers<
-        Contract['events'],
+        Contract['sseEvents'],
         z.infer<Contract['params']>,
         z.infer<Contract['query']>,
         z.infer<Contract['requestHeaders']>,
@@ -573,7 +575,7 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
   ? InferDualModeHandlers<Contract>
   : Contract extends AnySSEContractDefinition
     ? SSEOnlyHandlers<
-        Contract['events'],
+        Contract['sseEvents'],
         z.infer<Contract['params']>,
         z.infer<Contract['query']>,
         z.infer<Contract['requestHeaders']>,
@@ -595,7 +597,7 @@ export type SSERouteHandler<Contract extends AnySSEContractDefinition> = {
   readonly __type: 'SSERouteHandler'
   readonly contract: Contract
   readonly handlers: SSEOnlyHandlers<
-    Contract['events'],
+    Contract['sseEvents'],
     z.infer<Contract['params']>,
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
@@ -706,7 +708,7 @@ export function buildHandler<
   handlers: HandlersForContract<Contract>,
   options?: FastifySSERouteOptions | FastifyDualModeRouteOptions,
 ): SSERouteHandler<AnySSEContractDefinition> | DualModeRouteHandler<AnyDualModeContractDefinition> {
-  // Check if this is a dual-mode contract (has syncResponse or isDualMode marker)
+  // Check if this is a dual-mode contract (has syncResponseBody or isDualMode marker)
   if ('isDualMode' in contract && contract.isDualMode) {
     return {
       __type: 'DualModeRouteHandler',

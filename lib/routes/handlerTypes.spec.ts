@@ -5,7 +5,7 @@ import type { InferDualModeHandlers } from './fastifyRouteTypes.ts'
 import { buildHandler } from './fastifyRouteTypes.ts'
 
 describe('Handler Type Enforcement', () => {
-  describe('Dual-mode contracts (syncResponse)', () => {
+  describe('Dual-mode contracts (syncResponseBody)', () => {
     const dualModeContract = buildContract({
       method: 'POST',
       pathResolver: () => '/api/chat',
@@ -13,8 +13,8 @@ describe('Handler Type Enforcement', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ message: z.string() }),
-      syncResponse: z.object({ reply: z.string() }),
-      events: { chunk: z.object({ delta: z.string() }) },
+      syncResponseBody: z.object({ reply: z.string() }),
+      sseEvents: { chunk: z.object({ delta: z.string() }) },
     })
 
     it('requires sync handler, not json handler', () => {
@@ -60,8 +60,8 @@ describe('Handler Type Enforcement', () => {
         query: z.object({}),
         requestHeaders: z.object({}),
         requestBody: z.object({ message: z.string() }),
-        syncResponse: z.object({ reply: z.string() }),
-        events: { chunk: z.object({ delta: z.string() }) },
+        syncResponseBody: z.object({ reply: z.string() }),
+        sseEvents: { chunk: z.object({ delta: z.string() }) },
       })
 
       // This should compile without errors
@@ -89,7 +89,7 @@ describe('Handler Type Enforcement', () => {
         params: z.object({}),
         query: z.object({}),
         requestHeaders: z.object({}),
-        events: { data: z.object({ value: z.string() }) },
+        sseEvents: { data: z.object({ value: z.string() }) },
       })
 
       // This should compile without errors

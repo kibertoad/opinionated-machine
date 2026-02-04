@@ -12,11 +12,11 @@ export const chatCompletionContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   requestBody: z.object({ message: z.string() }),
-  syncResponse: z.object({
+  syncResponseBody: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
-  events: {
+  sseEvents: {
     chunk: z.object({ delta: z.string() }),
     done: z.object({ usage: z.object({ total: z.number() }) }),
   },
@@ -32,11 +32,11 @@ export const conversationCompletionContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
   requestBody: z.object({ message: z.string() }),
-  syncResponse: z.object({
+  syncResponseBody: z.object({
     reply: z.string(),
     conversationId: z.string(),
   }),
-  events: {
+  sseEvents: {
     chunk: z.object({ delta: z.string() }),
     done: z.object({ conversationId: z.string() }),
   },
@@ -50,12 +50,12 @@ export const jobStatusContract = buildContract({
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
   requestHeaders: z.object({}),
-  syncResponse: z.object({
+  syncResponseBody: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
   }),
-  events: {
+  sseEvents: {
     progress: z.object({ percent: z.number(), message: z.string().optional() }),
     done: z.object({ result: z.string() }),
     error: z.object({ code: z.string(), message: z.string() }),
@@ -76,11 +76,11 @@ export const authenticatedDualModeContract = buildContract({
     authorization: z.string().optional(),
   }),
   requestBody: z.object({ data: z.string() }),
-  syncResponse: z.object({
+  syncResponseBody: z.object({
     success: z.boolean(),
     data: z.string(),
   }),
-  events: {
+  sseEvents: {
     result: z.object({ success: z.boolean(), data: z.string() }),
   },
 })
@@ -95,8 +95,8 @@ export const defaultModeTestContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   requestBody: z.object({ input: z.string() }),
-  syncResponse: z.object({ output: z.string() }),
-  events: {
+  syncResponseBody: z.object({ output: z.string() }),
+  sseEvents: {
     output: z.object({ value: z.string() }),
   },
 })
@@ -111,8 +111,8 @@ export const errorTestContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   requestBody: z.object({ shouldThrow: z.boolean() }),
-  syncResponse: z.object({ success: z.boolean() }),
-  events: {
+  syncResponseBody: z.object({ success: z.boolean() }),
+  sseEvents: {
     result: z.object({ success: z.boolean() }),
   },
 })
@@ -128,15 +128,15 @@ export const defaultMethodContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   requestBody: z.object({ value: z.string() }),
-  syncResponse: z.object({ result: z.string() }),
-  events: {
+  syncResponseBody: z.object({ result: z.string() }),
+  sseEvents: {
     data: z.object({ value: z.string() }),
   },
 })
 
 /**
  * POST dual-mode route for testing JSON response validation failure.
- * The syncResponse schema is strict, but the handler will return mismatched data.
+ * The syncResponseBody schema is strict, but the handler will return mismatched data.
  */
 export const jsonValidationContract = buildContract({
   method: 'POST',
@@ -145,11 +145,11 @@ export const jsonValidationContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   requestBody: z.object({ returnInvalid: z.boolean() }),
-  syncResponse: z.object({
+  syncResponseBody: z.object({
     requiredField: z.string(),
     count: z.number().int().positive(),
   }),
-  events: {
+  sseEvents: {
     result: z.object({ success: z.boolean() }),
   },
 })

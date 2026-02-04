@@ -14,7 +14,7 @@ import type { DualModeControllerConfig } from './dualModeTypes.ts'
  */
 export type AllDualModeContractEventNames<
   Contracts extends Record<string, AnyDualModeContractDefinition>,
-> = Contracts[keyof Contracts]['events'] extends infer E
+> = Contracts[keyof Contracts]['sseEvents'] extends infer E
   ? E extends Record<string, z.ZodTypeAny>
     ? keyof E & string
     : never
@@ -27,8 +27,8 @@ export type ExtractDualModeEventSchema<
   Contracts extends Record<string, AnyDualModeContractDefinition>,
   EventName extends string,
 > = {
-  [K in keyof Contracts]: EventName extends keyof Contracts[K]['events']
-    ? Contracts[K]['events'][EventName]
+  [K in keyof Contracts]: EventName extends keyof Contracts[K]['sseEvents']
+    ? Contracts[K]['sseEvents'][EventName]
     : never
 }[keyof Contracts]
 
@@ -47,7 +47,7 @@ export type ExtractDualModeEventSchema<
  * ```typescript
  * class ChatController extends AbstractDualModeController<typeof contracts> {
  *   public static contracts = {
- *     chatCompletion: buildContract({ requestBody: ..., syncResponse: ..., ... }),
+ *     chatCompletion: buildContract({ requestBody: ..., syncResponseBody: ..., ... }),
  *   } as const
  *
  *   constructor(deps: Dependencies, config?: DualModeControllerConfig) {

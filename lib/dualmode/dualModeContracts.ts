@@ -23,7 +23,7 @@ export type PathResolver<Params> = (params: Params) => string
 
 /**
  * Definition for a dual-mode route.
- * Use `syncResponse` for the non-streaming response schema.
+ * Use `syncResponseBody` for the non-streaming response schema.
  *
  * @template Method - HTTP method (GET, POST, PUT, PATCH)
  * @template Params - Path parameters schema
@@ -51,9 +51,9 @@ export type SimplifiedDualModeContractDefinition<
   requestHeaders: RequestHeaders
   requestBody: Body
   /** Sync response schema - use with `sync` handler */
-  syncResponse: SyncResponse
+  syncResponseBody: SyncResponse
   responseHeaders?: ResponseHeaders
-  events: Events
+  sseEvents: Events
   isDualMode: true
   isSimplified: true
 }
@@ -71,8 +71,8 @@ export type AnyDualModeContractDefinition = {
   requestHeaders: z.ZodTypeAny
   requestBody: z.ZodTypeAny | undefined
   /** Sync response schema */
-  syncResponse: z.ZodTypeAny
+  syncResponseBody: z.ZodTypeAny
   responseHeaders?: z.ZodTypeAny
-  events: SSEEventSchemas
+  sseEvents: SSEEventSchemas
   isDualMode: true
 }

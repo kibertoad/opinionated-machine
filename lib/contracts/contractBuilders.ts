@@ -20,9 +20,9 @@ export type SSEGetContractConfig<
   params: Params
   query: Query
   requestHeaders: RequestHeaders
-  events: Events
+  sseEvents: Events
   requestBody?: never
-  syncResponse?: never
+  syncResponseBody?: never
 }
 
 /**
@@ -42,13 +42,13 @@ export type SSEPayloadContractConfig<
   query: Query
   requestHeaders: RequestHeaders
   requestBody: Body
-  events: Events
-  syncResponse?: never
+  sseEvents: Events
+  syncResponseBody?: never
 }
 
 /**
  * Configuration for building a GET dual-mode route.
- * Requires syncResponse, forbids requestBody.
+ * Requires syncResponseBody, forbids requestBody.
  */
 export type DualModeGetContractConfig<
   Params extends z.ZodTypeAny,
@@ -63,7 +63,7 @@ export type DualModeGetContractConfig<
   query: Query
   requestHeaders: RequestHeaders
   /** Single sync response schema */
-  syncResponse: JsonResponse
+  syncResponseBody: JsonResponse
   /**
    * Schema for validating response headers (sync mode only).
    * Used to define and validate headers that the server will send in the response.
@@ -77,13 +77,13 @@ export type DualModeGetContractConfig<
    * ```
    */
   responseHeaders?: ResponseHeaders
-  events: Events
+  sseEvents: Events
   requestBody?: never
 }
 
 /**
  * Configuration for building a POST/PUT/PATCH dual-mode route with request requestBody.
- * Requires both requestBody and syncResponse.
+ * Requires both requestBody and syncResponseBody.
  */
 export type DualModePayloadContractConfig<
   Params extends z.ZodTypeAny,
@@ -101,7 +101,7 @@ export type DualModePayloadContractConfig<
   requestHeaders: RequestHeaders
   requestBody: Body
   /** Single sync response schema */
-  syncResponse: JsonResponse
+  syncResponseBody: JsonResponse
   /**
    * Schema for validating response headers (sync mode only).
    * Used to define and validate headers that the server will send in the response.
@@ -115,30 +115,30 @@ export type DualModePayloadContractConfig<
    * ```
    */
   responseHeaders?: ResponseHeaders
-  events: Events
+  sseEvents: Events
 }
 
 /**
  * Unified contract builder with overloads for SSE-only and dual-mode contracts.
  *
- * Automatically determines the contract type based on the presence of `requestBody` and `syncResponse`:
+ * Automatically determines the contract type based on the presence of `requestBody` and `syncResponseBody`:
  *
  * | Response Config | requestBody | Result |
  * |-----------------|------|--------|
  * | none | ❌ | SSE GET |
  * | none | ✅ | SSE POST/PUT/PATCH |
- * | syncResponse | ❌ | Dual-mode GET |
- * | syncResponse | ✅ | Dual-mode POST/PUT/PATCH |
+ * | syncResponseBody | ❌ | Dual-mode GET |
+ * | syncResponseBody | ✅ | Dual-mode POST/PUT/PATCH |
  *
  * @example
  * ```typescript
- * // SSE GET - no requestBody, no syncResponse
+ * // SSE GET - no requestBody, no syncResponseBody
  * const notificationsStream = buildContract({
  *   pathResolver: () => '/api/notifications/stream',
  *   params: z.object({}),
  *   query: z.object({ userId: z.string().optional() }),
  *   requestHeaders: z.object({}),
- *   events: { notification: z.object({ id: z.string(), message: z.string() }) },
+ *   sseEvents: { notification: z.object({ id: z.string(), message: z.string() }) },
  * })
  *
  * // Dual-mode POST - single sync format
@@ -149,8 +149,8 @@ export type DualModePayloadContractConfig<
  *   query: z.object({}),
  *   requestHeaders: z.object({}),
  *   requestBody: z.object({ message: z.string() }),
- *   syncResponse: z.object({ reply: z.string(), usage: z.object({ tokens: z.number() }) }),
- *   events: { chunk: z.object({ delta: z.string() }), done: z.object({ usage: z.object({ total: z.number() }) }) },
+ *   syncResponseBody: z.object({ reply: z.string(), usage: z.object({ tokens: z.number() }) }),
+ *   sseEvents: { chunk: z.object({ delta: z.string() }), done: z.object({ usage: z.object({ total: z.number() }) }) },
  * })
  * ```
  */
@@ -164,7 +164,7 @@ function buildBaseFields(config: any, hasBody: boolean) {
     query: config.query,
     requestHeaders: config.requestHeaders,
     requestBody: hasBody ? config.requestBody : undefined,
-    events: config.events,
+    sseEvents: config.sseEvents,
   }
 }
 
@@ -173,7 +173,7 @@ function determineMethod(config: { method?: string }, hasBody: boolean, defaultM
   return hasBody ? (config.method ?? defaultMethod) : 'GET'
 }
 
-// Overload 1: Dual-mode with requestBody (has syncResponse + requestBody)
+// Overload 1: Dual-mode with requestBody (has syncResponseBody + requestBody)
 export function buildContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
@@ -203,7 +203,7 @@ export function buildContract<
   ResponseHeaders
 >
 
-// Overload 2: Dual-mode GET (has syncResponse, requestBody?: never)
+// Overload 2: Dual-mode GET (has syncResponseBody, requestBody?: never)
 export function buildContract<
   Params extends z.ZodTypeAny,
   Query extends z.ZodTypeAny,
@@ -264,16 +264,16 @@ export function buildContract(
     | SSEGetContractConfig<any, any, any, any>,
   // biome-ignore lint/suspicious/noExplicitAny: Return type depends on overload
 ): any {
-  const hasSyncResponse = 'syncResponse' in config && config.syncResponse !== undefined
+  const hasSyncResponseBody = 'syncResponseBody' in config && config.syncResponseBody !== undefined
   const hasBody = 'requestBody' in config && config.requestBody !== undefined
   const base = buildBaseFields(config, hasBody)
 
-  if (hasSyncResponse) {
+  if (hasSyncResponseBody) {
     // Dual-mode contract
     return {
       ...base,
       method: determineMethod(config as { method?: string }, hasBody, 'POST'),
-      syncResponse: (config as { syncResponse: unknown }).syncResponse,
+      syncResponseBody: (config as { syncResponseBody: unknown }).syncResponseBody,
       responseHeaders: (config as { responseHeaders?: unknown }).responseHeaders,
       isDualMode: true,
       isSimplified: true,

@@ -29,7 +29,7 @@ const chatStreamContract = buildContract({
     model: z.string(),
     messages: z.array(z.object({ role: z.string(), content: z.string() })),
   }),
-  events: {
+  sseEvents: {
     chunk: z.object({ content: z.string(), index: z.number() }),
     done: z.object({ totalTokens: z.number(), model: z.string() }),
     error: z.object({ code: z.number(), message: z.string() }),
@@ -385,7 +385,7 @@ describe('SSE Controller Type Safety', () => {
         params: z.object({}),
         query: z.object({}),
         requestHeaders: z.object({}),
-        events: {
+        sseEvents: {
           alert: z.object({ severity: z.enum(['info', 'warning', 'error']), message: z.string() }),
           dismiss: z.object({ alertId: z.string() }),
         },
@@ -459,12 +459,12 @@ describe('Dual-Mode Contract Type Safety', () => {
         query: z.object({}),
         requestHeaders: z.object({}),
         requestBody: z.object({ data: z.string() }),
-        syncResponse: z.object({ result: z.string() }),
+        syncResponseBody: z.object({ result: z.string() }),
         responseHeaders: z.object({
           'x-request-id': z.string(),
           'x-custom': z.number(),
         }),
-        events: {
+        sseEvents: {
           done: z.object({ success: z.boolean() }),
         },
       })
@@ -483,8 +483,8 @@ describe('Dual-Mode Contract Type Safety', () => {
         query: z.object({}),
         requestHeaders: z.object({}),
         requestBody: z.object({ data: z.string() }),
-        syncResponse: z.object({ result: z.string() }),
-        events: {
+        syncResponseBody: z.object({ result: z.string() }),
+        sseEvents: {
           done: z.object({ success: z.boolean() }),
         },
       })
@@ -503,7 +503,7 @@ describe('Dual-Mode Contract Type Safety', () => {
         query: z.object({}),
         requestHeaders: z.object({}),
         requestBody: z.object({ data: z.string() }),
-        events: {
+        sseEvents: {
           chunk: z.object({ content: z.string() }),
         },
       })
@@ -527,7 +527,7 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
     params: z.object({ userId: z.string() }),
     query: z.object({ since: z.string().optional() }),
     requestHeaders: z.object({ authorization: z.string() }),
-    events: {
+    sseEvents: {
       notification: z.object({ id: z.string(), message: z.string() }),
       heartbeat: z.object({ timestamp: z.number() }),
     },
@@ -679,11 +679,11 @@ describe('Dual-Mode Handler Type Safety', () => {
       message: z.string(),
       temperature: z.number().optional(),
     }),
-    syncResponse: z.object({
+    syncResponseBody: z.object({
       reply: z.string(),
       usage: z.object({ tokens: z.number() }),
     }),
-    events: {
+    sseEvents: {
       chunk: z.object({ delta: z.string() }),
       done: z.object({ usage: z.object({ total: z.number() }) }),
     },
@@ -724,7 +724,7 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('catches wrong sync handler return type at compile time', () => {
-      // @ts-expect-error - return type doesn't match syncResponse: missing 'usage'
+      // @ts-expect-error - return type doesn't match syncResponseBody: missing 'usage'
       buildHandler(chatCompletionContract, {
         sync: () => {
           return { reply: 'Hello' }
@@ -941,11 +941,11 @@ describe('Dual-Mode Handler Type Safety', () => {
     params: z.object({ jobId: z.string().uuid() }),
     query: z.object({ verbose: z.boolean().optional() }),
     requestHeaders: z.object({}),
-    syncResponse: z.object({
+    syncResponseBody: z.object({
       status: z.enum(['pending', 'running', 'completed', 'failed']),
       progress: z.number(),
     }),
-    events: {
+    sseEvents: {
       progress: z.object({ percent: z.number(), message: z.string().optional() }),
       done: z.object({ result: z.string() }),
     },
@@ -1060,7 +1060,7 @@ describe('Unified buildHandler Type Safety', () => {
     params: z.object({ userId: z.string() }),
     query: z.object({ since: z.string().optional() }),
     requestHeaders: z.object({}),
-    events: {
+    sseEvents: {
       notification: z.object({ id: z.string(), message: z.string() }),
       heartbeat: z.object({ timestamp: z.number() }),
     },
@@ -1074,11 +1074,11 @@ describe('Unified buildHandler Type Safety', () => {
     query: z.object({}),
     requestHeaders: z.object({}),
     requestBody: z.object({ message: z.string() }),
-    syncResponse: z.object({
+    syncResponseBody: z.object({
       reply: z.string(),
       usage: z.object({ tokens: z.number() }),
     }),
-    events: {
+    sseEvents: {
       chunk: z.object({ delta: z.string() }),
       done: z.object({ usage: z.object({ total: z.number() }) }),
     },
@@ -1251,7 +1251,7 @@ describe('Unified buildHandler Type Safety', () => {
         sync: () => ({ reply: 'Hello', usage: { tokens: 10 } }),
         sse: (_request, sse) => {
           // Assert sse is SSEContext with typed events
-          expectTypeOf(sse).toEqualTypeOf<SSEContext<typeof chatCompletionContract.events>>()
+          expectTypeOf(sse).toEqualTypeOf<SSEContext<typeof chatCompletionContract.sseEvents>>()
           sse.start('autoClose')
         },
       })

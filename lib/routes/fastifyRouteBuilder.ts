@@ -50,10 +50,10 @@ function buildSSEConfig(
 }
 
 /**
- * Validate response body against the syncResponse schema.
+ * Validate response body against the syncResponseBody schema.
  */
 function validateResponseBody(contract: AnyDualModeContractDefinition, response: unknown): void {
-  const schema = contract.syncResponse
+  const schema = contract.syncResponseBody
   if (!schema) return
 
   const result = schema.safeParse(response)
@@ -170,7 +170,7 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
     controller,
     request,
     reply,
-    contract.events,
+    contract.sseEvents,
     options,
     'dual-mode SSE',
   )
@@ -323,7 +323,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         controller,
         request,
         reply,
-        contract.events,
+        contract.sseEvents,
         options,
         'SSE',
       )

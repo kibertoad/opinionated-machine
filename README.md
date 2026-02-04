@@ -398,7 +398,7 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildContract` to define SSE routes. The contract type is automatically determined based on the presence of `requestBody` and `syncResponse` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
+Use `buildContract` to define SSE routes. The contract type is automatically determined based on the presence of `requestBody` and `syncResponseBody` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
@@ -410,7 +410,7 @@ export const channelStreamContract = buildContract({
   params: z.object({ channelId: z.string() }),
   query: z.object({}),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     message: z.object({ content: z.string() }),
   },
 })
@@ -421,7 +421,7 @@ export const notificationsContract = buildContract({
   params: z.object({}),
   query: z.object({ userId: z.string().optional() }),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     notification: z.object({
       id: z.string(),
       message: z.string(),
@@ -440,7 +440,7 @@ export const chatCompletionContract = buildContract({
     message: z.string(),
     stream: z.literal(true),
   }),
-  events: {
+  sseEvents: {
     chunk: z.object({ content: z.string() }),
     done: z.object({ totalTokens: z.number() }),
   },
@@ -1411,32 +1411,32 @@ Dual-mode contracts define endpoints that can return **either** a complete sync 
 - You're building OpenAI-style APIs where `stream: true` triggers SSE
 - You need polling fallback for clients that don't support SSE
 
-To create a dual-mode contract, include a `syncResponse` schema in your `buildContract` call:
-- Has `syncResponse` but no `requestBody` → GET dual-mode route
-- Has both `syncResponse` and `requestBody` → POST/PUT/PATCH dual-mode route
+To create a dual-mode contract, include a `syncResponseBody` schema in your `buildContract` call:
+- Has `syncResponseBody` but no `requestBody` → GET dual-mode route
+- Has both `syncResponseBody` and `requestBody` → POST/PUT/PATCH dual-mode route
 
 ```ts
 import { z } from 'zod'
 import { buildContract } from 'opinionated-machine'
 
-// GET dual-mode route (polling or streaming job status) - has syncResponse, no requestBody
+// GET dual-mode route (polling or streaming job status) - has syncResponseBody, no requestBody
 export const jobStatusContract = buildContract({
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
   requestHeaders: z.object({}),
-  syncResponse: z.object({
+  syncResponseBody: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
   }),
-  events: {
+  sseEvents: {
     progress: z.object({ percent: z.number(), message: z.string().optional() }),
     done: z.object({ result: z.string() }),
   },
 })
 
-// POST dual-mode route (OpenAI-style chat completion) - has both syncResponse and requestBody
+// POST dual-mode route (OpenAI-style chat completion) - has both syncResponseBody and requestBody
 export const chatCompletionContract = buildContract({
   method: 'POST',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
@@ -1444,11 +1444,11 @@ export const chatCompletionContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
   requestBody: z.object({ message: z.string() }),
-  syncResponse: z.object({
+  syncResponseBody: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
-  events: {
+  sseEvents: {
     chunk: z.object({ delta: z.string() }),
     done: z.object({ usage: z.object({ total: z.number() }) }),
   },
@@ -1469,14 +1469,14 @@ export const rateLimitedContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   requestBody: z.object({ data: z.string() }),
-  syncResponse: z.object({ result: z.string() }),
+  syncResponseBody: z.object({ result: z.string() }),
   // Define expected response headers
   responseHeaders: z.object({
     'x-ratelimit-limit': z.string(),
     'x-ratelimit-remaining': z.string(),
     'x-ratelimit-reset': z.string(),
   }),
-  events: {
+  sseEvents: {
     result: z.object({ success: z.boolean() }),
   },
 })
@@ -1509,7 +1509,7 @@ Dual-mode contracts use a single `sync` handler that returns the response data. 
 ```ts
 handlers: buildHandler(chatCompletionContract, {
   sync: async (request, reply) => {
-    // Return the response data matching syncResponse schema
+    // Return the response data matching syncResponseBody schema
     const result = await aiService.complete(request.body.message)
     return {
       reply: result.text,
@@ -1525,8 +1525,8 @@ handlers: buildHandler(chatCompletionContract, {
 ```
 
 TypeScript enforces the correct handler structure:
-- `syncResponse` contracts must use `sync` handler (returns response data)
-- `events` contracts must use `sse` handler (streams events)
+- `syncResponseBody` contracts must use `sync` handler (returns response data)
+- `sseEvents` contracts must use `sse` handler (streams events)
 
 ### Implementing Dual-Mode Controllers
 
@@ -1610,7 +1610,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 | `sync` | `(request, reply) => Response` |
 | `sse` | `(request, sse) => SSEHandlerResult` |
 
-The `sync` handler must return a value matching `syncResponse` schema. The `sse` handler uses `sse.start(mode)` to begin streaming (`'autoClose'` for request-response, `'keepAlive'` for long-lived sessions) and `session.send()` for type-safe event sending.
+The `sync` handler must return a value matching `syncResponseBody` schema. The `sse` handler uses `sse.start(mode)` to begin streaming (`'autoClose'` for request-response, `'keepAlive'` for long-lived sessions) and `session.send()` for type-safe event sending.
 
 ### Registering Dual-Mode Controllers
 

@@ -9,7 +9,7 @@ export const streamContract = buildContract({
   params: z.object({}),
   query: z.object({ userId: z.string().optional() }),
   requestHeaders: z.object({}),
-  events: { message: z.object({ text: z.string() }) },
+  sseEvents: { message: z.object({ text: z.string() }) },
 })
 
 /**
@@ -22,7 +22,7 @@ export const notificationsStreamContract = buildContract({
     userId: z.string().optional(),
   }),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     notification: z.object({
       id: z.string(),
       message: z.string(),
@@ -43,7 +43,7 @@ export const chatCompletionContract = buildContract({
     message: z.string(),
     stream: z.literal(true),
   }),
-  events: {
+  sseEvents: {
     chunk: z.object({
       content: z.string(),
     }),
@@ -63,7 +63,7 @@ export const authenticatedStreamContract = buildContract({
   requestHeaders: z.object({
     authorization: z.string(),
   }),
-  events: {
+  sseEvents: {
     data: z.object({
       value: z.string(),
     }),
@@ -82,7 +82,7 @@ export const channelStreamContract = buildContract({
     since: z.string().optional(),
   }),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     message: z.object({
       id: z.string(),
       content: z.string(),
@@ -101,7 +101,7 @@ export const reconnectStreamContract = buildContract({
   requestHeaders: z.object({
     'last-event-id': z.string().optional(),
   }),
-  events: {
+  sseEvents: {
     event: z.object({
       id: z.string(),
       data: z.string(),
@@ -119,7 +119,7 @@ export const asyncReconnectStreamContract = buildContract({
   requestHeaders: z.object({
     'last-event-id': z.string().optional(),
   }),
-  events: {
+  sseEvents: {
     event: z.object({
       id: z.string(),
       data: z.string(),
@@ -141,7 +141,7 @@ export const largeContentStreamContract = buildContract({
     chunkCount: z.number(),
     chunkSize: z.number(),
   }),
-  events: {
+  sseEvents: {
     chunk: z.object({
       index: z.number(),
       content: z.string(),
@@ -161,7 +161,7 @@ export const loggerTestStreamContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     message: z.object({ text: z.string() }),
   },
 })
@@ -174,7 +174,7 @@ export const onConnectErrorStreamContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     message: z.object({ text: z.string() }),
   },
 })
@@ -189,7 +189,7 @@ export const onReconnectErrorStreamContract = buildContract({
   requestHeaders: z.object({
     'last-event-id': z.string().optional(),
   }),
-  events: {
+  sseEvents: {
     event: z.object({ id: z.string(), data: z.string() }),
   },
 })
@@ -213,7 +213,7 @@ export const validationTestStreamContract = buildContract({
       status: z.string(),
     }),
   }),
-  events: {
+  sseEvents: {
     // Strict schema that eventData must match
     validatedEvent: z.object({
       id: z.string().uuid(),
@@ -247,7 +247,7 @@ export const openaiStyleStreamContract = buildContract({
     prompt: z.string(),
     stream: z.literal(true),
   }),
-  events: {
+  sseEvents: {
     // JSON object events (typical streaming chunks)
     chunk: z.object({
       choices: z.array(
@@ -271,7 +271,7 @@ export const onCloseErrorStreamContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     message: z.object({ text: z.string() }),
   },
 })
@@ -284,7 +284,7 @@ export const isConnectedTestStreamContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     status: z.object({ connected: z.boolean() }),
     done: z.object({ ok: z.boolean() }),
   },
@@ -302,7 +302,7 @@ export const sendStreamTestContract = buildContract({
   requestBody: z.object({
     sendInvalid: z.boolean().optional(),
   }),
-  events: {
+  sseEvents: {
     message: z.object({ text: z.string() }),
     done: z.object({ ok: z.boolean() }),
   },
@@ -316,7 +316,7 @@ export const getStreamTestContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     message: z.object({ text: z.string() }),
   },
 })
@@ -335,7 +335,7 @@ export const deferredHeaders404Contract = buildContract({
   }),
   query: z.object({}),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     message: z.object({ text: z.string() }),
   },
 })
@@ -352,7 +352,7 @@ export const deferredHeaders422Contract = buildContract({
   requestBody: z.object({
     value: z.number(),
   }),
-  events: {
+  sseEvents: {
     result: z.object({ computed: z.number() }),
   },
 })
@@ -365,7 +365,7 @@ export const forgottenStartContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     message: z.object({ text: z.string() }),
   },
 })
@@ -378,7 +378,7 @@ export const errorAfterStartContract = buildContract({
   params: z.object({}),
   query: z.object({}),
   requestHeaders: z.object({}),
-  events: {
+  sseEvents: {
     message: z.object({ text: z.string() }),
   },
 })

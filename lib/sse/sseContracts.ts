@@ -50,7 +50,7 @@ export type SSEContractDefinition<
   query: Query
   requestHeaders: RequestHeaders
   requestBody: Body
-  events: Events
+  sseEvents: Events
   isSSE: true
 }
 
@@ -66,6 +66,6 @@ export type AnySSEContractDefinition = {
   query: z.ZodTypeAny
   requestHeaders: z.ZodTypeAny
   requestBody: z.ZodTypeAny | undefined
-  events: SSEEventSchemas
+  sseEvents: SSEEventSchemas
   isSSE: true
 }
