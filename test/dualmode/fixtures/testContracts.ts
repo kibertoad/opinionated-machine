@@ -17,8 +17,8 @@ export const chatCompletionContract = buildContract({
     usage: z.object({ tokens: z.number() }),
   }),
   sseEvents: {
-    chunk: z.object({ delta: z.string() }),
-    done: z.object({ usage: z.object({ total: z.number() }) }),
+    chunk: z.object({ content: z.string() }),
+    done: z.object({ usage: z.object({ totalTokens: z.number() }) }),
   },
 })
 

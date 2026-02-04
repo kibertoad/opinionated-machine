@@ -107,9 +107,9 @@ describe('Dual-Mode Accept Header Routing', () => {
     expect(chunkEvents).toHaveLength(2)
     expect(doneEvents).toHaveLength(1)
 
-    expect(JSON.parse(chunkEvents[0]!.data)).toEqual({ delta: 'Hello' })
-    expect(JSON.parse(chunkEvents[1]!.data)).toEqual({ delta: 'World' })
-    expect(JSON.parse(doneEvents[0]!.data)).toEqual({ usage: { total: 2 } })
+    expect(JSON.parse(chunkEvents[0]!.data)).toEqual({ content: 'Hello' })
+    expect(JSON.parse(chunkEvents[1]!.data)).toEqual({ content: 'World' })
+    expect(JSON.parse(doneEvents[0]!.data)).toEqual({ usage: { totalTokens: 2 } })
   })
 
   it('defaults to JSON when no Accept header', { timeout: 10000 }, async () => {
@@ -746,7 +746,7 @@ describe('Dual-Mode Controller Methods', () => {
     // Use sendDualModeEventInternal to send a typed event
     const result = await controller.sendDualModeEventInternal(connection.id, {
       event: 'chunk',
-      data: { delta: 'extra-chunk' },
+      data: { content: 'extra-chunk' },
     })
 
     expect(result).toBe(true)
@@ -758,7 +758,7 @@ describe('Dual-Mode Controller Methods', () => {
     // Verify the extra event was received
     const events = conn.getReceivedEvents()
     const extraChunk = events.find(
-      (e) => e.event === 'chunk' && e.data === JSON.stringify({ delta: 'extra-chunk' }),
+      (e) => e.event === 'chunk' && e.data === JSON.stringify({ content: 'extra-chunk' }),
     )
     expect(extraChunk).toBeDefined()
 
@@ -778,7 +778,7 @@ describe('Dual-Mode Controller Methods', () => {
     // Try to send to a non-existent connection
     const result = await controller.sendDualModeEventInternal('non-existent-id', {
       event: 'chunk',
-      data: { delta: 'test' },
+      data: { content: 'test' },
     })
 
     expect(result).toBe(false)

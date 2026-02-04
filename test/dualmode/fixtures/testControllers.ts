@@ -44,9 +44,9 @@ export class TestChatDualModeController extends AbstractDualModeController<TestC
       const connection = sse.start('autoClose')
       const words = request.body.message.split(' ')
       for (const word of words) {
-        await connection.send('chunk', { delta: word })
+        await connection.send('chunk', { content: word })
       }
-      await connection.send('done', { usage: { total: words.length } })
+      await connection.send('done', { usage: { totalTokens: words.length } })
       // autoClose mode
     },
   })
