@@ -13,7 +13,6 @@ import type {
   FastifyDualModeHandlerConfig,
   FastifySSEHandlerConfig,
   FastifySSERouteOptions,
-  SSEHandlerResult,
   SSERouteHandler,
 } from './fastifyRouteTypes.ts'
 import {
@@ -123,7 +122,7 @@ async function handleSyncMode<Contract extends AnyDualModeContractDefinition>(
  * Process SSE handler result and manage connection lifecycle.
  */
 async function processSSEHandlerResult(
-  result: SSEHandlerResult,
+  responseData: { code: number; body: unknown } | undefined,
   controller:
     | AbstractDualModeController<Record<string, AnyDualModeContractDefinition>>
     | AbstractSSEController<Record<string, AnySSEContractDefinition>>,
@@ -132,8 +131,8 @@ async function processSSEHandlerResult(
   reply: FastifyReply,
   mode: 'autoClose' | 'keepAlive' | undefined,
 ): Promise<void> {
-  // Check if handler returned an early response (before streaming started)
-  if (result && result._type === 'respond') {
+  // Check if handler called sse.respond() (early return before streaming started)
+  if (responseData) {
     // Send HTTP response (early return before streaming started).
     // Clean up SSE-specific headers that @fastify/sse sets early in the lifecycle.
     // Not strictly necessary, but avoids confusing headers on JSON responses.
@@ -141,7 +140,7 @@ async function processSSEHandlerResult(
     reply.removeHeader('x-accel-buffering')
     // Critical: override content-type from text/event-stream to application/json,
     // otherwise the zod serializer compiler won't serialize the body correctly.
-    reply.type('application/json').code(result.code).send(result.body)
+    reply.type('application/json').code(responseData.code).send(responseData.body)
     return
   }
 
@@ -180,12 +179,12 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
 
   try {
     // biome-ignore lint/suspicious/noExplicitAny: SSEContext types are validated by FastifyDualModeHandlerConfig
-    const result = await handlers.sse(request, contextResult.sseContext as any)
+    await handlers.sse(request, contextResult.sseContext as any)
 
     // Check for forgotten start() detection
-    // Handler must either start streaming OR send a response
+    // Handler must either start streaming OR call sse.respond()
     // Note: With autoClose mode, handlers return void after start(), which is valid
-    if (!contextResult.isStarted() && (!result || result._type !== 'respond')) {
+    if (!contextResult.isStarted() && !contextResult.hasResponse()) {
       throw new Error(
         'SSE handler must either send a response (sse.respond()) ' +
           'or start streaming (sse.start()). Handler returned without doing either.',
@@ -194,7 +193,7 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
 
     // Process the result
     await processSSEHandlerResult(
-      result,
+      contextResult.getResponseData(),
       controller,
       contextResult.getConnectionId(),
       contextResult.connectionClosed,
@@ -335,15 +334,15 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
       )
 
       // Call user handler with (request, sse) signature
-      // Handler returns SSEHandlerResult indicating how to manage response
+      // Handler can call sse.respond() without returning it, or return it - both work
       try {
         // biome-ignore lint/suspicious/noExplicitAny: Request and SSEContext types are validated by FastifySSEHandlerConfig
-        const result = await handlers.sse(request as any, contextResult.sseContext as any)
+        await handlers.sse(request as any, contextResult.sseContext as any)
 
         // Check for forgotten start() detection
-        // Handler must either start streaming OR send a response
+        // Handler must either start streaming OR call sse.respond()
         // Note: With autoClose mode, handlers return void after start(), which is valid
-        if (!contextResult.isStarted() && (!result || result._type !== 'respond')) {
+        if (!contextResult.isStarted() && !contextResult.hasResponse()) {
           throw new Error(
             'SSE handler must either send a response (sse.respond()) ' +
               'or start streaming (sse.start()). Handler returned without doing either.',
@@ -352,7 +351,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
 
         // Process the result
         await processSSEHandlerResult(
-          result,
+          contextResult.getResponseData(),
           controller,
           contextResult.getConnectionId(),
           contextResult.connectionClosed,

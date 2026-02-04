@@ -30,6 +30,7 @@ import {
   openaiStyleStreamContract,
   publicErrorContract,
   reconnectStreamContract,
+  respondWithoutReturnContract,
   sendStreamTestContract,
   streamContract,
   validationTestStreamContract,
@@ -1076,4 +1077,50 @@ export class TestNonErrorThrowController extends AbstractSSEController<TestNonEr
       throw { code: 'WEIRD_ERROR' }
     },
   })
+}
+
+/**
+ * Test SSE controller for sse.respond() without explicit return.
+ * Demonstrates that sse.respond() can be called in try/catch without returning.
+ */
+export type TestRespondWithoutReturnContracts = {
+  respondWithoutReturn: typeof respondWithoutReturnContract
+}
+
+export class TestRespondWithoutReturnController extends AbstractSSEController<TestRespondWithoutReturnContracts> {
+  public static contracts = {
+    respondWithoutReturn: respondWithoutReturnContract,
+  } as const
+
+  // Simulated entity storage
+  private existingIds = new Set(['exists-1', 'exists-2'])
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestRespondWithoutReturnContracts> {
+    return {
+      respondWithoutReturn: this.handleStream,
+    }
+  }
+
+  private handleStream = buildHandler(respondWithoutReturnContract, {
+    sse: async (request, sse) => {
+      // This pattern demonstrates calling sse.respond() without returning it
+      // Useful in try/catch blocks for error handling
+      try {
+        const entity = this.getEntity(request.params.id)
+        // Entity found - start streaming
+        const session = sse.start('autoClose')
+        await session.send('message', { text: `Found: ${entity.name}` })
+      } catch {
+        // Note: NOT returning sse.respond() - just calling it
+        sse.respond(404, { error: 'Entity not found', id: request.params.id })
+      }
+    },
+  })
+
+  private getEntity(id: string): { name: string } {
+    if (!this.existingIds.has(id)) {
+      throw new Error('Not found')
+    }
+    return { name: `Entity ${id}` }
+  }
 }

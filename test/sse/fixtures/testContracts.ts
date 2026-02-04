@@ -410,3 +410,18 @@ export const nonErrorThrowContract = buildContract({
     message: z.object({ text: z.string() }),
   },
 })
+
+/**
+ * GET SSE route for testing sse.respond() without explicit return
+ */
+export const respondWithoutReturnContract = buildContract({
+  pathResolver: (params) => `/api/deferred/respond-no-return/${params.id}/stream`,
+  params: z.object({
+    id: z.string(),
+  }),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  sseEvents: {
+    message: z.object({ text: z.string() }),
+  },
+})

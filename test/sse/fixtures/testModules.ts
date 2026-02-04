@@ -28,6 +28,7 @@ import {
   TestPostSSEController,
   TestPublicErrorController,
   TestReconnectSSEController,
+  TestRespondWithoutReturnController,
   TestSendStreamSSEController,
   TestSSEController,
   TestValidationSSEController,
@@ -547,6 +548,27 @@ export class TestNonErrorThrowModule extends AbstractModule<TestNonErrorThrowMod
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testNonErrorThrowController: asSSEControllerClass(TestNonErrorThrowController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with respond-without-return test controller
+ */
+export type TestRespondWithoutReturnModuleDependencies = Record<string, never>
+
+export class TestRespondWithoutReturnModule extends AbstractModule<TestRespondWithoutReturnModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestRespondWithoutReturnModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testRespondWithoutReturnController: asSSEControllerClass(TestRespondWithoutReturnController, {
         diOptions,
       }),
     }

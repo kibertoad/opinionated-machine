@@ -16,6 +16,7 @@ import {
   forgottenStartContract,
   nonErrorThrowContract,
   publicErrorContract,
+  respondWithoutReturnContract,
 } from './fixtures/testContracts.js'
 import type {
   TestDeferredHeaders404Controller,
@@ -24,6 +25,7 @@ import type {
   TestForgottenStartController,
   TestNonErrorThrowController,
   TestPublicErrorController,
+  TestRespondWithoutReturnController,
 } from './fixtures/testControllers.js'
 import {
   TestDeferredHeaders404Module,
@@ -32,6 +34,7 @@ import {
   TestForgottenStartModule,
   TestNonErrorThrowModule,
   TestPublicErrorModule,
+  TestRespondWithoutReturnModule,
 } from './fixtures/testModules.js'
 
 // ============================================================================
@@ -429,4 +432,75 @@ describe('SSE Inject E2E (deferred headers - non-Error throw)', () => {
       await server.close()
     },
   )
+})
+
+describe('SSE Inject E2E (deferred headers - sse.respond() without return)', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestRespondWithoutReturnModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestRespondWithoutReturnController>(
+      'testRespondWithoutReturnController',
+    )
+
+    server = await SSETestServer.create(
+      (app) => {
+        app.route(buildFastifyRoute(controller, controller.buildSSERoutes().respondWithoutReturn))
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await context.destroy()
+    await server.close()
+  })
+
+  it(
+    'works when sse.respond() is called without explicit return (try/catch pattern)',
+    { timeout: 10000 },
+    async () => {
+      // Test: request for non-existent entity - triggers try/catch without return
+      const { closed } = injectSSE(server.app, respondWithoutReturnContract, {
+        params: { id: 'not-found' },
+      })
+
+      const response = await closed
+
+      // Should return proper HTTP 404 even though sse.respond() was not returned
+      expect(response.statusCode).toBe(404)
+      expect(response.headers['content-type']).toContain('application/json')
+
+      const body = JSON.parse(response.body)
+      expect(body).toEqual({ error: 'Entity not found', id: 'not-found' })
+    },
+  )
+
+  it('works normally when entity exists (streaming path)', { timeout: 10000 }, async () => {
+    // Test: request for existing entity - triggers normal streaming
+    const { closed } = injectSSE(server.app, respondWithoutReturnContract, {
+      params: { id: 'exists-1' },
+    })
+
+    const response = await closed
+
+    // Should return 200 with SSE
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('text/event-stream')
+
+    const events = parseSSEEvents(response.body)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.event).toBe('message')
+    expect(JSON.parse(events[0]!.data)).toEqual({ text: 'Found: Entity exists-1' })
+  })
 })

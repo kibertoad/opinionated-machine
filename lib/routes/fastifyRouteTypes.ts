@@ -181,6 +181,20 @@ export type SSEStartOptions<Context = unknown> = {
  * }
  * ```
  *
+ * @example Error handling with try/catch (no return needed)
+ * ```typescript
+ * sse: async (request, sse) => {
+ *   try {
+ *     const entity = await db.getById(request.params.id)
+ *     const session = sse.start('autoClose')
+ *     await session.send('data', { item: entity })
+ *   } catch (e) {
+ *     // sse.respond() can be called without returning - both patterns work
+ *     sse.respond(404, { error: 'Entity not found' })
+ *   }
+ * }
+ * ```
+ *
  * @example Passing to internal helper methods
  * ```typescript
  * import { SSEContext } from '@anthropic-ai/codemesh'
@@ -235,17 +249,29 @@ export type SSEContext<Events extends SSEEventSchemas = SSEEventSchemas, Respons
    * Use this for any case where you want to return a regular HTTP response
    * instead of starting an SSE stream: validation errors, not found, redirects, etc.
    *
-   * Must be called BEFORE `start()`. After calling `respond()`, the handler
-   * should return immediately with the result.
+   * Must be called BEFORE `start()`. You can either return the result or just call it
+   * (useful in try/catch blocks). Both patterns work:
    *
    * @param code - HTTP status code (e.g., 200, 404, 422)
    * @param body - Response body
-   * @returns SSEHandlerResult to return from the handler
+   * @returns SSERespondResult (can be returned or ignored)
    *
-   * @example
+   * @example Return pattern (simple cases)
    * ```typescript
    * if (!entity) {
    *   return sse.respond(404, { error: 'Entity not found' })
+   * }
+   * ```
+   *
+   * @example No-return pattern (try/catch blocks)
+   * ```typescript
+   * try {
+   *   const entity = await db.getById(id)
+   *   const session = sse.start('autoClose')
+   *   await session.send('data', entity)
+   * } catch (e) {
+   *   // No need to return - just calling sse.respond() is enough
+   *   sse.respond(404, { error: 'Entity not found' })
    * }
    * ```
    */
@@ -444,13 +470,13 @@ export type SyncModeHandler<
  * 2. Explicit streaming start via `sse.start(mode)`
  * 3. Type-safe event sending via the returned session
  *
- * @returns SSEHandlerResult indicating how to handle the response:
- * - `sse.respond(code, body)`: Send HTTP response before streaming (early return)
- * - `void`: Streaming started, session mode determines lifecycle
+ * Note: `sse.respond()` can be called with or without returning the result.
+ * Both patterns work - useful for try/catch blocks where returning is awkward.
  *
- * @example
+ * @returns SSEHandlerResult (optional - void is fine if sse.respond() or sse.start() was called)
+ *
+ * @example Request-response streaming (autoClose mode)
  * ```typescript
- * // Request-response streaming (AI completions) - autoClose mode
  * sse: async (request, sse) => {
  *   const entity = await db.find(request.params.id)
  *   if (!entity) {
@@ -462,8 +488,23 @@ export type SyncModeHandler<
  *   await session.send('done', { usage: { total: 5 } })
  *   // Session closes automatically after handler returns
  * }
+ * ```
  *
- * // Long-lived session (notifications) - keepAlive mode
+ * @example Error handling with try/catch (no return needed)
+ * ```typescript
+ * sse: async (request, sse) => {
+ *   try {
+ *     const entity = await db.getById(request.params.id)
+ *     const session = sse.start('autoClose')
+ *     await session.send('data', entity)
+ *   } catch (e) {
+ *     sse.respond(404, { error: 'Not found' })  // No return needed
+ *   }
+ * }
+ * ```
+ *
+ * @example Long-lived session (keepAlive mode)
+ * ```typescript
  * sse: async (request, sse) => {
  *   const session = sse.start('keepAlive')
  *   this.subscriptions.set(session.id, request.params.userId)
