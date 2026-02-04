@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { determineMode, determineSyncFormat, isErrorLike } from './fastifyRouteUtils.ts'
+import {
+  determineMode,
+  determineSyncFormat,
+  hasHttpStatusCode,
+  isErrorLike,
+} from './fastifyRouteUtils.ts'
 
 describe('fastifyRouteUtils', () => {
   describe('isErrorLike', () => {
@@ -29,6 +34,65 @@ describe('fastifyRouteUtils', () => {
 
     it('returns false for objects with non-string message property', () => {
       expect(isErrorLike({ message: 123 })).toBe(false)
+    })
+  })
+
+  describe('hasHttpStatusCode', () => {
+    it('returns true for objects with numeric httpStatusCode', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: 404 })).toBe(true)
+    })
+
+    it('returns true for Error-like objects with httpStatusCode', () => {
+      expect(hasHttpStatusCode({ message: 'test', httpStatusCode: 500 })).toBe(true)
+    })
+
+    it('returns false for null', () => {
+      expect(hasHttpStatusCode(null)).toBe(false)
+    })
+
+    it('returns false for undefined', () => {
+      expect(hasHttpStatusCode(undefined)).toBe(false)
+    })
+
+    it('returns false for strings', () => {
+      expect(hasHttpStatusCode('error')).toBe(false)
+    })
+
+    it('returns false for objects without httpStatusCode property', () => {
+      expect(hasHttpStatusCode({ message: 'test' })).toBe(false)
+    })
+
+    it('returns false for objects with non-number httpStatusCode property', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: '404' })).toBe(false)
+    })
+
+    it('returns false for NaN httpStatusCode', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: NaN })).toBe(false)
+    })
+
+    it('returns false for Infinity httpStatusCode', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: Infinity })).toBe(false)
+      expect(hasHttpStatusCode({ httpStatusCode: -Infinity })).toBe(false)
+    })
+
+    it('returns false for non-integer httpStatusCode', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: 404.5 })).toBe(false)
+    })
+
+    it('returns false for httpStatusCode below valid range', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: 99 })).toBe(false)
+      expect(hasHttpStatusCode({ httpStatusCode: 0 })).toBe(false)
+      expect(hasHttpStatusCode({ httpStatusCode: -1 })).toBe(false)
+    })
+
+    it('returns false for httpStatusCode above valid range', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: 600 })).toBe(false)
+      expect(hasHttpStatusCode({ httpStatusCode: 1000 })).toBe(false)
+    })
+
+    it('returns true for boundary values', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: 100 })).toBe(true)
+      expect(hasHttpStatusCode({ httpStatusCode: 599 })).toBe(true)
     })
   })
 

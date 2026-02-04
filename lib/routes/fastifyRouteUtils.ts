@@ -98,6 +98,25 @@ export function isErrorLike(err: unknown): err is { message: string } {
 }
 
 /**
+ * Check if an error has a valid httpStatusCode property (like PublicNonRecoverableError).
+ * Uses duck typing instead of instanceof for reliability across realms.
+ * Validates the status code is a finite integer within valid HTTP range (100-599).
+ */
+export function hasHttpStatusCode(err: unknown): err is { httpStatusCode: number } {
+  if (typeof err !== 'object' || err === null || !('httpStatusCode' in err)) {
+    return false
+  }
+  const statusCode = (err as { httpStatusCode: unknown }).httpStatusCode
+  return (
+    typeof statusCode === 'number' &&
+    Number.isFinite(statusCode) &&
+    Number.isInteger(statusCode) &&
+    statusCode >= 100 &&
+    statusCode <= 599
+  )
+}
+
+/**
  * Send replay events from either sync or async iterables.
  */
 export async function sendReplayEvents(
@@ -259,8 +278,10 @@ export type SSEContextResult<Events extends SSEEventSchemas = SSEEventSchemas> =
   getConnectionId: () => string | undefined
   /** Check if streaming was started */
   isStarted: () => boolean
-  /** Check if a response was returned */
+  /** Check if a response was sent via sse.respond() */
   hasResponse: () => boolean
+  /** Get the response data if sse.respond() was called */
+  getResponseData: () => { code: number; body: unknown } | undefined
   /** Get the session mode if streaming was started */
   getMode: () => SSESessionMode | undefined
 }
@@ -300,6 +321,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
   let connection: SSESession<Events> | undefined
   let sessionMode: SSESessionMode | undefined
   let onCloseCalled = false
+  let responseData: { code: number; body: unknown } | undefined
 
   // Helper to call onClose exactly once
   const callOnClose = async (reason: SSECloseReason) => {
@@ -434,6 +456,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
         throw new Error('Cannot send response after streaming has started.')
       }
       responseSent = true
+      responseData = { code, body }
       return { _type: 'respond', code, body }
     },
 
@@ -464,6 +487,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
     getConnectionId: () => (started ? connectionId : undefined),
     isStarted: () => started,
     hasResponse: () => responseSent,
+    getResponseData: () => responseData,
     getMode: () => sessionMode,
   }
 }

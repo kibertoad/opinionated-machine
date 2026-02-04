@@ -14,18 +14,27 @@ import {
   deferredHeaders422Contract,
   errorAfterStartContract,
   forgottenStartContract,
+  nonErrorThrowContract,
+  publicErrorContract,
+  respondWithoutReturnContract,
 } from './fixtures/testContracts.js'
 import type {
   TestDeferredHeaders404Controller,
   TestDeferredHeaders422Controller,
   TestErrorAfterStartController,
   TestForgottenStartController,
+  TestNonErrorThrowController,
+  TestPublicErrorController,
+  TestRespondWithoutReturnController,
 } from './fixtures/testControllers.js'
 import {
   TestDeferredHeaders404Module,
   TestDeferredHeaders422Module,
   TestErrorAfterStartModule,
   TestForgottenStartModule,
+  TestNonErrorThrowModule,
+  TestPublicErrorModule,
+  TestRespondWithoutReturnModule,
 } from './fixtures/testModules.js'
 
 // ============================================================================
@@ -286,5 +295,212 @@ describe('SSE Inject E2E (deferred headers - error detection)', () => {
 
     await context.destroy()
     await server.close()
+  })
+})
+
+describe('SSE Inject E2E (deferred headers - PublicNonRecoverableError)', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestPublicErrorModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestPublicErrorController>(
+      'testPublicErrorController',
+    )
+
+    server = await SSETestServer.create(
+      (app) => {
+        app.route(buildFastifyRoute(controller, controller.buildSSERoutes().publicError))
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await context.destroy()
+    await server.close()
+  })
+
+  it(
+    'returns HTTP 403 when PublicNonRecoverableError thrown with httpStatusCode 403',
+    { timeout: 10000 },
+    async () => {
+      const { closed } = injectSSE(server.app, publicErrorContract, {
+        params: { statusCode: '403' },
+      })
+
+      const response = await closed
+
+      expect(response.statusCode).toBe(403)
+      expect(response.headers['content-type']).toContain('application/json')
+
+      const body = JSON.parse(response.body)
+      expect(body.statusCode).toBe(403)
+      expect(body.message).toBe('Custom error with status 403')
+    },
+  )
+
+  it(
+    'returns HTTP 409 when PublicNonRecoverableError thrown with httpStatusCode 409',
+    { timeout: 10000 },
+    async () => {
+      const { closed } = injectSSE(server.app, publicErrorContract, {
+        params: { statusCode: '409' },
+      })
+
+      const response = await closed
+
+      expect(response.statusCode).toBe(409)
+      expect(response.headers['content-type']).toContain('application/json')
+
+      const body = JSON.parse(response.body)
+      expect(body.statusCode).toBe(409)
+      expect(body.message).toBe('Custom error with status 409')
+    },
+  )
+
+  it(
+    'returns HTTP 503 when PublicNonRecoverableError thrown with httpStatusCode 503',
+    { timeout: 10000 },
+    async () => {
+      const { closed } = injectSSE(server.app, publicErrorContract, {
+        params: { statusCode: '503' },
+      })
+
+      const response = await closed
+
+      expect(response.statusCode).toBe(503)
+      expect(response.headers['content-type']).toContain('application/json')
+
+      const body = JSON.parse(response.body)
+      expect(body.statusCode).toBe(503)
+      expect(body.error).toBe('Internal Server Error') // 5xx errors use this text
+      expect(body.message).toBe('Custom error with status 503')
+    },
+  )
+})
+
+describe('SSE Inject E2E (deferred headers - non-Error throw)', () => {
+  it(
+    'returns HTTP 500 with generic message when non-Error is thrown',
+    { timeout: 10000 },
+    async () => {
+      const container = createContainer({ injectionMode: 'PROXY' })
+      const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+      context.registerDependencies({ modules: [new TestNonErrorThrowModule()] }, undefined)
+
+      const controller = context.diContainer.resolve<TestNonErrorThrowController>(
+        'testNonErrorThrowController',
+      )
+
+      const server = await SSETestServer.create(
+        (app) => {
+          app.route(buildFastifyRoute(controller, controller.buildSSERoutes().nonErrorThrow))
+        },
+        {
+          configureApp: (app) => {
+            app.setValidatorCompiler(validatorCompiler)
+            app.setSerializerCompiler(serializerCompiler)
+          },
+          setup: () => ({ context }),
+        },
+      )
+
+      const { closed } = injectSSE(server.app, nonErrorThrowContract, {})
+
+      const response = await closed
+
+      expect(response.statusCode).toBe(500)
+      expect(response.headers['content-type']).toContain('application/json')
+
+      const body = JSON.parse(response.body)
+      expect(body.statusCode).toBe(500)
+      expect(body.error).toBe('Internal Server Error')
+      // When the thrown value is not error-like, it uses generic message
+      expect(body.message).toBe('Internal Server Error')
+
+      await context.destroy()
+      await server.close()
+    },
+  )
+})
+
+describe('SSE Inject E2E (deferred headers - sse.respond() without return)', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestRespondWithoutReturnModule()] }, undefined)
+
+    const controller = context.diContainer.resolve<TestRespondWithoutReturnController>(
+      'testRespondWithoutReturnController',
+    )
+
+    server = await SSETestServer.create(
+      (app) => {
+        app.route(buildFastifyRoute(controller, controller.buildSSERoutes().respondWithoutReturn))
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await context.destroy()
+    await server.close()
+  })
+
+  it(
+    'works when sse.respond() is called without explicit return (try/catch pattern)',
+    { timeout: 10000 },
+    async () => {
+      // Test: request for non-existent entity - triggers try/catch without return
+      const { closed } = injectSSE(server.app, respondWithoutReturnContract, {
+        params: { id: 'not-found' },
+      })
+
+      const response = await closed
+
+      // Should return proper HTTP 404 even though sse.respond() was not returned
+      expect(response.statusCode).toBe(404)
+      expect(response.headers['content-type']).toContain('application/json')
+
+      const body = JSON.parse(response.body)
+      expect(body).toEqual({ error: 'Entity not found', id: 'not-found' })
+    },
+  )
+
+  it('works normally when entity exists (streaming path)', { timeout: 10000 }, async () => {
+    // Test: request for existing entity - triggers normal streaming
+    const { closed } = injectSSE(server.app, respondWithoutReturnContract, {
+      params: { id: 'exists-1' },
+    })
+
+    const response = await closed
+
+    // Should return 200 with SSE
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('text/event-stream')
+
+    const events = parseSSEEvents(response.body)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.event).toBe('message')
+    expect(JSON.parse(events[0]!.data)).toEqual({ text: 'Found: Entity exists-1' })
   })
 })

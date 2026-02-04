@@ -1,3 +1,4 @@
+import { PublicNonRecoverableError } from '@lokalise/node-core'
 import {
   AbstractSSEController,
   type BuildFastifySSERoutesReturnType,
@@ -21,12 +22,15 @@ import {
   isConnectedTestStreamContract,
   largeContentStreamContract,
   loggerTestStreamContract,
+  nonErrorThrowContract,
   notificationsStreamContract,
   onCloseErrorStreamContract,
   onConnectErrorStreamContract,
   onReconnectErrorStreamContract,
   openaiStyleStreamContract,
+  publicErrorContract,
   reconnectStreamContract,
+  respondWithoutReturnContract,
   sendStreamTestContract,
   streamContract,
   validationTestStreamContract,
@@ -1010,4 +1014,113 @@ export class TestErrorAfterStartController extends AbstractSSEController<TestErr
       throw new Error('Simulated error after streaming started')
     },
   })
+}
+
+/**
+ * Test SSE controller for PublicNonRecoverableError with custom status code.
+ * Throws the error BEFORE streaming starts to test proper HTTP response codes.
+ */
+export type TestPublicErrorContracts = {
+  publicError: typeof publicErrorContract
+}
+
+export class TestPublicErrorController extends AbstractSSEController<TestPublicErrorContracts> {
+  public static contracts = {
+    publicError: publicErrorContract,
+  } as const
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestPublicErrorContracts> {
+    return {
+      publicError: this.handleStream,
+    }
+  }
+
+  private handleStream = buildHandler(publicErrorContract, {
+    sse: (request, _sse) => {
+      const statusCode = Number.parseInt(request.params.statusCode, 10)
+
+      // Throw PublicNonRecoverableError BEFORE calling sse.start()
+      // This tests that the framework respects the httpStatusCode property
+      throw new PublicNonRecoverableError({
+        message: `Custom error with status ${statusCode}`,
+        errorCode: 'TEST_ERROR',
+        httpStatusCode: statusCode,
+      })
+    },
+  })
+}
+
+/**
+ * Test SSE controller for non-Error throws.
+ * Throws a non-Error object (plain object) to test error handling edge cases.
+ */
+export type TestNonErrorThrowContracts = {
+  nonErrorThrow: typeof nonErrorThrowContract
+}
+
+export class TestNonErrorThrowController extends AbstractSSEController<TestNonErrorThrowContracts> {
+  public static contracts = {
+    nonErrorThrow: nonErrorThrowContract,
+  } as const
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestNonErrorThrowContracts> {
+    return {
+      nonErrorThrow: this.handleStream,
+    }
+  }
+
+  private handleStream = buildHandler(nonErrorThrowContract, {
+    sse: (_request, _sse) => {
+      // Throw a non-Error value (plain object without message) BEFORE calling sse.start()
+      // This tests the edge case where isErrorLike returns false
+      // eslint-disable-next-line @typescript-eslint/no-throw-literal
+      throw { code: 'WEIRD_ERROR' }
+    },
+  })
+}
+
+/**
+ * Test SSE controller for sse.respond() without explicit return.
+ * Demonstrates that sse.respond() can be called in try/catch without returning.
+ */
+export type TestRespondWithoutReturnContracts = {
+  respondWithoutReturn: typeof respondWithoutReturnContract
+}
+
+export class TestRespondWithoutReturnController extends AbstractSSEController<TestRespondWithoutReturnContracts> {
+  public static contracts = {
+    respondWithoutReturn: respondWithoutReturnContract,
+  } as const
+
+  // Simulated entity storage
+  private existingIds = new Set(['exists-1', 'exists-2'])
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestRespondWithoutReturnContracts> {
+    return {
+      respondWithoutReturn: this.handleStream,
+    }
+  }
+
+  private handleStream = buildHandler(respondWithoutReturnContract, {
+    sse: async (request, sse) => {
+      // This pattern demonstrates calling sse.respond() without returning it
+      // Useful in try/catch blocks for error handling
+      try {
+        const entity = this.getEntity(request.params.id)
+        // Entity found - start streaming
+        const session = sse.start('autoClose')
+        await session.send('message', { text: `Found: ${entity.name}` })
+      } catch {
+        // Note: NOT returning sse.respond() - just calling it
+        sse.respond(404, { error: 'Entity not found', id: request.params.id })
+      }
+    },
+  })
+
+  private getEntity(id: string): { name: string } {
+    if (!this.existingIds.has(id)) {
+      throw new Error('Not found')
+    }
+    return { name: `Entity ${id}` }
+  }
 }

@@ -382,3 +382,46 @@ export const errorAfterStartContract = buildContract({
     message: z.object({ text: z.string() }),
   },
 })
+
+/**
+ * GET SSE route for testing PublicNonRecoverableError with custom status code
+ */
+export const publicErrorContract = buildContract({
+  pathResolver: (params) => `/api/deferred/public-error/${params.statusCode}/stream`,
+  params: z.object({
+    statusCode: z.string(),
+  }),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  sseEvents: {
+    message: z.object({ text: z.string() }),
+  },
+})
+
+/**
+ * GET SSE route for testing non-Error throws (e.g., string or plain object)
+ */
+export const nonErrorThrowContract = buildContract({
+  pathResolver: () => '/api/deferred/non-error-throw/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  sseEvents: {
+    message: z.object({ text: z.string() }),
+  },
+})
+
+/**
+ * GET SSE route for testing sse.respond() without explicit return
+ */
+export const respondWithoutReturnContract = buildContract({
+  pathResolver: (params) => `/api/deferred/respond-no-return/${params.id}/stream`,
+  params: z.object({
+    id: z.string(),
+  }),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  sseEvents: {
+    message: z.object({ text: z.string() }),
+  },
+})
