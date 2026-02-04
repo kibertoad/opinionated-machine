@@ -14,6 +14,7 @@ import {
   TestErrorDualModeController,
   TestJobStatusDualModeController,
   TestJsonValidationDualModeController,
+  TestStatusCodeValidationDualModeController,
 } from './testControllers.js'
 
 /**
@@ -208,6 +209,29 @@ export class GenericDualModeModule extends AbstractModule<GenericDualModeModuleD
       genericDualModeController: asDualModeControllerClass(GenericDualModeController, {
         diOptions,
       }),
+    }
+  }
+}
+
+/**
+ * Module with status code validation test dual-mode controller.
+ * Tests responseSchemasByStatusCode validation.
+ */
+export type TestStatusCodeValidationDualModeModuleDependencies = Record<string, never>
+
+export class TestStatusCodeValidationDualModeModule extends AbstractModule<TestStatusCodeValidationDualModeModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestStatusCodeValidationDualModeModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testStatusCodeValidationDualModeController: asDualModeControllerClass(
+        TestStatusCodeValidationDualModeController,
+        { diOptions },
+      ),
     }
   }
 }

@@ -1,12 +1,38 @@
 import type {
   AnyDualModeContractDefinition,
   AnySSEContractDefinition,
+  HttpStatusCode,
 } from '@lokalise/api-contracts'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
 import type { SSECloseReason } from './fastifyRouteUtils.ts'
+
+// ============================================================================
+// Response Schema Helper Types
+// ============================================================================
+
+/**
+ * Infer the union of all response body types from responseSchemasByStatusCode.
+ * This allows handlers to return error responses with proper typing.
+ *
+ * @example
+ * ```typescript
+ * // Given responseSchemasByStatusCode: { 400: z.object({ error: string }), 404: z.object({ notFound: true }) }
+ * // InferErrorResponses<typeof contract> = { error: string } | { notFound: true }
+ * ```
+ */
+export type InferErrorResponses<
+  ResponseSchemas extends Partial<Record<HttpStatusCode, z.ZodTypeAny>> | undefined,
+> =
+  ResponseSchemas extends Partial<Record<HttpStatusCode, z.ZodTypeAny>>
+    ? {
+        [K in keyof ResponseSchemas]: ResponseSchemas[K] extends z.ZodTypeAny
+          ? z.infer<ResponseSchemas[K]>
+          : never
+      }[keyof ResponseSchemas]
+    : never
 
 // ============================================================================
 // SSE Handler Result Types
@@ -567,6 +593,21 @@ export type FastifyDualModeRouteOptions = FastifySSERouteOptions & {
  * Infer handlers type based on contract type.
  * All dual-mode contracts use `{ sync: handler, sse: handler }` pattern.
  *
+ * The sync handler return type includes both:
+ * - The success response type (from syncResponseBody)
+ * - Error response types (from responseSchemasByStatusCode)
+ *
+ * This allows returning error responses without type casting:
+ * ```typescript
+ * sync: (request, reply) => {
+ *   if (notFound) {
+ *     reply.code(404)
+ *     return { error: 'Not found', resourceId: '123' } // No cast needed!
+ *   }
+ *   return { success: true, data: 'OK' }
+ * }
+ * ```
+ *
  * @template Contract - The dual-mode contract definition
  */
 export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition> =
@@ -575,9 +616,11 @@ export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition
     z.infer<Contract['query']>,
     z.infer<Contract['requestHeaders']>,
     Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
-    Contract['syncResponseBody'] extends z.ZodTypeAny
-      ? z.infer<Contract['syncResponseBody']>
-      : unknown,
+    // Union of success response + error responses from responseSchemasByStatusCode
+    | (Contract['syncResponseBody'] extends z.ZodTypeAny
+        ? z.infer<Contract['syncResponseBody']>
+        : unknown)
+    | InferErrorResponses<Contract['responseSchemasByStatusCode']>,
     Contract['sseEvents']
   >
 

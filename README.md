@@ -57,6 +57,8 @@ Very opinionated DI framework for fastify, built on top of awilix
 - [Dual-Mode Controllers (SSE + Sync)](#dual-mode-controllers-sse--sync)
   - [Overview](#overview)
   - [Defining Dual-Mode Contracts](#defining-dual-mode-contracts)
+  - [Response Headers (Sync Mode)](#response-headers-sync-mode)
+  - [Error Response Schemas (responseSchemasByStatusCode)](#error-response-schemas-responseschemasbystatuscode)
   - [Implementing Dual-Mode Controllers](#implementing-dual-mode-controllers)
   - [Registering Dual-Mode Controllers](#registering-dual-mode-controllers)
   - [Accept Header Routing](#accept-header-routing)
@@ -1501,6 +1503,87 @@ handlers: buildHandler(rateLimitedContract, {
 ```
 
 If the handler doesn't set the required headers, validation will fail with a `RESPONSE_HEADERS_VALIDATION_FAILED` error.
+
+### Error Response Schemas (responseSchemasByStatusCode)
+
+Dual-mode and SSE contracts support `responseSchemasByStatusCode` to define and validate error responses for specific HTTP status codes. This enables type-safe error handling where different status codes can have different response shapes:
+
+```ts
+export const resourceContract = buildSseContract({
+  method: 'post',
+  pathResolver: (params) => `/api/resources/${params.id}`,
+  params: z.object({ id: z.string() }),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  requestBody: z.object({ data: z.string() }),
+  // Success response (2xx)
+  syncResponseBody: z.object({
+    success: z.boolean(),
+    data: z.string(),
+  }),
+  // Error responses by status code
+  responseSchemasByStatusCode: {
+    400: z.object({ error: z.string(), details: z.array(z.string()) }),
+    404: z.object({ error: z.string(), resourceId: z.string() }),
+  },
+  sseEvents: {
+    result: z.object({ success: z.boolean() }),
+  },
+})
+```
+
+In your handler, use `reply.code()` to set the status code and return the appropriate response shape. TypeScript includes all error response types in the return type union, so no casting is needed:
+
+```ts
+handlers: buildHandler(resourceContract, {
+  sync: (request, reply) => {
+    // Validation error - return 400 response
+    if (!isValid(request.body.data)) {
+      reply.code(400)
+      return { error: 'Bad Request', details: ['Invalid data format'] }
+    }
+
+    // Not found - return 404 response
+    const resource = findResource(request.params.id)
+    if (!resource) {
+      reply.code(404)
+      return { error: 'Not Found', resourceId: request.params.id }
+    }
+
+    // Success - return 200 response (default)
+    return { success: true, data: resource.data }
+  },
+  sse: async (request, sse) => {
+    // For SSE handlers, use sse.respond() for early HTTP responses
+    const resource = findResource(request.params.id)
+    if (!resource) {
+      return sse.respond(404, { error: 'Not Found', resourceId: request.params.id })
+    }
+
+    const session = sse.start('autoClose')
+    await session.send('result', { success: true })
+  },
+})
+```
+
+**Validation behavior:**
+
+- **Success responses (2xx)**: Validated against `syncResponseBody` schema
+- **Error responses (non-2xx)**: Validated against the matching schema in `responseSchemasByStatusCode`
+- **Validation failures**: Return 500 Internal Server Error (validation details are logged internally, not exposed to clients)
+
+**TypeScript support:**
+
+The `InferErrorResponses` helper type extracts error response types from `responseSchemasByStatusCode`, and `InferDualModeHandlers` includes them in the handler return type union. This means you can return error responses without type casting:
+
+```ts
+// The sync handler return type is automatically:
+// { success: boolean; data: string }           // from syncResponseBody
+// | { error: string; details: string[] }       // from responseSchemasByStatusCode[400]
+// | { error: string; resourceId: string }      // from responseSchemasByStatusCode[404]
+```
+
+**Note**: TypeScript cannot enforce that a specific status code matches its corresponding schema (e.g., that `reply.code(404)` must return the 404 schema specifically). The union type ensures all returned responses match *one of* the defined schemas, with runtime validation catching any mismatches.
 
 ### Single Sync Handler
 
