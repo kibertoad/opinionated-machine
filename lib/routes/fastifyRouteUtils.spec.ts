@@ -65,6 +65,35 @@ describe('fastifyRouteUtils', () => {
     it('returns false for objects with non-number httpStatusCode property', () => {
       expect(hasHttpStatusCode({ httpStatusCode: '404' })).toBe(false)
     })
+
+    it('returns false for NaN httpStatusCode', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: NaN })).toBe(false)
+    })
+
+    it('returns false for Infinity httpStatusCode', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: Infinity })).toBe(false)
+      expect(hasHttpStatusCode({ httpStatusCode: -Infinity })).toBe(false)
+    })
+
+    it('returns false for non-integer httpStatusCode', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: 404.5 })).toBe(false)
+    })
+
+    it('returns false for httpStatusCode below valid range', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: 99 })).toBe(false)
+      expect(hasHttpStatusCode({ httpStatusCode: 0 })).toBe(false)
+      expect(hasHttpStatusCode({ httpStatusCode: -1 })).toBe(false)
+    })
+
+    it('returns false for httpStatusCode above valid range', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: 600 })).toBe(false)
+      expect(hasHttpStatusCode({ httpStatusCode: 1000 })).toBe(false)
+    })
+
+    it('returns true for boundary values', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: 100 })).toBe(true)
+      expect(hasHttpStatusCode({ httpStatusCode: 599 })).toBe(true)
+    })
   })
 
   describe('determineMode', () => {

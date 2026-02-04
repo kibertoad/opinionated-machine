@@ -98,15 +98,21 @@ export function isErrorLike(err: unknown): err is { message: string } {
 }
 
 /**
- * Check if an error has an httpStatusCode property (like PublicNonRecoverableError).
+ * Check if an error has a valid httpStatusCode property (like PublicNonRecoverableError).
  * Uses duck typing instead of instanceof for reliability across realms.
+ * Validates the status code is a finite integer within valid HTTP range (100-599).
  */
 export function hasHttpStatusCode(err: unknown): err is { httpStatusCode: number } {
+  if (typeof err !== 'object' || err === null || !('httpStatusCode' in err)) {
+    return false
+  }
+  const statusCode = (err as { httpStatusCode: unknown }).httpStatusCode
   return (
-    typeof err === 'object' &&
-    err !== null &&
-    'httpStatusCode' in err &&
-    typeof (err as { httpStatusCode: unknown }).httpStatusCode === 'number'
+    typeof statusCode === 'number' &&
+    Number.isFinite(statusCode) &&
+    Number.isInteger(statusCode) &&
+    statusCode >= 100 &&
+    statusCode <= 599
   )
 }
 

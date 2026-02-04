@@ -197,7 +197,7 @@ export type SSEStartOptions<Context = unknown> = {
  *
  * @example Passing to internal helper methods
  * ```typescript
- * import { SSEContext } from '@anthropic-ai/codemesh'
+ * import { SSEContext } from 'opinionated-machine'
  * import { chatStreamContract } from './contracts'
  *
  * class ChatController extends AbstractSSEController<{ chat: typeof chatStreamContract }> {
