@@ -877,6 +877,53 @@ describe('Dual-Mode Route Builder Validation', () => {
 
     await context.destroy()
   })
+
+  it('throws error when handler has unknown __type', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
+
+    const controller: GenericDualModeController = context.diContainer.resolve(
+      'genericDualModeController',
+    )
+
+    // Create a handler with an unknown __type
+    const invalidHandler = {
+      __type: 'UnknownHandler' as const,
+      contract: {
+        pathResolver: () => '/api/unknown',
+      },
+      handlers: {},
+    }
+
+    expect(() => buildFastifyRoute(controller, invalidHandler as any)).toThrow(
+      'buildFastifyRoute received unexpected handler.__type: "UnknownHandler" for contract with path "/api/unknown"',
+    )
+
+    await context.destroy()
+  })
+
+  it('throws error when handler has undefined __type', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
+
+    const controller: GenericDualModeController = context.diContainer.resolve(
+      'genericDualModeController',
+    )
+
+    // Create a handler without __type
+    const invalidHandler = {
+      contract: {},
+      handlers: {},
+    }
+
+    expect(() => buildFastifyRoute(controller, invalidHandler as any)).toThrow(
+      'buildFastifyRoute received unexpected handler.__type: "undefined" for unknown handler',
+    )
+
+    await context.destroy()
+  })
 })
 
 describe('Dual-Mode Response Headers', () => {

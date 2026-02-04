@@ -485,14 +485,29 @@ export function buildFastifyRoute(
     )
   }
 
-  // SSERouteHandler
-  const sseHandler = handler as SSERouteHandler<AnySSEContractDefinition>
-  return buildSSERouteInternal(
-    controller as AbstractSSEController<Record<string, AnySSEContractDefinition>>,
-    {
-      contract: sseHandler.contract,
-      handlers: sseHandler.handlers,
-      options: sseHandler.options,
-    },
+  if (handler.__type === 'SSERouteHandler') {
+    const sseHandler = handler as SSERouteHandler<AnySSEContractDefinition>
+    return buildSSERouteInternal(
+      controller as AbstractSSEController<Record<string, AnySSEContractDefinition>>,
+      {
+        contract: sseHandler.contract,
+        handlers: sseHandler.handlers,
+        options: sseHandler.options,
+      },
+    )
+  }
+
+  // Unknown handler type - throw descriptive error
+  const unknownHandler = handler as { __type?: unknown; contract?: { pathResolver?: unknown } }
+  const handlerType = unknownHandler.__type ?? 'undefined'
+  const handlerIdentity =
+    typeof unknownHandler.contract?.pathResolver === 'function'
+      ? `contract with path "${unknownHandler.contract.pathResolver({})}"`
+      : 'unknown handler'
+  throw new Error(
+    `buildFastifyRoute received unexpected handler.__type: "${handlerType}" for ${handlerIdentity}. ` +
+      `Expected "DualModeRouteHandler" (for use with AbstractDualModeController and buildDualModeRouteInternal) ` +
+      `or "SSERouteHandler" (for use with AbstractSSEController and buildSSERouteInternal). ` +
+      `Ensure the handler was created using buildHandler().`,
   )
 }
