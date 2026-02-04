@@ -397,3 +397,16 @@ export const publicErrorContract = buildContract({
     message: z.object({ text: z.string() }),
   },
 })
+
+/**
+ * GET SSE route for testing non-Error throws (e.g., string or plain object)
+ */
+export const nonErrorThrowContract = buildContract({
+  pathResolver: () => '/api/deferred/non-error-throw/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  sseEvents: {
+    message: z.object({ text: z.string() }),
+  },
+})

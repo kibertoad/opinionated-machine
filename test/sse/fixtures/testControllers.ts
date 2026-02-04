@@ -22,6 +22,7 @@ import {
   isConnectedTestStreamContract,
   largeContentStreamContract,
   loggerTestStreamContract,
+  nonErrorThrowContract,
   notificationsStreamContract,
   onCloseErrorStreamContract,
   onConnectErrorStreamContract,
@@ -1044,6 +1045,35 @@ export class TestPublicErrorController extends AbstractSSEController<TestPublicE
         errorCode: 'TEST_ERROR',
         httpStatusCode: statusCode,
       })
+    },
+  })
+}
+
+/**
+ * Test SSE controller for non-Error throws.
+ * Throws a non-Error object (plain object) to test error handling edge cases.
+ */
+export type TestNonErrorThrowContracts = {
+  nonErrorThrow: typeof nonErrorThrowContract
+}
+
+export class TestNonErrorThrowController extends AbstractSSEController<TestNonErrorThrowContracts> {
+  public static contracts = {
+    nonErrorThrow: nonErrorThrowContract,
+  } as const
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestNonErrorThrowContracts> {
+    return {
+      nonErrorThrow: this.handleStream,
+    }
+  }
+
+  private handleStream = buildHandler(nonErrorThrowContract, {
+    sse: (_request, _sse) => {
+      // Throw a non-Error value (plain object without message) BEFORE calling sse.start()
+      // This tests the edge case where isErrorLike returns false
+      // eslint-disable-next-line @typescript-eslint/no-throw-literal
+      throw { code: 'WEIRD_ERROR' }
     },
   })
 }

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { determineMode, determineSyncFormat, isErrorLike } from './fastifyRouteUtils.ts'
+import {
+  determineMode,
+  determineSyncFormat,
+  hasHttpStatusCode,
+  isErrorLike,
+} from './fastifyRouteUtils.ts'
 
 describe('fastifyRouteUtils', () => {
   describe('isErrorLike', () => {
@@ -29,6 +34,36 @@ describe('fastifyRouteUtils', () => {
 
     it('returns false for objects with non-string message property', () => {
       expect(isErrorLike({ message: 123 })).toBe(false)
+    })
+  })
+
+  describe('hasHttpStatusCode', () => {
+    it('returns true for objects with numeric httpStatusCode', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: 404 })).toBe(true)
+    })
+
+    it('returns true for Error-like objects with httpStatusCode', () => {
+      expect(hasHttpStatusCode({ message: 'test', httpStatusCode: 500 })).toBe(true)
+    })
+
+    it('returns false for null', () => {
+      expect(hasHttpStatusCode(null)).toBe(false)
+    })
+
+    it('returns false for undefined', () => {
+      expect(hasHttpStatusCode(undefined)).toBe(false)
+    })
+
+    it('returns false for strings', () => {
+      expect(hasHttpStatusCode('error')).toBe(false)
+    })
+
+    it('returns false for objects without httpStatusCode property', () => {
+      expect(hasHttpStatusCode({ message: 'test' })).toBe(false)
+    })
+
+    it('returns false for objects with non-number httpStatusCode property', () => {
+      expect(hasHttpStatusCode({ httpStatusCode: '404' })).toBe(false)
     })
   })
 

@@ -20,6 +20,7 @@ import {
   TestIsConnectedSSEController,
   TestLargeContentSSEController,
   TestLoggerSSEController,
+  TestNonErrorThrowController,
   TestOnCloseErrorSSEController,
   TestOnConnectErrorSSEController,
   TestOnReconnectErrorSSEController,
@@ -525,6 +526,27 @@ export class TestPublicErrorModule extends AbstractModule<TestPublicErrorModuleD
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testPublicErrorController: asSSEControllerClass(TestPublicErrorController, {
+        diOptions,
+      }),
+    }
+  }
+}
+
+/**
+ * Module with non-Error throw test controller
+ */
+export type TestNonErrorThrowModuleDependencies = Record<string, never>
+
+export class TestNonErrorThrowModule extends AbstractModule<TestNonErrorThrowModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestNonErrorThrowModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testNonErrorThrowController: asSSEControllerClass(TestNonErrorThrowController, {
         diOptions,
       }),
     }

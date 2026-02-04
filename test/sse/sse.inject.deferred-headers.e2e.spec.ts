@@ -14,6 +14,7 @@ import {
   deferredHeaders422Contract,
   errorAfterStartContract,
   forgottenStartContract,
+  nonErrorThrowContract,
   publicErrorContract,
 } from './fixtures/testContracts.js'
 import type {
@@ -21,6 +22,7 @@ import type {
   TestDeferredHeaders422Controller,
   TestErrorAfterStartController,
   TestForgottenStartController,
+  TestNonErrorThrowController,
   TestPublicErrorController,
 } from './fixtures/testControllers.js'
 import {
@@ -28,6 +30,7 @@ import {
   TestDeferredHeaders422Module,
   TestErrorAfterStartModule,
   TestForgottenStartModule,
+  TestNonErrorThrowModule,
   TestPublicErrorModule,
 } from './fixtures/testModules.js'
 
@@ -379,6 +382,51 @@ describe('SSE Inject E2E (deferred headers - PublicNonRecoverableError)', () => 
       expect(body.statusCode).toBe(503)
       expect(body.error).toBe('Internal Server Error') // 5xx errors use this text
       expect(body.message).toBe('Custom error with status 503')
+    },
+  )
+})
+
+describe('SSE Inject E2E (deferred headers - non-Error throw)', () => {
+  it(
+    'returns HTTP 500 with generic message when non-Error is thrown',
+    { timeout: 10000 },
+    async () => {
+      const container = createContainer({ injectionMode: 'PROXY' })
+      const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+      context.registerDependencies({ modules: [new TestNonErrorThrowModule()] }, undefined)
+
+      const controller = context.diContainer.resolve<TestNonErrorThrowController>(
+        'testNonErrorThrowController',
+      )
+
+      const server = await SSETestServer.create(
+        (app) => {
+          app.route(buildFastifyRoute(controller, controller.buildSSERoutes().nonErrorThrow))
+        },
+        {
+          configureApp: (app) => {
+            app.setValidatorCompiler(validatorCompiler)
+            app.setSerializerCompiler(serializerCompiler)
+          },
+          setup: () => ({ context }),
+        },
+      )
+
+      const { closed } = injectSSE(server.app, nonErrorThrowContract, {})
+
+      const response = await closed
+
+      expect(response.statusCode).toBe(500)
+      expect(response.headers['content-type']).toContain('application/json')
+
+      const body = JSON.parse(response.body)
+      expect(body.statusCode).toBe(500)
+      expect(body.error).toBe('Internal Server Error')
+      // When the thrown value is not error-like, it uses generic message
+      expect(body.message).toBe('Internal Server Error')
+
+      await context.destroy()
+      await server.close()
     },
   )
 })
