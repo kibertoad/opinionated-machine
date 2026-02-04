@@ -1158,7 +1158,12 @@ if (this.hasConnectionSpy()) {
 
 ### SSE Rooms
 
-SSE Rooms provide Socket.IO-style room functionality for grouping connections and broadcasting messages to specific groups. This is useful for chat rooms, channels, user-specific notifications, and any scenario where you need to send messages to a subset of connected clients.
+SSE Rooms provide Socket.IO-style room functionality for grouping connections and broadcasting messages to specific groups. Common use cases include:
+
+- **Multi-tenant systems** - Broadcast announcements to all users within an organization or team
+- **Live dashboards** - Multiple users viewing the same dashboard join a room to receive real-time metric updates
+- **Stock tickers** - Users subscribe to specific symbols; each symbol is a room receiving price updates
+- **Sports/game scores** - Users following specific matches join those rooms for live score updates
 
 #### Enabling Rooms
 
@@ -1167,8 +1172,8 @@ Enable rooms by passing a `rooms` configuration to `asSSEControllerClass`:
 ```ts
 import { AbstractSSEController, asSSEControllerClass, buildHandler } from 'opinionated-machine'
 
-class ChatSSEController extends AbstractSSEController<typeof contracts> {
-  public static contracts = { chat: chatContract } as const
+class DashboardSSEController extends AbstractSSEController<typeof contracts> {
+  public static contracts = { dashboardStream: dashboardStreamContract } as const
 
   constructor(deps: Dependencies, sseConfig?: SSEControllerConfig) {
     super(deps, sseConfig)
@@ -1180,7 +1185,7 @@ class ChatSSEController extends AbstractSSEController<typeof contracts> {
 // In your module
 resolveControllers(diOptions: DependencyInjectionOptions) {
   return {
-    chatController: asSSEControllerClass(ChatSSEController, {
+    dashboardController: asSSEControllerClass(DashboardSSEController, {
       diOptions,
       rooms: {
         autoJoinSelfRoom: true, // Default: true - each connection joins a room named after its ID
@@ -1195,20 +1200,20 @@ resolveControllers(diOptions: DependencyInjectionOptions) {
 When rooms are enabled, each SSE session has access to room operations via `session.rooms`:
 
 ```ts
-private handleChat = buildHandler(chatContract, {
+private handleDashboardStream = buildHandler(dashboardStreamContract, {
   sse: async (request, sse) => {
     const session = sse.start('keepAlive')
 
     // Join one or more rooms
-    session.rooms.join(`channel:${request.params.channelId}`)
-    session.rooms.join(['premium', 'beta-testers']) // Multiple rooms
+    session.rooms.join(`dashboard:${request.params.dashboardId}`)
+    session.rooms.join(['org:acme', 'plan:enterprise']) // Multiple rooms
 
     // Leave rooms
-    session.rooms.leave('beta-testers')
+    session.rooms.leave('plan:enterprise')
 
     // Get all rooms this connection is in
     const rooms = session.rooms.getRooms()
-    // ['channel:123', 'premium', 'abc-def-123'] (includes self-room if autoJoinSelfRoom is true)
+    // ['dashboard:123', 'org:acme', 'abc-def-123'] (includes self-room if autoJoinSelfRoom is true)
   },
 })
 ```
@@ -1218,22 +1223,22 @@ private handleChat = buildHandler(chatContract, {
 Use `broadcastToRoom()` from your controller to send messages to all connections in a room:
 
 ```ts
-class ChatSSEController extends AbstractSSEController<typeof contracts> {
-  // Send a message to everyone in a room
-  async sendMessage(channelId: string, message: ChatMessage, senderId: string) {
-    const count = await this.broadcastToRoom(`channel:${channelId}`, {
-      event: 'message',
-      data: message,
+class DashboardSSEController extends AbstractSSEController<typeof contracts> {
+  // Send metrics update to everyone viewing the dashboard
+  async broadcastMetricsUpdate(dashboardId: string, metrics: DashboardMetrics) {
+    const count = await this.broadcastToRoom(`dashboard:${dashboardId}`, {
+      event: 'metricsUpdate',
+      data: metrics,
     })
-    console.log(`Message sent to ${count} connections`)
+    console.log(`Metrics sent to ${count} viewers`)
   }
 
-  // Broadcast to a room, excluding the sender
-  async sendMessageExcludingSender(channelId: string, message: ChatMessage, senderConnectionId: string) {
+  // Broadcast to a room, excluding specific connection (e.g., the one who triggered the update)
+  async broadcastChange(dashboardId: string, change: DashboardChange, triggerConnectionId: string) {
     await this.broadcastToRoom(
-      `channel:${channelId}`,
-      { event: 'message', data: message },
-      { except: senderConnectionId },
+      `dashboard:${dashboardId}`,
+      { event: 'change', data: change },
+      { except: triggerConnectionId },
     )
   }
 
@@ -1262,15 +1267,15 @@ class ChatSSEController extends AbstractSSEController<typeof contracts> {
 Controllers have access to room query methods:
 
 ```ts
-class ChatSSEController extends AbstractSSEController<typeof contracts> {
+class DashboardSSEController extends AbstractSSEController<typeof contracts> {
   // Get all connection IDs in a room
-  getChannelMembers(channelId: string): string[] {
-    return this.getConnectionsInRoom(`channel:${channelId}`)
+  getDashboardViewers(dashboardId: string): string[] {
+    return this.getConnectionsInRoom(`dashboard:${dashboardId}`)
   }
 
   // Get count of connections in a room
-  getChannelMemberCount(channelId: string): number {
-    return this.getConnectionCountInRoom(`channel:${channelId}`)
+  getDashboardViewerCount(dashboardId: string): number {
+    return this.getConnectionCountInRoom(`dashboard:${dashboardId}`)
   }
 
   // Get all rooms a specific connection is in
@@ -1292,13 +1297,13 @@ When a connection closes (client disconnect or server close), it automatically l
 
 #### Multi-Node Deployments with Redis
 
-For multi-node deployments where connections may be distributed across servers, use the Redis adapter from `@anthropic/sse-rooms-redis`:
+For multi-node deployments where connections may be distributed across servers, use the Redis adapter from `@opinionated-machine/sse-rooms-redis`:
 
 ```ts
-import { RedisAdapter } from '@anthropic/sse-rooms-redis'
+import { RedisAdapter } from '@opinionated-machine/sse-rooms-redis'
 import Redis from 'ioredis'
 
-class ChatSSEController extends AbstractSSEController<typeof contracts> {
+class DashboardSSEController extends AbstractSSEController<typeof contracts> {
   constructor(deps: { redis: Redis }, sseConfig?: SSEControllerConfig) {
     super(deps, sseConfig)
   }
@@ -1307,7 +1312,7 @@ class ChatSSEController extends AbstractSSEController<typeof contracts> {
 // In your module
 resolveControllers(diOptions: DependencyInjectionOptions) {
   return {
-    chatController: asSSEControllerClass(ChatSSEController, {
+    dashboardController: asSSEControllerClass(DashboardSSEController, {
       diOptions,
       rooms: {
         adapter: new RedisAdapter({
@@ -1323,7 +1328,7 @@ resolveControllers(diOptions: DependencyInjectionOptions) {
 
 The Redis adapter uses Pub/Sub for cross-node message propagation. When you call `broadcastToRoom()`, the message is published to Redis and delivered to all nodes that have connections in that room.
 
-See the [@anthropic/sse-rooms-redis](./packages/sse-rooms-redis/README.md) package for detailed documentation on Redis adapter configuration and usage.
+See the [@opinionated-machine/sse-rooms-redis](./packages/sse-rooms-redis/README.md) package for detailed documentation on Redis adapter configuration and usage.
 
 ### SSE Test Utilities
 
