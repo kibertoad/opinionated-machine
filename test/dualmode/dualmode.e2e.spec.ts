@@ -5,6 +5,7 @@ import { z } from 'zod'
 import {
   buildContract,
   buildFastifyRoute,
+  buildHandler,
   DIContext,
   SSEHttpClient,
   SSEInjectClient,
@@ -106,9 +107,9 @@ describe('Dual-Mode Accept Header Routing', () => {
     expect(chunkEvents).toHaveLength(2)
     expect(doneEvents).toHaveLength(1)
 
-    expect(JSON.parse(chunkEvents[0]!.data)).toEqual({ delta: 'Hello' })
-    expect(JSON.parse(chunkEvents[1]!.data)).toEqual({ delta: 'World' })
-    expect(JSON.parse(doneEvents[0]!.data)).toEqual({ usage: { total: 2 } })
+    expect(JSON.parse(chunkEvents[0]!.data)).toEqual({ content: 'Hello' })
+    expect(JSON.parse(chunkEvents[1]!.data)).toEqual({ content: 'World' })
+    expect(JSON.parse(doneEvents[0]!.data)).toEqual({ usage: { totalTokens: 2 } })
   })
 
   it('defaults to JSON when no Accept header', { timeout: 10000 }, async () => {
@@ -745,7 +746,7 @@ describe('Dual-Mode Controller Methods', () => {
     // Use sendDualModeEventInternal to send a typed event
     const result = await controller.sendDualModeEventInternal(connection.id, {
       event: 'chunk',
-      data: { delta: 'extra-chunk' },
+      data: { content: 'extra-chunk' },
     })
 
     expect(result).toBe(true)
@@ -757,7 +758,7 @@ describe('Dual-Mode Controller Methods', () => {
     // Verify the extra event was received
     const events = conn.getReceivedEvents()
     const extraChunk = events.find(
-      (e) => e.event === 'chunk' && e.data === JSON.stringify({ delta: 'extra-chunk' }),
+      (e) => e.event === 'chunk' && e.data === JSON.stringify({ content: 'extra-chunk' }),
     )
     expect(extraChunk).toBeDefined()
 
@@ -777,7 +778,7 @@ describe('Dual-Mode Controller Methods', () => {
     // Try to send to a non-existent connection
     const result = await controller.sendDualModeEventInternal('non-existent-id', {
       event: 'chunk',
-      data: { delta: 'test' },
+      data: { content: 'test' },
     })
 
     expect(result).toBe(false)
@@ -856,23 +857,70 @@ describe('Dual-Mode Route Builder Validation', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      jsonResponse: z.object({ result: z.string() }),
-      events: { result: z.object({ success: z.boolean() }) },
+      syncResponseBody: z.object({ result: z.string() }),
+      sseEvents: { result: z.object({ success: z.boolean() }) },
       isDualMode: true as const,
       isSimplified: true as const,
     }
 
     expect(() =>
-      buildFastifyRoute(controller, {
-        contract: invalidContract,
-        handlers: {
-          json: async () => ({ result: 'test' }),
+      buildFastifyRoute(
+        controller,
+        buildHandler(invalidContract, {
+          sync: async () => ({ result: 'test' }),
           sse: (_request, sse) => {
             sse.start('autoClose')
           },
-        },
-      }),
+        }),
+      ),
     ).toThrow('Route params schema must be a ZodObject for path template extraction')
+
+    await context.destroy()
+  })
+
+  it('throws error when handler has unknown __type', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
+
+    const controller: GenericDualModeController = context.diContainer.resolve(
+      'genericDualModeController',
+    )
+
+    // Create a handler with an unknown __type
+    const invalidHandler = {
+      __type: 'UnknownHandler' as const,
+      contract: {
+        pathResolver: () => '/api/unknown',
+      },
+      handlers: {},
+    }
+
+    expect(() => buildFastifyRoute(controller, invalidHandler as any)).toThrow(
+      'buildFastifyRoute received unexpected handler.__type: "UnknownHandler" for contract with path "/api/unknown"',
+    )
+
+    await context.destroy()
+  })
+
+  it('throws error when handler has undefined __type', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
+
+    const controller: GenericDualModeController = context.diContainer.resolve(
+      'genericDualModeController',
+    )
+
+    // Create a handler without __type
+    const invalidHandler = {
+      contract: {},
+      handlers: {},
+    }
+
+    expect(() => buildFastifyRoute(controller, invalidHandler as any)).toThrow(
+      'buildFastifyRoute received unexpected handler.__type: "undefined" for unknown handler',
+    )
 
     await context.destroy()
   })
@@ -896,18 +944,18 @@ describe('Dual-Mode Response Headers', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      jsonResponse: z.object({ result: z.string() }),
+      syncResponseBody: z.object({ result: z.string() }),
       responseHeaders: z.object({
         'x-request-id': z.string(),
         'x-ratelimit-remaining': z.string(),
       }),
-      events: { result: z.object({ success: z.boolean() }) },
+      sseEvents: { result: z.object({ success: z.boolean() }) },
     })
 
-    const route = buildFastifyRoute(controller, {
-      contract: contractWithHeaders,
-      handlers: {
-        json: (request, reply) => {
+    const route = buildFastifyRoute(
+      controller,
+      buildHandler(contractWithHeaders, {
+        sync: (request, reply) => {
           // Set the required headers
           reply.header('x-request-id', 'req-123')
           reply.header('x-ratelimit-remaining', '99')
@@ -916,8 +964,8 @@ describe('Dual-Mode Response Headers', () => {
         sse: (_request, sse) => {
           sse.start('autoClose')
         },
-      },
-    })
+      }),
+    )
 
     const server = await SSETestServer.create(
       (app) => {
@@ -968,25 +1016,25 @@ describe('Dual-Mode Response Headers', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      jsonResponse: z.object({ result: z.string() }),
+      syncResponseBody: z.object({ result: z.string() }),
       responseHeaders: z.object({
         'x-required-header': z.string(),
       }),
-      events: { result: z.object({ success: z.boolean() }) },
+      sseEvents: { result: z.object({ success: z.boolean() }) },
     })
 
-    const route = buildFastifyRoute(controller, {
-      contract: contractWithHeaders,
-      handlers: {
-        json: (request) => {
+    const route = buildFastifyRoute(
+      controller,
+      buildHandler(contractWithHeaders, {
+        sync: (request) => {
           // Intentionally NOT setting the required header
           return { result: request.body.data }
         },
         sse: (_request, sse) => {
           sse.start('autoClose')
         },
-      },
-    })
+      }),
+    )
 
     const server = await SSETestServer.create(
       (app) => {
@@ -1036,22 +1084,22 @@ describe('Dual-Mode Response Headers', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ data: z.string() }),
-      jsonResponse: z.object({ result: z.string() }),
+      syncResponseBody: z.object({ result: z.string() }),
       // No responseHeaders - should still work
-      events: { result: z.object({ success: z.boolean() }) },
+      sseEvents: { result: z.object({ success: z.boolean() }) },
     })
 
-    const route = buildFastifyRoute(controller, {
-      contract: contractWithoutHeaders,
-      handlers: {
-        json: (request) => {
+    const route = buildFastifyRoute(
+      controller,
+      buildHandler(contractWithoutHeaders, {
+        sync: (request) => {
           return { result: request.body.data }
         },
         sse: (_request, sse) => {
           sse.start('autoClose')
         },
-      },
-    })
+      }),
+    )
 
     const server = await SSETestServer.create(
       (app) => {

@@ -12,13 +12,13 @@ export const chatCompletionContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   requestBody: z.object({ message: z.string() }),
-  jsonResponse: z.object({
+  syncResponseBody: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
-  events: {
-    chunk: z.object({ delta: z.string() }),
-    done: z.object({ usage: z.object({ total: z.number() }) }),
+  sseEvents: {
+    chunk: z.object({ content: z.string() }),
+    done: z.object({ usage: z.object({ totalTokens: z.number() }) }),
   },
 })
 
@@ -32,11 +32,11 @@ export const conversationCompletionContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({ authorization: z.string() }),
   requestBody: z.object({ message: z.string() }),
-  jsonResponse: z.object({
+  syncResponseBody: z.object({
     reply: z.string(),
     conversationId: z.string(),
   }),
-  events: {
+  sseEvents: {
     chunk: z.object({ delta: z.string() }),
     done: z.object({ conversationId: z.string() }),
   },
@@ -50,12 +50,12 @@ export const jobStatusContract = buildContract({
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
   requestHeaders: z.object({}),
-  jsonResponse: z.object({
+  syncResponseBody: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
   }),
-  events: {
+  sseEvents: {
     progress: z.object({ percent: z.number(), message: z.string().optional() }),
     done: z.object({ result: z.string() }),
     error: z.object({ code: z.string(), message: z.string() }),
@@ -76,11 +76,11 @@ export const authenticatedDualModeContract = buildContract({
     authorization: z.string().optional(),
   }),
   requestBody: z.object({ data: z.string() }),
-  jsonResponse: z.object({
+  syncResponseBody: z.object({
     success: z.boolean(),
     data: z.string(),
   }),
-  events: {
+  sseEvents: {
     result: z.object({ success: z.boolean(), data: z.string() }),
   },
 })
@@ -95,8 +95,8 @@ export const defaultModeTestContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   requestBody: z.object({ input: z.string() }),
-  jsonResponse: z.object({ output: z.string() }),
-  events: {
+  syncResponseBody: z.object({ output: z.string() }),
+  sseEvents: {
     output: z.object({ value: z.string() }),
   },
 })
@@ -111,8 +111,8 @@ export const errorTestContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   requestBody: z.object({ shouldThrow: z.boolean() }),
-  jsonResponse: z.object({ success: z.boolean() }),
-  events: {
+  syncResponseBody: z.object({ success: z.boolean() }),
+  sseEvents: {
     result: z.object({ success: z.boolean() }),
   },
 })
@@ -128,15 +128,15 @@ export const defaultMethodContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   requestBody: z.object({ value: z.string() }),
-  jsonResponse: z.object({ result: z.string() }),
-  events: {
+  syncResponseBody: z.object({ result: z.string() }),
+  sseEvents: {
     data: z.object({ value: z.string() }),
   },
 })
 
 /**
  * POST dual-mode route for testing JSON response validation failure.
- * The jsonResponse schema is strict, but the handler will return mismatched data.
+ * The syncResponseBody schema is strict, but the handler will return mismatched data.
  */
 export const jsonValidationContract = buildContract({
   method: 'POST',
@@ -145,60 +145,13 @@ export const jsonValidationContract = buildContract({
   query: z.object({}),
   requestHeaders: z.object({}),
   requestBody: z.object({ returnInvalid: z.boolean() }),
-  jsonResponse: z.object({
+  syncResponseBody: z.object({
     requiredField: z.string(),
     count: z.number().int().positive(),
   }),
-  events: {
+  sseEvents: {
     result: z.object({ success: z.boolean() }),
   },
 })
 
-/**
- * POST dual-mode route with multi-format responses (verbose format).
- * Supports JSON, plain text, and CSV output formats.
- */
-export const multiFormatExportContract = buildContract({
-  method: 'POST',
-  pathResolver: () => '/api/export',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({
-    data: z.array(z.object({ name: z.string(), value: z.number() })),
-  }),
-  multiFormatResponses: {
-    'application/json': z.object({
-      items: z.array(z.object({ name: z.string(), value: z.number() })),
-      count: z.number(),
-    }),
-    'text/plain': z.string(),
-    'text/csv': z.string(),
-  },
-  events: {
-    progress: z.object({ percent: z.number() }),
-    done: z.object({ totalItems: z.number() }),
-  },
-})
-
-/**
- * GET dual-mode route with multi-format responses.
- */
-export const multiFormatReportContract = buildContract({
-  pathResolver: (params) => `/api/reports/${params.reportId}`,
-  params: z.object({ reportId: z.string() }),
-  query: z.object({ detailed: z.string().optional() }),
-  requestHeaders: z.object({}),
-  multiFormatResponses: {
-    'application/json': z.object({
-      id: z.string(),
-      title: z.string(),
-      data: z.unknown(),
-    }),
-    'text/plain': z.string(),
-  },
-  events: {
-    chunk: z.object({ content: z.string() }),
-    done: z.object({ totalSize: z.number() }),
-  },
-})
+// NOTE: Multi-format contracts removed - multi-format support is deprecated

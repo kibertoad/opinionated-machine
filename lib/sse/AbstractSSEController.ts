@@ -64,16 +64,20 @@ type SSEReply = FastifyReply & { sse: SSEReplyInterface }
  *
  *   public buildSSERoutes() {
  *     return {
- *       notifications: {
- *         contract: NotificationsSSEController.contracts.notifications,
- *         handlers: buildHandler(NotificationsSSEController.contracts.notifications, {
- *           sse: async (request, connection) => {
- *             await connection.send('notification', { message: 'Hello!' })
- *           },
- *         }),
- *       },
+ *       notifications: this.handleNotifications,
  *     }
  *   }
+ *
+ *   private handleNotifications = buildHandler(
+ *     NotificationsSSEController.contracts.notifications,
+ *     {
+ *       sse: async (request, sse) => {
+ *         const session = sse.start('autoClose')
+ *         await session.send('notification', { message: 'Hello!' })
+ *         // Connection closes automatically when handler returns
+ *       },
+ *     },
+ *   )
  * }
  * ```
  */

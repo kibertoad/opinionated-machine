@@ -14,7 +14,7 @@ import type { DualModeControllerConfig } from './dualModeTypes.ts'
  */
 export type AllDualModeContractEventNames<
   Contracts extends Record<string, AnyDualModeContractDefinition>,
-> = Contracts[keyof Contracts]['events'] extends infer E
+> = Contracts[keyof Contracts]['sseEvents'] extends infer E
   ? E extends Record<string, z.ZodTypeAny>
     ? keyof E & string
     : never
@@ -27,15 +27,15 @@ export type ExtractDualModeEventSchema<
   Contracts extends Record<string, AnyDualModeContractDefinition>,
   EventName extends string,
 > = {
-  [K in keyof Contracts]: EventName extends keyof Contracts[K]['events']
-    ? Contracts[K]['events'][EventName]
+  [K in keyof Contracts]: EventName extends keyof Contracts[K]['sseEvents']
+    ? Contracts[K]['sseEvents'][EventName]
     : never
 }[keyof Contracts]
 
 /**
  * Abstract base class for dual-mode controllers.
  *
- * Dual-mode controllers handle both SSE streaming and JSON responses on the
+ * Dual-mode controllers handle both SSE streaming and sync responses on the
  * same route path, automatically branching based on the `Accept` header.
  *
  * This class extends `AbstractSSEController` to reuse connection management,
@@ -47,7 +47,7 @@ export type ExtractDualModeEventSchema<
  * ```typescript
  * class ChatController extends AbstractDualModeController<typeof contracts> {
  *   public static contracts = {
- *     chatCompletion: buildContract({ requestBody: ..., jsonResponse: ..., ... }),
+ *     chatCompletion: buildContract({ requestBody: ..., syncResponseBody: ..., ... }),
  *   } as const
  *
  *   constructor(deps: Dependencies, config?: DualModeControllerConfig) {
@@ -56,23 +56,23 @@ export type ExtractDualModeEventSchema<
  *
  *   public buildDualModeRoutes() {
  *     return {
- *       chatCompletion: {
- *         contract: ChatController.contracts.chatCompletion,
- *         handlers: buildHandler(ChatController.contracts.chatCompletion, {
- *           json: async (request, reply) => {
- *             // Return complete JSON response
- *             return { reply: 'Hello', usage: { tokens: 5 } }
- *           },
- *           sse: async (request, connection) => {
- *             // Stream SSE events
- *             await connection.send('chunk', { delta: 'Hello' })
- *             await connection.send('done', { usage: { total: 5 } })
- *             this.closeConnection(connection.id)
- *           },
- *         }),
- *       },
+ *       chatCompletion: this.handleChatCompletion,
  *     }
  *   }
+ *
+ *   private handleChatCompletion = buildHandler(ChatController.contracts.chatCompletion, {
+ *     sync: async (request, reply) => {
+ *       // Return complete response
+ *       return { reply: 'Hello', usage: { tokens: 5 } }
+ *     },
+ *     sse: async (request, sse) => {
+ *       // Stream SSE events with autoClose mode
+ *       const session = sse.start('autoClose')
+ *       await session.send('chunk', { delta: 'Hello' })
+ *       await session.send('done', { usage: { total: 5 } })
+ *       // Connection closes automatically when handler returns
+ *     },
+ *   })
  * }
  * ```
  */

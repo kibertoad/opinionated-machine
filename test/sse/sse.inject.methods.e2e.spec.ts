@@ -3,6 +3,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildFastifyRoute,
+  buildHandler,
   DIContext,
   injectPayloadSSE,
   injectSSE,
@@ -96,21 +97,24 @@ describe('SSE Inject E2E (onClose error handling)', () => {
       const server = await SSETestServer.create(
         (app) => {
           app.route(
-            buildFastifyRoute(controller, {
-              contract: onCloseErrorStreamContract,
-              handlers: {
-                sse: async (_request, sse) => {
-                  const connection = sse.start('autoClose')
-                  await connection.send('message', { text: 'Hello' })
-                  // Server explicitly closes connection (autoClose mode)
+            buildFastifyRoute(
+              controller,
+              buildHandler(
+                onCloseErrorStreamContract,
+                {
+                  sse: async (_request, sse) => {
+                    const connection = sse.start('autoClose')
+                    await connection.send('message', { text: 'Hello' })
+                    // Server explicitly closes connection (autoClose mode)
+                  },
                 },
-              },
-              options: {
-                onClose: (_conn, reason) => {
-                  onCloseReason(reason)
+                {
+                  onClose: (_conn, reason) => {
+                    onCloseReason(reason)
+                  },
                 },
-              },
-            }),
+              ),
+            ),
           )
         },
         {

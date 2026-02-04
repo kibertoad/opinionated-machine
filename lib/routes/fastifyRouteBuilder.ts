@@ -3,22 +3,20 @@ import type { FastifyReply, RouteOptions } from 'fastify'
 import type { z } from 'zod'
 import { ZodObject } from 'zod'
 import type { AbstractDualModeController } from '../dualmode/AbstractDualModeController.ts'
-import {
-  type AnyDualModeContractDefinition,
-  isVerboseContract,
-} from '../dualmode/dualModeContracts.ts'
+import type { AnyDualModeContractDefinition } from '../dualmode/dualModeContracts.ts'
 import type { AbstractSSEController } from '../sse/AbstractSSEController.ts'
 import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type {
+  DualModeRouteHandler,
   FastifyDualModeHandlerConfig,
   FastifySSEHandlerConfig,
   FastifySSERouteOptions,
   SSEHandlerResult,
+  SSERouteHandler,
 } from './fastifyRouteTypes.ts'
 import {
   createSSEContext,
   determineMode,
-  determineSyncFormat,
   extractPathTemplate,
   handleSSEError,
   isErrorLike,
@@ -52,43 +50,16 @@ function buildSSEConfig(
 }
 
 /**
- * Validate response body against the appropriate schema.
- * For simplified contracts, uses jsonResponse.
- * For verbose contracts, uses the schema for the specified contentType.
+ * Validate response body against the syncResponseBody schema.
  */
-function validateResponseBody(
-  contract: AnyDualModeContractDefinition,
-  response: unknown,
-  contentType?: string,
-): void {
-  let schema: z.ZodTypeAny | undefined
-
-  if (isVerboseContract(contract)) {
-    // Multi-format: use schema for the content type
-    if (!contentType) {
-      throw new InternalError({
-        message: 'Content-Type is required for multi-format response validation',
-        errorCode: 'MISSING_CONTENT_TYPE',
-      })
-    }
-    schema = contract.multiFormatResponses[contentType]
-    if (!schema) {
-      throw new InternalError({
-        message: `No schema defined for Content-Type '${contentType}' in multiFormatResponses. Available formats: ${Object.keys(contract.multiFormatResponses).join(', ')}`,
-        errorCode: 'UNKNOWN_CONTENT_TYPE',
-      })
-    }
-  } else {
-    // Simplified: use jsonResponse
-    schema = contract.jsonResponse
-  }
-
+function validateResponseBody(contract: AnyDualModeContractDefinition, response: unknown): void {
+  const schema = contract.syncResponseBody
   if (!schema) return
 
   const result = schema.safeParse(response)
   if (!result.success) {
     throw new InternalError({
-      message: `Response validation failed for ${contentType ?? 'application/json'}: ${result.error.message}`,
+      message: `Response validation failed for application/json: ${result.error.message}`,
       errorCode: 'RESPONSE_VALIDATION_FAILED',
     })
   }
@@ -123,30 +94,7 @@ function validateResponseHeaders(
 }
 
 /**
- * Handle simplified JSON mode request (single format).
- */
-async function handleJsonMode<Contract extends AnyDualModeContractDefinition>(
-  contract: Contract,
-  handlers: FastifyDualModeHandlerConfig<Contract>['handlers'],
-  // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
-  request: any,
-  reply: FastifyReply,
-) {
-  // biome-ignore lint/suspicious/noExplicitAny: Handler type depends on contract
-  const response = await (handlers as any).json(request, reply)
-
-  validateResponseBody(contract, response, 'application/json')
-
-  // Explicitly set content-type to override SSE default (from sse: true option)
-  reply.type('application/json')
-
-  validateResponseHeaders(contract.responseHeaders, reply)
-
-  return reply.send(response)
-}
-
-/**
- * Handle verbose multi-format sync mode request.
+ * Handle sync mode request.
  */
 async function handleSyncMode<Contract extends AnyDualModeContractDefinition>(
   contract: Contract,
@@ -154,23 +102,14 @@ async function handleSyncMode<Contract extends AnyDualModeContractDefinition>(
   // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
   request: any,
   reply: FastifyReply,
-  contentType: string,
 ) {
   // biome-ignore lint/suspicious/noExplicitAny: Handler type depends on contract
-  const syncHandlers = (handlers as any).sync
-  if (!syncHandlers || !syncHandlers[contentType]) {
-    throw new InternalError({
-      message: `No handler found for content type: ${contentType}`,
-      errorCode: 'HANDLER_NOT_FOUND',
-    })
-  }
+  const response = await (handlers as any).sync(request, reply)
 
-  const response = await syncHandlers[contentType](request, reply)
+  validateResponseBody(contract, response)
 
-  validateResponseBody(contract, response, contentType)
-
-  // Set the content type
-  reply.type(contentType)
+  // Explicitly set content-type to override SSE default (from sse: true option)
+  reply.type('application/json')
 
   validateResponseHeaders(contract.responseHeaders, reply)
 
@@ -231,7 +170,7 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
     controller,
     request,
     reply,
-    contract.events,
+    contract.sseEvents,
     options,
     'dual-mode SSE',
   )
@@ -320,30 +259,14 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
       querystring: contract.query,
       headers: contract.requestHeaders,
       ...(contract.requestBody && { body: contract.requestBody }),
-      // Note: response schema for JSON mode could be added here
+      // Note: response schema for sync mode could be added here
     },
     handler: async (request, reply) => {
-      // Check if this is a verbose multi-format contract
-      if (isVerboseContract(contract)) {
-        const supportedFormats = Object.keys(contract.multiFormatResponses)
-        const formatResult = determineSyncFormat(
-          request.headers.accept,
-          supportedFormats,
-          supportedFormats[0],
-        )
-
-        if (formatResult.mode === 'sse') {
-          return await handleSSEMode(controller, contract, handlers, request, reply, options)
-        }
-
-        return await handleSyncMode(contract, handlers, request, reply, formatResult.contentType)
-      }
-
-      // Simplified single-JSON-format contract
+      // Determine mode based on Accept header
       const mode = determineMode(request.headers.accept, defaultMode)
 
       if (mode === 'json') {
-        return await handleJsonMode(contract, handlers, request, reply)
+        return await handleSyncMode(contract, handlers, request, reply)
       }
 
       return await handleSSEMode(controller, contract, handlers, request, reply, options)
@@ -400,7 +323,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         controller,
         request,
         reply,
-        contract.events,
+        contract.sseEvents,
         options,
         'SSE',
       )
@@ -470,11 +393,11 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
 /**
  * Build a Fastify route configuration for a dual-mode endpoint.
  *
- * This overload handles dual-mode contracts (endpoints that support both JSON and SSE responses).
+ * This overload handles dual-mode route handlers (endpoints that support both sync and SSE responses).
  * The response mode is determined by the Accept header.
  *
  * @param controller - The dual-mode controller instance
- * @param config - The dual-mode handler configuration
+ * @param handler - The dual-mode route handler (from buildHandler)
  * @returns Fastify route options
  */
 export function buildFastifyRoute<
@@ -482,100 +405,109 @@ export function buildFastifyRoute<
   Contract extends AnyDualModeContractDefinition,
 >(
   controller: AbstractDualModeController<Contracts>,
-  config: FastifyDualModeHandlerConfig<Contract>,
+  handler: DualModeRouteHandler<Contract>,
 ): RouteOptions
 
 /**
  * Build a Fastify route configuration for an SSE endpoint.
  *
- * This overload handles SSE-only contracts (endpoints that only stream SSE responses).
+ * This overload handles SSE route handlers (endpoints that only stream SSE responses).
  * Integrates with @fastify/sse and the AbstractSSEController for connection management.
  *
  * @param controller - The SSE controller instance
- * @param config - The SSE handler configuration
+ * @param handler - The SSE route handler (from buildHandler)
  * @returns Fastify route options
  */
 export function buildFastifyRoute<
   Contracts extends Record<string, AnySSEContractDefinition>,
   Contract extends AnySSEContractDefinition,
->(
-  controller: AbstractSSEController<Contracts>,
-  config: FastifySSEHandlerConfig<Contract>,
-): RouteOptions
+>(controller: AbstractSSEController<Contracts>, handler: SSERouteHandler<Contract>): RouteOptions
 
 /**
  * Build a Fastify route configuration for SSE or dual-mode endpoints.
  *
- * This unified function creates routes that integrate with @fastify/sse. The contract type
+ * This unified function creates routes that integrate with @fastify/sse. The handler type
  * determines the behavior:
  *
- * - **SSE contracts** (no `jsonResponse`): Creates SSE-only routes that stream events
- * - **Dual-mode contracts** (has `jsonResponse`): Creates routes that branch on Accept header
- *   - `Accept: application/json` → JSON response
+ * - **SSE route handlers**: Creates SSE-only routes that stream events
+ * - **Dual-mode route handlers**: Creates routes that branch on Accept header
+ *   - `Accept: application/json` → Sync response
  *   - `Accept: text/event-stream` → SSE streaming
  *
  * @example
  * ```typescript
  * // SSE-only route with deferred headers (can return early)
- * const sseRoute = buildFastifyRoute(notificationsController, {
- *   contract: notificationsContract,
- *   handlers: {
- *     sse: async (request, sse) => {
- *       const entity = await db.find(request.params.id)
- *       if (!entity) {
- *         return sse.respond(404, { error: 'Not found' })
- *       }
- *       // 'keepAlive' keeps session open after handler returns
- *       const session = sse.start('keepAlive')
- *       await session.send('notification', { message: 'Hello!' })
- *     },
+ * const sseHandler = buildHandler(notificationsContract, {
+ *   sse: async (request, sse) => {
+ *     const entity = await db.find(request.params.id)
+ *     if (!entity) {
+ *       return sse.respond(404, { error: 'Not found' })
+ *     }
+ *     const session = sse.start('keepAlive')
+ *     await session.send('notification', { message: 'Hello!' })
  *   },
- * })
+ * }, { onConnect: ..., onClose: ... })
  *
  * // Dual-mode route
- * const dualModeRoute = buildFastifyRoute(chatController, {
- *   contract: chatCompletionContract,
- *   handlers: {
- *     json: async (request, reply) => {
- *       return { reply: 'Hello', usage: { tokens: 1 } }
- *     },
- *     sse: async (request, sse) => {
- *       // 'autoClose' closes session after handler returns
- *       const session = sse.start('autoClose')
- *       await session.send('chunk', { delta: 'Hello' })
- *       await session.send('done', { usage: { total: 1 } })
- *     },
+ * const dualModeHandler = buildHandler(chatCompletionContract, {
+ *   sync: (request, reply) => {
+ *     return { reply: 'Hello', usage: { tokens: 1 } }
  *   },
- * })
+ *   sse: async (request, sse) => {
+ *     const session = sse.start('autoClose')
+ *     await session.send('chunk', { delta: 'Hello' })
+ *     await session.send('done', { usage: { total: 1 } })
+ *   },
+ * }, { preHandler: authHandler })
  *
  * // Register with Fastify
- * app.route(sseRoute)
- * app.route(dualModeRoute)
+ * app.route(buildFastifyRoute(notificationsController, sseHandler))
+ * app.route(buildFastifyRoute(chatController, dualModeHandler))
  * ```
  */
 export function buildFastifyRoute(
   controller:
     | AbstractDualModeController<Record<string, AnyDualModeContractDefinition>>
     | AbstractSSEController<Record<string, AnySSEContractDefinition>>,
-  config:
-    | FastifyDualModeHandlerConfig<AnyDualModeContractDefinition>
-    | FastifySSEHandlerConfig<AnySSEContractDefinition>,
+  handler:
+    | DualModeRouteHandler<AnyDualModeContractDefinition>
+    | SSERouteHandler<AnySSEContractDefinition>,
 ): RouteOptions {
-  // Discriminate by checking for dual-mode handlers:
-  // - Simplified: has 'json' and 'sse'
-  // - Verbose: has 'sync' and 'sse'
-  // SSE-only handlers have only 'sse'
-  if ('handlers' in config && ('json' in config.handlers || 'sync' in config.handlers)) {
-    // Dual-mode config has handlers with either (json and sse) or (sync and sse)
+  if (handler.__type === 'DualModeRouteHandler') {
+    const dualModeHandler = handler as DualModeRouteHandler<AnyDualModeContractDefinition>
     return buildDualModeRouteInternal(
       controller as AbstractDualModeController<Record<string, AnyDualModeContractDefinition>>,
-      config as FastifyDualModeHandlerConfig<AnyDualModeContractDefinition>,
+      {
+        contract: dualModeHandler.contract,
+        handlers: dualModeHandler.handlers,
+        options: dualModeHandler.options,
+      },
     )
   }
 
-  // SSE-only config has handlers with just sse
-  return buildSSERouteInternal(
-    controller as AbstractSSEController<Record<string, AnySSEContractDefinition>>,
-    config as FastifySSEHandlerConfig<AnySSEContractDefinition>,
+  if (handler.__type === 'SSERouteHandler') {
+    const sseHandler = handler as SSERouteHandler<AnySSEContractDefinition>
+    return buildSSERouteInternal(
+      controller as AbstractSSEController<Record<string, AnySSEContractDefinition>>,
+      {
+        contract: sseHandler.contract,
+        handlers: sseHandler.handlers,
+        options: sseHandler.options,
+      },
+    )
+  }
+
+  // Unknown handler type - throw descriptive error
+  const unknownHandler = handler as { __type?: unknown; contract?: { pathResolver?: unknown } }
+  const handlerType = unknownHandler.__type ?? 'undefined'
+  const handlerIdentity =
+    typeof unknownHandler.contract?.pathResolver === 'function'
+      ? `contract with path "${unknownHandler.contract.pathResolver({})}"`
+      : 'unknown handler'
+  throw new Error(
+    `buildFastifyRoute received unexpected handler.__type: "${handlerType}" for ${handlerIdentity}. ` +
+      `Expected "DualModeRouteHandler" (for use with AbstractDualModeController and buildDualModeRouteInternal) ` +
+      `or "SSERouteHandler" (for use with AbstractSSEController and buildSSERouteInternal). ` +
+      `Ensure the handler was created using buildHandler().`,
   )
 }

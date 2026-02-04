@@ -13,14 +13,14 @@ export type SSEEventSchemas = Record<string, z.ZodTypeAny>
  * @example
  * ```typescript
  * type Contracts = {
- *   notifications: { events: { alert: z.ZodObject<...> } }
- *   chat: { events: { message: z.ZodObject<...>, done: z.ZodObject<...> } }
+ *   notifications: { sseEvents: { alert: z.ZodObject<...> } }
+ *   chat: { sseEvents: { message: z.ZodObject<...>, done: z.ZodObject<...> } }
  * }
  * // AllContractEventNames<Contracts> = 'alert' | 'message' | 'done'
  * ```
  */
 export type AllContractEventNames<Contracts extends Record<string, AnySSEContractDefinition>> =
-  Contracts[keyof Contracts]['events'] extends infer E
+  Contracts[keyof Contracts]['sseEvents'] extends infer E
     ? E extends SSEEventSchemas
       ? keyof E & string
       : never
@@ -34,8 +34,8 @@ export type ExtractEventSchema<
   Contracts extends Record<string, AnySSEContractDefinition>,
   EventName extends string,
 > = {
-  [K in keyof Contracts]: EventName extends keyof Contracts[K]['events']
-    ? Contracts[K]['events'][EventName]
+  [K in keyof Contracts]: EventName extends keyof Contracts[K]['sseEvents']
+    ? Contracts[K]['sseEvents'][EventName]
     : never
 }[keyof Contracts]
 
@@ -94,12 +94,12 @@ export type SSEMessage<T = unknown> = {
  * This type provides compile-time type checking for event names and their
  * corresponding data payloads based on the contract's event schemas.
  *
- * @template Events - Map of event name to Zod schema (from contract.events)
+ * @template Events - Map of event name to Zod schema (from contract.sseEvents)
  *
  * @example
  * ```typescript
- * // Given a contract with events:
- * // events: { chunk: z.object({ content: z.string() }), done: z.object({ tokens: z.number() }) }
+ * // Given a contract with sseEvents:
+ * // sseEvents: { chunk: z.object({ content: z.string() }), done: z.object({ tokens: z.number() }) }
  *
  * // The sender will be typed as:
  * send('chunk', { content: 'hello' })  // OK

@@ -1,16 +1,8 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {
-  DIContext,
-  injectSSE,
-  parseSSEEvents,
-  SSETestServer,
-} from '../../index.js'
-import {
-  asyncReconnectStreamContract,
-  reconnectStreamContract,
-} from './fixtures/testContracts.js'
+import { DIContext, injectSSE, parseSSEEvents, SSETestServer } from '../../index.js'
+import { asyncReconnectStreamContract, reconnectStreamContract } from './fixtures/testContracts.js'
 import {
   TestReconnectSSEModule,
   type TestReconnectSSEModuleDependencies,

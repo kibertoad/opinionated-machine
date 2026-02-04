@@ -11,7 +11,7 @@ describe('sseContracts', () => {
       query: z.object({}),
       requestHeaders: z.object({}),
       requestBody: z.object({ message: z.string() }),
-      events: {
+      sseEvents: {
         data: z.object({ value: z.string() }),
       },
     }
@@ -50,7 +50,7 @@ describe('sseContracts', () => {
         params: z.object({}),
         query: z.object({ userId: z.string() }),
         requestHeaders: z.object({}),
-        events: {
+        sseEvents: {
           message: z.object({ text: z.string() }),
         },
       })
@@ -70,7 +70,7 @@ describe('sseContracts', () => {
       query: z.object({ filter: z.string().optional() }),
       requestHeaders: z.object({ authorization: z.string() }),
       requestBody: z.object({ message: z.string(), count: z.number() }),
-      events: {
+      sseEvents: {
         chunk: z.object({ content: z.string() }),
         done: z.object({ totalTokens: z.number() }),
       },

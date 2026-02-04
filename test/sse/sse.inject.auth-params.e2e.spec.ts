@@ -1,20 +1,9 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {
-  DIContext,
-  injectSSE,
-  parseSSEEvents,
-  SSETestServer,
-} from '../../index.js'
-import {
-  authenticatedStreamContract,
-  channelStreamContract,
-} from './fixtures/testContracts.js'
-import {
-  TestAuthSSEModule,
-  TestChannelSSEModule,
-} from './fixtures/testModules.js'
+import { DIContext, injectSSE, parseSSEEvents, SSETestServer } from '../../index.js'
+import { authenticatedStreamContract, channelStreamContract } from './fixtures/testContracts.js'
+import { TestAuthSSEModule, TestChannelSSEModule } from './fixtures/testModules.js'
 
 describe('SSE Inject E2E (authentication)', () => {
   let server: SSETestServer<{ context: DIContext<object, object> }>
