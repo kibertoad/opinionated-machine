@@ -1538,7 +1538,11 @@ In SSE handlers, use `sse.respond(code, body)` for non-2xx responses. This provi
 
 ```ts
 handlers: buildHandler(resourceContract, {
-  sync: (request) => {
+  sync: (request, reply) => {
+    if (!isValid(request.body.data)) {
+      reply.code(400)
+      return { error: 'Bad Request', details: ['Invalid data format'] }
+    }
     return { success: true, data: 'OK' }
   },
   sse: async (request, sse) => {
