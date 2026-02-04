@@ -398,14 +398,14 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildContract` to define SSE routes. The contract type is automatically determined based on the presence of `requestBody` and `syncResponseBody` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
+Use `buildSseContract` from `@lokalise/api-contracts` to define SSE routes. The contract type is automatically determined based on the presence of `requestBody` and `syncResponseBody` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
-import { buildContract } from 'opinionated-machine'
+import { buildSseContract } from '@lokalise/api-contracts'
 
 // GET-based SSE stream with path params (no body = GET)
-export const channelStreamContract = buildContract({
+export const channelStreamContract = buildSseContract({
   pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
   params: z.object({ channelId: z.string() }),
   query: z.object({}),
@@ -416,7 +416,7 @@ export const channelStreamContract = buildContract({
 })
 
 // GET-based SSE stream without path params
-export const notificationsContract = buildContract({
+export const notificationsContract = buildSseContract({
   pathResolver: () => '/api/notifications/stream',
   params: z.object({}),
   query: z.object({ userId: z.string().optional() }),
@@ -430,8 +430,8 @@ export const notificationsContract = buildContract({
 })
 
 // POST-based SSE stream (e.g., AI chat completions) - has requestBody = POST/PUT/PATCH
-export const chatCompletionContract = buildContract({
-  method: 'POST',
+export const chatCompletionContract = buildSseContract({
+  method: 'post',
   pathResolver: () => '/api/chat/completions',
   params: z.object({}),
   query: z.object({}),
@@ -451,7 +451,7 @@ For reusable event schema definitions, you can use the `SSEEventSchemas` type (r
 
 ```ts
 import { z } from 'zod'
-import { type SSEEventSchemas } from 'opinionated-machine'
+import type { SSEEventSchemas } from 'opinionated-machine'
 
 // Define reusable event schemas for multiple contracts
 const streamingEvents = {
@@ -1411,16 +1411,16 @@ Dual-mode contracts define endpoints that can return **either** a complete sync 
 - You're building OpenAI-style APIs where `stream: true` triggers SSE
 - You need polling fallback for clients that don't support SSE
 
-To create a dual-mode contract, include a `syncResponseBody` schema in your `buildContract` call:
+To create a dual-mode contract, include a `syncResponseBody` schema in your `buildSseContract` call:
 - Has `syncResponseBody` but no `requestBody` → GET dual-mode route
 - Has both `syncResponseBody` and `requestBody` → POST/PUT/PATCH dual-mode route
 
 ```ts
 import { z } from 'zod'
-import { buildContract } from 'opinionated-machine'
+import { buildSseContract } from '@lokalise/api-contracts'
 
 // GET dual-mode route (polling or streaming job status) - has syncResponseBody, no requestBody
-export const jobStatusContract = buildContract({
+export const jobStatusContract = buildSseContract({
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   params: z.object({ jobId: z.string().uuid() }),
   query: z.object({ verbose: z.string().optional() }),
@@ -1437,8 +1437,8 @@ export const jobStatusContract = buildContract({
 })
 
 // POST dual-mode route (OpenAI-style chat completion) - has both syncResponseBody and requestBody
-export const chatCompletionContract = buildContract({
-  method: 'POST',
+export const chatCompletionContract = buildSseContract({
+  method: 'post',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
   params: z.object({ chatId: z.string().uuid() }),
   query: z.object({}),
@@ -1462,8 +1462,8 @@ export const chatCompletionContract = buildContract({
 Dual-mode contracts support an optional `responseHeaders` schema to define and validate headers sent with sync responses. This is useful for documenting expected headers (rate limits, pagination, cache control) and validating that your handlers set them correctly:
 
 ```ts
-export const rateLimitedContract = buildContract({
-  method: 'POST',
+export const rateLimitedContract = buildSseContract({
+  method: 'post',
   pathResolver: () => '/api/rate-limited',
   params: z.object({}),
   query: z.object({}),
