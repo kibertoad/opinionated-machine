@@ -12,6 +12,7 @@ import {
   errorTestContract,
   jobStatusContract,
   jsonValidationContract,
+  statusCodeValidationContract,
 } from './testContracts.js'
 
 /**
@@ -364,6 +365,64 @@ export class GenericDualModeController extends AbstractDualModeController<Generi
     // This controller doesn't define its own routes - it's used for ad-hoc route building
     return {}
   }
+}
+
+/**
+ * Controller for testing responseSchemasByStatusCode validation.
+ * When returnStatus is set to 400 or 404, returns appropriate error responses.
+ * When returnValid is false, returns data that doesn't match the schema.
+ */
+export type TestStatusCodeValidationContracts = {
+  statusCodeValidation: typeof statusCodeValidationContract
+}
+
+export class TestStatusCodeValidationDualModeController extends AbstractDualModeController<TestStatusCodeValidationContracts> {
+  public static contracts = {
+    statusCodeValidation: statusCodeValidationContract,
+  } as const
+
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestStatusCodeValidationContracts> {
+    return {
+      statusCodeValidation: this.handleStatusCodeValidation,
+    }
+  }
+
+  // Note: For error responses (non-2xx), TypeScript handler return types don't account for
+  // responseSchemasByStatusCode which allows different response shapes per status code.
+  // We use 'as any' only for error responses since the type system only knows about syncResponseBody.
+  private handleStatusCodeValidation = buildHandler(statusCodeValidationContract, {
+    sync: (request, reply) => {
+      const { returnStatus, returnValid } = request.body
+
+      if (returnStatus === 400) {
+        reply.code(400)
+        if (returnValid) {
+          // Valid 400 response per responseSchemasByStatusCode
+          // TypeScript doesn't know about error response schemas, so we cast
+          return { error: 'Bad Request', details: ['Invalid input', 'Missing field'] } as any
+        }
+        // Invalid 400 response - missing 'details' field (for testing validation failure)
+        return { error: 'Bad Request', wrongField: 'invalid' } as any
+      }
+
+      if (returnStatus === 404) {
+        reply.code(404)
+        if (returnValid) {
+          // Valid 404 response per responseSchemasByStatusCode
+          return { error: 'Not Found', resourceId: 'item-123' } as any
+        }
+        // Invalid 404 response - missing 'resourceId' field (for testing validation failure)
+        return { error: 'Not Found', wrongField: 'invalid' } as any
+      }
+
+      // Success case - 200 (matches syncResponseBody) - no cast needed
+      return { success: true, data: 'OK' }
+    },
+    sse: async (_request, sse) => {
+      const connection = sse.start('autoClose')
+      await connection.send('result', { success: true })
+    },
+  })
 }
 
 // NOTE: Multi-format controllers removed - multi-format support is deprecated

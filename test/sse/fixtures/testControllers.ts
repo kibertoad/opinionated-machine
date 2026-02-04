@@ -32,6 +32,7 @@ import {
   reconnectStreamContract,
   respondWithoutReturnContract,
   sendStreamTestContract,
+  sseRespondValidationContract,
   streamContract,
   validationTestStreamContract,
 } from './testContracts.js'
@@ -1123,4 +1124,53 @@ export class TestRespondWithoutReturnController extends AbstractSSEController<Te
     }
     return { name: `Entity ${id}` }
   }
+}
+
+/**
+ * Test SSE controller for responseSchemasByStatusCode validation.
+ * Tests that sse.respond() validates against status-specific schemas.
+ */
+export type TestSSERespondValidationContracts = {
+  sseRespondValidation: typeof sseRespondValidationContract
+}
+
+export class TestSSERespondValidationController extends AbstractSSEController<TestSSERespondValidationContracts> {
+  public static contracts = {
+    sseRespondValidation: sseRespondValidationContract,
+  } as const
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestSSERespondValidationContracts> {
+    return {
+      sseRespondValidation: this.handleStream,
+    }
+  }
+
+  private handleStream = buildHandler(sseRespondValidationContract, {
+    sse: async (request, sse) => {
+      const { returnStatus, returnValid } = request.body
+
+      if (returnStatus === 400) {
+        if (returnValid) {
+          return sse.respond(400, {
+            error: 'Bad Request',
+            details: ['Invalid input', 'Missing field'],
+          })
+        }
+        // Invalid response - missing 'details' field
+        return sse.respond(400, { error: 'Bad Request', wrongField: 'invalid' } as any)
+      }
+
+      if (returnStatus === 404) {
+        if (returnValid) {
+          return sse.respond(404, { error: 'Not Found', resourceId: 'item-123' })
+        }
+        // Invalid response - missing 'resourceId' field
+        return sse.respond(404, { error: 'Not Found', wrongField: 'invalid' } as any)
+      }
+
+      // Default: start streaming
+      const session = sse.start('autoClose')
+      await session.send('message', { text: 'Streaming started' })
+    },
+  })
 }

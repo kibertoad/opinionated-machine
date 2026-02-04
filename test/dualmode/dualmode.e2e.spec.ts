@@ -27,6 +27,7 @@ import {
   TestErrorDualModeModule,
   TestJobStatusDualModeModule,
   TestJsonValidationDualModeModule,
+  TestStatusCodeValidationDualModeModule,
 } from './fixtures/testModules.js'
 
 /**
@@ -670,10 +671,10 @@ describe('Dual-Mode JSON Response Validation', () => {
       payload: { returnInvalid: true },
     })
 
-    // Should return 500 with error about validation failure
+    // Should return 500 with generic error message (validation details not exposed)
     expect(response.statusCode).toBe(500)
     const body = JSON.parse(response.body)
-    expect(body.message).toContain('Response validation failed for application/json')
+    expect(body.message).toBe('Internal Server Error')
   })
 
   it('returns 200 when JSON response is valid', { timeout: 10000 }, async () => {
@@ -1058,9 +1059,9 @@ describe('Dual-Mode Response Headers', () => {
       payload: { data: 'test' },
     })
 
-    // Should fail validation
+    // Should fail validation - returns generic error message (details not exposed)
     expect(response.statusCode).toBe(500)
-    expect(response.json().message).toContain('Response headers validation failed')
+    expect(response.json().message).toBe('Internal Server Error')
 
     await context.destroy()
     await server.close()
@@ -1128,5 +1129,117 @@ describe('Dual-Mode Response Headers', () => {
 
     await context.destroy()
     await server.close()
+  })
+})
+
+describe('Dual-Mode responseSchemasByStatusCode Validation', () => {
+  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies(
+      { modules: [new TestStatusCodeValidationDualModeModule()] },
+      undefined,
+    )
+
+    server = await SSETestServer.create(
+      (app) => {
+        context.registerDualModeRoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  it('validates 200 responses against syncResponseBody', async () => {
+    const response = await server.app.inject({
+      method: 'post',
+      url: '/api/status-code-validation',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      payload: { returnStatus: 200, returnValid: true },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ success: true, data: 'OK' })
+  })
+
+  it('validates 400 responses against responseSchemasByStatusCode', async () => {
+    const response = await server.app.inject({
+      method: 'post',
+      url: '/api/status-code-validation',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      payload: { returnStatus: 400, returnValid: true },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toEqual({
+      error: 'Bad Request',
+      details: ['Invalid input', 'Missing field'],
+    })
+  })
+
+  it('validates 404 responses against responseSchemasByStatusCode', async () => {
+    const response = await server.app.inject({
+      method: 'post',
+      url: '/api/status-code-validation',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      payload: { returnStatus: 404, returnValid: true },
+    })
+
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toEqual({ error: 'Not Found', resourceId: 'item-123' })
+  })
+
+  it('throws validation error for invalid 400 response', async () => {
+    const response = await server.app.inject({
+      method: 'post',
+      url: '/api/status-code-validation',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      payload: { returnStatus: 400, returnValid: false },
+    })
+
+    // Should fail validation - returns generic error message (details not exposed)
+    expect(response.statusCode).toBe(500)
+    expect(response.json().message).toBe('Internal Server Error')
+  })
+
+  it('throws validation error for invalid 404 response', async () => {
+    const response = await server.app.inject({
+      method: 'post',
+      url: '/api/status-code-validation',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      payload: { returnStatus: 404, returnValid: false },
+    })
+
+    // Should fail validation - returns generic error message (details not exposed)
+    expect(response.statusCode).toBe(500)
+    expect(response.json().message).toBe('Internal Server Error')
   })
 })

@@ -425,3 +425,26 @@ export const respondWithoutReturnContract = buildContract({
     message: z.object({ text: z.string() }),
   },
 })
+
+/**
+ * POST SSE route with responseSchemasByStatusCode for testing sse.respond() validation.
+ * Tests that sse.respond() responses are validated against status-specific schemas.
+ */
+export const sseRespondValidationContract = buildContract({
+  method: 'post',
+  pathResolver: () => '/api/sse-respond-validation/stream',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  requestBody: z.object({
+    returnStatus: z.number(),
+    returnValid: z.boolean(),
+  }),
+  responseSchemasByStatusCode: {
+    400: z.object({ error: z.string(), details: z.array(z.string()) }),
+    404: z.object({ error: z.string(), resourceId: z.string() }),
+  },
+  sseEvents: {
+    message: z.object({ text: z.string() }),
+  },
+})

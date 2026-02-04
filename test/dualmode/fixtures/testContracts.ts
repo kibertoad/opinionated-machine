@@ -154,4 +154,31 @@ export const jsonValidationContract = buildContract({
   },
 })
 
+/**
+ * POST dual-mode route with responseSchemasByStatusCode for testing status-based validation.
+ * Tests that non-2xx responses are validated against the appropriate schema.
+ */
+export const statusCodeValidationContract = buildContract({
+  method: 'post',
+  pathResolver: () => '/api/status-code-validation',
+  params: z.object({}),
+  query: z.object({}),
+  requestHeaders: z.object({}),
+  requestBody: z.object({
+    returnStatus: z.number(),
+    returnValid: z.boolean(),
+  }),
+  syncResponseBody: z.object({
+    success: z.boolean(),
+    data: z.string(),
+  }),
+  responseSchemasByStatusCode: {
+    400: z.object({ error: z.string(), details: z.array(z.string()) }),
+    404: z.object({ error: z.string(), resourceId: z.string() }),
+  },
+  sseEvents: {
+    result: z.object({ success: z.boolean() }),
+  },
+})
+
 // NOTE: Multi-format contracts removed - multi-format support is deprecated

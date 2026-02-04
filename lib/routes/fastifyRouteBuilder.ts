@@ -1,6 +1,7 @@
 import type {
   AnyDualModeContractDefinition,
   AnySSEContractDefinition,
+  HttpStatusCode,
 } from '@lokalise/api-contracts'
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
@@ -52,23 +53,89 @@ function buildSSEConfig(
 }
 
 /**
- * Validate response body against the syncResponseBody schema.
+ * Validate response body against the syncResponseBody schema (for 2xx success responses).
+ *
+ * Only validates if the contract defines a syncResponseBody schema.
+ * Validation errors are not exposed to clients - only logged internally.
+ *
+ * @param contract - The dual-mode contract containing the syncResponseBody schema
+ * @param response - The response body to validate
+ * @throws {InternalError} When validation fails with errorCode 'RESPONSE_VALIDATION_FAILED'
  */
-function validateResponseBody(contract: AnyDualModeContractDefinition, response: unknown): void {
+function validateSyncResponseBody(
+  contract: AnyDualModeContractDefinition,
+  response: unknown,
+): void {
   const schema = contract.syncResponseBody
   if (!schema) return
 
   const result = schema.safeParse(response)
   if (!result.success) {
     throw new InternalError({
-      message: `Response validation failed for application/json: ${result.error.message}`,
+      message: 'Internal Server Error',
       errorCode: 'RESPONSE_VALIDATION_FAILED',
+      details: { validationError: result.error.message },
+    })
+  }
+}
+
+/**
+ * Validate response body against responseSchemasByStatusCode for a specific HTTP status code.
+ *
+ * Used for non-2xx responses in dual-mode sync handlers and for sse.respond() in SSE handlers.
+ * Typically used for error responses, but can validate any status code with a defined schema.
+ * Only validates if the contract defines a schema for the given status code.
+ * Validation errors are not exposed to clients - only logged internally.
+ *
+ * @param responseSchemasByStatusCode - Map of HTTP status codes to Zod schemas (e.g., { 400: z.object(...), 404: z.object(...) })
+ * @param statusCode - The HTTP status code of the response
+ * @param response - The response body to validate
+ * @throws {InternalError} When validation fails with errorCode 'RESPONSE_VALIDATION_FAILED' and statusCode in details
+ *
+ * @example
+ * ```typescript
+ * // In a contract definition:
+ * const contract = buildContract({
+ *   responseSchemasByStatusCode: {
+ *     400: z.object({ error: z.string(), details: z.array(z.string()) }),
+ *     404: z.object({ error: z.string(), resourceId: z.string() }),
+ *   },
+ *   // ... other contract properties
+ * })
+ *
+ * // In a handler returning a 404:
+ * sync: (request, reply) => {
+ *   reply.code(404)
+ *   return { error: 'Not Found', resourceId: 'item-123' }  // Validated against 404 schema
+ * }
+ * ```
+ */
+function validateResponseByStatusCode(
+  responseSchemasByStatusCode: Partial<Record<HttpStatusCode, z.ZodTypeAny>> | undefined,
+  statusCode: number,
+  response: unknown,
+): void {
+  if (!responseSchemasByStatusCode) return
+
+  // Access the schema - keys may be stored as strings due to JavaScript object behavior
+  const schema = (responseSchemasByStatusCode as Record<string, z.ZodTypeAny | undefined>)[
+    String(statusCode)
+  ]
+  if (!schema) return
+
+  const result = schema.safeParse(response)
+  if (!result.success) {
+    throw new InternalError({
+      message: 'Internal Server Error',
+      errorCode: 'RESPONSE_VALIDATION_FAILED',
+      details: { statusCode, validationError: result.error.message },
     })
   }
 }
 
 /**
  * Validate response headers against the responseHeaders schema.
+ * Throws InternalError with generic message - validation details are in the error details, not exposed to clients.
  */
 function validateResponseHeaders(
   responseHeadersSchema: z.ZodTypeAny | undefined,
@@ -89,8 +156,9 @@ function validateResponseHeaders(
   const result = responseHeadersSchema.safeParse(headersToValidate)
   if (!result.success) {
     throw new InternalError({
-      message: `Response headers validation failed: ${result.error.message}`,
+      message: 'Internal Server Error',
       errorCode: 'RESPONSE_HEADERS_VALIDATION_FAILED',
+      details: { validationError: result.error.message },
     })
   }
 }
@@ -108,7 +176,25 @@ async function handleSyncMode<Contract extends AnyDualModeContractDefinition>(
   // biome-ignore lint/suspicious/noExplicitAny: Handler type depends on contract
   const response = await (handlers as any).sync(request, reply)
 
-  validateResponseBody(contract, response)
+  // Get the status code that was set by the handler (defaults to 200)
+  const statusCode = reply.statusCode ?? 200
+
+  // Validate response based on status code:
+  // - 2xx success codes: use syncResponseBody
+  // - Other codes: use responseSchemasByStatusCode if defined
+  try {
+    if (statusCode >= 200 && statusCode < 300) {
+      validateSyncResponseBody(contract, response)
+    } else {
+      validateResponseByStatusCode(contract.responseSchemasByStatusCode, statusCode, response)
+    }
+  } catch (err) {
+    // Reset status code to 500 for validation errors
+    // This is needed because the handler may have set a different status code (e.g., 404)
+    // and Fastify would use that status code when sending the error response
+    reply.code(500)
+    throw err
+  }
 
   // Explicitly set content-type to override SSE default (from sse: true option)
   reply.type('application/json')
@@ -130,9 +216,13 @@ async function processSSEHandlerResult(
   connectionClosed: Promise<void>,
   reply: FastifyReply,
   mode: 'autoClose' | 'keepAlive' | undefined,
+  responseSchemasByStatusCode?: Partial<Record<HttpStatusCode, z.ZodTypeAny>>,
 ): Promise<void> {
   // Check if handler called sse.respond() (early return before streaming started)
   if (responseData) {
+    // Validate sse.respond() body against responseSchemasByStatusCode if defined
+    validateResponseByStatusCode(responseSchemasByStatusCode, responseData.code, responseData.body)
+
     // Send HTTP response (early return before streaming started).
     // Clean up SSE-specific headers that @fastify/sse sets early in the lifecycle.
     // Not strictly necessary, but avoids confusing headers on JSON responses.
@@ -199,6 +289,7 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
       contextResult.connectionClosed,
       reply,
       contextResult.getMode(),
+      contract.responseSchemasByStatusCode,
     )
   } catch (err) {
     // If streaming was started, send error event to client and re-throw for logging
@@ -357,6 +448,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
           contextResult.connectionClosed,
           reply,
           contextResult.getMode(),
+          contract.responseSchemasByStatusCode,
         )
       } catch (err) {
         // If streaming was started, send error event to client and re-throw for logging
