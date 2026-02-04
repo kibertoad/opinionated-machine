@@ -1,3 +1,7 @@
+import type {
+  AnyDualModeContractDefinition,
+  AnySSEContractDefinition,
+} from '@lokalise/api-contracts'
 import type { RouteType } from '@lokalise/fastify-api-contracts'
 import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
@@ -8,14 +12,12 @@ import type { AbstractModule } from './AbstractModule.js'
 import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configUtils.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
 import type { AbstractDualModeController } from './dualmode/AbstractDualModeController.js'
-import type { AnyDualModeContractDefinition } from './dualmode/dualModeContracts.js'
 import {
   buildFastifyRoute,
   type RegisterDualModeRoutesOptions,
   type RegisterSSERoutesOptions,
 } from './routes/index.js'
 import type { AbstractSSEController } from './sse/AbstractSSEController.js'
-import type { AnySSEContractDefinition } from './sse/sseContracts.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
   modules: readonly AbstractModule<unknown, ExternalDependencies>[]

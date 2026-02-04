@@ -1,5 +1,5 @@
+import { buildSseContract as buildContract } from '@lokalise/api-contracts'
 import { z } from 'zod'
-import { buildContract } from '../../../index.js'
 
 /**
  * Simple GET SSE route for integration tests
@@ -34,7 +34,7 @@ export const notificationsStreamContract = buildContract({
  * POST SSE route for chat completions (OpenAI-style)
  */
 export const chatCompletionContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/chat/completions',
   params: z.object({}),
   query: z.object({}),
@@ -132,7 +132,7 @@ export const asyncReconnectStreamContract = buildContract({
  * Verifies that closeConnection doesn't cut off data transfer
  */
 export const largeContentStreamContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/large-content/stream',
   params: z.object({}),
   query: z.object({}),
@@ -200,7 +200,7 @@ export const onReconnectErrorStreamContract = buildContract({
  * to verify validation behavior with different payloads.
  */
 export const validationTestStreamContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/validation-test/stream',
   params: z.object({}),
   query: z.object({}),
@@ -238,7 +238,7 @@ export const validationTestStreamContract = buildContract({
  * ```
  */
 export const openaiStyleStreamContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/openai-style/stream',
   params: z.object({}),
   query: z.object({}),
@@ -294,7 +294,7 @@ export const isConnectedTestStreamContract = buildContract({
  * POST SSE route for testing sendStream() method with validation
  */
 export const sendStreamTestContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/send-stream-test/stream',
   params: z.object({}),
   query: z.object({}),
@@ -344,7 +344,7 @@ export const deferredHeaders404Contract = buildContract({
  * POST SSE route for testing deferred headers - 422 validation error
  */
 export const deferredHeaders422Contract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/deferred/validate/stream',
   params: z.object({}),
   query: z.object({}),

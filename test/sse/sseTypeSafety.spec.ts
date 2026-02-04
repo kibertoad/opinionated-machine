@@ -1,3 +1,4 @@
+import { buildSseContract as buildContract } from '@lokalise/api-contracts'
 import type { FastifyReply } from 'fastify'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { z } from 'zod/v4'
@@ -6,7 +7,6 @@ import {
   AbstractSSEController,
   type BuildFastifyDualModeRoutesReturnType,
   type BuildFastifySSERoutesReturnType,
-  buildContract,
   buildHandler,
   type SSEContext,
 } from '../../index.js'
@@ -20,7 +20,7 @@ import {
 
 // Define a realistic contract like users would
 const chatStreamContract = buildContract({
-  method: 'POST',
+  method: 'post',
   pathResolver: () => '/api/chat/stream',
   params: z.object({}),
   query: z.object({}),
@@ -453,7 +453,7 @@ describe('Dual-Mode Contract Type Safety', () => {
     it('infers responseHeaders type when defined', () => {
       // Contract with responseHeaders
       const contractWithHeaders = buildContract({
-        method: 'POST',
+        method: 'post',
         pathResolver: () => '/api/test',
         params: z.object({}),
         query: z.object({}),
@@ -477,7 +477,7 @@ describe('Dual-Mode Contract Type Safety', () => {
     it('allows omitting responseHeaders', () => {
       // Contract WITHOUT responseHeaders - should compile fine
       const contractWithoutHeaders = buildContract({
-        method: 'POST',
+        method: 'post',
         pathResolver: () => '/api/test',
         params: z.object({}),
         query: z.object({}),
@@ -497,7 +497,7 @@ describe('Dual-Mode Contract Type Safety', () => {
     it('SSE contracts do not have responseHeaders', () => {
       // SSE contract (no syncResponseBody)
       const sseContract = buildContract({
-        method: 'POST',
+        method: 'post',
         pathResolver: () => '/api/sse',
         params: z.object({}),
         query: z.object({}),
@@ -670,7 +670,7 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
 describe('Dual-Mode Handler Type Safety', () => {
   // POST dual-mode contract (with body)
   const chatCompletionContract = buildContract({
-    method: 'POST',
+    method: 'post',
     pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
     params: z.object({ chatId: z.string().uuid() }),
     query: z.object({ verbose: z.boolean().optional() }),
@@ -1068,7 +1068,7 @@ describe('Unified buildHandler Type Safety', () => {
 
   // Dual-mode contract
   const chatCompletionContract = buildContract({
-    method: 'POST',
+    method: 'post',
     pathResolver: () => '/api/chat/completions',
     params: z.object({}),
     query: z.object({}),

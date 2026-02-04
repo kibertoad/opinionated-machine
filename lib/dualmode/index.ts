@@ -1,5 +1,8 @@
-// Re-export buildContract from contracts module
-export { buildContract } from '../contracts/index.js'
+// Re-export contract types from @lokalise/api-contracts
+export type {
+  AnyDualModeContractDefinition,
+  SimplifiedDualModeContractDefinition,
+} from '@lokalise/api-contracts'
 // Re-export route types from routes module
 export {
   type BuildFastifyDualModeRoutesReturnType,
@@ -20,12 +23,6 @@ export {
   type AllDualModeContractEventNames,
   type ExtractDualModeEventSchema,
 } from './AbstractDualModeController.js'
-export type {
-  AnyDualModeContractDefinition,
-  DualModeMethod,
-  PathResolver,
-  SimplifiedDualModeContractDefinition,
-} from './dualModeContracts.js'
 // Framework-agnostic types
 export type {
   DualModeControllerConfig,

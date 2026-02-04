@@ -1,6 +1,6 @@
+import type { RoutePathResolver, SSEContractDefinition } from '@lokalise/api-contracts'
 import type { FastifyInstance } from 'fastify'
 import type { z } from 'zod'
-import type { SSEContractDefinition, SSEPathResolver } from '../sse/sseContracts.ts'
 import type { InjectPayloadSSEOptions, InjectSSEOptions, InjectSSEResult } from './sseTestTypes.ts'
 
 /**
@@ -8,7 +8,7 @@ import type { InjectPayloadSSEOptions, InjectSSEOptions, InjectSSEResult } from 
  * @internal
  */
 type ContractWithPathResolver = {
-  pathResolver: SSEPathResolver<unknown>
+  pathResolver: RoutePathResolver<unknown>
 }
 
 /**
@@ -68,7 +68,7 @@ function buildUrl<Contract extends ContractWithPathResolver>(
  */
 export function injectSSE<
   Contract extends SSEContractDefinition<
-    'GET',
+    'get',
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,
@@ -135,7 +135,7 @@ export function injectSSE<
  */
 export function injectPayloadSSE<
   Contract extends SSEContractDefinition<
-    'POST' | 'PUT' | 'PATCH',
+    'post' | 'put' | 'patch',
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,

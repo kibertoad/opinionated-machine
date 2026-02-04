@@ -1,12 +1,14 @@
+import type {
+  AnyDualModeContractDefinition,
+  AnySSEContractDefinition,
+} from '@lokalise/api-contracts'
 import type { z } from 'zod'
 import type {
   BuildFastifyDualModeRoutesReturnType,
   BuildFastifySSERoutesReturnType,
 } from '../routes/fastifyRouteTypes.ts'
 import { AbstractSSEController } from '../sse/AbstractSSEController.ts'
-import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type { SSEControllerConfig } from '../sse/sseTypes.ts'
-import type { AnyDualModeContractDefinition } from './dualModeContracts.ts'
 import type { DualModeControllerConfig } from './dualModeTypes.ts'
 
 /**
@@ -47,7 +49,7 @@ export type ExtractDualModeEventSchema<
  * ```typescript
  * class ChatController extends AbstractDualModeController<typeof contracts> {
  *   public static contracts = {
- *     chatCompletion: buildContract({ requestBody: ..., syncResponseBody: ..., ... }),
+ *     chatCompletion: buildSseContract({ requestBody: ..., syncResponseBody: ..., ... }),
  *   } as const
  *
  *   constructor(deps: Dependencies, config?: DualModeControllerConfig) {

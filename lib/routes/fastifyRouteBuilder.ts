@@ -1,11 +1,13 @@
+import type {
+  AnyDualModeContractDefinition,
+  AnySSEContractDefinition,
+} from '@lokalise/api-contracts'
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
 import type { z } from 'zod'
 import { ZodObject } from 'zod'
 import type { AbstractDualModeController } from '../dualmode/AbstractDualModeController.ts'
-import type { AnyDualModeContractDefinition } from '../dualmode/dualModeContracts.ts'
 import type { AbstractSSEController } from '../sse/AbstractSSEController.ts'
-import type { AnySSEContractDefinition } from '../sse/sseContracts.ts'
 import type {
   DualModeRouteHandler,
   FastifyDualModeHandlerConfig,

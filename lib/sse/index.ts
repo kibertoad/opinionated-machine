@@ -1,5 +1,13 @@
-// Re-export buildContract from contracts module
-export { buildContract } from '../contracts/index.js'
+// Re-export contract types from @lokalise/api-contracts
+export type {
+  AllContractEventNames,
+  AllContractEvents,
+  AnySSEContractDefinition,
+  ExtractEventSchema,
+  SSEContractDefinition,
+  SSEEventSchemas,
+  SSEMethod,
+} from '@lokalise/api-contracts'
 // Re-export route types from routes module
 export {
   type BuildFastifySSERoutesReturnType,
@@ -16,22 +24,12 @@ export {
 } from '../routes/index.js'
 export {
   AbstractSSEController,
-  type AllContractEventNames,
-  type AllContractEvents,
-  type ExtractEventSchema,
   type SSEControllerConfig,
-  type SSEEventSchemas,
   type SSEEventSender,
   type SSELogger,
   type SSEMessage,
 } from './AbstractSSEController.js'
 export { type SSESessionEvent, SSESessionSpy } from './SSESessionSpy.js'
-export type {
-  AnySSEContractDefinition,
-  SSEContractDefinition,
-  SSEMethod,
-  SSEPathResolver,
-} from './sseContracts.js'
 export {
   type ParsedSSEEvent,
   type ParseSSEBufferResult,

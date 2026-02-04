@@ -1,13 +1,13 @@
+import { buildSseContract as buildContract } from '@lokalise/api-contracts'
 import { describe, expectTypeOf, it } from 'vitest'
 import { z } from 'zod/v4'
-import { buildContract } from '../contracts/contractBuilders.ts'
 import type { InferDualModeHandlers } from './fastifyRouteTypes.ts'
 import { buildHandler } from './fastifyRouteTypes.ts'
 
 describe('Handler Type Enforcement', () => {
   describe('Dual-mode contracts (syncResponseBody)', () => {
     const dualModeContract = buildContract({
-      method: 'POST',
+      method: 'post',
       pathResolver: () => '/api/chat',
       params: z.object({}),
       query: z.object({}),
@@ -54,7 +54,7 @@ describe('Handler Type Enforcement', () => {
   describe('buildHandler enforces correct handler structure', () => {
     it('accepts valid dual-mode handlers', () => {
       const dualModeContract = buildContract({
-        method: 'POST',
+        method: 'post',
         pathResolver: () => '/api/chat',
         params: z.object({}),
         query: z.object({}),
