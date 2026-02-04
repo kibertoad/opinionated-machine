@@ -448,3 +448,33 @@ export const sseRespondValidationContract = buildContract({
     message: z.object({ text: z.string() }),
   },
 })
+
+// ============================================================================
+// Room Test Contracts
+// ============================================================================
+
+/**
+ * GET SSE route for testing room functionality
+ */
+export const roomStreamContract = buildContract({
+  pathResolver: (params) => `/api/rooms/${params.roomId}/stream`,
+  params: z.object({
+    roomId: z.string(),
+  }),
+  query: z.object({
+    userId: z.string().optional(),
+  }),
+  requestHeaders: z.object({}),
+  sseEvents: {
+    message: z.object({
+      from: z.string(),
+      text: z.string(),
+    }),
+    userJoined: z.object({
+      userId: z.string(),
+    }),
+    userLeft: z.object({
+      userId: z.string(),
+    }),
+  },
+})

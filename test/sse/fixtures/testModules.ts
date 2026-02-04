@@ -29,6 +29,7 @@ import {
   TestPublicErrorController,
   TestReconnectSSEController,
   TestRespondWithoutReturnController,
+  TestRoomSSEController,
   TestSendStreamSSEController,
   TestSSEController,
   TestValidationSSEController,
@@ -571,6 +572,33 @@ export class TestRespondWithoutReturnModule extends AbstractModule<TestRespondWi
       testRespondWithoutReturnController: asSSEControllerClass(TestRespondWithoutReturnController, {
         diOptions,
       }),
+    }
+  }
+}
+
+// ============================================================================
+// Room Test Modules
+// ============================================================================
+
+/**
+ * Module with room SSE controller for testing room functionality
+ */
+export type TestRoomSSEModuleDependencies = Record<string, never>
+
+export type TestRoomSSEModuleControllers = {
+  testRoomSSEController: TestRoomSSEController
+}
+
+export class TestRoomSSEModule extends AbstractModule<TestRoomSSEModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestRoomSSEModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testRoomSSEController: asSSEControllerClass(TestRoomSSEController, { diOptions }),
     }
   }
 }

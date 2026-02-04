@@ -31,6 +31,7 @@ import {
   publicErrorContract,
   reconnectStreamContract,
   respondWithoutReturnContract,
+  roomStreamContract,
   sendStreamTestContract,
   sseRespondValidationContract,
   streamContract,
@@ -1173,4 +1174,98 @@ export class TestSSERespondValidationController extends AbstractSSEController<Te
       await session.send('message', { text: 'Streaming started' })
     },
   })
+}
+
+// ============================================================================
+// Room Test Controllers
+// ============================================================================
+
+/**
+ * Test SSE controller for room functionality.
+ * Demonstrates joining rooms, broadcasting to rooms, and auto-leave on disconnect.
+ */
+export type TestRoomContracts = {
+  roomStream: typeof roomStreamContract
+}
+
+export class TestRoomSSEController extends AbstractSSEController<TestRoomContracts> {
+  public static contracts = {
+    roomStream: roomStreamContract,
+  } as const
+
+  constructor(deps: object, sseConfig?: SSEControllerConfig) {
+    // Enable rooms for this controller
+    super(deps, {
+      ...sseConfig,
+      rooms: sseConfig?.rooms ?? {},
+    })
+  }
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestRoomContracts> {
+    return {
+      roomStream: this.handleRoomStream,
+    }
+  }
+
+  private handleRoomStream = buildHandler(
+    roomStreamContract,
+    {
+      sse: async (request, sse) => {
+        const { roomId } = request.params
+        const userId = request.query.userId ?? 'anonymous'
+        const connection = sse.start('keepAlive', { context: { userId, roomId } })
+
+        // Join the room from the path parameter
+        connection.rooms.join(roomId)
+
+        // Notify others that this user joined (except self)
+        await this.broadcastToRoom(
+          roomId,
+          { event: 'userJoined', data: { userId } },
+          { except: connection.id },
+        )
+      },
+    },
+    {
+      onClose: (connection) => {
+        // Auto-leave is handled by the controller, but we can notify others
+        const ctx = connection.context as { userId: string; roomId: string }
+        // Note: We can't broadcast here because the connection is already being removed
+        // In real apps, you'd store userId->connectionId mapping and handle this differently
+      },
+    },
+  )
+
+  // Test helpers - expose protected methods for testing
+  public testBroadcastToRoom(
+    room: string | string[],
+    message: { event: string; data: unknown },
+    options?: { except?: string | string[] },
+  ) {
+    return this.broadcastToRoom(room, message, options)
+  }
+
+  public testJoinRoom(connectionId: string, room: string | string[]) {
+    return this.joinRoom(connectionId, room)
+  }
+
+  public testLeaveRoom(connectionId: string, room: string | string[]) {
+    return this.leaveRoom(connectionId, room)
+  }
+
+  public testGetRooms(connectionId: string) {
+    return this.getRooms(connectionId)
+  }
+
+  public testGetConnectionsInRoom(room: string) {
+    return this.getConnectionsInRoom(room)
+  }
+
+  public testGetConnectionCountInRoom(room: string) {
+    return this.getConnectionCountInRoom(room)
+  }
+
+  public get testRoomsEnabled() {
+    return this.roomsEnabled
+  }
 }

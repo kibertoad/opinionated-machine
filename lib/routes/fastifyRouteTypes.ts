@@ -6,6 +6,7 @@ import type {
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
+import type { SSERoomOperations } from '../sse/rooms/types.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
 import type { SSECloseReason } from './fastifyRouteUtils.ts'
 
@@ -194,6 +195,24 @@ export type SSESession<Events extends SSEEventSchemas = SSEEventSchemas, Context
    * ```
    */
   sendStream: (messages: AsyncIterable<SSEStreamMessage<Events>>) => Promise<void>
+  /**
+   * Room operations for this connection.
+   * Only available when rooms are enabled in the controller config.
+   *
+   * @example
+   * ```typescript
+   * // Join rooms
+   * session.rooms.join('announcements')
+   * session.rooms.join(['project:123', 'team:engineering'])
+   *
+   * // Leave rooms
+   * session.rooms.leave('project:123')
+   *
+   * // Query rooms
+   * const rooms = session.rooms.getRooms()  // ['announcements', 'team:engineering']
+   * ```
+   */
+  rooms: SSERoomOperations
   /**
    * Zod schemas for validating event data.
    * Map of event name to Zod schema. Used by sendEvent for runtime validation.

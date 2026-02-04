@@ -1156,6 +1156,175 @@ if (this.hasConnectionSpy()) {
 }
 ```
 
+### SSE Rooms
+
+SSE Rooms provide Socket.IO-style room functionality for grouping connections and broadcasting messages to specific groups. This is useful for chat rooms, channels, user-specific notifications, and any scenario where you need to send messages to a subset of connected clients.
+
+#### Enabling Rooms
+
+Enable rooms by passing a `rooms` configuration to `asSSEControllerClass`:
+
+```ts
+import { AbstractSSEController, asSSEControllerClass, buildHandler } from 'opinionated-machine'
+
+class ChatSSEController extends AbstractSSEController<typeof contracts> {
+  public static contracts = { chat: chatContract } as const
+
+  constructor(deps: Dependencies, sseConfig?: SSEControllerConfig) {
+    super(deps, sseConfig)
+  }
+
+  // ... handlers
+}
+
+// In your module
+resolveControllers(diOptions: DependencyInjectionOptions) {
+  return {
+    chatController: asSSEControllerClass(ChatSSEController, {
+      diOptions,
+      rooms: {
+        autoJoinSelfRoom: true, // Default: true - each connection joins a room named after its ID
+      },
+    }),
+  }
+}
+```
+
+#### Session Room Operations
+
+When rooms are enabled, each SSE session has access to room operations via `session.rooms`:
+
+```ts
+private handleChat = buildHandler(chatContract, {
+  sse: async (request, sse) => {
+    const session = sse.start('keepAlive')
+
+    // Join one or more rooms
+    session.rooms.join(`channel:${request.params.channelId}`)
+    session.rooms.join(['premium', 'beta-testers']) // Multiple rooms
+
+    // Leave rooms
+    session.rooms.leave('beta-testers')
+
+    // Get all rooms this connection is in
+    const rooms = session.rooms.getRooms()
+    // ['channel:123', 'premium', 'abc-def-123'] (includes self-room if autoJoinSelfRoom is true)
+  },
+})
+```
+
+#### Broadcasting to Rooms
+
+Use `broadcastToRoom()` from your controller to send messages to all connections in a room:
+
+```ts
+class ChatSSEController extends AbstractSSEController<typeof contracts> {
+  // Send a message to everyone in a room
+  async sendMessage(channelId: string, message: ChatMessage, senderId: string) {
+    const count = await this.broadcastToRoom(`channel:${channelId}`, {
+      event: 'message',
+      data: message,
+    })
+    console.log(`Message sent to ${count} connections`)
+  }
+
+  // Broadcast to a room, excluding the sender
+  async sendMessageExcludingSender(channelId: string, message: ChatMessage, senderConnectionId: string) {
+    await this.broadcastToRoom(
+      `channel:${channelId}`,
+      { event: 'message', data: message },
+      { except: senderConnectionId },
+    )
+  }
+
+  // Broadcast to multiple rooms (connections in any room receive it, de-duplicated)
+  async announceFeature(feature: string) {
+    const count = await this.broadcastToRoom(
+      ['premium', 'beta-testers'],
+      { event: 'feature-flag', data: { flag: feature, enabled: true } },
+    )
+    // Each connection receives the message only once, even if in multiple rooms
+  }
+
+  // Local-only broadcast (skip Redis propagation in multi-node setups)
+  async localAnnouncement(room: string, message: string) {
+    await this.broadcastToRoom(
+      room,
+      { event: 'announcement', data: { message } },
+      { local: true },
+    )
+  }
+}
+```
+
+#### Room Query Methods
+
+Controllers have access to room query methods:
+
+```ts
+class ChatSSEController extends AbstractSSEController<typeof contracts> {
+  // Get all connection IDs in a room
+  getChannelMembers(channelId: string): string[] {
+    return this.getConnectionsInRoom(`channel:${channelId}`)
+  }
+
+  // Get count of connections in a room
+  getChannelMemberCount(channelId: string): number {
+    return this.getConnectionCountInRoom(`channel:${channelId}`)
+  }
+
+  // Get all rooms a specific connection is in
+  getConnectionRooms(connectionId: string): string[] {
+    return this.getRooms(connectionId)
+  }
+
+  // Manually join/leave rooms from controller (useful for admin operations)
+  moveToRoom(connectionId: string, fromRoom: string, toRoom: string) {
+    this.leaveRoom(connectionId, fromRoom)
+    this.joinRoom(connectionId, toRoom)
+  }
+}
+```
+
+#### Auto-Leave on Disconnect
+
+When a connection closes (client disconnect or server close), it automatically leaves all rooms. No manual cleanup is required.
+
+#### Multi-Node Deployments with Redis
+
+For multi-node deployments where connections may be distributed across servers, use the Redis adapter from `@anthropic/sse-rooms-redis`:
+
+```ts
+import { RedisAdapter } from '@anthropic/sse-rooms-redis'
+import Redis from 'ioredis'
+
+class ChatSSEController extends AbstractSSEController<typeof contracts> {
+  constructor(deps: { redis: Redis }, sseConfig?: SSEControllerConfig) {
+    super(deps, sseConfig)
+  }
+}
+
+// In your module
+resolveControllers(diOptions: DependencyInjectionOptions) {
+  return {
+    chatController: asSSEControllerClass(ChatSSEController, {
+      diOptions,
+      rooms: {
+        adapter: new RedisAdapter({
+          pubClient: deps.redis,
+          subClient: deps.redis.duplicate(), // Separate connection for subscriptions
+          channelPrefix: 'myapp:sse:room:', // Optional, default: 'sse:room:'
+        }),
+      },
+    }),
+  }
+}
+```
+
+The Redis adapter uses Pub/Sub for cross-node message propagation. When you call `broadcastToRoom()`, the message is published to Redis and delivered to all nodes that have connections in that room.
+
+See the [@anthropic/sse-rooms-redis](./packages/sse-rooms-redis/README.md) package for detailed documentation on Redis adapter configuration and usage.
+
 ### SSE Test Utilities
 
 The library provides utilities for testing SSE endpoints.

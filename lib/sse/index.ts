@@ -37,3 +37,13 @@ export {
   parseSSEBuffer,
   parseSSEEvents,
 } from './sseParser.js'
+// Re-export room types and classes
+export {
+  InMemoryAdapter,
+  SSERoomManager,
+  type RoomBroadcastOptions,
+  type SSERoomAdapter,
+  type SSERoomManagerConfig,
+  type SSERoomMessageHandler,
+  type SSERoomOperations,
+} from './rooms/index.js'

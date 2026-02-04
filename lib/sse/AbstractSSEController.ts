@@ -8,6 +8,8 @@ import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import type { z } from 'zod'
 import type { BuildFastifySSERoutesReturnType, SSESession } from '../routes/fastifyRouteTypes.ts'
+import { SSERoomManager } from './rooms/SSERoomManager.ts'
+import type { RoomBroadcastOptions } from './rooms/types.ts'
 import { SSESessionSpy } from './SSESessionSpy.ts'
 import type { SSEControllerConfig, SSEMessage } from './sseTypes.ts'
 
@@ -89,6 +91,9 @@ export abstract class AbstractSSEController<
   /** Private storage for connection spy */
   private readonly _connectionSpy?: SSESessionSpy
 
+  /** Room manager for room-based broadcasting (optional) */
+  private readonly _roomManager?: SSERoomManager
+
   /**
    * SSE controllers must override this constructor and call super with their
    * dependencies object and the SSE config.
@@ -111,6 +116,15 @@ export abstract class AbstractSSEController<
   constructor(_dependencies: object, sseConfig?: SSEControllerConfig) {
     if (sseConfig?.enableConnectionSpy) {
       this._connectionSpy = new SSESessionSpy()
+    }
+
+    if (sseConfig?.rooms) {
+      this._roomManager = new SSERoomManager(sseConfig.rooms)
+
+      // Wire up adapter message handler to forward to local connections
+      this._roomManager.onRemoteMessage((room, message, _sourceNodeId, except) => {
+        this.handleRemoteBroadcast(room, message, except)
+      })
     }
   }
 
@@ -231,6 +245,15 @@ export abstract class AbstractSSEController<
    */
   public _sendEventRaw<T>(connectionId: string, message: SSEMessage<T>): Promise<boolean> {
     return this.sendEvent(connectionId, message)
+  }
+
+  /**
+   * Get the room manager for use by route utilities.
+   * Returns undefined if rooms are not enabled.
+   * @internal
+   */
+  public get _internalRoomManager(): SSERoomManager | undefined {
+    return this._roomManager
   }
 
   /**
@@ -370,6 +393,10 @@ export abstract class AbstractSSEController<
    */
   public registerConnection(connection: SSESession): void {
     this.connections.set(connection.id, connection)
+
+    // Notify room manager of new connection (handles auto-join self room)
+    this._roomManager?.onConnectionRegistered(connection.id)
+
     this.onConnectionEstablished?.(connection)
     // Notify spy after hook (so hook can set context before spy sees it)
     this._connectionSpy?.addConnection(connection)
@@ -391,6 +418,187 @@ export abstract class AbstractSSEController<
     this.onConnectionClosed?.(connection)
     // Notify spy of disconnection
     this._connectionSpy?.addDisconnection(connectionId)
+
+    // Auto-leave all rooms on disconnect
+    this._roomManager?.leaveAll(connectionId)
+
     this.connections.delete(connectionId)
+  }
+
+  // ============================================================================
+  // Room Operations
+  // ============================================================================
+
+  /**
+   * Get the room manager for this controller.
+   * Throws an error if rooms are not enabled.
+   *
+   * @throws Error if rooms are not enabled in the controller config
+   */
+  protected get roomManager(): SSERoomManager {
+    if (!this._roomManager) {
+      throw new Error(
+        'Rooms are not enabled. Pass { rooms: {} } to the controller config to enable rooms.',
+      )
+    }
+    return this._roomManager
+  }
+
+  /**
+   * Check if rooms are enabled for this controller.
+   */
+  protected get roomsEnabled(): boolean {
+    return this._roomManager !== undefined
+  }
+
+  /**
+   * Broadcast an event to all connections in one or more rooms.
+   *
+   * When broadcasting to multiple rooms, connections in multiple rooms
+   * only receive the message once (de-duplicated).
+   *
+   * @param room - Room name or array of room names
+   * @param message - The SSE message to broadcast
+   * @param options - Broadcast options (except, local)
+   * @returns Number of local connections the message was sent to
+   *
+   * @example
+   * ```typescript
+   * // Broadcast to a single room
+   * await this.broadcastToRoom('announcements', {
+   *   event: 'announcement',
+   *   data: { text: 'Server maintenance in 5 minutes' }
+   * })
+   *
+   * // Broadcast to multiple rooms (no duplicates)
+   * await this.broadcastToRoom(['premium', 'beta-testers'], {
+   *   event: 'feature-flag',
+   *   data: { flag: 'new-ui', enabled: true }
+   * })
+   *
+   * // Exclude sender from receiving their own message
+   * await this.broadcastToRoom(`channel:${channelId}`, {
+   *   event: 'message',
+   *   data: message
+   * }, { except: senderId })
+   * ```
+   */
+  protected async broadcastToRoom<T>(
+    room: string | string[],
+    message: SSEMessage<T>,
+    options?: RoomBroadcastOptions,
+  ): Promise<number> {
+    if (!this._roomManager) {
+      return 0
+    }
+
+    const rooms = Array.isArray(room) ? room : [room]
+    const except = options?.except
+      ? Array.isArray(options.except)
+        ? new Set(options.except)
+        : new Set([options.except])
+      : new Set<string>()
+
+    // Collect unique connection IDs from all rooms
+    const connectionIds = new Set<string>()
+    for (const r of rooms) {
+      for (const connId of this._roomManager.getConnectionsInRoom(r)) {
+        if (!except.has(connId)) {
+          connectionIds.add(connId)
+        }
+      }
+    }
+
+    // Send to all local connections
+    let sent = 0
+    for (const connId of connectionIds) {
+      if (await this.sendEvent(connId, message)) {
+        sent++
+      }
+    }
+
+    // Publish to adapter for cross-node propagation (unless local-only)
+    if (!options?.local) {
+      for (const r of rooms) {
+        await this._roomManager.publish(r, message, options)
+      }
+    }
+
+    return sent
+  }
+
+  /**
+   * Handle broadcasts from other nodes (via adapter).
+   * This method is called when the adapter receives a message from another node.
+   * @internal
+   */
+  private async handleRemoteBroadcast(
+    room: string,
+    message: SSEMessage,
+    except?: string,
+  ): Promise<void> {
+    if (!this._roomManager) {
+      return
+    }
+
+    const connectionIds = this._roomManager.getConnectionsInRoom(room)
+    for (const connId of connectionIds) {
+      if (connId !== except) {
+        await this.sendEvent(connId, message)
+      }
+    }
+  }
+
+  /**
+   * Join a connection to one or more rooms.
+   * Prefer using `session.rooms.join()` in handlers instead.
+   *
+   * @param connectionId - The connection to add to rooms
+   * @param room - Room name or array of room names
+   */
+  protected joinRoom(connectionId: string, room: string | string[]): void {
+    this._roomManager?.join(connectionId, room)
+  }
+
+  /**
+   * Remove a connection from one or more rooms.
+   * Prefer using `session.rooms.leave()` in handlers instead.
+   *
+   * @param connectionId - The connection to remove from rooms
+   * @param room - Room name or array of room names
+   */
+  protected leaveRoom(connectionId: string, room: string | string[]): void {
+    this._roomManager?.leave(connectionId, room)
+  }
+
+  /**
+   * Get all rooms a connection is in.
+   * Prefer using `session.rooms.getRooms()` in handlers instead.
+   *
+   * @param connectionId - The connection to query
+   * @returns Array of room names
+   */
+  protected getRooms(connectionId: string): string[] {
+    return this._roomManager?.getRooms(connectionId) ?? []
+  }
+
+  /**
+   * Get all connection IDs in a room.
+   *
+   * @param room - The room to query
+   * @returns Array of connection IDs
+   */
+  protected getConnectionsInRoom(room: string): string[] {
+    return this._roomManager?.getConnectionsInRoom(room) ?? []
+  }
+
+  /**
+   * Get the number of connections in a room.
+   *
+   * @param room - The room to query
+   * @returns Number of connections
+   */
+  protected getConnectionCountInRoom(room: string): number {
+    return this._roomManager?.getConnectionCountInRoom(room) ?? 0
   }
 }
