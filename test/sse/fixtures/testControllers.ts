@@ -1210,20 +1210,13 @@ export class TestRoomSSEController extends AbstractSSEController<TestRoomContrac
   private handleRoomStream = buildHandler(
     roomStreamContract,
     {
-      sse: async (request, sse) => {
+      sse: (request, sse) => {
         const { roomId } = request.params
         const userId = request.query.userId ?? 'anonymous'
         const connection = sse.start('keepAlive', { context: { userId, roomId } })
 
         // Join the room from the path parameter
         connection.rooms.join(roomId)
-
-        // Notify others that this user joined (except self)
-        await this.broadcastToRoom(
-          roomId,
-          { event: 'userJoined', data: { userId } },
-          { except: connection.id },
-        )
       },
     },
     {
@@ -1236,12 +1229,27 @@ export class TestRoomSSEController extends AbstractSSEController<TestRoomContrac
   )
 
   // Test helpers - expose protected methods for testing
+  // Overloaded test helper for type-safe room broadcasts
   public testBroadcastToRoom(
     room: string | string[],
-    message: { event: string; data: unknown },
-    options?: { except?: string | string[] },
-  ) {
-    return this.broadcastToRoom(room, message, options)
+    eventName: 'message',
+    data: { from: string; text: string },
+    options?: { local?: boolean; id?: string; retry?: number },
+  ): Promise<number>
+  public testBroadcastToRoom(
+    room: string | string[],
+    eventName: 'userJoined' | 'userLeft',
+    data: { userId: string },
+    options?: { local?: boolean; id?: string; retry?: number },
+  ): Promise<number>
+  public testBroadcastToRoom(
+    room: string | string[],
+    eventName: 'message' | 'userJoined' | 'userLeft',
+    data: { from: string; text: string } | { userId: string },
+    options?: { local?: boolean; id?: string; retry?: number },
+  ): Promise<number> {
+    // Type assertion needed because overload signatures don't narrow properly
+    return this.broadcastToRoom(room, eventName as 'message', data as any, options)
   }
 
   public testJoinRoom(connectionId: string, room: string | string[]) {
@@ -1250,10 +1258,6 @@ export class TestRoomSSEController extends AbstractSSEController<TestRoomContrac
 
   public testLeaveRoom(connectionId: string, room: string | string[]) {
     return this.leaveRoom(connectionId, room)
-  }
-
-  public testGetRooms(connectionId: string) {
-    return this.getRooms(connectionId)
   }
 
   public testGetConnectionsInRoom(room: string) {

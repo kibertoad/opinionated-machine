@@ -150,17 +150,6 @@ describe('RedisAdapter', () => {
         m: { event: 'test', data: { foo: 'bar' } },
         n: 'test-node-1',
       })
-      expect(parsed.e).toBeUndefined()
-    })
-
-    it('should include except connection ID when provided', async () => {
-      const message = { event: 'test', data: { foo: 'bar' } }
-
-      await adapter.publish('my-room', message, 'conn-123')
-
-      const publishedJson = (pubClient.publish as ReturnType<typeof vi.fn>).mock.calls[0][1]
-      const parsed = JSON.parse(publishedJson) as RedisRoomMessage
-      expect(parsed.e).toBe('conn-123')
     })
 
     it('should include message id and retry when provided', async () => {
@@ -199,25 +188,7 @@ describe('RedisAdapter', () => {
         'my-room',
         { event: 'test', data: { foo: 'bar' }, id: undefined, retry: undefined },
         'other-node',
-        undefined,
       )
-    })
-
-    it('should pass except connection ID to handler', async () => {
-      const handler = vi.fn()
-      adapter.onMessage(handler)
-
-      await adapter.connect()
-
-      const payload: RedisRoomMessage = {
-        v: 1,
-        m: { event: 'test', data: {} },
-        n: 'other-node',
-        e: 'conn-456',
-      }
-      subClient.simulateMessage('sse:room:my-room', JSON.stringify(payload))
-
-      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node', 'conn-456')
     })
 
     it('should ignore messages with unknown protocol version', async () => {
@@ -264,7 +235,6 @@ describe('RedisAdapter', () => {
         'chat:general', // Room name extracted correctly
         expect.any(Object),
         'other-node',
-        undefined,
       )
     })
 
@@ -287,7 +257,7 @@ describe('RedisAdapter', () => {
       }
       subClient.simulateMessage('custom:prefix:my-room', JSON.stringify(payload))
 
-      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node', undefined)
+      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node')
     })
   })
 })

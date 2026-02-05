@@ -213,14 +213,12 @@ function createRoomOperations(
     return {
       join: () => {},
       leave: () => {},
-      getRooms: () => [],
     }
   }
 
   return {
     join: (room) => roomManager.join(connectionId, room),
     leave: (room) => roomManager.leave(connectionId, room),
-    getRooms: () => roomManager.getRooms(connectionId),
   }
 }
 

@@ -201,15 +201,12 @@ export type SSESession<Events extends SSEEventSchemas = SSEEventSchemas, Context
    *
    * @example
    * ```typescript
-   * // Join rooms
-   * session.rooms.join('announcements')
+   * // Join rooms based on route parameters or business logic
+   * session.rooms.join(`dashboard:${request.params.dashboardId}`)
    * session.rooms.join(['project:123', 'team:engineering'])
    *
-   * // Leave rooms
+   * // Leave rooms when context changes
    * session.rooms.leave('project:123')
-   *
-   * // Query rooms
-   * const rooms = session.rooms.getRooms()  // ['announcements', 'team:engineering']
    * ```
    */
   rooms: SSERoomOperations

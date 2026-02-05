@@ -294,41 +294,7 @@ describe('SSERoomManager', () => {
       const message = { event: 'test', data: { foo: 'bar' } }
       await manager.publish('room-a', message)
 
-      expect(adapter.publish).toHaveBeenCalledWith('room-a', message, undefined)
-    })
-
-    it('should pass except option to adapter', async () => {
-      const adapter: SSERoomAdapter = {
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-        subscribe: vi.fn().mockResolvedValue(undefined),
-        unsubscribe: vi.fn().mockResolvedValue(undefined),
-        publish: vi.fn().mockResolvedValue(undefined),
-        onMessage: vi.fn(),
-      }
-      const manager = new SSERoomManager({ adapter })
-
-      const message = { event: 'test', data: { foo: 'bar' } }
-      await manager.publish('room-a', message, { except: 'conn-1' })
-
-      expect(adapter.publish).toHaveBeenCalledWith('room-a', message, 'conn-1')
-    })
-
-    it('should pass first element when except is an array', async () => {
-      const adapter: SSERoomAdapter = {
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-        subscribe: vi.fn().mockResolvedValue(undefined),
-        unsubscribe: vi.fn().mockResolvedValue(undefined),
-        publish: vi.fn().mockResolvedValue(undefined),
-        onMessage: vi.fn(),
-      }
-      const manager = new SSERoomManager({ adapter })
-
-      const message = { event: 'test', data: { foo: 'bar' } }
-      await manager.publish('room-a', message, { except: ['conn-1', 'conn-2'] })
-
-      expect(adapter.publish).toHaveBeenCalledWith('room-a', message, 'conn-1')
+      expect(adapter.publish).toHaveBeenCalledWith('room-a', message)
     })
 
     it('should not call adapter.publish when local: true', async () => {
@@ -371,12 +337,11 @@ describe('SSERoomManager', () => {
         room: string,
         message: unknown,
         nodeId: string,
-        except?: string,
       ) => void
       const message = { event: 'test', data: { foo: 'bar' } }
-      onMessageHandler('room-a', message, 'node-2', 'except-conn')
+      onMessageHandler('room-a', message, 'node-2')
 
-      expect(handler).toHaveBeenCalledWith('room-a', message, 'node-2', 'except-conn')
+      expect(handler).toHaveBeenCalledWith('room-a', message, 'node-2')
     })
 
     it('should not call handler for messages from same node', () => {
@@ -400,10 +365,9 @@ describe('SSERoomManager', () => {
         room: string,
         message: unknown,
         nodeId: string,
-        except?: string,
       ) => void
       const message = { event: 'test', data: { foo: 'bar' } }
-      onMessageHandler('room-a', message, 'node-1', undefined)
+      onMessageHandler('room-a', message, 'node-1')
 
       expect(handler).not.toHaveBeenCalled()
     })

@@ -39,11 +39,11 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Setup Node 22.x
+      - name: Setup Node
         uses: actions/setup-node@v6
         with:
           always-auth: false
-          node-version: 22.x
+          node-version: 24.x
 
       - name: Install root dependencies
         run: npm install

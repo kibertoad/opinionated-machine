@@ -67,12 +67,11 @@ describe('RedisAdapter Integration', () => {
         room: string
         message: SSEMessage
         sourceNodeId: string
-        except?: string
       }> = []
 
       // Set up handler on node 2
-      adapter2.onMessage((room, message, sourceNodeId, except) => {
-        receivedMessages.push({ room, message, sourceNodeId, except })
+      adapter2.onMessage((room, message, sourceNodeId) => {
+        receivedMessages.push({ room, message, sourceNodeId })
       })
 
       // Subscribe node 2 to the room
@@ -99,29 +98,6 @@ describe('RedisAdapter Integration', () => {
         },
         sourceNodeId: 'node-1',
       })
-    })
-
-    it('should include except connection ID in propagated messages', async () => {
-      const receivedMessages: Array<{
-        room: string
-        message: SSEMessage
-        sourceNodeId: string
-        except?: string
-      }> = []
-
-      adapter2.onMessage((room, message, sourceNodeId, except) => {
-        receivedMessages.push({ room, message, sourceNodeId, except })
-      })
-
-      await adapter2.subscribe('test-room')
-      await new Promise((resolve) => setTimeout(resolve, 100))
-
-      await adapter1.publish('test-room', { event: 'update', data: {} }, 'conn-to-exclude')
-
-      await new Promise((resolve) => setTimeout(resolve, 100))
-
-      expect(receivedMessages).toHaveLength(1)
-      expect(receivedMessages[0]?.except).toBe('conn-to-exclude')
     })
 
     it('should handle multiple rooms independently', async () => {

@@ -10,25 +10,30 @@ import type { SSERoomAdapter, SSERoomMessageHandler } from '../types.ts'
  * For multi-node deployments, use RedisAdapter or a custom adapter.
  */
 export class InMemoryAdapter implements SSERoomAdapter {
-  async connect(): Promise<void> {
+  connect(): Promise<void> {
     // No-op for in-memory adapter
+    return Promise.resolve()
   }
 
-  async disconnect(): Promise<void> {
+  disconnect(): Promise<void> {
     // No-op for in-memory adapter
+    return Promise.resolve()
   }
 
-  async subscribe(_room: string): Promise<void> {
+  subscribe(_room: string): Promise<void> {
     // No-op for in-memory adapter - no cross-node subscription needed
+    return Promise.resolve()
   }
 
-  async unsubscribe(_room: string): Promise<void> {
+  unsubscribe(_room: string): Promise<void> {
     // No-op for in-memory adapter
+    return Promise.resolve()
   }
 
-  async publish(_room: string, _message: SSEMessage, _except?: string): Promise<void> {
+  publish(_room: string, _message: SSEMessage, _except?: string): Promise<void> {
     // No-op for in-memory adapter - messages are only sent locally
     // The controller handles local delivery directly
+    return Promise.resolve()
   }
 
   onMessage(_handler: SSERoomMessageHandler): void {

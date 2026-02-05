@@ -74,8 +74,6 @@ export type RedisRoomMessage = {
     id?: string
     retry?: number
   }
-  /** Connection ID to exclude (optional) */
-  e?: string
   /** Source node ID */
   n: string
 }

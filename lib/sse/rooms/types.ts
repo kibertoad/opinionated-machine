@@ -5,13 +5,8 @@ import type { SSEMessage } from '../sseTypes.ts'
  */
 export type RoomBroadcastOptions = {
   /**
-   * Exclude these connection IDs from the broadcast.
-   * Useful for excluding the sender from receiving their own message.
-   */
-  except?: string | string[]
-  /**
    * Only broadcast locally (skip adapter propagation to other nodes).
-   * Useful when receiving a message from another node to avoid infinite loops.
+   * Useful for testing or node-specific announcements.
    * @default false
    */
   local?: boolean
@@ -59,9 +54,8 @@ export type SSERoomAdapter = {
    *
    * @param room - The room to publish to
    * @param message - The SSE message to broadcast
-   * @param except - Connection ID to exclude (optional)
    */
-  publish(room: string, message: SSEMessage, except?: string): Promise<void>
+  publish(room: string, message: SSEMessage): Promise<void>
 
   /**
    * Register a handler for messages received from other nodes.
@@ -79,7 +73,6 @@ export type SSERoomMessageHandler = (
   room: string,
   message: SSEMessage,
   sourceNodeId: string,
-  except?: string,
 ) => void
 
 /**
@@ -102,7 +95,7 @@ export type SSERoomManagerConfig = {
 
 /**
  * Room operations available on SSE sessions.
- * Accessed via `session.rooms.join()`, `session.rooms.leave()`, etc.
+ * Accessed via `session.rooms.join()`, `session.rooms.leave()`.
  */
 export type SSERoomOperations = {
   /**
@@ -112,8 +105,8 @@ export type SSERoomOperations = {
    *
    * @example
    * ```typescript
-   * // Join a single room
-   * session.rooms.join('announcements')
+   * // Join a single room based on route parameter
+   * session.rooms.join(`dashboard:${request.params.dashboardId}`)
    *
    * // Join multiple rooms
    * session.rooms.join(['project:123', 'team:engineering'])
@@ -127,11 +120,4 @@ export type SSERoomOperations = {
    * @param room - Room name or array of room names to leave
    */
   leave: (room: string | string[]) => void
-
-  /**
-   * Get all rooms this connection is currently in.
-   *
-   * @returns Array of room names
-   */
-  getRooms: () => string[]
 }

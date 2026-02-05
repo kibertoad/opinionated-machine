@@ -65,12 +65,12 @@ export class SSERoomManager {
     this.nodeId = config.nodeId ?? randomUUID()
 
     // Set up adapter message handler
-    this.adapter.onMessage((room, message, sourceNodeId, except) => {
+    this.adapter.onMessage((room, message, sourceNodeId) => {
       // Skip messages from this node (we already handled them locally)
       if (sourceNodeId === this.nodeId) {
         return
       }
-      this.messageHandler?.(room, message, sourceNodeId, except)
+      this.messageHandler?.(room, message, sourceNodeId)
     })
   }
 
@@ -264,7 +264,6 @@ export class SSERoomManager {
       return // Skip adapter for local-only broadcasts
     }
 
-    const except = Array.isArray(options?.except) ? options.except[0] : options?.except
-    await this.adapter.publish(room, message, except)
+    await this.adapter.publish(room, message)
   }
 }

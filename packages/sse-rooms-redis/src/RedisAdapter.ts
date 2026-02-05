@@ -18,7 +18,6 @@ import type { RedisAdapterConfig, RedisRoomMessage } from './types.ts'
  * {
  *   "v": 1,              // Protocol version
  *   "m": { SSEMessage }, // The event to broadcast
- *   "e": "conn-id",      // Except connection ID (optional)
  *   "n": "node-id"       // Source node ID
  * }
  * ```
@@ -100,7 +99,7 @@ export class RedisAdapter implements SSERoomAdapter {
     this.subscribedChannels.delete(channel)
   }
 
-  async publish(room: string, message: SSEMessage, except?: string): Promise<void> {
+  async publish(room: string, message: SSEMessage): Promise<void> {
     const channel = this.getChannelName(room)
     const payload: RedisRoomMessage = {
       v: 1,
@@ -111,10 +110,6 @@ export class RedisAdapter implements SSERoomAdapter {
         retry: message.retry,
       },
       n: this.nodeId,
-    }
-
-    if (except) {
-      payload.e = except
     }
 
     await this.pubClient.publish(channel, JSON.stringify(payload))
@@ -162,7 +157,7 @@ export class RedisAdapter implements SSERoomAdapter {
         retry: payload.m.retry,
       }
 
-      this.messageHandler(room, message, payload.n, payload.e)
+      this.messageHandler(room, message, payload.n)
     } catch {
       // Invalid JSON or message format, skip
     }

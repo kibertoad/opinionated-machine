@@ -69,7 +69,6 @@ describe('SSE Rooms E2E', () => {
         },
       )
 
-      expect(controller.testGetRooms(serverConnection.id)).toContain('general')
       expect(controller.testGetConnectionsInRoom('general')).toContain(serverConnection.id)
 
       client.close()
@@ -85,10 +84,10 @@ describe('SSE Rooms E2E', () => {
       // Manually join additional rooms
       controller.testJoinRoom(serverConnection.id, ['premium', 'beta'])
 
-      const rooms = controller.testGetRooms(serverConnection.id)
-      expect(rooms).toContain('lobby')
-      expect(rooms).toContain('premium')
-      expect(rooms).toContain('beta')
+      // Verify connection is in all rooms
+      expect(controller.testGetConnectionsInRoom('lobby')).toContain(serverConnection.id)
+      expect(controller.testGetConnectionsInRoom('premium')).toContain(serverConnection.id)
+      expect(controller.testGetConnectionsInRoom('beta')).toContain(serverConnection.id)
 
       client.close()
     })
@@ -101,13 +100,12 @@ describe('SSE Rooms E2E', () => {
       )
 
       controller.testJoinRoom(serverConnection.id, ['room2', 'room3'])
-      expect(controller.testGetRooms(serverConnection.id)).toContain('room2')
+      expect(controller.testGetConnectionsInRoom('room2')).toContain(serverConnection.id)
 
       controller.testLeaveRoom(serverConnection.id, 'room2')
 
-      const rooms = controller.testGetRooms(serverConnection.id)
-      expect(rooms).not.toContain('room2')
-      expect(rooms).toContain('room3')
+      expect(controller.testGetConnectionsInRoom('room2')).not.toContain(serverConnection.id)
+      expect(controller.testGetConnectionsInRoom('room3')).toContain(serverConnection.id)
 
       client.close()
     })
@@ -173,7 +171,7 @@ describe('SSE Rooms E2E', () => {
       client2.close()
     })
 
-    it('should support except option to exclude sender', { timeout: 10000 }, async () => {
+    it('should broadcast to all connections in room', { timeout: 10000 }, async () => {
       // Connect two users to the same room
       const { client: client1 } = await SSEHttpClient.connect(
         server.baseUrl,
@@ -184,7 +182,7 @@ describe('SSE Rooms E2E', () => {
         },
       )
 
-      const { client: client2, serverConnection: conn2 } = await SSEHttpClient.connect(
+      const { client: client2 } = await SSEHttpClient.connect(
         server.baseUrl,
         '/api/rooms/chat/stream',
         {
@@ -193,15 +191,14 @@ describe('SSE Rooms E2E', () => {
         },
       )
 
-      // Broadcast from user2, excluding user2
-      const count = await controller.testBroadcastToRoom(
-        'chat',
-        { event: 'message', data: { from: 'user2', text: 'Hello!' } },
-        { except: conn2.id },
-      )
+      // Broadcast to all in room
+      const count = await controller.testBroadcastToRoom('chat', 'message', {
+        from: 'system',
+        text: 'Hello!',
+      })
 
-      // Should send to 1 connection (user1), not 2
-      expect(count).toBe(1)
+      // Should send to both connections
+      expect(count).toBe(2)
 
       client1.close()
       client2.close()
@@ -221,9 +218,9 @@ describe('SSE Rooms E2E', () => {
       controller.testJoinRoom(conn.id, ['premium', 'beta'])
 
       // Broadcast to both rooms - should only send once to this user
-      const count = await controller.testBroadcastToRoom(['premium', 'beta'], {
-        event: 'message',
-        data: { from: 'system', text: 'Feature update!' },
+      const count = await controller.testBroadcastToRoom(['premium', 'beta'], 'message', {
+        from: 'system',
+        text: 'Feature update!',
       })
 
       expect(count).toBe(1) // De-duplicated
@@ -338,14 +335,14 @@ describe('SSE Rooms E2E', () => {
       // But we excluded self, so we need to broadcast manually
 
       // Broadcast a message to the room
-      await controller.testBroadcastToRoom('delivery-test', {
-        event: 'message',
-        data: { from: 'system', text: 'Welcome!' },
+      await controller.testBroadcastToRoom('delivery-test', 'message', {
+        from: 'system',
+        text: 'Welcome!',
       })
 
-      await controller.testBroadcastToRoom('delivery-test', {
-        event: 'message',
-        data: { from: 'bot', text: 'How can I help?' },
+      await controller.testBroadcastToRoom('delivery-test', 'message', {
+        from: 'bot',
+        text: 'How can I help?',
       })
 
       const events = await eventsPromise

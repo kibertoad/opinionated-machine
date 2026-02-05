@@ -1218,16 +1218,18 @@ private handleDashboardStream = buildHandler(dashboardStreamContract, {
 
 #### Broadcasting to Rooms
 
-Use `broadcastToRoom()` from your controller to send messages to all connections in a room:
+Use `broadcastToRoom()` from your controller to send type-safe messages to all connections in a room. Event names and data are validated against your contract schemas at compile time:
 
 ```ts
 class DashboardSSEController extends AbstractSSEController<typeof contracts> {
   // Send metrics update to everyone viewing the dashboard
+  // Event name and data are type-checked against contract's sseEvents
   async broadcastMetricsUpdate(dashboardId: string, metrics: DashboardMetrics) {
-    const count = await this.broadcastToRoom(`dashboard:${dashboardId}`, {
-      event: 'metricsUpdate',
-      data: metrics,
-    })
+    const count = await this.broadcastToRoom(
+      `dashboard:${dashboardId}`,
+      'metricsUpdate', // Must be a valid event name from contracts
+      metrics,         // Must match the schema for 'metricsUpdate'
+    )
     console.log(`Metrics sent to ${count} viewers`)
   }
 
@@ -1235,7 +1237,8 @@ class DashboardSSEController extends AbstractSSEController<typeof contracts> {
   async broadcastChange(dashboardId: string, change: DashboardChange, triggerConnectionId: string) {
     await this.broadcastToRoom(
       `dashboard:${dashboardId}`,
-      { event: 'change', data: change },
+      'change',
+      change,
       { except: triggerConnectionId },
     )
   }
@@ -1244,18 +1247,15 @@ class DashboardSSEController extends AbstractSSEController<typeof contracts> {
   async announceFeature(feature: string) {
     const count = await this.broadcastToRoom(
       ['premium', 'beta-testers'],
-      { event: 'feature-flag', data: { flag: feature, enabled: true } },
+      'featureFlag',
+      { flag: feature, enabled: true },
     )
     // Each connection receives the message only once, even if in multiple rooms
   }
 
   // Local-only broadcast (skip Redis propagation in multi-node setups)
   async localAnnouncement(room: string, message: string) {
-    await this.broadcastToRoom(
-      room,
-      { event: 'announcement', data: { message } },
-      { local: true },
-    )
+    await this.broadcastToRoom(room, 'announcement', { message }, { local: true })
   }
 }
 ```

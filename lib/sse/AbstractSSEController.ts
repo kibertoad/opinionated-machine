@@ -122,8 +122,8 @@ export abstract class AbstractSSEController<
       this._roomManager = new SSERoomManager(sseConfig.rooms)
 
       // Wire up adapter message handler to forward to local connections
-      this._roomManager.onRemoteMessage((room, message, _sourceNodeId, except) => {
-        this.handleRemoteBroadcast(room, message, except)
+      this._roomManager.onRemoteMessage((room, message, _sourceNodeId) => {
+        this.handleRemoteBroadcast(room, message)
       })
     }
   }
@@ -449,49 +449,54 @@ export abstract class AbstractSSEController<
   }
 
   /**
-   * Broadcast an event to all connections in one or more rooms.
+   * Broadcast a type-safe event to all connections in one or more rooms.
+   *
+   * Event names and data are validated against the controller's contract schemas
+   * at compile time, ensuring only valid events can be broadcast.
    *
    * When broadcasting to multiple rooms, connections in multiple rooms
    * only receive the message once (de-duplicated).
    *
    * @param room - Room name or array of room names
-   * @param message - The SSE message to broadcast
-   * @param options - Broadcast options (except, local)
+   * @param eventName - Event name (must be defined in one of the controller's contracts)
+   * @param data - Event data (must match the schema for the event)
+   * @param options - Broadcast options (local, id, retry)
    * @returns Number of local connections the message was sent to
    *
    * @example
    * ```typescript
-   * // Broadcast to a single room
-   * await this.broadcastToRoom('announcements', {
-   *   event: 'announcement',
-   *   data: { text: 'Server maintenance in 5 minutes' }
+   * // Broadcast to a single room (type-safe)
+   * await this.broadcastToRoom('dashboard:123', 'metricsUpdate', {
+   *   cpu: 45.2, memory: 72.1
    * })
    *
    * // Broadcast to multiple rooms (no duplicates)
-   * await this.broadcastToRoom(['premium', 'beta-testers'], {
-   *   event: 'feature-flag',
-   *   data: { flag: 'new-ui', enabled: true }
+   * await this.broadcastToRoom(['premium', 'beta-testers'], 'featureFlag', {
+   *   flag: 'new-ui', enabled: true
    * })
-   *
-   * // Exclude sender from receiving their own message
-   * await this.broadcastToRoom(`channel:${channelId}`, {
-   *   event: 'message',
-   *   data: message
-   * }, { except: senderId })
    * ```
    */
-  protected async broadcastToRoom<T>(
+  protected async broadcastToRoom<EventName extends AllContractEventNames<APIContracts>>(
     room: string | string[],
-    message: SSEMessage<T>,
-    options?: RoomBroadcastOptions,
+    eventName: EventName,
+    data: ExtractEventSchema<APIContracts, EventName> extends z.ZodTypeAny
+      ? z.input<ExtractEventSchema<APIContracts, EventName>>
+      : never,
+    options?: RoomBroadcastOptions & { id?: string; retry?: number },
   ): Promise<number> {
     if (!this._roomManager) {
       return 0
     }
 
+    const message: SSEMessage = {
+      event: eventName,
+      data,
+      id: options?.id,
+      retry: options?.retry,
+    }
+
     const rooms = Array.isArray(room) ? room : [room]
-    const except = this.buildExceptSet(options?.except)
-    const connectionIds = this.collectRoomConnections(this._roomManager, rooms, except)
+    const connectionIds = this.collectRoomConnections(this._roomManager, rooms)
 
     // Send to all local connections
     let sent = 0
@@ -512,29 +517,13 @@ export abstract class AbstractSSEController<
   }
 
   /**
-   * Build a Set of connection IDs to exclude from broadcasts.
+   * Collect unique connection IDs from multiple rooms.
    */
-  private buildExceptSet(except: string | string[] | undefined): Set<string> {
-    if (!except) {
-      return new Set<string>()
-    }
-    return Array.isArray(except) ? new Set(except) : new Set([except])
-  }
-
-  /**
-   * Collect unique connection IDs from multiple rooms, excluding specified IDs.
-   */
-  private collectRoomConnections(
-    roomManager: SSERoomManager,
-    rooms: string[],
-    except: Set<string>,
-  ): Set<string> {
+  private collectRoomConnections(roomManager: SSERoomManager, rooms: string[]): Set<string> {
     const connectionIds = new Set<string>()
     for (const r of rooms) {
       for (const connId of roomManager.getConnectionsInRoom(r)) {
-        if (!except.has(connId)) {
-          connectionIds.add(connId)
-        }
+        connectionIds.add(connId)
       }
     }
     return connectionIds
@@ -545,20 +534,14 @@ export abstract class AbstractSSEController<
    * This method is called when the adapter receives a message from another node.
    * @internal
    */
-  private async handleRemoteBroadcast(
-    room: string,
-    message: SSEMessage,
-    except?: string,
-  ): Promise<void> {
+  private async handleRemoteBroadcast(room: string, message: SSEMessage): Promise<void> {
     if (!this._roomManager) {
       return
     }
 
     const connectionIds = this._roomManager.getConnectionsInRoom(room)
     for (const connId of connectionIds) {
-      if (connId !== except) {
-        await this.sendEvent(connId, message)
-      }
+      await this.sendEvent(connId, message)
     }
   }
 
@@ -582,17 +565,6 @@ export abstract class AbstractSSEController<
    */
   protected leaveRoom(connectionId: string, room: string | string[]): void {
     this._roomManager?.leave(connectionId, room)
-  }
-
-  /**
-   * Get all rooms a connection is in.
-   * Prefer using `session.rooms.getRooms()` in handlers instead.
-   *
-   * @param connectionId - The connection to query
-   * @returns Array of room names
-   */
-  protected getRooms(connectionId: string): string[] {
-    return this._roomManager?.getRooms(connectionId) ?? []
   }
 
   /**
