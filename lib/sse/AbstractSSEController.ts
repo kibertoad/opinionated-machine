@@ -127,7 +127,7 @@ export abstract class AbstractSSEController<
 
       // Wire up adapter message handler to forward to local connections
       this._roomManager.onRemoteMessage((room, message, _sourceNodeId) => {
-        this.handleRemoteBroadcast(room, message)
+        return this.handleRemoteBroadcast(room, message)
       })
     }
   }

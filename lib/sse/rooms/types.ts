@@ -73,7 +73,7 @@ export type SSERoomMessageHandler = (
   room: string,
   message: SSEMessage,
   sourceNodeId: string,
-) => void
+) => void | Promise<void>
 
 /**
  * Configuration for the SSE Room Manager.
