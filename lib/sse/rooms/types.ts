@@ -1,4 +1,4 @@
-import type { SSEMessage } from '../sseTypes.ts'
+import type { SSEMessage } from '../sseTypes.js'
 
 /**
  * Options for broadcasting to rooms.

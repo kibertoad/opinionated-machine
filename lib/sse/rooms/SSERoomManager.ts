@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import type { SSEMessage } from '../sseTypes.ts'
-import { InMemoryAdapter } from './adapters/InMemoryAdapter.ts'
+import type { SSEMessage } from '../sseTypes.js'
+import { InMemoryAdapter } from './adapters/InMemoryAdapter.js'
 import type {
   RoomBroadcastOptions,
   SSERoomAdapter,
   SSERoomManagerConfig,
   SSERoomMessageHandler,
-} from './types.ts'
+} from './types.js'
 
 /**
  * Manages room membership for SSE connections.

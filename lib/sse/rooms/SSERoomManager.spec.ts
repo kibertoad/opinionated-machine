@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { InMemoryAdapter } from './adapters/InMemoryAdapter.ts'
-import { SSERoomManager } from './SSERoomManager.ts'
-import type { SSERoomAdapter } from './types.ts'
+import { InMemoryAdapter } from './adapters/InMemoryAdapter.js'
+import { SSERoomManager } from './SSERoomManager.js'
+import type { SSERoomAdapter } from './types.js'
 
 describe('SSERoomManager', () => {
   describe('constructor', () => {

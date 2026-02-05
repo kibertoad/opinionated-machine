@@ -1,5 +1,5 @@
-import type { SSEMessage } from '../../sseTypes.ts'
-import type { SSERoomAdapter, SSERoomMessageHandler } from '../types.ts'
+import type { SSEMessage } from '../../sseTypes.js'
+import type { SSERoomAdapter, SSERoomMessageHandler } from '../types.js'
 
 /**
  * Default no-op adapter for single-node deployments.

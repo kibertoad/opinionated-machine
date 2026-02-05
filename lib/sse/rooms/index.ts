@@ -1,8 +1,8 @@
 // Core room manager
 
 // Adapters
-export { InMemoryAdapter } from './adapters/InMemoryAdapter.ts'
-export { SSERoomManager } from './SSERoomManager.ts'
+export { InMemoryAdapter } from './adapters/InMemoryAdapter.js'
+export { SSERoomManager } from './SSERoomManager.js'
 // Types
 export type {
   RoomBroadcastOptions,
@@ -10,4 +10,4 @@ export type {
   SSERoomManagerConfig,
   SSERoomMessageHandler,
   SSERoomOperations,
-} from './types.ts'
+} from './types.js'

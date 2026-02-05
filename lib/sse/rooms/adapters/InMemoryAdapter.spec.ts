@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { InMemoryAdapter } from './InMemoryAdapter.ts'
+import { InMemoryAdapter } from './InMemoryAdapter.js'
 
 describe('InMemoryAdapter', () => {
   it('should implement connect as no-op', async () => {
