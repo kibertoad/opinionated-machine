@@ -30,7 +30,7 @@ export class InMemoryAdapter implements SSERoomAdapter {
     return Promise.resolve()
   }
 
-  publish(_room: string, _message: SSEMessage, _except?: string): Promise<void> {
+  publish(_room: string, _message: SSEMessage): Promise<void> {
     // No-op for in-memory adapter - messages are only sent locally
     // The controller handles local delivery directly
     return Promise.resolve()

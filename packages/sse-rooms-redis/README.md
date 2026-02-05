@@ -50,21 +50,21 @@ import { RedisAdapter } from '@opinionated-machine/sse-rooms-redis'
 import { AbstractSSEController } from 'opinionated-machine'
 
 class ChatSSEController extends AbstractSSEController<typeof contracts> {
-  constructor(deps: { redisUrl: string }) {
-    const pubClient = createClient({ url: deps.redisUrl })
-    const subClient = pubClient.duplicate()
-
-    // node-redis requires explicit connect
-    pubClient.connect()
-    subClient.connect()
-
+  constructor(deps: { pubClient: ReturnType<typeof createClient>; subClient: ReturnType<typeof createClient> }) {
     super(deps, {
       rooms: {
-        adapter: new RedisAdapter({ pubClient, subClient })
+        adapter: new RedisAdapter({ pubClient: deps.pubClient, subClient: deps.subClient })
       }
     })
   }
 }
+
+// Setup (before creating controller):
+const pubClient = createClient({ url: redisUrl })
+const subClient = pubClient.duplicate()
+
+// node-redis requires explicit connect - await both before use
+await Promise.all([pubClient.connect(), subClient.connect()])
 ```
 
 ## Configuration
@@ -141,7 +141,6 @@ Messages are JSON-encoded with the following structure:
     id?: string,
     retry?: number
   },
-  e?: string,        // Except connection ID (optional)
   n: string          // Source node ID
 }
 ```

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { SSEReplyInterface } from '@fastify/sse'
 import type {
   AllContractEventNames,
@@ -93,6 +94,12 @@ export abstract class AbstractSSEController<
 
   /** Room manager for room-based broadcasting (optional) */
   private readonly _roomManager?: SSERoomManager
+
+  /** Cache of recently processed message IDs for deduplication (remote broadcasts) */
+  private readonly _recentMessageIds: Set<string> = new Set()
+
+  /** Maximum number of message IDs to cache for deduplication */
+  private static readonly MAX_DEDUP_CACHE_SIZE = 1000
 
   /**
    * SSE controllers must override this constructor and call super with their
@@ -488,10 +495,13 @@ export abstract class AbstractSSEController<
       return 0
     }
 
+    // Generate a stable message ID for deduplication if not provided
+    const messageId = options?.id ?? randomUUID()
+
     const message: SSEMessage = {
       event: eventName,
       data,
-      id: options?.id,
+      id: messageId,
       retry: options?.retry,
     }
 
@@ -507,6 +517,7 @@ export abstract class AbstractSSEController<
     }
 
     // Publish to adapter for cross-node propagation (unless local-only)
+    // Only publish once with all rooms - adapter handles per-room delivery
     if (!options?.local) {
       for (const r of rooms) {
         await this._roomManager.publish(r, message, options)
@@ -532,11 +543,32 @@ export abstract class AbstractSSEController<
   /**
    * Handle broadcasts from other nodes (via adapter).
    * This method is called when the adapter receives a message from another node.
+   * Deduplicates messages based on message ID to prevent duplicate delivery
+   * when a connection is in multiple rooms that all receive the same broadcast.
    * @internal
    */
   private async handleRemoteBroadcast(room: string, message: SSEMessage): Promise<void> {
     if (!this._roomManager) {
       return
+    }
+
+    // Deduplicate based on message ID
+    // When broadcasting to multiple rooms, we receive the same message for each room
+    // but should only deliver once per connection
+    if (message.id) {
+      if (this._recentMessageIds.has(message.id)) {
+        return // Already processed this message
+      }
+      this._recentMessageIds.add(message.id)
+
+      // Prevent unbounded growth of the dedup cache
+      if (this._recentMessageIds.size > AbstractSSEController.MAX_DEDUP_CACHE_SIZE) {
+        // Remove oldest entries (first ~10%)
+        const idsToRemove = Array.from(this._recentMessageIds).slice(0, 100)
+        for (const id of idsToRemove) {
+          this._recentMessageIds.delete(id)
+        }
+      }
     }
 
     const connectionIds = this._roomManager.getConnectionsInRoom(room)

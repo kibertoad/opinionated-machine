@@ -24,7 +24,7 @@
         "test:watch": "vitest",
         "docker:up": "docker compose up -d --wait",
         "docker:down": "docker compose down",
-        "test:docker": "npm run docker:up && npm run test:integration; npm run docker:down",
+        "test:docker": "npm run docker:up && npm run test; npm run docker:down",
         "prepublishOnly": "npm run build"
     },
     "repository": {

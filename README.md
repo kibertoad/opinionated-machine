@@ -1233,13 +1233,12 @@ class DashboardSSEController extends AbstractSSEController<typeof contracts> {
     console.log(`Metrics sent to ${count} viewers`)
   }
 
-  // Broadcast to a room, excluding specific connection (e.g., the one who triggered the update)
-  async broadcastChange(dashboardId: string, change: DashboardChange, triggerConnectionId: string) {
+  // Broadcast to a room
+  async broadcastChange(dashboardId: string, change: DashboardChange) {
     await this.broadcastToRoom(
       `dashboard:${dashboardId}`,
       'change',
       change,
-      { except: triggerConnectionId },
     )
   }
 
@@ -1308,14 +1307,14 @@ class DashboardSSEController extends AbstractSSEController<typeof contracts> {
 }
 
 // In your module
-resolveControllers(diOptions: DependencyInjectionOptions) {
+resolveControllers(diOptions: DependencyInjectionOptions & { redis: Redis }) {
   return {
     dashboardController: asSSEControllerClass(DashboardSSEController, {
       diOptions,
       rooms: {
         adapter: new RedisAdapter({
-          pubClient: deps.redis,
-          subClient: deps.redis.duplicate(), // Separate connection for subscriptions
+          pubClient: diOptions.redis,
+          subClient: diOptions.redis.duplicate(), // Separate connection for subscriptions
           channelPrefix: 'myapp:sse:room:', // Optional, default: 'sse:room:'
         }),
       },

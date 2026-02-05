@@ -24,9 +24,7 @@ describe('InMemoryAdapter', () => {
 
   it('should implement publish as no-op', async () => {
     const adapter = new InMemoryAdapter()
-    await expect(
-      adapter.publish('room-a', { event: 'test', data: {} }, 'except-id'),
-    ).resolves.toBeUndefined()
+    await expect(adapter.publish('room-a', { event: 'test', data: {} })).resolves.toBeUndefined()
   })
 
   it('should store message handler via onMessage', () => {
