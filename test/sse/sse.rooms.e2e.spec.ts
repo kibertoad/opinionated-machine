@@ -1,9 +1,47 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { SSEMessage, SSERoomAdapter, SSERoomMessageHandler } from '../../index.js'
 import { DIContext, SSEHttpClient, SSETestServer } from '../../index.js'
 import type { TestRoomSSEController } from './fixtures/testControllers.js'
 import { TestRoomSSEModule, type TestRoomSSEModuleControllers } from './fixtures/testModules.js'
+
+/**
+ * Mock adapter for testing remote broadcast deduplication.
+ * Allows manually triggering the onMessage handler to simulate messages from other nodes.
+ */
+class MockAdapter implements SSERoomAdapter {
+  private messageHandler?: SSERoomMessageHandler
+
+  connect(): Promise<void> {
+    return Promise.resolve()
+  }
+
+  disconnect(): Promise<void> {
+    return Promise.resolve()
+  }
+
+  subscribe(_room: string): Promise<void> {
+    return Promise.resolve()
+  }
+
+  unsubscribe(_room: string): Promise<void> {
+    return Promise.resolve()
+  }
+
+  publish(_room: string, _message: SSEMessage): Promise<void> {
+    return Promise.resolve()
+  }
+
+  onMessage(handler: SSERoomMessageHandler): void {
+    this.messageHandler = handler
+  }
+
+  /** Simulate receiving a message from another node */
+  simulateRemoteMessage(room: string, message: SSEMessage, sourceNodeId: string): void {
+    this.messageHandler?.(room, message, sourceNodeId)
+  }
+}
 
 /**
  * E2E tests for SSE Rooms functionality.
@@ -349,6 +387,176 @@ describe('SSE Rooms E2E', () => {
       expect(JSON.parse(events[0]!.data)).toEqual({ from: 'system', text: 'Welcome!' })
       expect(events[1]?.event).toBe('message')
       expect(JSON.parse(events[1]!.data)).toEqual({ from: 'bot', text: 'How can I help?' })
+
+      client.close()
+    })
+  })
+
+  describe('remote broadcast deduplication', () => {
+    let mockAdapter: MockAdapter
+    let mockServer: SSETestServer<{
+      context: DIContext<TestRoomSSEModuleControllers, object>
+    }>
+    let mockContext: DIContext<TestRoomSSEModuleControllers, object>
+    let mockController: TestRoomSSEController
+
+    beforeEach(async () => {
+      mockAdapter = new MockAdapter()
+      const container = createContainer({ injectionMode: 'PROXY' })
+      mockContext = new DIContext<TestRoomSSEModuleControllers, object>(
+        container,
+        { isTestMode: true },
+        {},
+      )
+      mockContext.registerDependencies(
+        {
+          modules: [new TestRoomSSEModule({ rooms: { adapter: mockAdapter, nodeId: 'node-1' } })],
+        },
+        undefined,
+      )
+
+      mockController =
+        mockContext.diContainer.resolve<TestRoomSSEController>('testRoomSSEController')
+
+      mockServer = await SSETestServer.create(
+        (app) => {
+          mockContext.registerSSERoutes(app)
+        },
+        {
+          configureApp: (app) => {
+            app.setValidatorCompiler(validatorCompiler)
+            app.setSerializerCompiler(serializerCompiler)
+          },
+          setup: () => ({ context: mockContext }),
+        },
+      )
+    })
+
+    afterEach(async () => {
+      await mockServer.resources.context.destroy()
+      await mockServer.close()
+    })
+
+    it('should deliver remote broadcasts to connections in room', { timeout: 10000 }, async () => {
+      const { client } = await SSEHttpClient.connect(
+        mockServer.baseUrl,
+        '/api/rooms/remote-test/stream',
+        {
+          query: { userId: 'receiver' },
+          awaitServerConnection: { controller: mockController },
+        },
+      )
+
+      const eventsPromise = client.collectEvents(1, 5000)
+
+      // Simulate a remote broadcast from another node
+      mockAdapter.simulateRemoteMessage(
+        'remote-test',
+        { event: 'message', data: { from: 'remote', text: 'Hello from node 2' }, id: 'msg-1' },
+        'node-2',
+      )
+
+      const events = await eventsPromise
+      expect(events).toHaveLength(1)
+      expect(events[0]?.event).toBe('message')
+      expect(JSON.parse(events[0]!.data)).toEqual({ from: 'remote', text: 'Hello from node 2' })
+
+      client.close()
+    })
+
+    it(
+      'should deduplicate remote broadcasts with same message ID',
+      { timeout: 10000 },
+      async () => {
+        const { client } = await SSEHttpClient.connect(
+          mockServer.baseUrl,
+          '/api/rooms/dedup-test/stream',
+          {
+            query: { userId: 'receiver' },
+            awaitServerConnection: { controller: mockController },
+          },
+        )
+
+        const eventsPromise = client.collectEvents(1, 3000)
+
+        // Simulate the same message arriving twice (e.g., connection in multiple rooms)
+        mockAdapter.simulateRemoteMessage(
+          'dedup-test',
+          { event: 'message', data: { from: 'remote', text: 'Duplicate test' }, id: 'dup-msg-1' },
+          'node-2',
+        )
+        mockAdapter.simulateRemoteMessage(
+          'dedup-test',
+          { event: 'message', data: { from: 'remote', text: 'Duplicate test' }, id: 'dup-msg-1' },
+          'node-2',
+        )
+
+        const events = await eventsPromise
+        // Should only receive once despite being sent twice
+        expect(events).toHaveLength(1)
+
+        client.close()
+      },
+    )
+
+    it('should deliver messages without ID (no deduplication)', { timeout: 10000 }, async () => {
+      const { client } = await SSEHttpClient.connect(
+        mockServer.baseUrl,
+        '/api/rooms/no-id-test/stream',
+        {
+          query: { userId: 'receiver' },
+          awaitServerConnection: { controller: mockController },
+        },
+      )
+
+      const eventsPromise = client.collectEvents(2, 5000)
+
+      // Messages without ID should not be deduplicated
+      mockAdapter.simulateRemoteMessage(
+        'no-id-test',
+        { event: 'message', data: { from: 'remote', text: 'No ID 1' } },
+        'node-2',
+      )
+      mockAdapter.simulateRemoteMessage(
+        'no-id-test',
+        { event: 'message', data: { from: 'remote', text: 'No ID 2' } },
+        'node-2',
+      )
+
+      const events = await eventsPromise
+      expect(events).toHaveLength(2)
+
+      client.close()
+    })
+
+    it('should deliver different message IDs separately', { timeout: 10000 }, async () => {
+      const { client } = await SSEHttpClient.connect(
+        mockServer.baseUrl,
+        '/api/rooms/diff-id-test/stream',
+        {
+          query: { userId: 'receiver' },
+          awaitServerConnection: { controller: mockController },
+        },
+      )
+
+      const eventsPromise = client.collectEvents(2, 5000)
+
+      // Different IDs should both be delivered
+      mockAdapter.simulateRemoteMessage(
+        'diff-id-test',
+        { event: 'message', data: { from: 'remote', text: 'Msg 1' }, id: 'unique-1' },
+        'node-2',
+      )
+      mockAdapter.simulateRemoteMessage(
+        'diff-id-test',
+        { event: 'message', data: { from: 'remote', text: 'Msg 2' }, id: 'unique-2' },
+        'node-2',
+      )
+
+      const events = await eventsPromise
+      expect(events).toHaveLength(2)
+      expect(events[0]?.id).toBe('unique-1')
+      expect(events[1]?.id).toBe('unique-2')
 
       client.close()
     })

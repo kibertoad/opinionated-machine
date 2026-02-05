@@ -1,3 +1,4 @@
+import { asFunction } from 'awilix'
 import {
   AbstractModule,
   asServiceClass,
@@ -5,6 +6,7 @@ import {
   asSSEControllerClass,
   type DependencyInjectionOptions,
   type MandatoryNameAndRegistrationPair,
+  type SSEControllerConfig,
   type SSELogger,
 } from '../../../index.js'
 import {
@@ -589,7 +591,21 @@ export type TestRoomSSEModuleControllers = {
   testRoomSSEController: TestRoomSSEController
 }
 
+export type TestRoomSSEModuleConfig = {
+  rooms?: {
+    adapter?: import('../../../index.js').SSERoomAdapter
+    nodeId?: string
+  }
+}
+
 export class TestRoomSSEModule extends AbstractModule<TestRoomSSEModuleDependencies> {
+  private readonly config?: TestRoomSSEModuleConfig
+
+  constructor(config?: TestRoomSSEModuleConfig) {
+    super()
+    this.config = config
+  }
+
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestRoomSSEModuleDependencies> {
     return {}
   }
@@ -597,8 +613,24 @@ export class TestRoomSSEModule extends AbstractModule<TestRoomSSEModuleDependenc
   override resolveControllers(
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
+    // Build sseConfig with test mode + optional room config
+    const enableConnectionSpy = diOptions.isTestMode ?? false
+    const sseConfig: SSEControllerConfig = {
+      ...(enableConnectionSpy && { enableConnectionSpy: true }),
+      ...(this.config?.rooms && { rooms: this.config.rooms }),
+    }
+
+    // Use asFunction to pass custom sseConfig (asSSEControllerClass doesn't support custom room config)
     return {
-      testRoomSSEController: asSSEControllerClass(TestRoomSSEController, { diOptions }),
+      testRoomSSEController: asFunction(
+        (cradle: any) => new TestRoomSSEController(cradle, sseConfig),
+        {
+          lifetime: 'SINGLETON',
+          isSSEController: true,
+          asyncDispose: 'closeAllConnections',
+          asyncDisposePriority: 5,
+        },
+      ),
     }
   }
 }
