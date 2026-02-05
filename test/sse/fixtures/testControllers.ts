@@ -31,6 +31,7 @@ import {
   publicErrorContract,
   reconnectStreamContract,
   respondWithoutReturnContract,
+  roomStreamContract,
   sendStreamTestContract,
   sseRespondValidationContract,
   streamContract,
@@ -1173,4 +1174,101 @@ export class TestSSERespondValidationController extends AbstractSSEController<Te
       await session.send('message', { text: 'Streaming started' })
     },
   })
+}
+
+// ============================================================================
+// Room Test Controllers
+// ============================================================================
+
+/**
+ * Test SSE controller for room functionality.
+ * Demonstrates joining rooms, broadcasting to rooms, and auto-leave on disconnect.
+ */
+export type TestRoomContracts = {
+  roomStream: typeof roomStreamContract
+}
+
+export class TestRoomSSEController extends AbstractSSEController<TestRoomContracts> {
+  public static contracts = {
+    roomStream: roomStreamContract,
+  } as const
+
+  constructor(deps: object, sseConfig?: SSEControllerConfig) {
+    // Enable rooms for this controller
+    super(deps, {
+      ...sseConfig,
+      rooms: sseConfig?.rooms ?? {},
+    })
+  }
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestRoomContracts> {
+    return {
+      roomStream: this.handleRoomStream,
+    }
+  }
+
+  private handleRoomStream = buildHandler(
+    roomStreamContract,
+    {
+      sse: (request, sse) => {
+        const { roomId } = request.params
+        const userId = request.query.userId ?? 'anonymous'
+        const connection = sse.start('keepAlive', { context: { userId, roomId } })
+
+        // Join the room from the path parameter
+        connection.rooms.join(roomId)
+      },
+    },
+    {
+      onClose: (_connection) => {
+        // Auto-leave is handled by the controller
+        // Note: We can't broadcast here because the connection is already being removed
+        // In real apps, you'd store userId->connectionId mapping and handle this differently
+      },
+    },
+  )
+
+  // Test helpers - expose protected methods for testing
+  // Overloaded test helper for type-safe room broadcasts
+  public testBroadcastToRoom(
+    room: string | string[],
+    eventName: 'message',
+    data: { from: string; text: string },
+    options?: { local?: boolean; id?: string; retry?: number },
+  ): Promise<number>
+  public testBroadcastToRoom(
+    room: string | string[],
+    eventName: 'userJoined' | 'userLeft',
+    data: { userId: string },
+    options?: { local?: boolean; id?: string; retry?: number },
+  ): Promise<number>
+  public testBroadcastToRoom(
+    room: string | string[],
+    eventName: 'message' | 'userJoined' | 'userLeft',
+    data: { from: string; text: string } | { userId: string },
+    options?: { local?: boolean; id?: string; retry?: number },
+  ): Promise<number> {
+    // Type assertion needed because overload signatures don't narrow properly
+    return this.broadcastToRoom(room, eventName as 'message', data as any, options)
+  }
+
+  public testJoinRoom(connectionId: string, room: string | string[]) {
+    return this.joinRoom(connectionId, room)
+  }
+
+  public testLeaveRoom(connectionId: string, room: string | string[]) {
+    return this.leaveRoom(connectionId, room)
+  }
+
+  public testGetConnectionsInRoom(room: string) {
+    return this.getConnectionsInRoom(room)
+  }
+
+  public testGetConnectionCountInRoom(room: string) {
+    return this.getConnectionCountInRoom(room)
+  }
+
+  public get testRoomsEnabled() {
+    return this.roomsEnabled
+  }
 }

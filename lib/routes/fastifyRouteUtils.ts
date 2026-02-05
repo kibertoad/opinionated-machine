@@ -3,6 +3,8 @@ import type { SSEReplyInterface } from '@fastify/sse'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
+import type { SSERoomManager } from '../sse/rooms/SSERoomManager.ts'
+import type { SSERoomOperations } from '../sse/rooms/types.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
 import type {
   SSEContext,
@@ -26,6 +28,8 @@ export type SSEControllerLike = {
   _sendEventRaw(connectionId: string, message: SSEMessage): Promise<boolean>
   registerConnection(connection: SSESession): void
   unregisterConnection(connectionId: string): void
+  /** Room manager, if rooms are enabled */
+  _internalRoomManager?: SSERoomManager
 }
 
 /**
@@ -197,6 +201,28 @@ export type SSESessionSetupResult<Events extends SSEEventSchemas = SSEEventSchem
 }
 
 /**
+ * Create room operations object for the session.
+ * If room manager is not available, returns no-op functions.
+ */
+function createRoomOperations(
+  connectionId: string,
+  roomManager: SSERoomManager | undefined,
+): SSERoomOperations {
+  if (!roomManager) {
+    // Return no-op operations when rooms are not enabled
+    return {
+      join: () => {},
+      leave: () => {},
+    }
+  }
+
+  return {
+    join: (room) => roomManager.join(connectionId, room),
+    leave: (room) => roomManager.leave(connectionId, room),
+  }
+}
+
+/**
  * Create an SSE connection object with all helpers.
  * This is an internal helper used by createSSEContext.
  *
@@ -249,6 +275,9 @@ function createSSESessionInternal<Events extends SSEEventSchemas, Context = unkn
     }
   }
 
+  // Create room operations
+  const rooms = createRoomOperations(connectionId, controller._internalRoomManager)
+
   return {
     id: connectionId,
     request,
@@ -259,6 +288,7 @@ function createSSESessionInternal<Events extends SSEEventSchemas, Context = unkn
     isConnected: () => sseReply.sse.isConnected,
     getStream: () => sseReply.sse.stream(),
     sendStream,
+    rooms,
     eventSchemas,
   }
 }

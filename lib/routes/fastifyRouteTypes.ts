@@ -6,6 +6,7 @@ import type {
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
+import type { SSERoomOperations } from '../sse/rooms/types.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
 import type { SSECloseReason } from './fastifyRouteUtils.ts'
 
@@ -195,11 +196,33 @@ export type SSESession<Events extends SSEEventSchemas = SSEEventSchemas, Context
    */
   sendStream: (messages: AsyncIterable<SSEStreamMessage<Events>>) => Promise<void>
   /**
+   * Room operations for this connection.
+   * Only available when rooms are enabled in the controller config.
+   *
+   * @example
+   * ```typescript
+   * // Join rooms based on route parameters or business logic
+   * session.rooms.join(`dashboard:${request.params.dashboardId}`)
+   * session.rooms.join(['project:123', 'team:engineering'])
+   *
+   * // Leave rooms when context changes
+   * session.rooms.leave('project:123')
+   * ```
+   */
+  rooms: SSERoomOperations
+  /**
    * Zod schemas for validating event data.
    * Map of event name to Zod schema. Used by sendEvent for runtime validation.
    * @internal
    */
   eventSchemas?: SSEEventSchemas
+  /**
+   * Cache of recently received message IDs for deduplication.
+   * Used to prevent duplicate delivery when a connection is in multiple rooms
+   * that all receive the same broadcast.
+   * @internal
+   */
+  recentMessageIds?: Set<string>
 }
 
 // ============================================================================

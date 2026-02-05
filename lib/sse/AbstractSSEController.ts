@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { SSEReplyInterface } from '@fastify/sse'
 import type {
   AllContractEventNames,
@@ -8,6 +9,8 @@ import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import type { z } from 'zod'
 import type { BuildFastifySSERoutesReturnType, SSESession } from '../routes/fastifyRouteTypes.ts'
+import { SSERoomManager } from './rooms/SSERoomManager.ts'
+import type { RoomBroadcastOptions } from './rooms/types.ts'
 import { SSESessionSpy } from './SSESessionSpy.ts'
 import type { SSEControllerConfig, SSEMessage } from './sseTypes.ts'
 
@@ -89,6 +92,12 @@ export abstract class AbstractSSEController<
   /** Private storage for connection spy */
   private readonly _connectionSpy?: SSESessionSpy
 
+  /** Room manager for room-based broadcasting (optional) */
+  private readonly _roomManager?: SSERoomManager
+
+  /** Maximum number of message IDs to cache per connection for deduplication */
+  private static readonly MAX_DEDUP_CACHE_SIZE = 1000
+
   /**
    * SSE controllers must override this constructor and call super with their
    * dependencies object and the SSE config.
@@ -111,6 +120,15 @@ export abstract class AbstractSSEController<
   constructor(_dependencies: object, sseConfig?: SSEControllerConfig) {
     if (sseConfig?.enableConnectionSpy) {
       this._connectionSpy = new SSESessionSpy()
+    }
+
+    if (sseConfig?.rooms) {
+      this._roomManager = new SSERoomManager(sseConfig.rooms)
+
+      // Wire up adapter message handler to forward to local connections
+      this._roomManager.onRemoteMessage((room, message, _sourceNodeId) => {
+        return this.handleRemoteBroadcast(room, message)
+      })
     }
   }
 
@@ -231,6 +249,15 @@ export abstract class AbstractSSEController<
    */
   public _sendEventRaw<T>(connectionId: string, message: SSEMessage<T>): Promise<boolean> {
     return this.sendEvent(connectionId, message)
+  }
+
+  /**
+   * Get the room manager for use by route utilities.
+   * Returns undefined if rooms are not enabled.
+   * @internal
+   */
+  public get _internalRoomManager(): SSERoomManager | undefined {
+    return this._roomManager
   }
 
   /**
@@ -370,6 +397,7 @@ export abstract class AbstractSSEController<
    */
   public registerConnection(connection: SSESession): void {
     this.connections.set(connection.id, connection)
+
     this.onConnectionEstablished?.(connection)
     // Notify spy after hook (so hook can set context before spy sees it)
     this._connectionSpy?.addConnection(connection)
@@ -391,6 +419,220 @@ export abstract class AbstractSSEController<
     this.onConnectionClosed?.(connection)
     // Notify spy of disconnection
     this._connectionSpy?.addDisconnection(connectionId)
+
+    // Auto-leave all rooms on disconnect
+    this._roomManager?.leaveAll(connectionId)
+
     this.connections.delete(connectionId)
+  }
+
+  // ============================================================================
+  // Room Operations
+  // ============================================================================
+
+  /**
+   * Get the room manager for this controller.
+   * Throws an error if rooms are not enabled.
+   *
+   * @throws Error if rooms are not enabled in the controller config
+   */
+  protected get roomManager(): SSERoomManager {
+    if (!this._roomManager) {
+      throw new Error(
+        'Rooms are not enabled. Pass { rooms: {} } to the controller config to enable rooms.',
+      )
+    }
+    return this._roomManager
+  }
+
+  /**
+   * Check if rooms are enabled for this controller.
+   */
+  protected get roomsEnabled(): boolean {
+    return this._roomManager !== undefined
+  }
+
+  /**
+   * Broadcast a type-safe event to all connections in one or more rooms.
+   *
+   * Event names and data are validated against the controller's contract schemas
+   * at compile time, ensuring only valid events can be broadcast.
+   *
+   * When broadcasting to multiple rooms, connections in multiple rooms
+   * only receive the message once (de-duplicated).
+   *
+   * @param room - Room name or array of room names
+   * @param eventName - Event name (must be defined in one of the controller's contracts)
+   * @param data - Event data (must match the schema for the event)
+   * @param options - Broadcast options (local, id, retry)
+   * @returns Number of local connections the message was sent to
+   *
+   * @example
+   * ```typescript
+   * // Broadcast to a single room (type-safe)
+   * await this.broadcastToRoom('dashboard:123', 'metricsUpdate', {
+   *   cpu: 45.2, memory: 72.1
+   * })
+   *
+   * // Broadcast to multiple rooms (no duplicates)
+   * await this.broadcastToRoom(['premium', 'beta-testers'], 'featureFlag', {
+   *   flag: 'new-ui', enabled: true
+   * })
+   * ```
+   */
+  protected async broadcastToRoom<EventName extends AllContractEventNames<APIContracts>>(
+    room: string | string[],
+    eventName: EventName,
+    data: ExtractEventSchema<APIContracts, EventName> extends z.ZodTypeAny
+      ? z.input<ExtractEventSchema<APIContracts, EventName>>
+      : never,
+    options?: RoomBroadcastOptions & { id?: string; retry?: number },
+  ): Promise<number> {
+    if (!this._roomManager) {
+      return 0
+    }
+
+    // Generate a stable message ID for deduplication if not provided
+    const messageId = options?.id ?? randomUUID()
+
+    const message: SSEMessage = {
+      event: eventName,
+      data,
+      id: messageId,
+      retry: options?.retry,
+    }
+
+    const rooms = Array.isArray(room) ? room : [room]
+    const connectionIds = this.collectRoomConnections(this._roomManager, rooms)
+
+    // Send to all local connections
+    let sent = 0
+    for (const connId of connectionIds) {
+      if (await this.sendEvent(connId, message)) {
+        sent++
+      }
+    }
+
+    // Publish to adapter for cross-node propagation (unless local-only)
+    // Only publish once with all rooms - adapter handles per-room delivery
+    if (!options?.local) {
+      for (const r of rooms) {
+        await this._roomManager.publish(r, message, options)
+      }
+    }
+
+    return sent
+  }
+
+  /**
+   * Collect unique connection IDs from multiple rooms.
+   */
+  private collectRoomConnections(roomManager: SSERoomManager, rooms: string[]): Set<string> {
+    const connectionIds = new Set<string>()
+    for (const r of rooms) {
+      for (const connId of roomManager.getConnectionsInRoom(r)) {
+        connectionIds.add(connId)
+      }
+    }
+    return connectionIds
+  }
+
+  /**
+   * Check if a message has already been delivered to a connection (deduplication).
+   * Returns true if the message is a duplicate and should be skipped.
+   * @internal
+   */
+  private isDuplicateMessage(connection: SSESession, messageId: string | undefined): boolean {
+    if (!messageId) {
+      return false
+    }
+
+    // Initialize the dedup cache if needed
+    if (!connection.recentMessageIds) {
+      connection.recentMessageIds = new Set()
+    }
+
+    if (connection.recentMessageIds.has(messageId)) {
+      return true // Already delivered to this connection
+    }
+
+    // FIFO eviction: remove oldest entry if at capacity
+    if (connection.recentMessageIds.size >= AbstractSSEController.MAX_DEDUP_CACHE_SIZE) {
+      const oldest = connection.recentMessageIds.values().next().value as string
+      connection.recentMessageIds.delete(oldest)
+    }
+
+    connection.recentMessageIds.add(messageId)
+    return false
+  }
+
+  /**
+   * Handle broadcasts from other nodes (via adapter).
+   * This method is called when the adapter receives a message from another node.
+   * Deduplicates messages per-connection based on message ID to prevent duplicate
+   * delivery when a connection is in multiple rooms that all receive the same broadcast.
+   * @internal
+   */
+  private async handleRemoteBroadcast(room: string, message: SSEMessage): Promise<void> {
+    if (!this._roomManager) {
+      return
+    }
+
+    const connectionIds = this._roomManager.getConnectionsInRoom(room)
+    for (const connId of connectionIds) {
+      const connection = this.connections.get(connId)
+      if (!connection) {
+        continue
+      }
+
+      // Per-connection deduplication - skip if already delivered
+      if (this.isDuplicateMessage(connection, message.id)) {
+        continue
+      }
+
+      await this.sendEvent(connId, message)
+    }
+  }
+
+  /**
+   * Join a connection to one or more rooms.
+   * Prefer using `session.rooms.join()` in handlers instead.
+   *
+   * @param connectionId - The connection to add to rooms
+   * @param room - Room name or array of room names
+   */
+  protected joinRoom(connectionId: string, room: string | string[]): void {
+    this._roomManager?.join(connectionId, room)
+  }
+
+  /**
+   * Remove a connection from one or more rooms.
+   * Prefer using `session.rooms.leave()` in handlers instead.
+   *
+   * @param connectionId - The connection to remove from rooms
+   * @param room - Room name or array of room names
+   */
+  protected leaveRoom(connectionId: string, room: string | string[]): void {
+    this._roomManager?.leave(connectionId, room)
+  }
+
+  /**
+   * Get all connection IDs in a room.
+   *
+   * @param room - The room to query
+   * @returns Array of connection IDs
+   */
+  protected getConnectionsInRoom(room: string): string[] {
+    return this._roomManager?.getConnectionsInRoom(room) ?? []
+  }
+
+  /**
+   * Get the number of connections in a room.
+   *
+   * @param room - The room to query
+   * @returns Number of connections
+   */
+  protected getConnectionCountInRoom(room: string): number {
+    return this._roomManager?.getConnectionCountInRoom(room) ?? 0
   }
 }
