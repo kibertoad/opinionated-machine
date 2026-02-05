@@ -1208,10 +1208,6 @@ private handleDashboardStream = buildHandler(dashboardStreamContract, {
 
     // Leave rooms
     session.rooms.leave('plan:enterprise')
-
-    // Get all rooms this connection is in
-    const rooms = session.rooms.getRooms()
-    // ['dashboard:123', 'org:acme']
   },
 })
 ```

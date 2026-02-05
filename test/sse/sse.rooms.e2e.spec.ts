@@ -331,10 +331,7 @@ describe('SSE Rooms E2E', () => {
       // Start collecting events
       const eventsPromise = client.collectEvents(2, 5000)
 
-      // First event: userJoined (sent automatically when connecting)
-      // But we excluded self, so we need to broadcast manually
-
-      // Broadcast a message to the room
+      // Broadcast messages to the room
       await controller.testBroadcastToRoom('delivery-test', 'message', {
         from: 'system',
         text: 'Welcome!',

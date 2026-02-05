@@ -95,10 +95,7 @@ export abstract class AbstractSSEController<
   /** Room manager for room-based broadcasting (optional) */
   private readonly _roomManager?: SSERoomManager
 
-  /** Cache of recently processed message IDs for deduplication (remote broadcasts) */
-  private readonly _recentMessageIds: Set<string> = new Set()
-
-  /** Maximum number of message IDs to cache for deduplication */
+  /** Maximum number of message IDs to cache per connection for deduplication */
   private static readonly MAX_DEDUP_CACHE_SIZE = 1000
 
   /**
@@ -541,10 +538,39 @@ export abstract class AbstractSSEController<
   }
 
   /**
+   * Check if a message has already been delivered to a connection (deduplication).
+   * Returns true if the message is a duplicate and should be skipped.
+   * @internal
+   */
+  private isDuplicateMessage(connection: SSESession, messageId: string | undefined): boolean {
+    if (!messageId) {
+      return false
+    }
+
+    // Initialize the dedup cache if needed
+    if (!connection.recentMessageIds) {
+      connection.recentMessageIds = new Set()
+    }
+
+    if (connection.recentMessageIds.has(messageId)) {
+      return true // Already delivered to this connection
+    }
+
+    // FIFO eviction: remove oldest entry if at capacity
+    if (connection.recentMessageIds.size >= AbstractSSEController.MAX_DEDUP_CACHE_SIZE) {
+      const oldest = connection.recentMessageIds.values().next().value as string
+      connection.recentMessageIds.delete(oldest)
+    }
+
+    connection.recentMessageIds.add(messageId)
+    return false
+  }
+
+  /**
    * Handle broadcasts from other nodes (via adapter).
    * This method is called when the adapter receives a message from another node.
-   * Deduplicates messages based on message ID to prevent duplicate delivery
-   * when a connection is in multiple rooms that all receive the same broadcast.
+   * Deduplicates messages per-connection based on message ID to prevent duplicate
+   * delivery when a connection is in multiple rooms that all receive the same broadcast.
    * @internal
    */
   private async handleRemoteBroadcast(room: string, message: SSEMessage): Promise<void> {
@@ -552,27 +578,18 @@ export abstract class AbstractSSEController<
       return
     }
 
-    // Deduplicate based on message ID
-    // When broadcasting to multiple rooms, we receive the same message for each room
-    // but should only deliver once per connection
-    if (message.id) {
-      if (this._recentMessageIds.has(message.id)) {
-        return // Already processed this message
-      }
-      this._recentMessageIds.add(message.id)
-
-      // Prevent unbounded growth of the dedup cache
-      if (this._recentMessageIds.size > AbstractSSEController.MAX_DEDUP_CACHE_SIZE) {
-        // Remove oldest entries (first ~10%)
-        const idsToRemove = Array.from(this._recentMessageIds).slice(0, 100)
-        for (const id of idsToRemove) {
-          this._recentMessageIds.delete(id)
-        }
-      }
-    }
-
     const connectionIds = this._roomManager.getConnectionsInRoom(room)
     for (const connId of connectionIds) {
+      const connection = this.connections.get(connId)
+      if (!connection) {
+        continue
+      }
+
+      // Per-connection deduplication - skip if already delivered
+      if (this.isDuplicateMessage(connection, message.id)) {
+        continue
+      }
+
       await this.sendEvent(connId, message)
     }
   }

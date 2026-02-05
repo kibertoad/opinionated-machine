@@ -216,6 +216,13 @@ export type SSESession<Events extends SSEEventSchemas = SSEEventSchemas, Context
    * @internal
    */
   eventSchemas?: SSEEventSchemas
+  /**
+   * Cache of recently received message IDs for deduplication.
+   * Used to prevent duplicate delivery when a connection is in multiple rooms
+   * that all receive the same broadcast.
+   * @internal
+   */
+  recentMessageIds?: Set<string>
 }
 
 // ============================================================================
