@@ -1,4 +1,4 @@
-import Redis from 'ioredis'
+import { Redis } from 'ioredis'
 import type { SSEMessage } from 'opinionated-machine'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { RedisAdapter } from './RedisAdapter.ts'

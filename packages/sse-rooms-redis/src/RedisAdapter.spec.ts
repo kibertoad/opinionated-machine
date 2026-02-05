@@ -143,7 +143,7 @@ describe('RedisAdapter', () => {
       expect(pubClient.publish).toHaveBeenCalledWith('sse:room:my-room', expect.any(String))
 
       // Verify the published JSON
-      const publishedJson = (pubClient.publish as ReturnType<typeof vi.fn>).mock.calls[0][1]
+      const publishedJson = (pubClient.publish as ReturnType<typeof vi.fn>).mock.calls[0]![1]
       const parsed = JSON.parse(publishedJson) as RedisRoomMessage
       expect(parsed).toMatchObject({
         v: 1,
@@ -162,7 +162,7 @@ describe('RedisAdapter', () => {
 
       await adapter.publish('my-room', message)
 
-      const publishedJson = (pubClient.publish as ReturnType<typeof vi.fn>).mock.calls[0][1]
+      const publishedJson = (pubClient.publish as ReturnType<typeof vi.fn>).mock.calls[0]![1]
       const parsed = JSON.parse(publishedJson) as RedisRoomMessage
       expect(parsed.m.id).toBe('msg-123')
       expect(parsed.m.retry).toBe(5000)
