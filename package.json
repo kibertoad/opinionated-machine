@@ -4,6 +4,9 @@
     "description": "Very opinionated DI framework for fastify, built on top of awilix ",
     "type": "module",
     "license": "MIT",
+    "workspaces": [
+        "packages/*"
+    ],
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
     "exports": {
