@@ -70,7 +70,7 @@ describe('RedisAdapter Integration', () => {
       }> = []
 
       // Set up handler on node 2
-      adapter2.onMessage((room, message, sourceNodeId) => {
+      adapter2.onMessage((room: string, message: SSEMessage, sourceNodeId: string) => {
         receivedMessages.push({ room, message, sourceNodeId })
       })
 
@@ -103,7 +103,7 @@ describe('RedisAdapter Integration', () => {
     it('should handle multiple rooms independently', async () => {
       const receivedOnNode2: string[] = []
 
-      adapter2.onMessage((room) => {
+      adapter2.onMessage((room: string) => {
         receivedOnNode2.push(room)
       })
 
@@ -127,7 +127,7 @@ describe('RedisAdapter Integration', () => {
     it('should stop receiving after unsubscribe', async () => {
       const receivedMessages: string[] = []
 
-      adapter2.onMessage((room) => {
+      adapter2.onMessage((room: string) => {
         receivedMessages.push(room)
       })
 
@@ -154,7 +154,7 @@ describe('RedisAdapter Integration', () => {
     it('should handle rapid sequential publishes', async () => {
       const receivedMessages: SSEMessage[] = []
 
-      adapter2.onMessage((_, message) => {
+      adapter2.onMessage((_: string, message: SSEMessage) => {
         receivedMessages.push(message)
       })
 
@@ -187,11 +187,11 @@ describe('RedisAdapter Integration', () => {
       const node1Received: string[] = []
       const node2Received: string[] = []
 
-      adapter1.onMessage((room) => {
+      adapter1.onMessage((room: string) => {
         node1Received.push(room)
       })
 
-      adapter2.onMessage((room) => {
+      adapter2.onMessage((room: string) => {
         node2Received.push(room)
       })
 

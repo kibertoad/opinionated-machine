@@ -41,7 +41,7 @@
         "@lokalise/tsconfig": "^3.1.0",
         "@types/node": "^22.19.7",
         "ioredis": "^5.9.2",
-        "opinionated-machine": "file:../..",
+        "opinionated-machine": "*",
         "rimraf": "^6.1.2",
         "typescript": "^5.9.3",
         "vitest": "^4.0.18"

@@ -103,12 +103,7 @@ export class RedisAdapter implements SSERoomAdapter {
     const channel = this.getChannelName(room)
     const payload: RedisRoomMessage = {
       v: 1,
-      m: {
-        event: message.event,
-        data: message.data,
-        id: message.id,
-        retry: message.retry,
-      },
+      m: message,
       n: this.nodeId,
     }
 
@@ -150,14 +145,7 @@ export class RedisAdapter implements SSERoomAdapter {
       }
 
       const room = this.getRoomFromChannel(channel)
-      const message: SSEMessage = {
-        event: payload.m.event,
-        data: payload.m.data,
-        id: payload.m.id,
-        retry: payload.m.retry,
-      }
-
-      this.messageHandler(room, message, payload.n)
+      this.messageHandler(room, payload.m, payload.n)
     } catch {
       // Invalid JSON or message format, skip
     }

@@ -45,12 +45,13 @@ jobs:
           always-auth: false
           node-version: 24.x
 
-      - name: Install root dependencies
+      - name: Install all dependencies
         run: npm install
         working-directory: .
 
-      - name: Install package dependencies
-        run: npm install
+      - name: Build root package
+        run: npm run build
+        working-directory: .
 
       - name: Run Tests
         run: npm test

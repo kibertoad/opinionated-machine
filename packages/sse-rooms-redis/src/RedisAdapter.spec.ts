@@ -186,7 +186,7 @@ describe('RedisAdapter', () => {
 
       expect(handler).toHaveBeenCalledWith(
         'my-room',
-        { event: 'test', data: { foo: 'bar' }, id: undefined, retry: undefined },
+        { event: 'test', data: { foo: 'bar' } },
         'other-node',
       )
     })

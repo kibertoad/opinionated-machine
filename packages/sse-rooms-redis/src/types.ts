@@ -1,3 +1,5 @@
+import type { SSEMessage } from 'opinionated-machine'
+
 /**
  * Minimal interface for a Redis-like client.
  * Compatible with ioredis, node-redis, and similar libraries.
@@ -68,12 +70,7 @@ export type RedisRoomMessage = {
   /** Protocol version for future compatibility */
   v: 1
   /** The SSE message to broadcast */
-  m: {
-    event?: string
-    data: unknown
-    id?: string
-    retry?: number
-  }
+  m: SSEMessage
   /** Source node ID */
   n: string
 }
