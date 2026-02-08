@@ -58,7 +58,7 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Overview](#overview)
   - [Defining Dual-Mode Contracts](#defining-dual-mode-contracts)
   - [Response Headers (Sync Mode)](#response-headers-sync-mode)
-  - [Status-Specific Response Schemas (responseSchemasByStatusCode)](#status-specific-response-schemas-responseschemasbystatuscode)
+  - [Status-Specific Response Schemas (responseBodySchemasByStatusCode)](#status-specific-response-schemas-responsebodyschemasbystatuscode)
   - [Implementing Dual-Mode Controllers](#implementing-dual-mode-controllers)
   - [Registering Dual-Mode Controllers](#registering-dual-mode-controllers)
   - [Accept Header Routing](#accept-header-routing)
@@ -401,30 +401,32 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildSseContract` from `@lokalise/api-contracts` to define SSE routes. The contract type is automatically determined based on the presence of `requestBody` and `syncResponseBody` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
+Use `buildSseContract` from `@lokalise/api-contracts` to define SSE routes. The `method` field determines the HTTP method. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
 import { buildSseContract } from '@lokalise/api-contracts'
 
-// GET-based SSE stream with path params (no body = GET)
+// GET-based SSE stream with path params
 export const channelStreamContract = buildSseContract({
+  method: 'get',
   pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
-  params: z.object({ channelId: z.string() }),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  sseEvents: {
+  requestPathParamsSchema: z.object({ channelId: z.string() }),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  serverSentEventSchemas: {
     message: z.object({ content: z.string() }),
   },
 })
 
 // GET-based SSE stream without path params
 export const notificationsContract = buildSseContract({
+  method: 'get',
   pathResolver: () => '/api/notifications/stream',
-  params: z.object({}),
-  query: z.object({ userId: z.string().optional() }),
-  requestHeaders: z.object({}),
-  sseEvents: {
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({ userId: z.string().optional() }),
+  requestHeaderSchema: z.object({}),
+  serverSentEventSchemas: {
     notification: z.object({
       id: z.string(),
       message: z.string(),
@@ -432,18 +434,18 @@ export const notificationsContract = buildSseContract({
   },
 })
 
-// POST-based SSE stream (e.g., AI chat completions) - has requestBody = POST/PUT/PATCH
+// POST-based SSE stream (e.g., AI chat completions)
 export const chatCompletionContract = buildSseContract({
   method: 'post',
   pathResolver: () => '/api/chat/completions',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({
     message: z.string(),
     stream: z.literal(true),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     chunk: z.object({ content: z.string() }),
     done: z.object({ totalTokens: z.number() }),
   },
@@ -602,11 +604,11 @@ import { type InferSSERequest, type SSEContext, type SSESession } from 'opiniona
 
 private handleStream = async (
   request: InferSSERequest<typeof chatCompletionContract>,
-  sse: SSEContext<typeof chatCompletionContract['sseEvents']>,
+  sse: SSEContext<typeof chatCompletionContract['serverSentEventSchemas']>,
 ) => {
   // request.body, request.params, etc. all typed from contract
   const session = sse.start('autoClose')
-  // session.send() is typed based on contract sseEvents
+  // session.send() is typed based on contract serverSentEventSchemas
   await session.send('chunk', { content: 'hello' })
   // 'autoClose' mode: connection closes when handler returns
 }
@@ -1414,44 +1416,45 @@ Dual-mode contracts define endpoints that can return **either** a complete sync 
 - You're building OpenAI-style APIs where `stream: true` triggers SSE
 - You need polling fallback for clients that don't support SSE
 
-To create a dual-mode contract, include a `syncResponseBody` schema in your `buildSseContract` call:
-- Has `syncResponseBody` but no `requestBody` → GET dual-mode route
-- Has both `syncResponseBody` and `requestBody` → POST/PUT/PATCH dual-mode route
+To create a dual-mode contract, include a `successResponseBodySchema` in your `buildSseContract` call:
+- Has `successResponseBodySchema` but no `requestBodySchema` → GET dual-mode route
+- Has both `successResponseBodySchema` and `requestBodySchema` → POST/PUT/PATCH dual-mode route
 
 ```ts
 import { z } from 'zod'
 import { buildSseContract } from '@lokalise/api-contracts'
 
-// GET dual-mode route (polling or streaming job status) - has syncResponseBody, no requestBody
+// GET dual-mode route (polling or streaming job status)
 export const jobStatusContract = buildSseContract({
+  method: 'get',
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
-  params: z.object({ jobId: z.string().uuid() }),
-  query: z.object({ verbose: z.string().optional() }),
-  requestHeaders: z.object({}),
-  syncResponseBody: z.object({
+  requestPathParamsSchema: z.object({ jobId: z.string().uuid() }),
+  requestQuerySchema: z.object({ verbose: z.string().optional() }),
+  requestHeaderSchema: z.object({}),
+  successResponseBodySchema: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     progress: z.object({ percent: z.number(), message: z.string().optional() }),
     done: z.object({ result: z.string() }),
   },
 })
 
-// POST dual-mode route (OpenAI-style chat completion) - has both syncResponseBody and requestBody
+// POST dual-mode route (OpenAI-style chat completion)
 export const chatCompletionContract = buildSseContract({
   method: 'post',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
-  params: z.object({ chatId: z.string().uuid() }),
-  query: z.object({}),
-  requestHeaders: z.object({ authorization: z.string() }),
-  requestBody: z.object({ message: z.string() }),
-  syncResponseBody: z.object({
+  requestPathParamsSchema: z.object({ chatId: z.string().uuid() }),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({ authorization: z.string() }),
+  requestBodySchema: z.object({ message: z.string() }),
+  successResponseBodySchema: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     chunk: z.object({ delta: z.string() }),
     done: z.object({ usage: z.object({ total: z.number() }) }),
   },
@@ -1462,24 +1465,24 @@ export const chatCompletionContract = buildSseContract({
 
 ### Response Headers (Sync Mode)
 
-Dual-mode contracts support an optional `responseHeaders` schema to define and validate headers sent with sync responses. This is useful for documenting expected headers (rate limits, pagination, cache control) and validating that your handlers set them correctly:
+Dual-mode contracts support an optional `responseHeaderSchema` to define and validate headers sent with sync responses. This is useful for documenting expected headers (rate limits, pagination, cache control) and validating that your handlers set them correctly:
 
 ```ts
 export const rateLimitedContract = buildSseContract({
   method: 'post',
   pathResolver: () => '/api/rate-limited',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({ data: z.string() }),
-  syncResponseBody: z.object({ result: z.string() }),
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({ data: z.string() }),
+  successResponseBodySchema: z.object({ result: z.string() }),
   // Define expected response headers
-  responseHeaders: z.object({
+  responseHeaderSchema: z.object({
     'x-ratelimit-limit': z.string(),
     'x-ratelimit-remaining': z.string(),
     'x-ratelimit-reset': z.string(),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     result: z.object({ success: z.boolean() }),
   },
 })
@@ -1505,29 +1508,29 @@ handlers: buildHandler(rateLimitedContract, {
 
 If the handler doesn't set the required headers, validation will fail with a `RESPONSE_HEADERS_VALIDATION_FAILED` error.
 
-### Status-Specific Response Schemas (responseSchemasByStatusCode)
+### Status-Specific Response Schemas (responseBodySchemasByStatusCode)
 
-Dual-mode and SSE contracts support `responseSchemasByStatusCode` to define and validate responses for specific HTTP status codes. This is typically used for error responses (4xx, 5xx), but can define schemas for any status code where you need a different response shape:
+Dual-mode and SSE contracts support `responseBodySchemasByStatusCode` to define and validate responses for specific HTTP status codes. This is typically used for error responses (4xx, 5xx), but can define schemas for any status code where you need a different response shape:
 
 ```ts
 export const resourceContract = buildSseContract({
   method: 'post',
   pathResolver: (params) => `/api/resources/${params.id}`,
-  params: z.object({ id: z.string() }),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({ data: z.string() }),
+  requestPathParamsSchema: z.object({ id: z.string() }),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({ data: z.string() }),
   // Success response (2xx)
-  syncResponseBody: z.object({
+  successResponseBodySchema: z.object({
     success: z.boolean(),
     data: z.string(),
   }),
   // Responses by status code (typically used for errors)
-  responseSchemasByStatusCode: {
+  responseBodySchemasByStatusCode: {
     400: z.object({ error: z.string(), details: z.array(z.string()) }),
     404: z.object({ error: z.string(), resourceId: z.string() }),
   },
-  sseEvents: {
+  serverSentEventSchemas: {
     result: z.object({ success: z.boolean() }),
   },
 })
@@ -1572,7 +1575,7 @@ sse.respond(404, { error: 'Not Found', details: [] })        // ✗ Error - wron
 sse.respond(500, { message: 'error' })                       // ✗ Error - 500 not defined in schema
 ```
 
-Only status codes defined in `responseSchemasByStatusCode` are allowed. To use an undefined status code, add it to the schema or use a type assertion.
+Only status codes defined in `responseBodySchemasByStatusCode` are allowed. To use an undefined status code, add it to the schema or use a type assertion.
 
 **Sync handlers (union typing with runtime validation):**
 
@@ -1586,22 +1589,22 @@ sync: (request, reply) => {
 }
 
 // The sync handler return type is automatically:
-// { success: boolean; data: string }           // from syncResponseBody
-// | { error: string; details: string[] }       // from responseSchemasByStatusCode[400]
-// | { error: string; resourceId: string }      // from responseSchemasByStatusCode[404]
+// { success: boolean; data: string }           // from successResponseBodySchema
+// | { error: string; details: string[] }       // from responseBodySchemasByStatusCode[400]
+// | { error: string; resourceId: string }      // from responseBodySchemasByStatusCode[404]
 ```
 
 **Validation behavior:**
 
-- **Success responses (2xx)**: Validated against `syncResponseBody` schema
-- **Non-2xx responses**: Validated against the matching schema in `responseSchemasByStatusCode` (if defined)
+- **Success responses (2xx)**: Validated against `successResponseBodySchema`
+- **Non-2xx responses**: Validated against the matching schema in `responseBodySchemasByStatusCode` (if defined)
 - **Validation failures**: Return 500 Internal Server Error (validation details are logged internally, not exposed to clients)
 
 **Validation priority for 2xx status codes:**
 
-- All 2xx responses (200, 201, 204, etc.) are validated against `syncResponseBody`
-- `responseSchemasByStatusCode` is only used for non-2xx status codes
-- If you define the same 2xx code in both, `syncResponseBody` takes precedence
+- All 2xx responses (200, 201, 204, etc.) are validated against `successResponseBodySchema`
+- `responseBodySchemasByStatusCode` is only used for non-2xx status codes
+- If you define the same 2xx code in both, `successResponseBodySchema` takes precedence
 
 ### Single Sync Handler
 
@@ -1610,7 +1613,7 @@ Dual-mode contracts use a single `sync` handler that returns the response data. 
 ```ts
 handlers: buildHandler(chatCompletionContract, {
   sync: async (request, reply) => {
-    // Return the response data matching syncResponseBody schema
+    // Return the response data matching successResponseBodySchema
     const result = await aiService.complete(request.body.message)
     return {
       reply: result.text,
@@ -1626,8 +1629,8 @@ handlers: buildHandler(chatCompletionContract, {
 ```
 
 TypeScript enforces the correct handler structure:
-- `syncResponseBody` contracts must use `sync` handler (returns response data)
-- `sseEvents` contracts must use `sse` handler (streams events)
+- `successResponseBodySchema` contracts must use `sync` handler (returns response data)
+- `serverSentEventSchemas` contracts must use `sse` handler (streams events)
 
 ### Implementing Dual-Mode Controllers
 
@@ -1711,7 +1714,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 | `sync` | `(request, reply) => Response` |
 | `sse` | `(request, sse) => SSEHandlerResult` |
 
-The `sync` handler must return a value matching `syncResponseBody` schema. The `sse` handler uses `sse.start(mode)` to begin streaming (`'autoClose'` for request-response, `'keepAlive'` for long-lived sessions) and `session.send()` for type-safe event sending.
+The `sync` handler must return a value matching `successResponseBodySchema`. The `sse` handler uses `sse.start(mode)` to begin streaming (`'autoClose'` for request-response, `'keepAlive'` for long-lived sessions) and `session.send()` for type-safe event sending.
 
 ### Registering Dual-Mode Controllers
 

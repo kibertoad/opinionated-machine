@@ -1166,7 +1166,7 @@ describe('Dual-Mode responseSchemasByStatusCode Validation', () => {
     await server.close()
   })
 
-  it('validates 200 responses against syncResponseBody', async () => {
+  it('validates 200 responses against successResponseBodySchema', async () => {
     const response = await server.app.inject({
       method: 'post',
       url: '/api/status-code-validation',

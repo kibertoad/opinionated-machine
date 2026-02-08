@@ -53,12 +53,12 @@ function buildSSEConfig(
 }
 
 /**
- * Validate response body against the syncResponseBody schema (for 2xx success responses).
+ * Validate response body against the successResponseBodySchema (for 2xx success responses).
  *
- * Only validates if the contract defines a syncResponseBody schema.
+ * Only validates if the contract defines a successResponseBodySchema.
  * Validation errors are not exposed to clients - only logged internally.
  *
- * @param contract - The dual-mode contract containing the syncResponseBody schema
+ * @param contract - The dual-mode contract containing the successResponseBodySchema
  * @param response - The response body to validate
  * @throws {InternalError} When validation fails with errorCode 'RESPONSE_VALIDATION_FAILED'
  */
@@ -96,7 +96,7 @@ function validateSyncResponseBody(
  * ```typescript
  * // In a contract definition:
  * const contract = buildContract({
- *   responseSchemasByStatusCode: {
+ *   responseBodySchemasByStatusCode: {
  *     400: z.object({ error: z.string(), details: z.array(z.string()) }),
  *     404: z.object({ error: z.string(), resourceId: z.string() }),
  *   },
@@ -180,8 +180,8 @@ async function handleSyncMode<Contract extends AnyDualModeContractDefinition>(
   const statusCode = reply.statusCode ?? 200
 
   // Validate response based on status code:
-  // - 2xx success codes: use syncResponseBody
-  // - Other codes: use responseSchemasByStatusCode if defined
+  // - 2xx success codes: use successResponseBodySchema
+  // - Other codes: use responseBodySchemasByStatusCode if defined
   try {
     if (statusCode >= 200 && statusCode < 300) {
       validateSyncResponseBody(contract, response)

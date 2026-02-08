@@ -5,7 +5,7 @@ import type { InferDualModeHandlers } from './fastifyRouteTypes.ts'
 import { buildHandler } from './fastifyRouteTypes.ts'
 
 describe('Handler Type Enforcement', () => {
-  describe('Dual-mode contracts (syncResponseBody)', () => {
+  describe('Dual-mode contracts (successResponseBodySchema)', () => {
     const dualModeContract = buildContract({
       method: 'post',
       pathResolver: () => '/api/chat',
@@ -111,7 +111,7 @@ describe('Handler Type Enforcement', () => {
     })
   })
 
-  describe('sse.respond() with responseSchemasByStatusCode', () => {
+  describe('sse.respond() with responseBodySchemasByStatusCode', () => {
     const contractWithStatusSchemas = buildContract({
       method: 'post',
       pathResolver: () => '/api/resource',
@@ -188,7 +188,7 @@ describe('Handler Type Enforcement', () => {
       buildHandler(contractWithStatusSchemas, {
         sync: () => ({ success: true, data: 'OK' }),
         sse: (_req, sse) => {
-          // 500 is not defined in responseSchemasByStatusCode
+          // 500 is not defined in responseBodySchemasByStatusCode
           // @ts-expect-error - 500 is not a valid status code for this contract
           return sse.respond(500, { message: 'Internal error' })
         },

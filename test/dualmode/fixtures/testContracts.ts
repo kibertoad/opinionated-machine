@@ -137,7 +137,7 @@ export const defaultMethodContract = buildContract({
 
 /**
  * POST dual-mode route for testing JSON response validation failure.
- * The syncResponseBody schema is strict, but the handler will return mismatched data.
+ * The successResponseBodySchema is strict, but the handler will return mismatched data.
  */
 export const jsonValidationContract = buildContract({
   method: 'post',
