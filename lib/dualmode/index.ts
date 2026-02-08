@@ -1,7 +1,7 @@
 // Re-export contract types from @lokalise/api-contracts
 export type {
   AnyDualModeContractDefinition,
-  SimplifiedDualModeContractDefinition,
+  DualModeContractDefinition,
 } from '@lokalise/api-contracts'
 // Re-export route types from routes module
 export {

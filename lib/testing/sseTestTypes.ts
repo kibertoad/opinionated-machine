@@ -63,19 +63,21 @@ export type SSEConnectOptions = {
  * Options for injectSSE (GET SSE routes).
  */
 export type InjectSSEOptions<Contract extends AnySSEContractDefinition> = {
-  params?: z.infer<Contract['params']>
-  query?: z.infer<Contract['query']>
-  headers?: z.infer<Contract['requestHeaders']>
+  params?: z.infer<Contract['requestPathParamsSchema']>
+  query?: z.infer<Contract['requestQuerySchema']>
+  headers?: z.infer<Contract['requestHeaderSchema']>
 }
 
 /**
  * Options for injectPayloadSSE (POST/PUT/PATCH SSE routes).
  */
 export type InjectPayloadSSEOptions<Contract extends AnySSEContractDefinition> = {
-  params?: z.infer<Contract['params']>
-  query?: z.infer<Contract['query']>
-  headers?: z.infer<Contract['requestHeaders']>
-  body: Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : never
+  params?: z.infer<Contract['requestPathParamsSchema']>
+  query?: z.infer<Contract['requestQuerySchema']>
+  headers?: z.infer<Contract['requestHeaderSchema']>
+  body: Contract['requestBodySchema'] extends z.ZodTypeAny
+    ? z.infer<Contract['requestBodySchema']>
+    : never
 }
 
 /**

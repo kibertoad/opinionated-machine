@@ -1,4 +1,7 @@
-import {type AnyDualModeContractDefinition, buildSseContract as buildContract} from '@lokalise/api-contracts'
+import {
+  type AnyDualModeContractDefinition,
+  buildSseContract as buildContract,
+} from '@lokalise/api-contracts'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'

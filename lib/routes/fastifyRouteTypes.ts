@@ -457,12 +457,14 @@ export type FastifySSEHandlerConfig<Contract extends AnySSEContractDefinition> =
   contract: Contract
   /** Handlers object containing the SSE handler */
   handlers: SSEOnlyHandlers<
-    Contract['sseEvents'],
-    z.infer<Contract['params']>,
-    z.infer<Contract['query']>,
-    z.infer<Contract['requestHeaders']>,
-    Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
-    Contract['responseSchemasByStatusCode']
+    Contract['serverSentEventSchemas'],
+    z.infer<Contract['requestPathParamsSchema']>,
+    z.infer<Contract['requestQuerySchema']>,
+    z.infer<Contract['requestHeaderSchema']>,
+    Contract['requestBodySchema'] extends z.ZodTypeAny
+      ? z.infer<Contract['requestBodySchema']>
+      : undefined,
+    Contract['responseBodySchemasByStatusCode']
   >
   /** Optional route configuration */
   options?: FastifySSERouteOptions
@@ -495,10 +497,12 @@ export type BuildFastifySSERoutesReturnType<
  * ```
  */
 export type InferSSERequest<Contract extends AnySSEContractDefinition> = FastifyRequest<{
-  Params: z.infer<Contract['params']>
-  Querystring: z.infer<Contract['query']>
-  Headers: z.infer<Contract['requestHeaders']>
-  Body: Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined
+  Params: z.infer<Contract['requestPathParamsSchema']>
+  Querystring: z.infer<Contract['requestQuerySchema']>
+  Headers: z.infer<Contract['requestHeaderSchema']>
+  Body: Contract['requestBodySchema'] extends z.ZodTypeAny
+    ? z.infer<Contract['requestBodySchema']>
+    : undefined
 }>
 
 // ============================================================================
@@ -663,18 +667,20 @@ export type FastifyDualModeRouteOptions = FastifySSERouteOptions & {
  */
 export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition> =
   DualModeHandlers<
-    z.infer<Contract['params']>,
-    z.infer<Contract['query']>,
-    z.infer<Contract['requestHeaders']>,
-    Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
+    z.infer<Contract['requestPathParamsSchema']>,
+    z.infer<Contract['requestQuerySchema']>,
+    z.infer<Contract['requestHeaderSchema']>,
+    Contract['requestBodySchema'] extends z.ZodTypeAny
+      ? z.infer<Contract['requestBodySchema']>
+      : undefined,
     // Union of success response + error responses from responseSchemasByStatusCode
-    | (Contract['syncResponseBody'] extends z.ZodTypeAny
-        ? z.infer<Contract['syncResponseBody']>
+    | (Contract['successResponseBodySchema'] extends z.ZodTypeAny
+        ? z.infer<Contract['successResponseBodySchema']>
         : unknown)
-    | InferErrorResponses<Contract['responseSchemasByStatusCode']>,
-    Contract['sseEvents'],
+    | InferErrorResponses<Contract['responseBodySchemasByStatusCode']>,
+    Contract['serverSentEventSchemas'],
     // Pass responseSchemasByStatusCode for strict sse.respond() typing
-    Contract['responseSchemasByStatusCode']
+    Contract['responseBodySchemasByStatusCode']
   >
 
 /**
@@ -730,12 +736,14 @@ export type InferHandlers<Contract> = Contract extends AnyDualModeContractDefini
   ? InferDualModeHandlers<Contract>
   : Contract extends AnySSEContractDefinition
     ? SSEOnlyHandlers<
-        Contract['sseEvents'],
-        z.infer<Contract['params']>,
-        z.infer<Contract['query']>,
-        z.infer<Contract['requestHeaders']>,
-        Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
-        Contract['responseSchemasByStatusCode']
+        Contract['serverSentEventSchemas'],
+        z.infer<Contract['requestPathParamsSchema']>,
+        z.infer<Contract['requestQuerySchema']>,
+        z.infer<Contract['requestHeaderSchema']>,
+        Contract['requestBodySchema'] extends z.ZodTypeAny
+          ? z.infer<Contract['requestBodySchema']>
+          : undefined,
+        Contract['responseBodySchemasByStatusCode']
       >
     : never
 
@@ -746,12 +754,14 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
   ? InferDualModeHandlers<Contract>
   : Contract extends AnySSEContractDefinition
     ? SSEOnlyHandlers<
-        Contract['sseEvents'],
-        z.infer<Contract['params']>,
-        z.infer<Contract['query']>,
-        z.infer<Contract['requestHeaders']>,
-        Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
-        Contract['responseSchemasByStatusCode']
+        Contract['serverSentEventSchemas'],
+        z.infer<Contract['requestPathParamsSchema']>,
+        z.infer<Contract['requestQuerySchema']>,
+        z.infer<Contract['requestHeaderSchema']>,
+        Contract['requestBodySchema'] extends z.ZodTypeAny
+          ? z.infer<Contract['requestBodySchema']>
+          : undefined,
+        Contract['responseBodySchemasByStatusCode']
       >
     : never
 
@@ -769,12 +779,14 @@ export type SSERouteHandler<Contract extends AnySSEContractDefinition> = {
   readonly __type: 'SSERouteHandler'
   readonly contract: Contract
   readonly handlers: SSEOnlyHandlers<
-    Contract['sseEvents'],
-    z.infer<Contract['params']>,
-    z.infer<Contract['query']>,
-    z.infer<Contract['requestHeaders']>,
-    Contract['requestBody'] extends z.ZodTypeAny ? z.infer<Contract['requestBody']> : undefined,
-    Contract['responseSchemasByStatusCode']
+    Contract['serverSentEventSchemas'],
+    z.infer<Contract['requestPathParamsSchema']>,
+    z.infer<Contract['requestQuerySchema']>,
+    z.infer<Contract['requestHeaderSchema']>,
+    Contract['requestBodySchema'] extends z.ZodTypeAny
+      ? z.infer<Contract['requestBodySchema']>
+      : undefined,
+    Contract['responseBodySchemasByStatusCode']
   >
   readonly options?: FastifySSERouteOptions
 }

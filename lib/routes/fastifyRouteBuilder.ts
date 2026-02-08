@@ -66,7 +66,7 @@ function validateSyncResponseBody(
   contract: AnyDualModeContractDefinition,
   response: unknown,
 ): void {
-  const schema = contract.syncResponseBody
+  const schema = contract.successResponseBodySchema
   if (!schema) return
 
   const result = schema.safeParse(response)
@@ -186,7 +186,7 @@ async function handleSyncMode<Contract extends AnyDualModeContractDefinition>(
     if (statusCode >= 200 && statusCode < 300) {
       validateSyncResponseBody(contract, response)
     } else {
-      validateResponseByStatusCode(contract.responseSchemasByStatusCode, statusCode, response)
+      validateResponseByStatusCode(contract.responseBodySchemasByStatusCode, statusCode, response)
     }
   } catch (err) {
     // Reset status code to 500 for validation errors
@@ -199,7 +199,7 @@ async function handleSyncMode<Contract extends AnyDualModeContractDefinition>(
   // Explicitly set content-type to override SSE default (from sse: true option)
   reply.type('application/json')
 
-  validateResponseHeaders(contract.responseHeaders, reply)
+  validateResponseHeaders(contract.responseHeaderSchema, reply)
 
   return reply.send(response)
 }
@@ -262,7 +262,7 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
     controller,
     request,
     reply,
-    contract.sseEvents,
+    contract.serverSentEventSchemas,
     options,
     'dual-mode SSE',
   )
@@ -289,7 +289,7 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
       contextResult.connectionClosed,
       reply,
       contextResult.getMode(),
-      contract.responseSchemasByStatusCode,
+      contract.responseBodySchemasByStatusCode,
     )
   } catch (err) {
     // If streaming was started, send error event to client and re-throw for logging
@@ -338,23 +338,23 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
 
   // Extract Fastify path template from pathResolver
   // Runtime guard: extractPathTemplate requires a ZodObject to access .shape for parameter names
-  if (!(contract.params instanceof ZodObject)) {
+  if (!(contract.requestPathParamsSchema instanceof ZodObject)) {
     throw new InternalError({
-      message: `Route params schema must be a ZodObject for path template extraction, got ${contract.params.constructor.name}`,
+      message: `Route params schema must be a ZodObject for path template extraction, got ${contract.requestPathParamsSchema.constructor.name}`,
       errorCode: 'INVALID_PARAMS_SCHEMA',
     })
   }
-  const url = extractPathTemplate(contract.pathResolver, contract.params)
+  const url = extractPathTemplate(contract.pathResolver, contract.requestPathParamsSchema)
 
   const routeOptions: RouteOptions = {
     method: contract.method,
     url,
     sse: buildSSEConfig(options), // Enable SSE support with optional per-route config
     schema: {
-      params: contract.params,
-      querystring: contract.query,
-      headers: contract.requestHeaders,
-      ...(contract.requestBody && { body: contract.requestBody }),
+      params: contract.requestPathParamsSchema,
+      querystring: contract.requestQuerySchema,
+      headers: contract.requestHeaderSchema,
+      ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
       // Note: response schema for sync mode could be added here
     },
     handler: async (request, reply) => {
@@ -394,23 +394,23 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
   const { contract, handlers, options } = config
 
   // Runtime guard: extractPathTemplate requires a ZodObject to access .shape for parameter names
-  if (!(contract.params instanceof ZodObject)) {
+  if (!(contract.requestPathParamsSchema instanceof ZodObject)) {
     throw new InternalError({
-      message: `Route params schema must be a ZodObject for path template extraction, got ${contract.params.constructor.name}`,
+      message: `Route params schema must be a ZodObject for path template extraction, got ${contract.requestPathParamsSchema.constructor.name}`,
       errorCode: 'INVALID_PARAMS_SCHEMA',
     })
   }
-  const url = extractPathTemplate(contract.pathResolver, contract.params)
+  const url = extractPathTemplate(contract.pathResolver, contract.requestPathParamsSchema)
 
   const routeOptions: RouteOptions = {
     method: contract.method,
     url,
     sse: buildSSEConfig(options), // Enable SSE support with optional per-route config
     schema: {
-      params: contract.params,
-      querystring: contract.query,
-      headers: contract.requestHeaders,
-      ...(contract.requestBody && { body: contract.requestBody }),
+      params: contract.requestPathParamsSchema,
+      querystring: contract.requestQuerySchema,
+      headers: contract.requestHeaderSchema,
+      ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
     },
     // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Core SSE route handler must coordinate context, error handling, and result processing
     handler: async (request, reply) => {
@@ -419,7 +419,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         controller,
         request,
         reply,
-        contract.sseEvents,
+        contract.serverSentEventSchemas,
         options,
         'SSE',
       )
@@ -448,7 +448,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
           contextResult.connectionClosed,
           reply,
           contextResult.getMode(),
-          contract.responseSchemasByStatusCode,
+          contract.responseBodySchemasByStatusCode,
         )
       } catch (err) {
         // If streaming was started, send error event to client and re-throw for logging

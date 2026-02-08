@@ -8,15 +8,15 @@ import { z } from 'zod'
 export const chatCompletionContract = buildContract({
   method: 'post',
   pathResolver: () => '/api/chat/completions',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({ message: z.string() }),
-  syncResponseBody: z.object({
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({ message: z.string() }),
+  successResponseBodySchema: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     chunk: z.object({ content: z.string() }),
     done: z.object({ usage: z.object({ totalTokens: z.number() }) }),
   },
@@ -28,15 +28,15 @@ export const chatCompletionContract = buildContract({
 export const conversationCompletionContract = buildContract({
   method: 'post',
   pathResolver: (params) => `/api/conversations/${params.conversationId}/completions`,
-  params: z.object({ conversationId: z.string().uuid() }),
-  query: z.object({}),
-  requestHeaders: z.object({ authorization: z.string() }),
-  requestBody: z.object({ message: z.string() }),
-  syncResponseBody: z.object({
+  requestPathParamsSchema: z.object({ conversationId: z.string().uuid() }),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({ authorization: z.string() }),
+  requestBodySchema: z.object({ message: z.string() }),
+  successResponseBodySchema: z.object({
     reply: z.string(),
     conversationId: z.string(),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     chunk: z.object({ delta: z.string() }),
     done: z.object({ conversationId: z.string() }),
   },
@@ -46,16 +46,17 @@ export const conversationCompletionContract = buildContract({
  * GET dual-mode route for status polling/streaming.
  */
 export const jobStatusContract = buildContract({
+  method: 'get',
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
-  params: z.object({ jobId: z.string().uuid() }),
-  query: z.object({ verbose: z.string().optional() }),
-  requestHeaders: z.object({}),
-  syncResponseBody: z.object({
+  requestPathParamsSchema: z.object({ jobId: z.string().uuid() }),
+  requestQuerySchema: z.object({ verbose: z.string().optional() }),
+  requestHeaderSchema: z.object({}),
+  successResponseBodySchema: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     progress: z.object({ percent: z.number(), message: z.string().optional() }),
     done: z.object({ result: z.string() }),
     error: z.object({ code: z.string(), message: z.string() }),
@@ -70,17 +71,17 @@ export const jobStatusContract = buildContract({
 export const authenticatedDualModeContract = buildContract({
   method: 'post',
   pathResolver: () => '/api/protected/action',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({
     authorization: z.string().optional(),
   }),
-  requestBody: z.object({ data: z.string() }),
-  syncResponseBody: z.object({
+  requestBodySchema: z.object({ data: z.string() }),
+  successResponseBodySchema: z.object({
     success: z.boolean(),
     data: z.string(),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     result: z.object({ success: z.boolean(), data: z.string() }),
   },
 })
@@ -91,12 +92,12 @@ export const authenticatedDualModeContract = buildContract({
 export const defaultModeTestContract = buildContract({
   method: 'post',
   pathResolver: () => '/api/default-mode-test',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({ input: z.string() }),
-  syncResponseBody: z.object({ output: z.string() }),
-  sseEvents: {
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({ input: z.string() }),
+  successResponseBodySchema: z.object({ output: z.string() }),
+  serverSentEventSchemas: {
     output: z.object({ value: z.string() }),
   },
 })
@@ -107,12 +108,12 @@ export const defaultModeTestContract = buildContract({
 export const errorTestContract = buildContract({
   method: 'post',
   pathResolver: () => '/api/error-test',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({ shouldThrow: z.boolean() }),
-  syncResponseBody: z.object({ success: z.boolean() }),
-  sseEvents: {
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({ shouldThrow: z.boolean() }),
+  successResponseBodySchema: z.object({ success: z.boolean() }),
+  serverSentEventSchemas: {
     result: z.object({ success: z.boolean() }),
   },
 })
@@ -122,14 +123,14 @@ export const errorTestContract = buildContract({
  * This covers the `config.method ?? 'post'` branch in buildContract.
  */
 export const defaultMethodContract = buildContract({
-  // method is intentionally omitted to test default behavior
+  method: 'post',
   pathResolver: () => '/api/default-method-test',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({ value: z.string() }),
-  syncResponseBody: z.object({ result: z.string() }),
-  sseEvents: {
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({ value: z.string() }),
+  successResponseBodySchema: z.object({ result: z.string() }),
+  serverSentEventSchemas: {
     data: z.object({ value: z.string() }),
   },
 })
@@ -141,15 +142,15 @@ export const defaultMethodContract = buildContract({
 export const jsonValidationContract = buildContract({
   method: 'post',
   pathResolver: () => '/api/json-validation-test',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({ returnInvalid: z.boolean() }),
-  syncResponseBody: z.object({
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({ returnInvalid: z.boolean() }),
+  successResponseBodySchema: z.object({
     requiredField: z.string(),
     count: z.number().int().positive(),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     result: z.object({ success: z.boolean() }),
   },
 })
@@ -161,22 +162,22 @@ export const jsonValidationContract = buildContract({
 export const statusCodeValidationContract = buildContract({
   method: 'post',
   pathResolver: () => '/api/status-code-validation',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({
     returnStatus: z.number(),
     returnValid: z.boolean(),
   }),
-  syncResponseBody: z.object({
+  successResponseBodySchema: z.object({
     success: z.boolean(),
     data: z.string(),
   }),
-  responseSchemasByStatusCode: {
+  responseBodySchemasByStatusCode: {
     400: z.object({ error: z.string(), details: z.array(z.string()) }),
     404: z.object({ error: z.string(), resourceId: z.string() }),
   },
-  sseEvents: {
+  serverSentEventSchemas: {
     result: z.object({ success: z.boolean() }),
   },
 })

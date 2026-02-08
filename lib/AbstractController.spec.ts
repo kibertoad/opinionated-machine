@@ -1,7 +1,5 @@
 import { buildContract } from '@lokalise/api-contracts'
-import {
-  buildFastifyRoute,
-} from '@lokalise/fastify-api-contracts'
+import { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
 import { describe, expectTypeOf, it } from 'vitest'
 import { z } from 'zod/v4'
 import type { BuildRoutesReturnType } from '../lib/AbstractController.js'

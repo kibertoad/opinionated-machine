@@ -1,7 +1,5 @@
 import { buildRestContract } from '@lokalise/api-contracts'
-import {
-  buildFastifyRoute
-} from '@lokalise/fastify-api-contracts'
+import { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
 import { boolean, z } from 'zod/v4'
 import { AbstractController, type BuildRoutesReturnType } from '../lib/AbstractController.js'
 import type { TestModuleDependencies, TestService } from './TestModule.js'
@@ -59,14 +57,11 @@ export class TestController extends AbstractController<typeof TestController.con
     this.service = testService
   }
 
-  private getItem = buildFastifyRoute(
-    TestController.contracts.getItem,
-    async (req, reply) => {
-      req.log.info(req.params.userId)
-      this.service.execute()
-      await reply.status(200).send({ success: true })
-    },
-  )
+  private getItem = buildFastifyRoute(TestController.contracts.getItem, async (req, reply) => {
+    req.log.info(req.params.userId)
+    this.service.execute()
+    await reply.status(200).send({ success: true })
+  })
 
   private deleteItem = buildFastifyRoute(
     TestController.contracts.deleteItem,
@@ -77,12 +72,9 @@ export class TestController extends AbstractController<typeof TestController.con
     },
   )
 
-  private createItem = buildFastifyRoute(
-    TestController.contracts.createItem,
-    async (_, reply) => {
-      await reply.status(200).send({ success: true })
-    },
-  )
+  private createItem = buildFastifyRoute(TestController.contracts.createItem, async (_, reply) => {
+    await reply.status(200).send({ success: true })
+  })
 
   private updateItem = buildFastifyRoute(
     TestController.contracts.updateItem,

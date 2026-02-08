@@ -133,7 +133,7 @@ Controllers require using fastify-api-contracts and allow to define application 
 
 ```ts
 import { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
-import { buildDeleteRoute } from '@lokalise/universal-ts-utils/api-contracts/apiContracts'
+import { buildRestContract } from '@lokalise/api-contracts'
 import { z } from 'zod/v4'
 import { AbstractController } from 'opinionated-machine'
 
@@ -142,7 +142,8 @@ const PATH_PARAMS_SCHEMA = z.object({
   userId: z.string(),
 })
 
-const contract = buildDeleteRoute({
+const contract = buildRestContract({
+  method: 'delete',
   successResponseBodySchema: BODY_SCHEMA,
   requestPathParamsSchema: PATH_PARAMS_SCHEMA,
   pathResolver: (pathParams) => `/users/${pathParams.userId}`,

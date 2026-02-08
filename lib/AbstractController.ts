@@ -4,9 +4,7 @@ import type {
   GetRouteDefinition,
   PayloadRouteDefinition,
 } from '@lokalise/api-contracts'
-import type {
-  buildFastifyRoute
-} from '@lokalise/fastify-api-contracts'
+import type { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
 import type { z } from 'zod/v4'
 
 // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
