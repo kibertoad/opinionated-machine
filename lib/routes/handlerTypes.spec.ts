@@ -5,16 +5,16 @@ import type { InferDualModeHandlers } from './fastifyRouteTypes.ts'
 import { buildHandler } from './fastifyRouteTypes.ts'
 
 describe('Handler Type Enforcement', () => {
-  describe('Dual-mode contracts (syncResponseBody)', () => {
+  describe('Dual-mode contracts (successResponseBodySchema)', () => {
     const dualModeContract = buildContract({
       method: 'post',
       pathResolver: () => '/api/chat',
-      params: z.object({}),
-      query: z.object({}),
-      requestHeaders: z.object({}),
-      requestBody: z.object({ message: z.string() }),
-      syncResponseBody: z.object({ reply: z.string() }),
-      sseEvents: { chunk: z.object({ delta: z.string() }) },
+      requestPathParamsSchema: z.object({}),
+      requestQuerySchema: z.object({}),
+      requestHeaderSchema: z.object({}),
+      requestBodySchema: z.object({ message: z.string() }),
+      successResponseBodySchema: z.object({ reply: z.string() }),
+      serverSentEventSchemas: { chunk: z.object({ delta: z.string() }) },
     })
 
     it('requires sync handler, not json handler', () => {
@@ -56,12 +56,12 @@ describe('Handler Type Enforcement', () => {
       const dualModeContract = buildContract({
         method: 'post',
         pathResolver: () => '/api/chat',
-        params: z.object({}),
-        query: z.object({}),
-        requestHeaders: z.object({}),
-        requestBody: z.object({ message: z.string() }),
-        syncResponseBody: z.object({ reply: z.string() }),
-        sseEvents: { chunk: z.object({ delta: z.string() }) },
+        requestPathParamsSchema: z.object({}),
+        requestQuerySchema: z.object({}),
+        requestHeaderSchema: z.object({}),
+        requestBodySchema: z.object({ message: z.string() }),
+        successResponseBodySchema: z.object({ reply: z.string() }),
+        serverSentEventSchemas: { chunk: z.object({ delta: z.string() }) },
       })
 
       // This should compile without errors
@@ -85,11 +85,12 @@ describe('Handler Type Enforcement', () => {
 
     it('accepts valid SSE-only handlers', () => {
       const sseContract = buildContract({
+        method: 'get',
         pathResolver: () => '/api/stream',
-        params: z.object({}),
-        query: z.object({}),
-        requestHeaders: z.object({}),
-        sseEvents: { data: z.object({ value: z.string() }) },
+        requestPathParamsSchema: z.object({}),
+        requestQuerySchema: z.object({}),
+        requestHeaderSchema: z.object({}),
+        serverSentEventSchemas: { data: z.object({ value: z.string() }) },
       })
 
       // This should compile without errors
@@ -110,20 +111,20 @@ describe('Handler Type Enforcement', () => {
     })
   })
 
-  describe('sse.respond() with responseSchemasByStatusCode', () => {
+  describe('sse.respond() with responseBodySchemasByStatusCode', () => {
     const contractWithStatusSchemas = buildContract({
       method: 'post',
       pathResolver: () => '/api/resource',
-      params: z.object({}),
-      query: z.object({}),
-      requestHeaders: z.object({}),
-      requestBody: z.object({ data: z.string() }),
-      syncResponseBody: z.object({ success: z.boolean(), data: z.string() }),
-      responseSchemasByStatusCode: {
+      requestPathParamsSchema: z.object({}),
+      requestQuerySchema: z.object({}),
+      requestHeaderSchema: z.object({}),
+      requestBodySchema: z.object({ data: z.string() }),
+      successResponseBodySchema: z.object({ success: z.boolean(), data: z.string() }),
+      responseBodySchemasByStatusCode: {
         400: z.object({ error: z.string(), details: z.array(z.string()) }),
         404: z.object({ error: z.string(), resourceId: z.string() }),
       },
-      sseEvents: { result: z.object({ success: z.boolean() }) },
+      serverSentEventSchemas: { result: z.object({ success: z.boolean() }) },
     })
 
     it('accepts valid sse.respond() calls with correct schema', () => {
@@ -187,7 +188,7 @@ describe('Handler Type Enforcement', () => {
       buildHandler(contractWithStatusSchemas, {
         sync: () => ({ success: true, data: 'OK' }),
         sse: (_req, sse) => {
-          // 500 is not defined in responseSchemasByStatusCode
+          // 500 is not defined in responseBodySchemasByStatusCode
           // @ts-expect-error - 500 is not a valid status code for this contract
           return sse.respond(500, { message: 'Internal error' })
         },

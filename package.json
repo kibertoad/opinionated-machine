@@ -34,8 +34,8 @@
         "ts-deepmerge": "^7.0.3"
     },
     "peerDependencies": {
-        "@lokalise/api-contracts": ">=6.2.0",
-        "@lokalise/fastify-api-contracts": ">=5.0.0",
+        "@lokalise/api-contracts": ">=6.5.1",
+        "@lokalise/fastify-api-contracts": ">=5.2.0",
         "@lokalise/node-core": ">=14.7.4",
         "awilix": ">=12.0.0",
         "awilix-manager": ">=6.0.0",
@@ -46,13 +46,13 @@
     "devDependencies": {
         "@types/node": "^22.19.7",
         "@biomejs/biome": "2.3.14",
-        "@lokalise/api-contracts": "^6.2.0",
+        "@lokalise/api-contracts": "^6.5.1",
         "@lokalise/biome-config": "^3.1.1",
-        "@lokalise/fastify-api-contracts": "^5.1.1",
+        "@lokalise/fastify-api-contracts": "^5.2.0",
         "@lokalise/node-core": "^14.7.4",
         "@lokalise/tsconfig": "^3.1.0",
         "@vitest/coverage-v8": "^4.0.18",
-        "awilix": "^12.0.5",
+        "awilix": "^12.1.0",
         "awilix-manager": "^6.3.0",
         "fastify": "^5.7.0",
         "fastify-type-provider-zod": "^6.1.0",

@@ -1,4 +1,7 @@
-import { buildSseContract as buildContract } from '@lokalise/api-contracts'
+import {
+  type AnyDualModeContractDefinition,
+  buildSseContract as buildContract,
+} from '@lokalise/api-contracts'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -852,16 +855,16 @@ describe('Dual-Mode Route Builder Validation', () => {
 
     // Create an invalid contract where params is a ZodString instead of ZodObject
     const invalidContract = {
-      method: 'post' as const,
+      method: 'post',
       pathResolver: () => '/api/invalid',
-      params: z.string(), // Invalid: should be ZodObject
-      query: z.object({}),
-      requestHeaders: z.object({}),
-      requestBody: z.object({ data: z.string() }),
-      syncResponseBody: z.object({ result: z.string() }),
-      sseEvents: { result: z.object({ success: z.boolean() }) },
+      requestPathParamsSchema: z.string(), // Invalid: should be ZodObject
+      requestQuerySchema: z.object({}),
+      requestHeaderSchema: z.object({}),
+      requestBodySchema: z.object({ data: z.string() }),
+      successResponseBodySchema: z.object({ result: z.string() }),
+      serverSentEventSchemas: { result: z.object({ success: z.boolean() }) },
       isDualMode: true as const,
-    }
+    } satisfies AnyDualModeContractDefinition
 
     expect(() =>
       buildFastifyRoute(
@@ -940,16 +943,16 @@ describe('Dual-Mode Response Headers', () => {
     const contractWithHeaders = buildContract({
       method: 'post',
       pathResolver: () => '/api/with-headers',
-      params: z.object({}),
-      query: z.object({}),
-      requestHeaders: z.object({}),
-      requestBody: z.object({ data: z.string() }),
-      syncResponseBody: z.object({ result: z.string() }),
-      responseHeaders: z.object({
+      requestPathParamsSchema: z.object({}),
+      requestQuerySchema: z.object({}),
+      requestHeaderSchema: z.object({}),
+      requestBodySchema: z.object({ data: z.string() }),
+      successResponseBodySchema: z.object({ result: z.string() }),
+      responseHeaderSchema: z.object({
         'x-request-id': z.string(),
         'x-ratelimit-remaining': z.string(),
       }),
-      sseEvents: { result: z.object({ success: z.boolean() }) },
+      serverSentEventSchemas: { result: z.object({ success: z.boolean() }) },
     })
 
     const route = buildFastifyRoute(
@@ -1012,15 +1015,15 @@ describe('Dual-Mode Response Headers', () => {
     const contractWithHeaders = buildContract({
       method: 'post',
       pathResolver: () => '/api/missing-headers',
-      params: z.object({}),
-      query: z.object({}),
-      requestHeaders: z.object({}),
-      requestBody: z.object({ data: z.string() }),
-      syncResponseBody: z.object({ result: z.string() }),
-      responseHeaders: z.object({
+      requestPathParamsSchema: z.object({}),
+      requestQuerySchema: z.object({}),
+      requestHeaderSchema: z.object({}),
+      requestBodySchema: z.object({ data: z.string() }),
+      successResponseBodySchema: z.object({ result: z.string() }),
+      responseHeaderSchema: z.object({
         'x-required-header': z.string(),
       }),
-      sseEvents: { result: z.object({ success: z.boolean() }) },
+      serverSentEventSchemas: { result: z.object({ success: z.boolean() }) },
     })
 
     const route = buildFastifyRoute(
@@ -1080,13 +1083,13 @@ describe('Dual-Mode Response Headers', () => {
     const contractWithoutHeaders = buildContract({
       method: 'post',
       pathResolver: () => '/api/no-headers',
-      params: z.object({}),
-      query: z.object({}),
-      requestHeaders: z.object({}),
-      requestBody: z.object({ data: z.string() }),
-      syncResponseBody: z.object({ result: z.string() }),
+      requestPathParamsSchema: z.object({}),
+      requestQuerySchema: z.object({}),
+      requestHeaderSchema: z.object({}),
+      requestBodySchema: z.object({ data: z.string() }),
+      successResponseBodySchema: z.object({ result: z.string() }),
       // No responseHeaders - should still work
-      sseEvents: { result: z.object({ success: z.boolean() }) },
+      serverSentEventSchemas: { result: z.object({ success: z.boolean() }) },
     })
 
     const route = buildFastifyRoute(
@@ -1163,7 +1166,7 @@ describe('Dual-Mode responseSchemasByStatusCode Validation', () => {
     await server.close()
   })
 
-  it('validates 200 responses against syncResponseBody', async () => {
+  it('validates 200 responses against successResponseBodySchema', async () => {
     const response = await server.app.inject({
       method: 'post',
       url: '/api/status-code-validation',

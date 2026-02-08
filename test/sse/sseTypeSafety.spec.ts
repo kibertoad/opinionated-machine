@@ -22,14 +22,14 @@ import {
 const chatStreamContract = buildContract({
   method: 'post',
   pathResolver: () => '/api/chat/stream',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({ authorization: z.string() }),
-  requestBody: z.object({
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({ authorization: z.string() }),
+  requestBodySchema: z.object({
     model: z.string(),
     messages: z.array(z.object({ role: z.string(), content: z.string() })),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     chunk: z.object({ content: z.string(), index: z.number() }),
     done: z.object({ totalTokens: z.number(), model: z.string() }),
     error: z.object({ code: z.number(), message: z.string() }),
@@ -381,11 +381,12 @@ describe('SSE Controller Type Safety', () => {
       // This test demonstrates that a controller with multiple contracts
       // gets autocomplete for all events across all routes
       const notificationContract = buildContract({
+        method: 'get',
         pathResolver: () => '/api/notifications',
-        params: z.object({}),
-        query: z.object({}),
-        requestHeaders: z.object({}),
-        sseEvents: {
+        requestPathParamsSchema: z.object({}),
+        requestQuerySchema: z.object({}),
+        requestHeaderSchema: z.object({}),
+        serverSentEventSchemas: {
           alert: z.object({ severity: z.enum(['info', 'warning', 'error']), message: z.string() }),
           dismiss: z.object({ alertId: z.string() }),
         },
@@ -455,22 +456,22 @@ describe('Dual-Mode Contract Type Safety', () => {
       const contractWithHeaders = buildContract({
         method: 'post',
         pathResolver: () => '/api/test',
-        params: z.object({}),
-        query: z.object({}),
-        requestHeaders: z.object({}),
-        requestBody: z.object({ data: z.string() }),
-        syncResponseBody: z.object({ result: z.string() }),
-        responseHeaders: z.object({
+        requestPathParamsSchema: z.object({}),
+        requestQuerySchema: z.object({}),
+        requestHeaderSchema: z.object({}),
+        requestBodySchema: z.object({ data: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        responseHeaderSchema: z.object({
           'x-request-id': z.string(),
           'x-custom': z.number(),
         }),
-        sseEvents: {
+        serverSentEventSchemas: {
           done: z.object({ success: z.boolean() }),
         },
       })
 
       // Type should include responseHeaders
-      expect(contractWithHeaders.responseHeaders).toBeDefined()
+      expect(contractWithHeaders.responseHeaderSchema).toBeDefined()
       expect(contractWithHeaders.isDualMode).toBe(true)
     })
 
@@ -479,31 +480,31 @@ describe('Dual-Mode Contract Type Safety', () => {
       const contractWithoutHeaders = buildContract({
         method: 'post',
         pathResolver: () => '/api/test',
-        params: z.object({}),
-        query: z.object({}),
-        requestHeaders: z.object({}),
-        requestBody: z.object({ data: z.string() }),
-        syncResponseBody: z.object({ result: z.string() }),
-        sseEvents: {
+        requestPathParamsSchema: z.object({}),
+        requestQuerySchema: z.object({}),
+        requestHeaderSchema: z.object({}),
+        requestBodySchema: z.object({ data: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: {
           done: z.object({ success: z.boolean() }),
         },
       })
 
       // responseHeaders should be undefined
-      expect(contractWithoutHeaders.responseHeaders).toBeUndefined()
+      expect(contractWithoutHeaders.responseHeaderSchema).toBeUndefined()
       expect(contractWithoutHeaders.isDualMode).toBe(true)
     })
 
     it('SSE contracts do not have responseHeaders', () => {
-      // SSE contract (no syncResponseBody)
+      // SSE contract (no successResponseBodySchema)
       const sseContract = buildContract({
         method: 'post',
         pathResolver: () => '/api/sse',
-        params: z.object({}),
-        query: z.object({}),
-        requestHeaders: z.object({}),
-        requestBody: z.object({ data: z.string() }),
-        sseEvents: {
+        requestPathParamsSchema: z.object({}),
+        requestQuerySchema: z.object({}),
+        requestHeaderSchema: z.object({}),
+        requestBodySchema: z.object({ data: z.string() }),
+        serverSentEventSchemas: {
           chunk: z.object({ content: z.string() }),
         },
       })
@@ -511,7 +512,7 @@ describe('Dual-Mode Contract Type Safety', () => {
       // SSE contracts are marked with isSSE, not isDualMode
       expect(sseContract.isSSE).toBe(true)
       // @ts-expect-error - responseHeaders does not exist on SSE contracts
-      expect(sseContract.responseHeaders).toBeUndefined()
+      expect(sseContract.responseHeaderSchema).toBeUndefined()
     })
   })
 })
@@ -523,11 +524,12 @@ describe('Dual-Mode Contract Type Safety', () => {
 describe('GET SSE Controller Type Safety (non-payload)', () => {
   // GET SSE contract - no body field
   const notificationsContract = buildContract({
+    method: 'get',
     pathResolver: (params) => `/api/users/${params.userId}/notifications`,
-    params: z.object({ userId: z.string() }),
-    query: z.object({ since: z.string().optional() }),
-    requestHeaders: z.object({ authorization: z.string() }),
-    sseEvents: {
+    requestPathParamsSchema: z.object({ userId: z.string() }),
+    requestQuerySchema: z.object({ since: z.string().optional() }),
+    requestHeaderSchema: z.object({ authorization: z.string() }),
+    serverSentEventSchemas: {
       notification: z.object({ id: z.string(), message: z.string() }),
       heartbeat: z.object({ timestamp: z.number() }),
     },
@@ -647,7 +649,7 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
 
     it('GET contract has no body in contract definition', () => {
       // Verify the contract itself has no body field
-      expect(notificationsContract.requestBody).toBeUndefined()
+      expect(notificationsContract.requestBodySchema).toBeUndefined()
 
       // The handler can still be created and works without body
       const handlers = buildHandler(notificationsContract, {
@@ -672,18 +674,18 @@ describe('Dual-Mode Handler Type Safety', () => {
   const chatCompletionContract = buildContract({
     method: 'post',
     pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
-    params: z.object({ chatId: z.string().uuid() }),
-    query: z.object({ verbose: z.boolean().optional() }),
-    requestHeaders: z.object({ authorization: z.string() }),
-    requestBody: z.object({
+    requestPathParamsSchema: z.object({ chatId: z.string().uuid() }),
+    requestQuerySchema: z.object({ verbose: z.boolean().optional() }),
+    requestHeaderSchema: z.object({ authorization: z.string() }),
+    requestBodySchema: z.object({
       message: z.string(),
       temperature: z.number().optional(),
     }),
-    syncResponseBody: z.object({
+    successResponseBodySchema: z.object({
       reply: z.string(),
       usage: z.object({ tokens: z.number() }),
     }),
-    sseEvents: {
+    serverSentEventSchemas: {
       chunk: z.object({ delta: z.string() }),
       done: z.object({ usage: z.object({ total: z.number() }) }),
     },
@@ -702,7 +704,7 @@ describe('Dual-Mode Handler Type Safety', () => {
           return {
             chatCompletion: buildHandler(chatCompletionContract, {
               sync: (request) => {
-                // Valid: return matches syncResponseBody schema
+                // Valid: return matches successResponseBodySchema
                 return {
                   reply: request.body.message,
                   usage: { tokens: 10 },
@@ -724,7 +726,7 @@ describe('Dual-Mode Handler Type Safety', () => {
     })
 
     it('catches wrong sync handler return type at compile time', () => {
-      // @ts-expect-error - return type doesn't match syncResponseBody: missing 'usage'
+      // @ts-expect-error - return type doesn't match successResponseBodySchema: missing 'usage'
       buildHandler(chatCompletionContract, {
         sync: () => {
           return { reply: 'Hello' }
@@ -937,15 +939,16 @@ describe('Dual-Mode Handler Type Safety', () => {
 
   // GET dual-mode contract (no body)
   const jobStatusContract = buildContract({
+    method: 'get',
     pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
-    params: z.object({ jobId: z.string().uuid() }),
-    query: z.object({ verbose: z.boolean().optional() }),
-    requestHeaders: z.object({}),
-    syncResponseBody: z.object({
+    requestPathParamsSchema: z.object({ jobId: z.string().uuid() }),
+    requestQuerySchema: z.object({ verbose: z.boolean().optional() }),
+    requestHeaderSchema: z.object({}),
+    successResponseBodySchema: z.object({
       status: z.enum(['pending', 'running', 'completed', 'failed']),
       progress: z.number(),
     }),
-    sseEvents: {
+    serverSentEventSchemas: {
       progress: z.object({ percent: z.number(), message: z.string().optional() }),
       done: z.object({ result: z.string() }),
     },
@@ -964,7 +967,7 @@ describe('Dual-Mode Handler Type Safety', () => {
           return {
             jobStatus: buildHandler(jobStatusContract, {
               sync: (request) => {
-                // Valid: return matches syncResponseBody schema
+                // Valid: return matches successResponseBodySchema
                 const _jobId = request.params.jobId
                 return { status: 'running' as const, progress: 50 }
               },
@@ -1013,7 +1016,7 @@ describe('Dual-Mode Handler Type Safety', () => {
 
     it('GET contract has no body in contract definition', () => {
       // Verify the contract itself has no body field
-      expect(jobStatusContract.requestBody).toBeUndefined()
+      expect(jobStatusContract.requestBodySchema).toBeUndefined()
 
       // Handlers work without body
       const handlers = buildHandler(jobStatusContract, {
@@ -1056,11 +1059,12 @@ describe('Dual-Mode Handler Type Safety', () => {
 describe('Unified buildHandler Type Safety', () => {
   // SSE-only contract
   const notificationsContract = buildContract({
+    method: 'get',
     pathResolver: (params) => `/api/users/${params.userId}/notifications`,
-    params: z.object({ userId: z.string() }),
-    query: z.object({ since: z.string().optional() }),
-    requestHeaders: z.object({}),
-    sseEvents: {
+    requestPathParamsSchema: z.object({ userId: z.string() }),
+    requestQuerySchema: z.object({ since: z.string().optional() }),
+    requestHeaderSchema: z.object({}),
+    serverSentEventSchemas: {
       notification: z.object({ id: z.string(), message: z.string() }),
       heartbeat: z.object({ timestamp: z.number() }),
     },
@@ -1070,15 +1074,15 @@ describe('Unified buildHandler Type Safety', () => {
   const chatCompletionContract = buildContract({
     method: 'post',
     pathResolver: () => '/api/chat/completions',
-    params: z.object({}),
-    query: z.object({}),
-    requestHeaders: z.object({}),
-    requestBody: z.object({ message: z.string() }),
-    syncResponseBody: z.object({
+    requestPathParamsSchema: z.object({}),
+    requestQuerySchema: z.object({}),
+    requestHeaderSchema: z.object({}),
+    requestBodySchema: z.object({ message: z.string() }),
+    successResponseBodySchema: z.object({
       reply: z.string(),
       usage: z.object({ tokens: z.number() }),
     }),
-    sseEvents: {
+    serverSentEventSchemas: {
       chunk: z.object({ delta: z.string() }),
       done: z.object({ usage: z.object({ total: z.number() }) }),
     },
@@ -1251,7 +1255,9 @@ describe('Unified buildHandler Type Safety', () => {
         sync: () => ({ reply: 'Hello', usage: { tokens: 10 } }),
         sse: (_request, sse) => {
           // Assert sse is SSEContext with typed events
-          expectTypeOf(sse).toEqualTypeOf<SSEContext<typeof chatCompletionContract.sseEvents>>()
+          expectTypeOf(sse).toEqualTypeOf<
+            SSEContext<typeof chatCompletionContract.serverSentEventSchemas>
+          >()
           sse.start('autoClose')
         },
       })
