@@ -1,7 +1,6 @@
-import { buildDeleteRoute, buildGetRoute, buildPayloadRoute } from '@lokalise/api-contracts'
+import { buildContract } from '@lokalise/api-contracts'
 import {
-  buildFastifyNoPayloadRoute,
-  buildFastifyPayloadRoute,
+  buildFastifyRoute,
 } from '@lokalise/fastify-api-contracts'
 import { describe, expectTypeOf, it } from 'vitest'
 import { z } from 'zod/v4'
@@ -15,17 +14,19 @@ describe('AbstractController', () => {
     })
 
     const contracts = {
-      getItem: buildGetRoute({
+      getItem: buildContract({
+        method: 'get',
         successResponseBodySchema: ITEM_SCHEMA,
         requestPathParamsSchema: ITEM_SCHEMA.pick({ id: true }),
         pathResolver: (pathParams) => `/users/${pathParams.id}`,
       }),
-      deleteItem: buildDeleteRoute({
+      deleteItem: buildContract({
+        method: 'delete',
         successResponseBodySchema: z.undefined(),
         requestPathParamsSchema: ITEM_SCHEMA.pick({ id: true }),
         pathResolver: (pathParams) => `/users/${pathParams.id}`,
       }),
-      updateItem: buildPayloadRoute({
+      updateItem: buildContract({
         method: 'patch',
         requestBodySchema: ITEM_SCHEMA.pick({ value: true }),
         successResponseBodySchema: z.undefined(),
@@ -34,7 +35,7 @@ describe('AbstractController', () => {
         requestPathParamsSchema: ITEM_SCHEMA.pick({ id: true }),
         pathResolver: (pathParams) => `/users/${pathParams.id}`,
       }),
-      createItem: buildPayloadRoute({
+      createItem: buildContract({
         method: 'post',
         requestBodySchema: ITEM_SCHEMA.pick({ value: true }),
         successResponseBodySchema: z.object({ success: z.boolean() }),
@@ -42,22 +43,22 @@ describe('AbstractController', () => {
       }),
     } as const
 
-    const getItem = buildFastifyNoPayloadRoute(contracts.getItem, async (_, reply) =>
+    const getItem = buildFastifyRoute(contracts.getItem, async (_, reply) =>
       reply.status(200).send({
         id: '1',
         value: 'test',
       }),
     )
 
-    const deleteItem = buildFastifyNoPayloadRoute(contracts.deleteItem, async (_, reply) =>
+    const deleteItem = buildFastifyRoute(contracts.deleteItem, async (_, reply) =>
       reply.status(200).send(),
     )
 
-    const updateItem = buildFastifyPayloadRoute(contracts.updateItem, async (_, reply) =>
+    const updateItem = buildFastifyRoute(contracts.updateItem, async (_, reply) =>
       reply.status(200).send(),
     )
 
-    const createItem = buildFastifyPayloadRoute(contracts.createItem, async (_, reply) =>
+    const createItem = buildFastifyRoute(contracts.createItem, async (_, reply) =>
       reply.status(200).send({ success: true }),
     )
 

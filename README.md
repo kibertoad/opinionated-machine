@@ -132,7 +132,7 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
 Controllers require using fastify-api-contracts and allow to define application routes.
 
 ```ts
-import { buildFastifyNoPayloadRoute } from '@lokalise/fastify-api-contracts'
+import { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
 import { buildDeleteRoute } from '@lokalise/universal-ts-utils/api-contracts/apiContracts'
 import { z } from 'zod/v4'
 import { AbstractController } from 'opinionated-machine'
@@ -157,7 +157,7 @@ export class MyController extends AbstractController<typeof MyController.contrac
       this.service = testService
   }
 
-    private deleteItem = buildFastifyNoPayloadRoute(
+    private deleteItem = buildFastifyRoute(
         TestController.contracts.deleteItem,
         async (req, reply) => {
             req.log.info(req.params.userId)
@@ -546,7 +546,7 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
 
 ### Type-Safe SSE Handlers with `buildHandler`
 
-For automatic type inference of request parameters (similar to `buildFastifyPayloadRoute` for regular controllers), use `buildHandler`:
+For automatic type inference of request parameters (similar to `buildFastifyRoute` for regular controllers), use `buildHandler`:
 
 ```ts
 import {

@@ -5,8 +5,7 @@ import type {
   PayloadRouteDefinition,
 } from '@lokalise/api-contracts'
 import type {
-  buildFastifyNoPayloadRoute,
-  buildFastifyPayloadRoute,
+  buildFastifyRoute
 } from '@lokalise/fastify-api-contracts'
 import type { z } from 'zod/v4'
 
@@ -26,7 +25,7 @@ type FastifyPayloadRouteReturnType<
   // biome-ignore lint/suspicious/noExplicitAny: ResponseSchemasByStatusCode type is complex
   ResponseSchemasByStatusCode extends Record<number, any> | undefined,
 > = ReturnType<
-  typeof buildFastifyPayloadRoute<
+  typeof buildFastifyRoute<
     RequestBody,
     ResponseBody,
     Path,
@@ -39,20 +38,25 @@ type FastifyPayloadRouteReturnType<
   >
 >
 type FastifyNoPayloadRouteReturnType<
-  RequestBody extends OptionalZodSchema,
+  ResponseBody extends OptionalZodSchema,
   Path extends OptionalZodSchema,
   Query extends OptionalZodSchema,
   Headers extends OptionalZodSchema,
   ResponseHeaders extends OptionalZodSchema,
+  IsNonJSONResponseExpected extends boolean,
+  IsEmptyResponseExpected extends boolean,
   // biome-ignore lint/suspicious/noExplicitAny: ResponseSchemasByStatusCode type is complex
   ResponseSchemasByStatusCode extends Record<number, any> | undefined,
 > = ReturnType<
-  typeof buildFastifyNoPayloadRoute<
-    RequestBody,
+  typeof buildFastifyRoute<
+    undefined,
+    ResponseBody,
     Path,
     Query,
     Headers,
     ResponseHeaders,
+    IsNonJSONResponseExpected,
+    IsEmptyResponseExpected,
     ResponseSchemasByStatusCode
   >
 >
@@ -87,8 +91,8 @@ export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonR
               infer GetQuery,
               infer GetHeaders,
               infer GetResponseHeaders,
-              infer _GetIsNonJSONResponseExpected,
-              infer _GetIsEmptyResponseExpected,
+              infer GetIsNonJSONResponseExpected,
+              infer GetIsEmptyResponseExpected,
               infer GetResponseSchemasByStatusCode
             >
           | DeleteRouteDefinition<
@@ -97,8 +101,8 @@ export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonR
               infer DeleteQuery,
               infer DeleteHeaders,
               infer DeleteResponseHeaders,
-              infer _DeleteIsNonJSONResponseExpected,
-              infer _DeleteIsEmptyResponseExpected,
+              infer DeleteIsNonJSONResponseExpected,
+              infer DeleteIsEmptyResponseExpected,
               infer DeleteResponseSchemasByStatusCode
             >
       ? FastifyNoPayloadRouteReturnType<
@@ -107,6 +111,8 @@ export type BuildRoutesReturnType<APIContracts extends Record<string, AnyCommonR
           GetQuery | DeleteQuery,
           GetHeaders | DeleteHeaders,
           GetResponseHeaders | DeleteResponseHeaders,
+          GetIsNonJSONResponseExpected | DeleteIsNonJSONResponseExpected,
+          GetIsEmptyResponseExpected | DeleteIsEmptyResponseExpected,
           GetResponseSchemasByStatusCode | DeleteResponseSchemasByStatusCode
         >
       : never

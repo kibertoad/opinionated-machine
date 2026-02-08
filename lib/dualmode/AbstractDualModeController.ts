@@ -16,7 +16,7 @@ import type { DualModeControllerConfig } from './dualModeTypes.ts'
  */
 export type AllDualModeContractEventNames<
   Contracts extends Record<string, AnyDualModeContractDefinition>,
-> = Contracts[keyof Contracts]['sseEvents'] extends infer E
+> = Contracts[keyof Contracts]['serverSentEventSchemas'] extends infer E
   ? E extends Record<string, z.ZodTypeAny>
     ? keyof E & string
     : never
@@ -29,8 +29,8 @@ export type ExtractDualModeEventSchema<
   Contracts extends Record<string, AnyDualModeContractDefinition>,
   EventName extends string,
 > = {
-  [K in keyof Contracts]: EventName extends keyof Contracts[K]['sseEvents']
-    ? Contracts[K]['sseEvents'][EventName]
+  [K in keyof Contracts]: EventName extends keyof Contracts[K]['serverSentEventSchemas']
+    ? Contracts[K]['serverSentEventSchemas'][EventName]
     : never
 }[keyof Contracts]
 
