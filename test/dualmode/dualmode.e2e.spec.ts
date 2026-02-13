@@ -1,5 +1,6 @@
 import {
   type AnyDualModeContractDefinition,
+  type AnySSEContractDefinition,
   buildSseContract as buildContract,
 } from '@lokalise/api-contracts'
 import { createContainer } from 'awilix'
@@ -871,6 +872,41 @@ describe('Dual-Mode Route Builder Validation', () => {
         controller,
         buildHandler(invalidContract, {
           sync: async () => ({ result: 'test' }),
+          sse: (_request, sse) => {
+            sse.start('autoClose')
+          },
+        }),
+      ),
+    ).toThrow('Route params schema must be a ZodObject for path template extraction')
+
+    await context.destroy()
+  })
+
+  it('throws error when params is not a ZodObject for SSE-only routes', async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
+
+    const controller: GenericDualModeController = context.diContainer.resolve(
+      'genericDualModeController',
+    )
+
+    // Create an invalid SSE-only contract where params is a ZodString instead of ZodObject
+    const invalidSSEContract = {
+      method: 'get',
+      pathResolver: () => '/api/invalid-sse',
+      requestPathParamsSchema: z.string(), // Invalid: should be ZodObject
+      requestQuerySchema: z.object({}),
+      requestHeaderSchema: z.object({}),
+      requestBodySchema: undefined,
+      serverSentEventSchemas: { data: z.object({ value: z.string() }) },
+      isSSE: true as const,
+    } satisfies AnySSEContractDefinition
+
+    expect(() =>
+      buildFastifyRoute(
+        controller,
+        buildHandler(invalidSSEContract, {
           sse: (_request, sse) => {
             sse.start('autoClose')
           },

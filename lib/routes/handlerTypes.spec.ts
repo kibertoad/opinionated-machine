@@ -1,7 +1,7 @@
 import { buildSseContract as buildContract } from '@lokalise/api-contracts'
 import { describe, expectTypeOf, it } from 'vitest'
 import { z } from 'zod/v4'
-import type { InferDualModeHandlers } from './fastifyRouteTypes.ts'
+import type { InferDualModeHandlers, InferHandlers, InferSSERequest } from './fastifyRouteTypes.ts'
 import { buildHandler } from './fastifyRouteTypes.ts'
 
 describe('Handler Type Enforcement', () => {
@@ -193,6 +193,88 @@ describe('Handler Type Enforcement', () => {
           return sse.respond(500, { message: 'Internal error' })
         },
       })
+    })
+  })
+
+  describe('Optional schema properties (requestPathParamsSchema, requestQuerySchema, requestHeaderSchema)', () => {
+    it('SSE-only contract with path params and custom headers infers correct types', () => {
+      const sseContractWithParams = buildContract({
+        method: 'get',
+        pathResolver: () => '/api/items/:id',
+        requestPathParamsSchema: z.object({ id: z.string() }),
+        requestQuerySchema: z.object({}),
+        requestHeaderSchema: z.object({ authorization: z.string() }),
+        serverSentEventSchemas: { data: z.object({ value: z.string() }) },
+      })
+
+      const container = buildHandler(sseContractWithParams, {
+        sse: async (req, sse) => {
+          expectTypeOf(req.params).toEqualTypeOf<{ id: string }>()
+          expectTypeOf(req.headers).toExtend<{ authorization: string }>()
+          const connection = sse.start('autoClose')
+          await connection.send('data', { value: req.params.id })
+        },
+      })
+
+      expectTypeOf(container).toHaveProperty('handlers')
+
+      type Request = InferSSERequest<typeof sseContractWithParams>
+      expectTypeOf<Request['params']>().toEqualTypeOf<{ id: string }>()
+
+      type Handlers = InferHandlers<typeof sseContractWithParams>
+      expectTypeOf<Handlers['sse']>().toBeFunction()
+      expectTypeOf<Handlers['sync']>().toEqualTypeOf<undefined>()
+    })
+
+    it('Dual-mode contract with path params and custom headers infers correct types', () => {
+      const dualContractWithParams = buildContract({
+        method: 'post',
+        pathResolver: () => '/api/items/:id',
+        requestPathParamsSchema: z.object({ id: z.string() }),
+        requestQuerySchema: z.object({}),
+        requestHeaderSchema: z.object({ authorization: z.string() }),
+        requestBodySchema: z.object({ data: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { chunk: z.object({ delta: z.string() }) },
+      })
+
+      type Handlers = InferDualModeHandlers<typeof dualContractWithParams>
+      type SyncHandler = Handlers['sync']
+      type SSEHandler = Handlers['sse']
+
+      expectTypeOf<SyncHandler>().toBeFunction()
+      expectTypeOf<SSEHandler>().toBeFunction()
+
+      buildHandler(dualContractWithParams, {
+        sync: (req) => {
+          expectTypeOf(req.params).toEqualTypeOf<{ id: string }>()
+          expectTypeOf(req.headers).toExtend<{ authorization: string }>()
+          return { result: 'ok' }
+        },
+        sse: async (req, sse) => {
+          expectTypeOf(req.params).toEqualTypeOf<{ id: string }>()
+          expectTypeOf(req.headers).toExtend<{ authorization: string }>()
+          const connection = sse.start('autoClose')
+          await connection.send('chunk', { delta: 'hi' })
+        },
+      })
+    })
+
+    it('Params and headers are not unknown when schemas are provided', () => {
+      // Verify that params/headers are properly inferred (not unknown)
+      // when schemas are provided - this is the regression the conditional narrowing fix prevents
+      const contract = buildContract({
+        method: 'get',
+        pathResolver: () => '/api/items/:id',
+        requestPathParamsSchema: z.object({ id: z.string() }),
+        requestQuerySchema: z.object({ limit: z.number() }),
+        requestHeaderSchema: z.object({ authorization: z.string() }),
+        serverSentEventSchemas: { data: z.object({ value: z.string() }) },
+      })
+
+      type Request = InferSSERequest<typeof contract>
+      expectTypeOf<Request['params']>().toEqualTypeOf<{ id: string }>()
+      expectTypeOf<Request['query']>().toEqualTypeOf<{ limit: number }>()
     })
   })
 })
