@@ -340,7 +340,7 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
   // Runtime guard: extractPathTemplate requires a ZodObject to access .shape for parameter names
   if (!(contract.requestPathParamsSchema instanceof ZodObject)) {
     throw new InternalError({
-      message: `Route params schema must be a ZodObject for path template extraction, got ${contract.requestPathParamsSchema.constructor.name}`,
+      message: `Route params schema must be a ZodObject for path template extraction, got ${contract.requestPathParamsSchema?.constructor.name ?? 'undefined'}`,
       errorCode: 'INVALID_PARAMS_SCHEMA',
     })
   }
@@ -396,7 +396,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
   // Runtime guard: extractPathTemplate requires a ZodObject to access .shape for parameter names
   if (!(contract.requestPathParamsSchema instanceof ZodObject)) {
     throw new InternalError({
-      message: `Route params schema must be a ZodObject for path template extraction, got ${contract.requestPathParamsSchema.constructor.name}`,
+      message: `Route params schema must be a ZodObject for path template extraction, got ${contract.requestPathParamsSchema?.constructor.name ?? 'undefined'}`,
       errorCode: 'INVALID_PARAMS_SCHEMA',
     })
   }

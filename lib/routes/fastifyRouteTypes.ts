@@ -458,12 +458,10 @@ export type FastifySSEHandlerConfig<Contract extends AnySSEContractDefinition> =
   /** Handlers object containing the SSE handler */
   handlers: SSEOnlyHandlers<
     Contract['serverSentEventSchemas'],
-    z.infer<Contract['requestPathParamsSchema']>,
-    z.infer<Contract['requestQuerySchema']>,
-    z.infer<Contract['requestHeaderSchema']>,
-    Contract['requestBodySchema'] extends z.ZodTypeAny
-      ? z.infer<Contract['requestBodySchema']>
-      : undefined,
+    InferOptionalSchema<Contract['requestPathParamsSchema']>,
+    InferOptionalSchema<Contract['requestQuerySchema']>,
+    InferOptionalSchema<Contract['requestHeaderSchema']>,
+    InferOptionalSchema<Contract['requestBodySchema'], undefined>,
     Contract['responseBodySchemasByStatusCode']
   >
   /** Optional route configuration */
@@ -478,6 +476,16 @@ export type BuildFastifySSERoutesReturnType<
 > = {
   [K in keyof APIContracts]: SSERouteHandler<APIContracts[K]>
 }
+
+/**
+ * Safely infer the output type of an optional Zod schema property.
+ * Since contract schema properties are optional (`Schema | undefined`),
+ * a bare `Contract['schema'] extends z.ZodTypeAny` check always fails
+ * because `ZodObject | undefined` does not extend `ZodTypeAny`.
+ * NonNullable strips the `undefined` before the check.
+ */
+type InferOptionalSchema<T, Fallback = unknown> =
+  NonNullable<T> extends z.ZodTypeAny ? z.infer<NonNullable<T>> : Fallback
 
 /**
  * Infer the FastifyRequest type from an SSE contract.
@@ -497,12 +505,10 @@ export type BuildFastifySSERoutesReturnType<
  * ```
  */
 export type InferSSERequest<Contract extends AnySSEContractDefinition> = FastifyRequest<{
-  Params: z.infer<Contract['requestPathParamsSchema']>
-  Querystring: z.infer<Contract['requestQuerySchema']>
-  Headers: z.infer<Contract['requestHeaderSchema']>
-  Body: Contract['requestBodySchema'] extends z.ZodTypeAny
-    ? z.infer<Contract['requestBodySchema']>
-    : undefined
+  Params: InferOptionalSchema<Contract['requestPathParamsSchema']>
+  Querystring: InferOptionalSchema<Contract['requestQuerySchema']>
+  Headers: InferOptionalSchema<Contract['requestHeaderSchema']>
+  Body: InferOptionalSchema<Contract['requestBodySchema'], undefined>
 }>
 
 // ============================================================================
@@ -667,12 +673,10 @@ export type FastifyDualModeRouteOptions = FastifySSERouteOptions & {
  */
 export type InferDualModeHandlers<Contract extends AnyDualModeContractDefinition> =
   DualModeHandlers<
-    z.infer<Contract['requestPathParamsSchema']>,
-    z.infer<Contract['requestQuerySchema']>,
-    z.infer<Contract['requestHeaderSchema']>,
-    Contract['requestBodySchema'] extends z.ZodTypeAny
-      ? z.infer<Contract['requestBodySchema']>
-      : undefined,
+    InferOptionalSchema<Contract['requestPathParamsSchema']>,
+    InferOptionalSchema<Contract['requestQuerySchema']>,
+    InferOptionalSchema<Contract['requestHeaderSchema']>,
+    InferOptionalSchema<Contract['requestBodySchema'], undefined>,
     // Union of success response + error responses from responseBodySchemasByStatusCode
     | (Contract['successResponseBodySchema'] extends z.ZodTypeAny
         ? z.infer<Contract['successResponseBodySchema']>
@@ -737,12 +741,10 @@ export type InferHandlers<Contract> = Contract extends AnyDualModeContractDefini
   : Contract extends AnySSEContractDefinition
     ? SSEOnlyHandlers<
         Contract['serverSentEventSchemas'],
-        z.infer<Contract['requestPathParamsSchema']>,
-        z.infer<Contract['requestQuerySchema']>,
-        z.infer<Contract['requestHeaderSchema']>,
-        Contract['requestBodySchema'] extends z.ZodTypeAny
-          ? z.infer<Contract['requestBodySchema']>
-          : undefined,
+        InferOptionalSchema<Contract['requestPathParamsSchema']>,
+        InferOptionalSchema<Contract['requestQuerySchema']>,
+        InferOptionalSchema<Contract['requestHeaderSchema']>,
+        InferOptionalSchema<Contract['requestBodySchema'], undefined>,
         Contract['responseBodySchemasByStatusCode']
       >
     : never
@@ -755,12 +757,10 @@ type HandlersForContract<Contract> = Contract extends AnyDualModeContractDefinit
   : Contract extends AnySSEContractDefinition
     ? SSEOnlyHandlers<
         Contract['serverSentEventSchemas'],
-        z.infer<Contract['requestPathParamsSchema']>,
-        z.infer<Contract['requestQuerySchema']>,
-        z.infer<Contract['requestHeaderSchema']>,
-        Contract['requestBodySchema'] extends z.ZodTypeAny
-          ? z.infer<Contract['requestBodySchema']>
-          : undefined,
+        InferOptionalSchema<Contract['requestPathParamsSchema']>,
+        InferOptionalSchema<Contract['requestQuerySchema']>,
+        InferOptionalSchema<Contract['requestHeaderSchema']>,
+        InferOptionalSchema<Contract['requestBodySchema'], undefined>,
         Contract['responseBodySchemasByStatusCode']
       >
     : never
@@ -780,12 +780,10 @@ export type SSERouteHandler<Contract extends AnySSEContractDefinition> = {
   readonly contract: Contract
   readonly handlers: SSEOnlyHandlers<
     Contract['serverSentEventSchemas'],
-    z.infer<Contract['requestPathParamsSchema']>,
-    z.infer<Contract['requestQuerySchema']>,
-    z.infer<Contract['requestHeaderSchema']>,
-    Contract['requestBodySchema'] extends z.ZodTypeAny
-      ? z.infer<Contract['requestBodySchema']>
-      : undefined,
+    InferOptionalSchema<Contract['requestPathParamsSchema']>,
+    InferOptionalSchema<Contract['requestQuerySchema']>,
+    InferOptionalSchema<Contract['requestHeaderSchema']>,
+    InferOptionalSchema<Contract['requestBodySchema'], undefined>,
     Contract['responseBodySchemasByStatusCode']
   >
   readonly options?: FastifySSERouteOptions

@@ -3,6 +3,10 @@ import type { FastifyInstance } from 'fastify'
 import type { z } from 'zod'
 import type { ParsedSSEEvent } from '../sse/sseParser.ts'
 
+/** Safely infer the output type of an optional Zod schema property. */
+type InferOptionalSchema<T, Fallback = unknown> =
+  NonNullable<T> extends z.ZodTypeAny ? z.infer<NonNullable<T>> : Fallback
+
 /**
  * Represents an active SSE test connection (inject-based).
  *
@@ -63,21 +67,19 @@ export type SSEConnectOptions = {
  * Options for injectSSE (GET SSE routes).
  */
 export type InjectSSEOptions<Contract extends AnySSEContractDefinition> = {
-  params?: z.infer<Contract['requestPathParamsSchema']>
-  query?: z.infer<Contract['requestQuerySchema']>
-  headers?: z.infer<Contract['requestHeaderSchema']>
+  params?: InferOptionalSchema<Contract['requestPathParamsSchema']>
+  query?: InferOptionalSchema<Contract['requestQuerySchema']>
+  headers?: InferOptionalSchema<Contract['requestHeaderSchema']>
 }
 
 /**
  * Options for injectPayloadSSE (POST/PUT/PATCH SSE routes).
  */
 export type InjectPayloadSSEOptions<Contract extends AnySSEContractDefinition> = {
-  params?: z.infer<Contract['requestPathParamsSchema']>
-  query?: z.infer<Contract['requestQuerySchema']>
-  headers?: z.infer<Contract['requestHeaderSchema']>
-  body: Contract['requestBodySchema'] extends z.ZodTypeAny
-    ? z.infer<Contract['requestBodySchema']>
-    : never
+  params?: InferOptionalSchema<Contract['requestPathParamsSchema']>
+  query?: InferOptionalSchema<Contract['requestQuerySchema']>
+  headers?: InferOptionalSchema<Contract['requestHeaderSchema']>
+  body: InferOptionalSchema<Contract['requestBodySchema'], never>
 }
 
 /**
