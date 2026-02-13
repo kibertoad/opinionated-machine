@@ -222,7 +222,7 @@ describe('Handler Type Enforcement', () => {
       expectTypeOf<Request['params']>().toEqualTypeOf<{ id: string }>()
 
       type Handlers = InferHandlers<typeof sseContractWithParams>
-      expectTypeOf<Handlers>().toHaveProperty('sse')
+      expectTypeOf<Handlers['sse']>().toBeFunction()
       expectTypeOf<Handlers['sync']>().toEqualTypeOf<undefined>()
     })
 
