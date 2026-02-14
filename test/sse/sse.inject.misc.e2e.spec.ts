@@ -7,7 +7,7 @@ import { TestSSEModule, type TestSSEModuleDependencies } from './fixtures/testMo
 describe('SSE Inject E2E (controller without spy)', () => {
   it('throws error when accessing connectionSpy without enableConnectionSpy', async () => {
     // Create a controller without spy enabled (isTestMode: false)
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
     const context = new DIContext<TestSSEModuleDependencies, object>(
       container,
       { isTestMode: false }, // Spy not enabled
