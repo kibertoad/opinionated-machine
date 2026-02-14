@@ -64,9 +64,9 @@ export type InferModuleDependencies<M extends AbstractModule> =
 export type InferPublicModuleDependencies<M extends AbstractModule> =
   ReturnType<M['resolveDependencies']> extends infer R
     ? {
-        [K in keyof R as R[K] extends { readonly __publicResolver: true } ? K : never]: R[K] extends Resolver<infer T>
-          ? T
-          : never
+        [K in keyof R as R[K] extends { readonly __publicResolver: true }
+          ? K
+          : never]: R[K] extends Resolver<infer T> ? T : never
       }
     : never
 

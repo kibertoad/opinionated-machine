@@ -32,4 +32,5 @@ export class TestModuleSecondary extends AbstractModule {
 
 export type TestModuleSecondaryDependencies = InferModuleDependencies<TestModuleSecondary>
 
-export type TestModuleSecondaryPublicDependencies = InferPublicModuleDependencies<TestModuleSecondary>
+export type TestModuleSecondaryPublicDependencies =
+  InferPublicModuleDependencies<TestModuleSecondary>

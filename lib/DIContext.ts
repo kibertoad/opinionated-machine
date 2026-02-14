@@ -155,7 +155,7 @@ export class DIContext<
       }
     }
 
-    this.diContainer.register(targetDiConfig)
+    this.diContainer.register(targetDiConfig as Record<string, Resolver<unknown>>)
 
     // append dependency overrides
     // @ts-expect-error FixMe check this later

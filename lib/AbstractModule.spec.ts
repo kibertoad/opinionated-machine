@@ -1,20 +1,31 @@
+import type { BuildResolver, DisposableResolver } from 'awilix'
 import { describe, expectTypeOf, it } from 'vitest'
-import type { InferModuleDependencies, InferPublicModuleDependencies } from './AbstractModule.ts'
-import type {
-  TestModule,
-  TestService,
-  TestServiceWithTransitive,
-  TestMessageQueueConsumer,
-  JobWorker,
-  PeriodicJob,
+import {
+  type JobWorker,
+  type PeriodicJob,
   Queue,
   QueueManager,
+  type TestMessageQueueConsumer,
+  type TestModule,
+  TestService,
+  type TestServiceWithTransitive,
 } from '../test/TestModule.ts'
-import type {
-  TestModuleSecondary,
+import {
+  type TestModuleSecondary,
   TestRepository,
-  TestServiceSecondary,
+  type TestServiceSecondary,
 } from '../test/TestModuleSecondary.ts'
+import type { InferModuleDependencies, InferPublicModuleDependencies } from './AbstractModule.ts'
+import type { PublicResolver } from './resolverFunctions.ts'
+import {
+  asEnqueuedJobQueueManagerFunction,
+  asJobQueueClass,
+  asRepositoryClass,
+  asServiceClass,
+  asSingletonClass,
+  asSingletonFunction,
+  asUseCaseClass,
+} from './resolverFunctions.ts'
 
 describe('InferModuleDependencies', () => {
   it('infers all dependency types from a module', () => {
@@ -62,7 +73,9 @@ describe('InferPublicModuleDependencies', () => {
     expectTypeOf<PublicDeps['testService']>().toEqualTypeOf<TestService>()
 
     expectTypeOf<PublicDeps>().toHaveProperty('testServiceWithTransitive')
-    expectTypeOf<PublicDeps['testServiceWithTransitive']>().toEqualTypeOf<TestServiceWithTransitive>()
+    expectTypeOf<
+      PublicDeps['testServiceWithTransitive']
+    >().toEqualTypeOf<TestServiceWithTransitive>()
 
     // Public: asJobQueueClass
     expectTypeOf<PublicDeps>().toHaveProperty('queue')
@@ -109,5 +122,59 @@ describe('InferPublicModuleDependencies', () => {
     type Inferred = InferPublicModuleDependencies<TestModuleSecondary>
 
     expectTypeOf<Inferred>().toEqualTypeOf<ManualPick>()
+  })
+})
+
+describe('PublicResolver branding', () => {
+  it('returns PublicResolver by default for public resolver functions', () => {
+    const service = asServiceClass(TestService)
+    expectTypeOf(service).toExtend<PublicResolver<TestService>>()
+
+    const useCase = asUseCaseClass(TestService)
+    expectTypeOf(useCase).toExtend<PublicResolver<TestService>>()
+
+    const jobQueue = asJobQueueClass(Queue, { diOptions: {} })
+    expectTypeOf(jobQueue).toExtend<PublicResolver<Queue>>()
+
+    const queueManager = asEnqueuedJobQueueManagerFunction(() => new QueueManager(), {})
+    expectTypeOf(queueManager).toExtend<PublicResolver<QueueManager>>()
+  })
+
+  it('drops PublicResolver brand when public: false is passed', () => {
+    const service = asServiceClass(TestService, { public: false })
+    expectTypeOf(service).toExtend<BuildResolver<TestService> & DisposableResolver<TestService>>()
+    expectTypeOf(service).not.toExtend<PublicResolver<TestService>>()
+
+    const useCase = asUseCaseClass(TestService, { public: false })
+    expectTypeOf(useCase).not.toExtend<PublicResolver<TestService>>()
+
+    const jobQueue = asJobQueueClass(Queue, { diOptions: {} }, { public: false })
+    expectTypeOf(jobQueue).not.toExtend<PublicResolver<Queue>>()
+
+    const queueManager = asEnqueuedJobQueueManagerFunction(
+      () => new QueueManager(),
+      {},
+      { public: false },
+    )
+    expectTypeOf(queueManager).not.toExtend<PublicResolver<QueueManager>>()
+  })
+
+  it('does not brand private resolver functions by default', () => {
+    const repo = asRepositoryClass(TestRepository)
+    expectTypeOf(repo).not.toExtend<PublicResolver<TestRepository>>()
+
+    const singleton = asSingletonClass(TestService)
+    expectTypeOf(singleton).not.toExtend<PublicResolver<TestService>>()
+
+    const singletonFn = asSingletonFunction(() => new TestService())
+    expectTypeOf(singletonFn).not.toExtend<PublicResolver<TestService>>()
+  })
+
+  it('brands asSingletonClass and asSingletonFunction when public: true is passed', () => {
+    const singleton = asSingletonClass(TestService, { public: true })
+    expectTypeOf(singleton).toExtend<PublicResolver<TestService>>()
+
+    const singletonFn = asSingletonFunction(() => new TestService(), { public: true })
+    expectTypeOf(singletonFn).toExtend<PublicResolver<TestService>>()
   })
 })

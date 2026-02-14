@@ -28,6 +28,14 @@ export interface EnqueuedJobQueueManager {
 
 export function asSingletonClass<T = object>(
   Type: Constructor<T>,
+  opts: BuildResolverOptions<T> & { public: true },
+): PublicResolver<T>
+export function asSingletonClass<T = object>(
+  Type: Constructor<T>,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T>
+export function asSingletonClass<T = object>(
+  Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type, {
@@ -60,6 +68,14 @@ export function asClassWithConfig<T = object, Config = unknown>(
 
 export function asSingletonFunction<T>(
   fn: FunctionReturning<T>,
+  opts: BuildResolverOptions<T> & { public: true },
+): PublicResolver<T>
+export function asSingletonFunction<T>(
+  fn: FunctionReturning<T>,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T>
+export function asSingletonFunction<T>(
+  fn: FunctionReturning<T>,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
   return asFunction(fn, {
@@ -70,24 +86,40 @@ export function asSingletonFunction<T>(
 
 export function asServiceClass<T = object>(
   Type: Constructor<T>,
+  opts: BuildResolverOptions<T> & { public: false },
+): BuildResolver<T> & DisposableResolver<T>
+export function asServiceClass<T = object>(
+  Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
-): PublicResolver<T> {
+): PublicResolver<T>
+export function asServiceClass<T = object>(
+  Type: Constructor<T>,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type, {
     public: true,
     ...opts,
     lifetime: 'SINGLETON',
-  }) as PublicResolver<T>
+  })
 }
 
 export function asUseCaseClass<T = object>(
   Type: Constructor<T>,
+  opts: BuildResolverOptions<T> & { public: false },
+): BuildResolver<T> & DisposableResolver<T>
+export function asUseCaseClass<T = object>(
+  Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
-): PublicResolver<T> {
+): PublicResolver<T>
+export function asUseCaseClass<T = object>(
+  Type: Constructor<T>,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type, {
     public: true,
     ...opts,
     lifetime: 'SINGLETON',
-  }) as PublicResolver<T>
+  })
 }
 
 export function asRepositoryClass<T = object>(
@@ -311,8 +343,18 @@ export type JobQueueModuleOptions = {
 export function asJobQueueClass<T = object>(
   Type: Constructor<T>,
   queueOptions: JobQueueModuleOptions,
+  opts: BuildResolverOptions<T> & { public: false },
+): BuildResolver<T> & DisposableResolver<T>
+export function asJobQueueClass<T = object>(
+  Type: Constructor<T>,
+  queueOptions: JobQueueModuleOptions,
   opts?: BuildResolverOptions<T>,
-): PublicResolver<T> {
+): PublicResolver<T>
+export function asJobQueueClass<T = object>(
+  Type: Constructor<T>,
+  queueOptions: JobQueueModuleOptions,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type, {
     // these follow background-jobs-common conventions
     asyncInit: 'start',
@@ -323,14 +365,24 @@ export function asJobQueueClass<T = object>(
     enabled: isJobQueueEnabled(queueOptions.diOptions.jobQueuesEnabled, queueOptions.queueName),
     lifetime: 'SINGLETON',
     ...opts,
-  }) as PublicResolver<T>
+  })
 }
 
 export function asEnqueuedJobQueueManagerFunction<T extends EnqueuedJobQueueManager>(
   fn: FunctionReturning<T>,
   diOptions: DependencyInjectionOptions,
+  opts: BuildResolverOptions<T> & { public: false },
+): BuildResolver<T> & DisposableResolver<T>
+export function asEnqueuedJobQueueManagerFunction<T extends EnqueuedJobQueueManager>(
+  fn: FunctionReturning<T>,
+  diOptions: DependencyInjectionOptions,
   opts?: BuildResolverOptions<T>,
-): PublicResolver<T> {
+): PublicResolver<T>
+export function asEnqueuedJobQueueManagerFunction<T extends EnqueuedJobQueueManager>(
+  fn: FunctionReturning<T>,
+  diOptions: DependencyInjectionOptions,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
   return asFunction(fn, {
     // these follow background-jobs-common conventions
     asyncInit: (manager) => manager.start(resolveJobQueuesEnabled(diOptions)),
@@ -341,5 +393,5 @@ export function asEnqueuedJobQueueManagerFunction<T extends EnqueuedJobQueueMana
     enabled: isJobQueueEnabled(diOptions.jobQueuesEnabled),
     lifetime: 'SINGLETON',
     ...opts,
-  }) as PublicResolver<T>
+  })
 }
