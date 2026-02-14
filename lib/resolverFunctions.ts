@@ -18,6 +18,9 @@ declare module 'awilix' {
   }
 }
 
+export type PublicResolver<T> = BuildResolver<T> &
+  DisposableResolver<T> & { readonly __publicResolver: true }
+
 // this follows background-jobs-common conventions
 export interface EnqueuedJobQueueManager {
   start(enabled?: string[] | boolean): Promise<void>
@@ -68,23 +71,23 @@ export function asSingletonFunction<T>(
 export function asServiceClass<T = object>(
   Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
-): BuildResolver<T> & DisposableResolver<T> {
+): PublicResolver<T> {
   return asClass(Type, {
     public: true,
     ...opts,
     lifetime: 'SINGLETON',
-  })
+  }) as PublicResolver<T>
 }
 
 export function asUseCaseClass<T = object>(
   Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
-): BuildResolver<T> & DisposableResolver<T> {
+): PublicResolver<T> {
   return asClass(Type, {
     public: true,
     ...opts,
     lifetime: 'SINGLETON',
-  })
+  }) as PublicResolver<T>
 }
 
 export function asRepositoryClass<T = object>(
@@ -309,7 +312,7 @@ export function asJobQueueClass<T = object>(
   Type: Constructor<T>,
   queueOptions: JobQueueModuleOptions,
   opts?: BuildResolverOptions<T>,
-): BuildResolver<T> & DisposableResolver<T> {
+): PublicResolver<T> {
   return asClass(Type, {
     // these follow background-jobs-common conventions
     asyncInit: 'start',
@@ -320,14 +323,14 @@ export function asJobQueueClass<T = object>(
     enabled: isJobQueueEnabled(queueOptions.diOptions.jobQueuesEnabled, queueOptions.queueName),
     lifetime: 'SINGLETON',
     ...opts,
-  })
+  }) as PublicResolver<T>
 }
 
 export function asEnqueuedJobQueueManagerFunction<T extends EnqueuedJobQueueManager>(
   fn: FunctionReturning<T>,
   diOptions: DependencyInjectionOptions,
   opts?: BuildResolverOptions<T>,
-): BuildResolver<T> & DisposableResolver<T> {
+): PublicResolver<T> {
   return asFunction(fn, {
     // these follow background-jobs-common conventions
     asyncInit: (manager) => manager.start(resolveJobQueuesEnabled(diOptions)),
@@ -338,5 +341,5 @@ export function asEnqueuedJobQueueManagerFunction<T extends EnqueuedJobQueueMana
     enabled: isJobQueueEnabled(diOptions.jobQueuesEnabled),
     lifetime: 'SINGLETON',
     ...opts,
-  })
+  }) as PublicResolver<T>
 }

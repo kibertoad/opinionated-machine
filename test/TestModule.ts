@@ -1,5 +1,9 @@
 import { asClass } from 'awilix'
-import { AbstractModule, type MandatoryNameAndRegistrationPair } from '../lib/AbstractModule.js'
+import {
+  AbstractModule,
+  type InferModuleDependencies,
+  type MandatoryNameAndRegistrationPair,
+} from '../lib/AbstractModule.js'
 import type { DependencyInjectionOptions } from '../lib/DIContext.js'
 import {
   asControllerClass,
@@ -100,21 +104,8 @@ export class PeriodicJob {
   }
 }
 
-export type TestModuleDependencies = {
-  testService: TestService
-  testServiceWithTransitive: TestServiceWithTransitive
-  testExpendable: TestService
-  messageQueueConsumer: TestMessageQueueConsumer
-  jobWorker: JobWorker
-  queueManager: QueueManager
-  queue: Queue
-  periodicJob: PeriodicJob
-}
-
-export class TestModule extends AbstractModule<TestModuleDependencies> {
-  resolveDependencies(
-    diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<TestModuleDependencies> {
+export class TestModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
     return {
       testService: asServiceClass(TestService),
       testServiceWithTransitive: asServiceClass(TestServiceWithTransitive),
@@ -153,3 +144,5 @@ export class TestModule extends AbstractModule<TestModuleDependencies> {
     }
   }
 }
+
+export type TestModuleDependencies = InferModuleDependencies<TestModule>

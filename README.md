@@ -69,20 +69,12 @@ Very opinionated DI framework for fastify, built on top of awilix
 Define a module, or several modules, that will be used for resolving dependency graphs, using awilix:
 
 ```ts
-import { AbstractModule, asSingletonClass, asMessageQueueHandlerClass, asJobWorkerClass, asJobQueueClass, asControllerClass } from 'opinionated-machine'
+import { AbstractModule, type InferModuleDependencies, asSingletonClass, asMessageQueueHandlerClass, asJobWorkerClass, asJobQueueClass, asControllerClass } from 'opinionated-machine'
 
-export type ModuleDependencies = {
-    service: Service
-    messageQueueConsumer: MessageQueueConsumer
-    jobWorker: JobWorker
-    queueManager: QueueManager
-}
-
-export class MyModule extends AbstractModule<ModuleDependencies, ExternalDependencies> {
+export class MyModule extends AbstractModule {
     resolveDependencies(
         diOptions: DependencyInjectionOptions,
-        _externalDependencies: ExternalDependencies,
-    ): MandatoryNameAndRegistrationPair<ModuleDependencies> {
+    ) {
         return {
             service: asSingletonClass(Service),
 
@@ -103,7 +95,7 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
             }),
 
             // by default disposal methods from `background-jobs-commons` job queue manager
-            // will be assumed. If different values are necessary, specify "asyncDispose" fields 
+            // will be assumed. If different values are necessary, specify "asyncDispose" fields
             // in the second config object
             queueManager: asJobQueueClass(
                 QueueManager,
@@ -123,6 +115,38 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
         return {
             controller: asControllerClass(MyController),
         }
+    }
+}
+
+// Dependencies are inferred from the return type of resolveDependencies()
+export type ModuleDependencies = InferModuleDependencies<MyModule>
+```
+
+The `InferModuleDependencies` utility type extracts the dependency types from the resolvers returned by `resolveDependencies()`, so you don't need to maintain a separate type manually.
+
+When a module is used as a secondary module, only resolvers marked as **public** (`asServiceClass`, `asUseCaseClass`, `asJobQueueClass`, `asEnqueuedJobQueueManagerFunction`) are exposed. Use `InferPublicModuleDependencies` to infer only the public dependencies:
+
+```ts
+// Inferred as { service: Service } — repositories and other private resolvers are excluded
+export type MyModulePublicDependencies = InferPublicModuleDependencies<MyModule>
+```
+
+You can also use the explicit generic pattern if you prefer (e.g. for `isolatedDeclarations` mode):
+
+```ts
+export type ModuleDependencies = {
+    service: Service
+    messageQueueConsumer: MessageQueueConsumer
+    jobWorker: JobWorker
+    queueManager: QueueManager
+}
+
+export class MyModule extends AbstractModule<ModuleDependencies, ExternalDependencies> {
+    resolveDependencies(
+        diOptions: DependencyInjectionOptions,
+        _externalDependencies: ExternalDependencies,
+    ): MandatoryNameAndRegistrationPair<ModuleDependencies> {
+        return { /* ... */ }
     }
 }
 ```
@@ -633,9 +657,9 @@ export class SimpleSSEController extends AbstractSSEController<Contracts> {
 Use `asSSEControllerClass` in your module's `resolveControllers` method alongside REST controllers. SSE controllers are automatically detected via the `isSSEController` flag and registered in the DI container:
 
 ```ts
-import { AbstractModule, asControllerClass, asSSEControllerClass, asServiceClass, type DependencyInjectionOptions } from 'opinionated-machine'
+import { AbstractModule, type InferModuleDependencies, asControllerClass, asSSEControllerClass, asServiceClass, type DependencyInjectionOptions } from 'opinionated-machine'
 
-export class NotificationsModule extends AbstractModule<Dependencies> {
+export class NotificationsModule extends AbstractModule {
   resolveDependencies() {
     return {
       notificationService: asServiceClass(NotificationService),
@@ -651,6 +675,8 @@ export class NotificationsModule extends AbstractModule<Dependencies> {
     }
   }
 }
+
+export type NotificationsModuleDependencies = InferModuleDependencies<NotificationsModule>
 ```
 
 ### Registering SSE Routes
@@ -1723,12 +1749,13 @@ Use `asDualModeControllerClass` in your module:
 ```ts
 import {
   AbstractModule,
+  type InferModuleDependencies,
   asControllerClass,
   asDualModeControllerClass,
   asServiceClass,
 } from 'opinionated-machine'
 
-export class ChatModule extends AbstractModule<Dependencies> {
+export class ChatModule extends AbstractModule {
   resolveDependencies() {
     return {
       aiService: asServiceClass(AIService),
@@ -1744,6 +1771,8 @@ export class ChatModule extends AbstractModule<Dependencies> {
     }
   }
 }
+
+export type ChatModuleDependencies = InferModuleDependencies<ChatModule>
 ```
 
 Register dual-mode routes after the `@fastify/sse` plugin:

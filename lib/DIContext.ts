@@ -57,7 +57,7 @@ export class DIContext<
   private readonly appConfig: Config
 
   constructor(
-    diContainer: AwilixContainer,
+    diContainer: AwilixContainer<Dependencies>,
     options: DependencyInjectionOptions,
     appConfig: Config,
     awilixManager?: AwilixManager,
