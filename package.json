@@ -35,7 +35,7 @@
     },
     "peerDependencies": {
         "@lokalise/api-contracts": ">=6.5.1",
-        "@lokalise/fastify-api-contracts": ">=5.2.0",
+        "@lokalise/fastify-api-contracts": ">=5.3.0",
         "@lokalise/node-core": ">=14.7.4",
         "awilix": ">=13.0.0",
         "awilix-manager": ">=6.0.0",

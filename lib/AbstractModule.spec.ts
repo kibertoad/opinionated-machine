@@ -1,7 +1,11 @@
 import type { BuildResolver, DisposableResolver } from 'awilix'
 import { describe, expectTypeOf, it } from 'vitest'
 import { type TestModule, TestService } from '../test/TestModule.ts'
-import { type TestModuleSecondary, TestRepository, type TestServiceSecondary } from '../test/TestModuleSecondary.ts'
+import {
+  type TestModuleSecondary,
+  TestRepository,
+  type TestServiceSecondary,
+} from '../test/TestModuleSecondary.ts'
 import type { InferModuleDependencies, InferPublicModuleDependencies } from './AbstractModule.ts'
 import type { PublicResolver } from './resolverFunctions.ts'
 import {
@@ -59,7 +63,9 @@ describe('PublicResolver conditional branding', () => {
   })
 
   it('private-by-default resolver gains brand with { public: true }', () => {
-    expectTypeOf(asSingletonClass(TestService, { public: true })).toExtend<PublicResolver<TestService>>()
+    expectTypeOf(asSingletonClass(TestService, { public: true })).toExtend<
+      PublicResolver<TestService>
+    >()
     expectTypeOf(asSingletonFunction(() => new TestService(), { public: true })).toExtend<
       PublicResolver<TestService>
     >()

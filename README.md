@@ -69,7 +69,7 @@ Very opinionated DI framework for fastify, built on top of awilix
 Define a module, or several modules, that will be used for resolving dependency graphs, using awilix:
 
 ```ts
-import { AbstractModule, type InferModuleDependencies, asSingletonClass, asMessageQueueHandlerClass, asJobWorkerClass, asJobQueueClass, asControllerClass } from 'opinionated-machine'
+import { AbstractModule, type InferModuleDependencies, asSingletonClass, asMessageQueueHandlerClass, asEnqueuedJobWorkerClass, asJobQueueClass, asControllerClass } from 'opinionated-machine'
 
 export class MyModule extends AbstractModule {
     resolveDependencies(
