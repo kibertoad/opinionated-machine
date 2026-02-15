@@ -6,13 +6,6 @@ export type MandatoryNameAndRegistrationPair<T> = {
 }
 
 /**
- * Use this utility type to combine dependencies from multiple modules into full context list of dependencies
- */
-export type UnionToIntersection<U> =
-  // biome-ignore lint/suspicious/noExplicitAny: we accept anything here
-  (U extends any ? (x: U) => void : never) extends (x: infer I) => void ? I : never
-
-/**
  * Infers the module's dependency types from the return type of `resolveDependencies()`.
  *
  * This eliminates the need to manually define a `ModuleDependencies` type that duplicates
@@ -69,6 +62,29 @@ export type InferPublicModuleDependencies<M extends AbstractModule> =
           : never]: R[K] extends Resolver<infer T> ? T : never
       }
     : never
+
+/**
+ * Augmentation target for accumulating public dependencies across modules.
+ *
+ * Each module augments this interface via `declare module` to register its
+ * public dependencies. The augmentations are project-wide — they apply
+ * everywhere as long as the augmenting file is part of the TypeScript
+ * compilation, with no explicit import chain required.
+ *
+ * @example
+ * ```typescript
+ * // In your module file:
+ * declare module 'opinionated-machine' {
+ *   interface PublicDependencies extends InferPublicModuleDependencies<MyModule> {}
+ * }
+ *
+ * // In any consumer file:
+ * import type { PublicDependencies } from 'opinionated-machine'
+ * // PublicDependencies contains all augmented public deps
+ * ```
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: augmentation target for progressive public dependency accumulation
+export interface PublicDependencies {}
 
 export abstract class AbstractModule<ModuleDependencies = unknown, ExternalDependencies = never> {
   public abstract resolveDependencies(
