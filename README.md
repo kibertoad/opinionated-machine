@@ -208,6 +208,73 @@ myFactory: asSingletonFunction(
 
 **Note:** `Pick<ModuleDependencies, 'a' | 'b'>` does **not** work — `Pick` requires `keyof ModuleDependencies`, which forces TypeScript to resolve the entire type and triggers the circular reference. Each property must be accessed individually via indexed access.
 
+**Alternative: class wrapper**
+
+When adapting a third-party class with an incompatible constructor, `asSingletonFunction` is typically used to bridge the gap between the DI cradle and the library's API. If the adapter needs many dependencies, the indexed access syntax can become verbose. In that case, wrap the adaptation logic in a class and use `asSingletonClass` instead — the constructor can reference `ModuleDependencies` directly since `ClassValue<T>` breaks the cycle automatically:
+
+```ts
+// Third-party library — constructor is incompatible with DI cradle
+import { S3Client } from '@aws-sdk/client-s3'
+
+// With asSingletonFunction, each dep needs indexed access:
+s3Client: asSingletonFunction(
+  ({ config, logger }: {
+    config: ModuleDependencies['config']
+    logger: ModuleDependencies['logger']
+  }) => {
+    return new S3Client({
+      region: config.awsRegion,
+      credentials: { accessKeyId: config.awsAccessKey, secretAccessKey: config.awsSecretKey },
+      logger,
+    })
+  },
+),
+
+// With a class wrapper, reference ModuleDependencies directly.
+// If you need to add domain-specific methods, the wrapper becomes a full adapter:
+class S3StorageAdapter {
+  private readonly client: S3Client
+
+  constructor({ config, logger }: ModuleDependencies) {
+    this.client = new S3Client({
+      region: config.awsRegion,
+      credentials: { accessKeyId: config.awsAccessKey, secretAccessKey: config.awsSecretKey },
+      logger,
+    })
+  }
+
+  async upload(bucket: string, key: string, body: Buffer): Promise<string> {
+    await this.client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body }))
+    return `https://${bucket}.s3.amazonaws.com/${key}`
+  }
+}
+
+// In resolveDependencies():
+s3StorageAdapter: asSingletonClass(S3StorageAdapter),
+
+// If you just need the third-party instance as-is without adding any logic,
+// use a simple container to avoid re-wrapping every method:
+class S3ClientProvider {
+  readonly client: S3Client
+
+  constructor({ config, logger }: ModuleDependencies) {
+    this.client = new S3Client({
+      region: config.awsRegion,
+      credentials: { accessKeyId: config.awsAccessKey, secretAccessKey: config.awsSecretKey },
+      logger,
+    })
+  }
+}
+
+// In resolveDependencies():
+s3ClientProvider: asSingletonClass(S3ClientProvider),
+
+// Consumers access the original instance directly:
+// this.s3ClientProvider.client.send(new PutObjectCommand({ ... }))
+```
+
+This is more heavyweight than a function resolver but provides full type safety with no indexed access needed, and scales cleanly to any number of dependencies.
+
 You can also use the explicit generic pattern if you prefer (e.g. for `isolatedDeclarations` mode):
 
 ```ts

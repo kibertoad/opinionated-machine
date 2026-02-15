@@ -70,64 +70,6 @@ export type InferPublicModuleDependencies<M extends AbstractModule> =
       }
     : never
 
-/**
- * Like {@link InferPublicModuleDependencies}, but retains **all** dependency keys:
- * public dependencies are mapped to their unwrapped types, while non-public ones
- * are mapped to `never`.
- *
- * Designed to be used as the type argument for {@link AvailableDependencies} so that
- * private dependencies from other modules stay inaccessible (`never` wins over the
- * permissive index signature) while same-module deps fall through to `any`.
- *
- * @example
- * ```typescript
- * // Inferred as { myService: MyService; myRepo: never }
- * type Deps = InferStrictPublicModuleDependencies<MyModule>
- *
- * // Use with AvailableDependencies in asSingletonFunction callbacks:
- * asSingletonFunction(
- *   ({ myService }: AvailableDependencies<Deps>): MyHelper => new MyHelper(myService),
- * )
- * ```
- */
-export type InferStrictPublicModuleDependencies<M extends AbstractModule> =
-  ReturnType<M['resolveDependencies']> extends infer R
-    ? {
-        [K in keyof R]: R[K] extends { readonly __publicResolver: true }
-          ? R[K] extends Resolver<infer T>
-            ? T
-            : never
-          : never
-      }
-    : never
-
-/**
- * Merges known typed dependencies with a permissive index signature for
- * same-module references that cannot be explicitly typed without causing
- * circular self-reference.
- *
- * **Intended for `asSingletonFunction` callbacks** inside `resolveDependencies()`,
- * where the `ClassValue<T>` trick used by class-based resolvers is not available.
- * Prefer class-based resolvers (`asServiceClass`, `asSingletonClass`, etc.) wherever
- * possible — they provide full type safety with no `any` fallback.
- *
- * @example
- * ```typescript
- * // Cross-module deps are fully typed, same-module deps are `any`
- * myHelper: asSingletonFunction(
- *   ({ externalService, localDep }: AvailableDependencies<OtherModulePublicDeps>): MyHelper => {
- *     return new MyHelper(externalService, localDep)
- *   },
- * )
- * ```
- */
-export type AvailableDependencies<
-  // biome-ignore lint/complexity/noBannedTypes: empty default allows bare usage without type params
-  KnownDeps extends Record<string, unknown> = {},
-> =
-  // biome-ignore lint/suspicious/noExplicitAny: permissive index signature for unknown local deps
-  KnownDeps & Record<string, any>
-
 export abstract class AbstractModule<ModuleDependencies = unknown, ExternalDependencies = never> {
   public abstract resolveDependencies(
     diOptions: DependencyInjectionOptions,
