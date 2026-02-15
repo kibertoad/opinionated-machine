@@ -23,7 +23,7 @@ import type {
 
 export class TestService {
   public counter = 0
-  private readonly _testFunction: () => void
+  private readonly _testFunction: () => Promise<void>
   private readonly _testServiceSecondary: TestServiceSecondary
 
   constructor({
@@ -135,11 +135,13 @@ export class TestModule extends AbstractModule {
 
     return {
       ...deps,
-      testFunction: asFunction(({ testService }: InferCradleFromResolvers<typeof deps>) => {
-        return () => {
-          testService.execute()
-        }
-      }),
+      testFunction: asFunction(
+        ({ testServiceWithTransitive }: InferCradleFromResolvers<typeof deps>) => {
+          return () => {
+            return testServiceWithTransitive.execute()
+          }
+        },
+      ),
 
       testExpendable: asClass(TestService),
 
