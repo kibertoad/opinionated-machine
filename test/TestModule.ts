@@ -1,6 +1,7 @@
-import { asClass } from 'awilix'
+import { asClass, asFunction, type InferCradleFromResolvers } from 'awilix'
 import {
   AbstractModule,
+  type AvailableDependencies,
   type InferModuleDependencies,
   type MandatoryNameAndRegistrationPair,
 } from '../lib/AbstractModule.js'
@@ -22,6 +23,16 @@ import type {
 
 export class TestService {
   public counter = 0
+  private readonly _testFunction: () => void
+  private readonly _testServiceSecondary: TestServiceSecondary
+
+  constructor({
+    testFunction,
+    testServiceSecondary,
+  }: AvailableDependencies<TestModuleSecondaryPublicDependencies>) {
+    this._testFunction = testFunction
+    this._testServiceSecondary = testServiceSecondary
+  }
 
   execute() {}
 }
@@ -106,9 +117,29 @@ export class PeriodicJob {
 
 export class TestModule extends AbstractModule {
   resolveDependencies(diOptions: DependencyInjectionOptions) {
-    return {
+    const deps = {
       testService: asServiceClass(TestService),
       testServiceWithTransitive: asServiceClass(TestServiceWithTransitive),
+      testServiceFromFunction: asFunction(
+        ({
+          testFunction,
+          testServiceSecondary,
+        }: AvailableDependencies<TestModuleSecondaryPublicDependencies>) => {
+          return new TestService({
+            testServiceSecondary,
+            testFunction,
+          })
+        },
+      ),
+    }
+
+    return {
+      ...deps,
+      testFunction: asFunction(({ testService }: InferCradleFromResolvers<typeof deps>) => {
+        return () => {
+          testService.execute()
+        }
+      }),
 
       testExpendable: asClass(TestService),
 

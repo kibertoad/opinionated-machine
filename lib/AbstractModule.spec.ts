@@ -66,8 +66,8 @@ describe('PublicResolver conditional branding', () => {
     expectTypeOf(asSingletonClass(TestService, { public: true })).toExtend<
       PublicResolver<TestService>
     >()
-    expectTypeOf(asSingletonFunction(() => new TestService(), { public: true })).toExtend<
-      PublicResolver<TestService>
-    >()
+    expectTypeOf(
+      asSingletonFunction(() => new TestService(null as any), { public: true }),
+    ).toExtend<PublicResolver<TestService>>()
   })
 })
