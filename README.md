@@ -125,75 +125,109 @@ export type ModuleDependencies = InferModuleDependencies<MyModule>
 
 The `InferModuleDependencies` utility type extracts the dependency types from the resolvers returned by `resolveDependencies()`, so you don't need to maintain a separate type manually.
 
-When a module is used as a secondary module, only resolvers marked as **public** (`asServiceClass`, `asUseCaseClass`, `asJobQueueClass`, `asEnqueuedJobQueueManagerFunction`) are exposed. Use `InferPublicModuleDependencies` to infer only the public dependencies:
+When a module is used as a secondary module, only resolvers marked as **public** (`asServiceClass`, `asUseCaseClass`, `asJobQueueClass`, `asEnqueuedJobQueueManagerFunction`) are exposed. Use `InferPublicModuleDependencies` to infer only the public dependencies (private ones are omitted entirely):
 
 ```ts
-// Inferred as { service: Service; repo: never } — private resolvers are mapped to never
+// Inferred as { service: Service } — private resolvers are omitted
 export type MyModulePublicDependencies = InferPublicModuleDependencies<MyModule>
 ```
 
-Non-public dependencies are mapped to `never` rather than omitted. This ensures that when combined with `AvailableDependencies`, private dependencies cannot be accidentally injected — the `never` type takes precedence over the permissive index signature:
+For use with `AvailableDependencies`, use `InferStrictPublicModuleDependencies` instead — it retains all dependency keys but maps private ones to `never`, preventing accidental access through the permissive index signature:
 
 ```ts
-constructor({ service, repo }: AvailableDependencies<MyModulePublicDependencies>) {
-  service.execute() // ✓ typed as Service
-  repo.find()       // ✗ type error — repo is never
+// Inferred as { service: Service; repo: never }
+type StrictDeps = InferStrictPublicModuleDependencies<MyModule>
+
+// Private deps from other modules are never, not any
+constructor({ service, repo }: AvailableDependencies<StrictDeps>) {
+  service.execute() // typed as Service
+  repo.find()       // type error — repo is never
 }
 ```
 
 ### Avoiding circular dependencies in typed cradle parameters
 
-Because `InferModuleDependencies` is inferred from the module's own `resolveDependencies()` return type, services and functions defined within that module cannot reference it without creating a circular type dependency. There are two patterns to work around this:
+Because `InferModuleDependencies` is inferred from the module's own `resolveDependencies()` return type, classes and functions that reference it inside the same module could create a circular type dependency. The library handles this automatically for class-based resolvers, and provides `AvailableDependencies` for function-based resolvers.
 
-#### Pattern 1: `AvailableDependencies` (recommended for most cases)
+#### Class-based resolvers (recommended — works automatically)
 
-`AvailableDependencies` merges all known external public dependencies (which are safe from circular references) with a permissive index signature for in-module references. This gives autocompletion and type safety for cross-module deps, while allowing freeform access to same-module deps that cannot be explicitly typed without circular self-reference.
-
-The generic parameter should be a type that combines the public dependencies of all other modules and any global infrastructural dependencies (e.g. logger, config) available in the DI container — everything that is safe to reference without circular self-reference.
-
-Works in both class constructors and `asFunction` callbacks:
+All class-based resolver functions (`asSingletonClass`, `asServiceClass`, `asRepositoryClass`, etc.) use a `ClassValue<T>` type internally, which infers the instance type from the class's `prototype` property rather than its constructor signature. This means classes can freely reference `InferModuleDependencies` in their constructors without causing circular type dependencies:
 
 ```ts
-import { type AvailableDependencies } from 'opinionated-machine'
+import { AbstractModule, type InferModuleDependencies, asServiceClass, asSingletonClass } from 'opinionated-machine'
 
-// Combine public deps from other modules and global infrastructure into a single type
-type KnownDependencies = AuthModulePublicDeps & BillingModulePublicDeps & GlobalDeps
-
-// In a class constructor — cross-module deps are typed, same-module deps are accessible without error
 export class MyService {
-  constructor({ authService, localDep }: AvailableDependencies<KnownDependencies>) {
-    // authService — fully typed via AuthModulePublicDeps
-    // localDep — typed as `any`, no circular reference
+  // Constructor references ModuleDependencies — no circular dependency!
+  constructor({ myHelper }: ModuleDependencies) {
+    // myHelper is fully typed as MyHelper
   }
 }
 
-// In an asFunction callback — same pattern
-myFn: asFunction(({ authService, localDep }: AvailableDependencies<KnownDependencies>) => { ... })
-```
-
-#### Pattern 2: Resolver grouping with `InferCradleFromResolvers` (full type safety)
-
-For `asFunction` callbacks inside `resolveDependencies()`, you can extract sibling resolvers into a `const` and use awilix's `InferCradleFromResolvers` to get fully typed access — no `any` fallback. This works because `typeof deps` is resolved before the function that references it, breaking the cycle:
-
-```ts
-import { asFunction, type InferCradleFromResolvers } from 'awilix'
+export class MyHelper {
+  process() {}
+}
 
 export class MyModule extends AbstractModule {
   resolveDependencies(diOptions: DependencyInjectionOptions) {
-    const deps = {
-      myService: asServiceClass(MyService),
-      myRepo: asRepositoryClass(MyRepository),
-    }
-
     return {
-      ...deps,
-      // myService and myRepo are fully typed — no `any`, no circular reference
-      myFn: asFunction(({ myService }: InferCradleFromResolvers<typeof deps>) => {
-        return () => myService.execute()
-      }),
+      myService: asServiceClass(MyService),   // ClassValue<T> breaks the cycle
+      myHelper: asSingletonClass(MyHelper),
     }
   }
 }
+
+export type ModuleDependencies = InferModuleDependencies<MyModule>
+```
+
+**Prefer class-based resolvers wherever possible** — they provide full type safety with no `any` fallback and no extra annotations needed.
+
+#### Function-based resolvers (`asSingletonFunction` with `AvailableDependencies`)
+
+Function-based resolvers (`asSingletonFunction`) cannot use the `ClassValue<T>` trick because functions don't have a `prototype` property that separates return type from parameter types. For these cases, use `AvailableDependencies`:
+
+```ts
+import { type AvailableDependencies, asSingletonFunction } from 'opinionated-machine'
+
+export class MyModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
+    return {
+      myService: asServiceClass(MyService),
+      myHelper: asSingletonClass(MyHelper),
+
+      // AvailableDependencies provides `any` for destructured properties,
+      // avoiding circular reference. Explicit return type annotation is required.
+      myFactory: asSingletonFunction(
+        ({ myHelper }: AvailableDependencies): (() => void) => {
+          return () => myHelper.process()
+        },
+      ),
+    }
+  }
+}
+```
+
+When you need typed access to cross-module dependencies inside a function resolver, pass them as the type parameter. Use `InferStrictPublicModuleDependencies` to prevent accidental access to private deps:
+
+```ts
+type KnownDeps = InferStrictPublicModuleDependencies<AuthModule> & InferStrictPublicModuleDependencies<BillingModule>
+
+myFactory: asSingletonFunction(
+  ({ authService, localDep }: AvailableDependencies<KnownDeps>): MyFactory => {
+    // authService — fully typed from AuthModule public deps
+    // localDep — typed as `any` from permissive index signature (same-module dep)
+    return new MyFactory(authService, localDep)
+  },
+)
+```
+
+**Alternative: explicit return type annotations without `AvailableDependencies`**
+
+If the function just passes the cradle through to a class constructor, you can use an explicit return type annotation. The parameter stays untyped (`any` from awilix's `FunctionReturning<T>`), and the return type tells TypeScript what the resolver produces:
+
+```ts
+myServiceFromFunction: asSingletonFunction((cradle): MyService => {
+  return new MyService(cradle) // cradle is any, MyService constructor validates at runtime
+}),
 ```
 
 You can also use the explicit generic pattern if you prefer (e.g. for `isolatedDeclarations` mode):

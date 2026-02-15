@@ -39,15 +39,12 @@ export type InferModuleDependencies<M extends AbstractModule> =
     : never
 
 /**
- * Infers the **public** dependency types from the return type of `resolveDependencies()`,
- * while mapping non-public dependencies to `never`.
+ * Infers only the **public** dependency types from the return type of `resolveDependencies()`,
+ * omitting non-public dependencies entirely.
  *
  * When a module is used as a secondary module, only resolvers marked with `public: true`
  * (i.e. those created via `asServiceClass`, `asUseCaseClass`, `asJobQueueClass`, or
- * `asEnqueuedJobQueueManagerFunction`) are exposed. Non-public resolvers are retained
- * as `never` to prevent accidental injection — when combined with {@link AvailableDependencies},
- * the `never` type takes precedence over the permissive index signature, ensuring that
- * private dependencies cannot be accessed through the type system.
+ * `asEnqueuedJobQueueManagerFunction`) are exposed. Non-public resolvers are filtered out.
  *
  * @example
  * ```typescript
@@ -55,22 +52,45 @@ export type InferModuleDependencies<M extends AbstractModule> =
  *   resolveDependencies(diOptions: DependencyInjectionOptions) {
  *     return {
  *       myService: asServiceClass(MyService),       // public → MyService
- *       myRepo: asRepositoryClass(MyRepository),     // private → never
+ *       myRepo: asRepositoryClass(MyRepository),     // private → omitted
  *     }
  *   }
  * }
  *
- * // Inferred as { myService: MyService; myRepo: never }
+ * // Inferred as { myService: MyService }
  * export type MyModulePublicDependencies = InferPublicModuleDependencies<MyModule>
- *
- * // When used with AvailableDependencies, myRepo is never — cannot be injected
- * constructor({ myService, myRepo }: AvailableDependencies<MyModulePublicDependencies>) {
- *   myService.execute() // ✓ typed as MyService
- *   myRepo.find()       // ✗ type error — myRepo is never
- * }
  * ```
  */
 export type InferPublicModuleDependencies<M extends AbstractModule> =
+  ReturnType<M['resolveDependencies']> extends infer R
+    ? {
+        [K in keyof R as R[K] extends { readonly __publicResolver: true }
+          ? K
+          : never]: R[K] extends Resolver<infer T> ? T : never
+      }
+    : never
+
+/**
+ * Like {@link InferPublicModuleDependencies}, but retains **all** dependency keys:
+ * public dependencies are mapped to their unwrapped types, while non-public ones
+ * are mapped to `never`.
+ *
+ * Designed to be used as the type argument for {@link AvailableDependencies} so that
+ * private dependencies from other modules stay inaccessible (`never` wins over the
+ * permissive index signature) while same-module deps fall through to `any`.
+ *
+ * @example
+ * ```typescript
+ * // Inferred as { myService: MyService; myRepo: never }
+ * type Deps = InferStrictPublicModuleDependencies<MyModule>
+ *
+ * // Use with AvailableDependencies in asSingletonFunction callbacks:
+ * asSingletonFunction(
+ *   ({ myService }: AvailableDependencies<Deps>): MyHelper => new MyHelper(myService),
+ * )
+ * ```
+ */
+export type InferStrictPublicModuleDependencies<M extends AbstractModule> =
   ReturnType<M['resolveDependencies']> extends infer R
     ? {
         [K in keyof R]: R[K] extends { readonly __publicResolver: true }
@@ -82,36 +102,28 @@ export type InferPublicModuleDependencies<M extends AbstractModule> =
     : never
 
 /**
- * Utility type for typing the cradle parameter in any DI-managed construction — whether
- * via `asClass` (constructor injection) or `asFunction` callbacks.
+ * Merges known typed dependencies with a permissive index signature for
+ * same-module references that cannot be explicitly typed without causing
+ * circular self-reference.
  *
- * Merges all known external public dependencies (which are safe from circular references)
- * with a permissive index signature for in-module references. This gives autocompletion
- * and type safety for cross-module deps, while allowing freeform access to same-module
- * deps that cannot be explicitly typed without circular self-reference.
- *
- * The generic parameter should be a type that combines the public dependencies of all other
- * modules and any global infrastructural dependencies (e.g. logger, config) available in
- * the DI container — everything that is safe to reference without circular self-reference.
+ * **Intended for `asSingletonFunction` callbacks** inside `resolveDependencies()`,
+ * where the `ClassValue<T>` trick used by class-based resolvers is not available.
+ * Prefer class-based resolvers (`asServiceClass`, `asSingletonClass`, etc.) wherever
+ * possible — they provide full type safety with no `any` fallback.
  *
  * @example
  * ```typescript
- * // Combine public deps from other modules and global infrastructure into a single type
- * type KnownDependencies = AuthModulePublicDeps & BillingModulePublicDeps & GlobalDeps
- *
- * // In a class constructor — auth and billing deps are typed, same-module deps are accessible without error
- * export class MyService {
- *   constructor({ authService, localDep }: AvailableDependencies<KnownDependencies>) { ... }
- * }
- *
- * // In an asFunction callback — same pattern
- * myFn: asFunction(({ authService, localDep }: AvailableDependencies<KnownDependencies>) => { ... })
+ * // Cross-module deps are fully typed, same-module deps are `any`
+ * myHelper: asSingletonFunction(
+ *   ({ externalService, localDep }: AvailableDependencies<OtherModulePublicDeps>): MyHelper => {
+ *     return new MyHelper(externalService, localDep)
+ *   },
+ * )
  * ```
- *
- * @see README.md for an alternative pattern using `InferCradleFromResolvers` for full type safety.
  */
 export type AvailableDependencies<
-  KnownDeps extends Record<string, unknown> = Record<string, unknown>,
+  // biome-ignore lint/complexity/noBannedTypes: empty default allows bare usage without type params
+  KnownDeps extends Record<string, unknown> = {},
 > =
   // biome-ignore lint/suspicious/noExplicitAny: permissive index signature for unknown local deps
   KnownDeps & Record<string, any>

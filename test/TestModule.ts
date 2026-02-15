@@ -1,4 +1,4 @@
-import { asClass, asFunction, type InferCradleFromResolvers } from 'awilix'
+import { asClass } from 'awilix'
 import {
   AbstractModule,
   type AvailableDependencies,
@@ -14,6 +14,8 @@ import {
   asMessageQueueHandlerClass,
   asPeriodicJobClass,
   asServiceClass,
+  asSingletonClass,
+  asSingletonFunction,
 } from '../lib/resolverFunctions.js'
 import { TestController } from './TestController.js'
 import type {
@@ -25,12 +27,17 @@ export class TestHelper {
   process() {}
 }
 
+export class ExpendableTestService {
+  public counter = 0
+  execute() {}
+}
+
 export class TestService {
   public counter = 0
-  private readonly _testFunction: () => Promise<void>
+  private readonly _testFunction: () => void
   private readonly _testHelper: TestHelper
 
-  constructor({ testFunction, testHelper }: AvailableDependencies) {
+  constructor({ testFunction, testHelper }: TestModuleDependencies) {
     this._testFunction = testFunction
     this._testHelper = testHelper
   }
@@ -118,24 +125,21 @@ export class PeriodicJob {
 
 export class TestModule extends AbstractModule {
   resolveDependencies(diOptions: DependencyInjectionOptions) {
-    const deps = {
-      testHelper: asClass(TestHelper),
+    return {
+      testHelper: asSingletonClass(TestHelper),
       testService: asServiceClass(TestService),
       testServiceWithTransitive: asServiceClass(TestServiceWithTransitive),
-      testServiceFromFunction: asFunction((cradle: AvailableDependencies) => {
+      testServiceFromFunction: asSingletonFunction((cradle): TestService => {
         return new TestService(cradle)
       }),
-    }
 
-    return {
-      ...deps,
-      testFunction: asFunction(({ testHelper }: InferCradleFromResolvers<typeof deps>) => {
+      testFunction: asSingletonFunction(({ testHelper }: AvailableDependencies): (() => void) => {
         return () => {
           testHelper.process()
         }
       }),
 
-      testExpendable: asClass(TestService),
+      testExpendable: asClass(ExpendableTestService),
 
       messageQueueConsumer: asMessageQueueHandlerClass(TestMessageQueueConsumer, {
         queueName: TestMessageQueueConsumer.QUEUE_ID,
