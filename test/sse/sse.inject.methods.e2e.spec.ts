@@ -32,7 +32,9 @@ describe('SSE Inject E2E (onClose error handling)', () => {
       error: vi.fn(),
     }
 
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestOnCloseErrorSSEModuleDependencies>({
+      injectionMode: 'PROXY',
+    })
     const context = new DIContext<TestOnCloseErrorSSEModuleDependencies, object>(
       container,
       { isTestMode: true },

@@ -18,11 +18,22 @@ declare module 'awilix' {
   }
 }
 
+export type PublicResolver<T> = BuildResolver<T> &
+  DisposableResolver<T> & { readonly __publicResolver: true }
+
 // this follows background-jobs-common conventions
 export interface EnqueuedJobQueueManager {
   start(enabled?: string[] | boolean): Promise<void>
 }
 
+export function asSingletonClass<T = object>(
+  Type: Constructor<T>,
+  opts: BuildResolverOptions<T> & { public: true },
+): PublicResolver<T>
+export function asSingletonClass<T = object>(
+  Type: Constructor<T>,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T>
 export function asSingletonClass<T = object>(
   Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
@@ -57,6 +68,14 @@ export function asClassWithConfig<T = object, Config = unknown>(
 
 export function asSingletonFunction<T>(
   fn: FunctionReturning<T>,
+  opts: BuildResolverOptions<T> & { public: true },
+): PublicResolver<T>
+export function asSingletonFunction<T>(
+  fn: FunctionReturning<T>,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T>
+export function asSingletonFunction<T>(
+  fn: FunctionReturning<T>,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
   return asFunction(fn, {
@@ -65,6 +84,14 @@ export function asSingletonFunction<T>(
   })
 }
 
+export function asServiceClass<T = object>(
+  Type: Constructor<T>,
+  opts: BuildResolverOptions<T> & { public: false },
+): BuildResolver<T> & DisposableResolver<T>
+export function asServiceClass<T = object>(
+  Type: Constructor<T>,
+  opts?: BuildResolverOptions<T>,
+): PublicResolver<T>
 export function asServiceClass<T = object>(
   Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
@@ -76,6 +103,14 @@ export function asServiceClass<T = object>(
   })
 }
 
+export function asUseCaseClass<T = object>(
+  Type: Constructor<T>,
+  opts: BuildResolverOptions<T> & { public: false },
+): BuildResolver<T> & DisposableResolver<T>
+export function asUseCaseClass<T = object>(
+  Type: Constructor<T>,
+  opts?: BuildResolverOptions<T>,
+): PublicResolver<T>
 export function asUseCaseClass<T = object>(
   Type: Constructor<T>,
   opts?: BuildResolverOptions<T>,
@@ -308,6 +343,16 @@ export type JobQueueModuleOptions = {
 export function asJobQueueClass<T = object>(
   Type: Constructor<T>,
   queueOptions: JobQueueModuleOptions,
+  opts: BuildResolverOptions<T> & { public: false },
+): BuildResolver<T> & DisposableResolver<T>
+export function asJobQueueClass<T = object>(
+  Type: Constructor<T>,
+  queueOptions: JobQueueModuleOptions,
+  opts?: BuildResolverOptions<T>,
+): PublicResolver<T>
+export function asJobQueueClass<T = object>(
+  Type: Constructor<T>,
+  queueOptions: JobQueueModuleOptions,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type, {
@@ -323,6 +368,16 @@ export function asJobQueueClass<T = object>(
   })
 }
 
+export function asEnqueuedJobQueueManagerFunction<T extends EnqueuedJobQueueManager>(
+  fn: FunctionReturning<T>,
+  diOptions: DependencyInjectionOptions,
+  opts: BuildResolverOptions<T> & { public: false },
+): BuildResolver<T> & DisposableResolver<T>
+export function asEnqueuedJobQueueManagerFunction<T extends EnqueuedJobQueueManager>(
+  fn: FunctionReturning<T>,
+  diOptions: DependencyInjectionOptions,
+  opts?: BuildResolverOptions<T>,
+): PublicResolver<T>
 export function asEnqueuedJobQueueManagerFunction<T extends EnqueuedJobQueueManager>(
   fn: FunctionReturning<T>,
   diOptions: DependencyInjectionOptions,

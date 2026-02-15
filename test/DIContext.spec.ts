@@ -21,8 +21,8 @@ import {
   type TestModuleSecondaryPublicDependencies,
 } from './TestModuleSecondary.js'
 
-function createTestContainer() {
-  return createContainer({
+function createTestContainer<T extends object = TestModuleDependencies>() {
+  return createContainer<T>({
     injectionMode: 'PROXY',
   })
 }
@@ -36,7 +36,7 @@ function createContext<TargetDependencies extends object = TestModuleDependencie
   secondaryModules: AbstractModule<unknown>[] = [],
 ): DIContext<TargetDependencies, Config> {
   const module = new TestModule()
-  const container = createTestContainer()
+  const container = createTestContainer<TargetDependencies>()
   const context = new DIContext<TargetDependencies, Config>(container, options, {})
 
   context.registerDependencies(

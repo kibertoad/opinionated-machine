@@ -1,4 +1,9 @@
-import { AbstractModule, type MandatoryNameAndRegistrationPair } from '../lib/AbstractModule.js'
+import {
+  AbstractModule,
+  type InferModuleDependencies,
+  type InferPublicModuleDependencies,
+  type MandatoryNameAndRegistrationPair,
+} from '../lib/AbstractModule.js'
 import type { DependencyInjectionOptions } from '../lib/DIContext.js'
 import { asRepositoryClass, asServiceClass } from '../lib/resolverFunctions.js'
 
@@ -10,21 +15,8 @@ export class TestServiceSecondary {
   }
 }
 
-export type TestModuleSecondaryDependencies = {
-  testServiceSecondary: TestServiceSecondary
-  testRepository: TestRepository
-}
-
-export type TestModuleSecondaryPublicDependencies = Pick<
-  TestModuleSecondaryDependencies,
-  'testServiceSecondary'
->
-
-export class TestModuleSecondary extends AbstractModule<TestModuleSecondaryDependencies> {
-  resolveDependencies(
-    _diOptions: DependencyInjectionOptions,
-    _externalDependencies: never,
-  ): MandatoryNameAndRegistrationPair<TestModuleSecondaryDependencies> {
+export class TestModuleSecondary extends AbstractModule {
+  resolveDependencies(_diOptions: DependencyInjectionOptions) {
     return {
       testServiceSecondary: asServiceClass(TestServiceSecondary),
       testRepository: asRepositoryClass(TestRepository),
@@ -37,3 +29,8 @@ export class TestModuleSecondary extends AbstractModule<TestModuleSecondaryDepen
     return {}
   }
 }
+
+export type TestModuleSecondaryDependencies = InferModuleDependencies<TestModuleSecondary>
+
+export type TestModuleSecondaryPublicDependencies =
+  InferPublicModuleDependencies<TestModuleSecondary>

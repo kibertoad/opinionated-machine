@@ -12,7 +12,65 @@ export type UnionToIntersection<U> =
   // biome-ignore lint/suspicious/noExplicitAny: we accept anything here
   (U extends any ? (x: U) => void : never) extends (x: infer I) => void ? I : never
 
-export abstract class AbstractModule<ModuleDependencies, ExternalDependencies = never> {
+/**
+ * Infers the module's dependency types from the return type of `resolveDependencies()`.
+ *
+ * This eliminates the need to manually define a `ModuleDependencies` type that duplicates
+ * information already present in the resolver return value.
+ *
+ * @example
+ * ```typescript
+ * export class MyModule extends AbstractModule {
+ *   resolveDependencies(diOptions: DependencyInjectionOptions) {
+ *     return {
+ *       myService: asServiceClass(MyService),
+ *       myRepo: asRepositoryClass(MyRepository),
+ *     }
+ *   }
+ * }
+ *
+ * // Inferred as { myService: MyService; myRepo: MyRepository }
+ * export type MyModuleDependencies = InferModuleDependencies<MyModule>
+ * ```
+ */
+export type InferModuleDependencies<M extends AbstractModule> =
+  ReturnType<M['resolveDependencies']> extends infer R
+    ? { [K in keyof R]: R[K] extends Resolver<infer T> ? T : never }
+    : never
+
+/**
+ * Infers only the **public** dependency types from the return type of `resolveDependencies()`.
+ *
+ * When a module is used as a secondary module, only resolvers marked with `public: true`
+ * (i.e. those created via `asServiceClass`, `asUseCaseClass`, `asJobQueueClass`, or
+ * `asEnqueuedJobQueueManagerFunction`) are exposed. This type automatically filters
+ * to just those public dependencies.
+ *
+ * @example
+ * ```typescript
+ * export class MyModule extends AbstractModule {
+ *   resolveDependencies(diOptions: DependencyInjectionOptions) {
+ *     return {
+ *       myService: asServiceClass(MyService),       // public
+ *       myRepo: asRepositoryClass(MyRepository),     // private
+ *     }
+ *   }
+ * }
+ *
+ * // Inferred as { myService: MyService }
+ * export type MyModulePublicDependencies = InferPublicModuleDependencies<MyModule>
+ * ```
+ */
+export type InferPublicModuleDependencies<M extends AbstractModule> =
+  ReturnType<M['resolveDependencies']> extends infer R
+    ? {
+        [K in keyof R as R[K] extends { readonly __publicResolver: true }
+          ? K
+          : never]: R[K] extends Resolver<infer T> ? T : never
+      }
+    : never
+
+export abstract class AbstractModule<ModuleDependencies = unknown, ExternalDependencies = never> {
   public abstract resolveDependencies(
     diOptions: DependencyInjectionOptions,
     externalDependencies: ExternalDependencies,

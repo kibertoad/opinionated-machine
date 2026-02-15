@@ -38,7 +38,7 @@ describe('configUtils', () => {
     })
 
     it('merges config overrides and returns new dependency overrides', () => {
-      const container = createContainer({ injectionMode: 'PROXY' })
+      const container = createContainer<{ config: TestConfig }>({ injectionMode: 'PROXY' })
 
       const result = mergeConfigAndDependencyOverrides<{ config: TestConfig }, TestConfig>(
         baseConfig,
@@ -60,7 +60,9 @@ describe('configUtils', () => {
     })
 
     it('preserves existing dependency overrides when merging config', () => {
-      const container = createContainer({ injectionMode: 'PROXY' })
+      const container = createContainer<{ config: TestConfig; otherDep: string }>({
+        injectionMode: 'PROXY',
+      })
       const existingOverrides = {
         otherDep: { resolve: () => 'other' },
       }

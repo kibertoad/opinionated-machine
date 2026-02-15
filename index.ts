@@ -1,6 +1,8 @@
 export { AbstractController, type BuildRoutesReturnType } from './lib/AbstractController.js'
 export {
   AbstractModule,
+  type InferModuleDependencies,
+  type InferPublicModuleDependencies,
   type MandatoryNameAndRegistrationPair,
   type UnionToIntersection,
 } from './lib/AbstractModule.js'
