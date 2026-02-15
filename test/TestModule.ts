@@ -13,6 +13,8 @@ import {
   asMessageQueueHandlerClass,
   asPeriodicJobClass,
   asServiceClass,
+  asSingletonClass,
+  asSingletonFunction,
 } from '../lib/resolverFunctions.js'
 import { TestController } from './TestController.js'
 import type {
@@ -20,8 +22,24 @@ import type {
   TestServiceSecondary,
 } from './TestModuleSecondary.js'
 
+export class TestHelper {
+  process() {}
+}
+
+export class ExpendableTestService {
+  public counter = 0
+  execute() {}
+}
+
 export class TestService {
   public counter = 0
+  private readonly _testFunction: () => void
+  private readonly _testHelper: TestHelper
+
+  constructor({ testFunction, testHelper }: TestModuleDependencies) {
+    this._testFunction = testFunction
+    this._testHelper = testHelper
+  }
 
   execute() {}
 }
@@ -107,10 +125,22 @@ export class PeriodicJob {
 export class TestModule extends AbstractModule {
   resolveDependencies(diOptions: DependencyInjectionOptions) {
     return {
+      testHelper: asSingletonClass(TestHelper),
       testService: asServiceClass(TestService),
       testServiceWithTransitive: asServiceClass(TestServiceWithTransitive),
+      testServiceFromFunction: asSingletonFunction((cradle): TestService => {
+        return new TestService(cradle)
+      }),
 
-      testExpendable: asClass(TestService),
+      testFunction: asSingletonFunction(
+        ({ testHelper }: { testHelper: TestModuleDependencies['testHelper'] }) => {
+          return () => {
+            testHelper.process()
+          }
+        },
+      ),
+
+      testExpendable: asClass(ExpendableTestService),
 
       messageQueueConsumer: asMessageQueueHandlerClass(TestMessageQueueConsumer, {
         queueName: TestMessageQueueConsumer.QUEUE_ID,

@@ -39,20 +39,20 @@ export type InferModuleDependencies<M extends AbstractModule> =
     : never
 
 /**
- * Infers only the **public** dependency types from the return type of `resolveDependencies()`.
+ * Infers only the **public** dependency types from the return type of `resolveDependencies()`,
+ * omitting non-public dependencies entirely.
  *
  * When a module is used as a secondary module, only resolvers marked with `public: true`
  * (i.e. those created via `asServiceClass`, `asUseCaseClass`, `asJobQueueClass`, or
- * `asEnqueuedJobQueueManagerFunction`) are exposed. This type automatically filters
- * to just those public dependencies.
+ * `asEnqueuedJobQueueManagerFunction`) are exposed. Non-public resolvers are filtered out.
  *
  * @example
  * ```typescript
  * export class MyModule extends AbstractModule {
  *   resolveDependencies(diOptions: DependencyInjectionOptions) {
  *     return {
- *       myService: asServiceClass(MyService),       // public
- *       myRepo: asRepositoryClass(MyRepository),     // private
+ *       myService: asServiceClass(MyService),       // public → MyService
+ *       myRepo: asRepositoryClass(MyRepository),     // private → omitted
  *     }
  *   }
  * }

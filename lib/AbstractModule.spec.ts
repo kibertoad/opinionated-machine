@@ -25,7 +25,7 @@ describe('InferModuleDependencies', () => {
 })
 
 describe('InferPublicModuleDependencies', () => {
-  it('includes public and excludes private dependencies', () => {
+  it('resolves public dependencies to their unwrapped types', () => {
     type PublicDeps = InferPublicModuleDependencies<TestModule>
 
     // asServiceClass → public, resolved to unwrapped type
@@ -34,15 +34,25 @@ describe('InferPublicModuleDependencies', () => {
     expectTypeOf<PublicDeps>().toHaveProperty('queue')
     // asEnqueuedJobQueueManagerFunction → public
     expectTypeOf<PublicDeps>().toHaveProperty('queueManager')
+  })
 
-    // raw asClass → private
+  it('omits non-public dependencies from the type', () => {
+    type PublicDeps = InferPublicModuleDependencies<TestModule>
+
+    // private resolvers are omitted entirely
     expectTypeOf<PublicDeps>().not.toHaveProperty('testExpendable')
-    // asMessageQueueHandlerClass → private
     expectTypeOf<PublicDeps>().not.toHaveProperty('messageQueueConsumer')
-    // asEnqueuedJobWorkerClass → private
     expectTypeOf<PublicDeps>().not.toHaveProperty('jobWorker')
-    // asPeriodicJobClass → private
     expectTypeOf<PublicDeps>().not.toHaveProperty('periodicJob')
+  })
+
+  it('omits private deps from secondary module public type', () => {
+    type PublicDeps = InferPublicModuleDependencies<TestModuleSecondary>
+
+    // public dep is properly typed
+    expectTypeOf<PublicDeps['testServiceSecondary']>().toEqualTypeOf<TestServiceSecondary>()
+    // private dep is omitted
+    expectTypeOf<PublicDeps>().not.toHaveProperty('testRepository')
   })
 })
 
@@ -66,8 +76,8 @@ describe('PublicResolver conditional branding', () => {
     expectTypeOf(asSingletonClass(TestService, { public: true })).toExtend<
       PublicResolver<TestService>
     >()
-    expectTypeOf(asSingletonFunction(() => new TestService(), { public: true })).toExtend<
-      PublicResolver<TestService>
-    >()
+    expectTypeOf(
+      asSingletonFunction(() => new TestService(null as any), { public: true }),
+    ).toExtend<PublicResolver<TestService>>()
   })
 })

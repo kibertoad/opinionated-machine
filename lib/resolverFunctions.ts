@@ -10,6 +10,20 @@ import {
   resolveJobQueuesEnabled,
 } from './diConfigUtils.js'
 
+/**
+ * Type-level representation of a class value that infers the instance type
+ * from the `prototype` property rather than from the constructor signature.
+ *
+ * This breaks circular type dependencies that occur when a class constructor
+ * references a type derived from the module's own resolver return type
+ * (e.g. `InferModuleDependencies`), because TypeScript can resolve the
+ * instance type (prototype) without evaluating constructor parameter types.
+ *
+ * Constructor parameter types are still fully checked — the cycle is only
+ * broken at the resolver inference level.
+ */
+type ClassValue<T> = { prototype: T }
+
 declare module 'awilix' {
   interface ResolverOptions<T> {
     public?: boolean // if module is used as secondary, only public dependencies will be exposed. default is false
@@ -27,18 +41,18 @@ export interface EnqueuedJobQueueManager {
 }
 
 export function asSingletonClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   opts: BuildResolverOptions<T> & { public: true },
 ): PublicResolver<T>
 export function asSingletonClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T>
 export function asSingletonClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
-  return asClass(Type, {
+  return asClass(Type as unknown as Constructor<T>, {
     ...opts,
     lifetime: 'SINGLETON',
   })
@@ -55,12 +69,13 @@ export function asSingletonClass<T = object>(
  * ```
  */
 export function asClassWithConfig<T = object, Config = unknown>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   config: Config,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
+  const Ctor = Type as unknown as Constructor<T>
   // biome-ignore lint/suspicious/noExplicitAny: Dynamic constructor invocation with cradle proxy
-  return asFunction((cradle: any) => new Type(cradle, config), {
+  return asFunction((cradle: any) => new Ctor(cradle, config), {
     ...opts,
     lifetime: opts?.lifetime ?? 'SINGLETON',
   })
@@ -85,18 +100,18 @@ export function asSingletonFunction<T>(
 }
 
 export function asServiceClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   opts: BuildResolverOptions<T> & { public: false },
 ): BuildResolver<T> & DisposableResolver<T>
 export function asServiceClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   opts?: BuildResolverOptions<T>,
 ): PublicResolver<T>
 export function asServiceClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
-  return asClass(Type, {
+  return asClass(Type as unknown as Constructor<T>, {
     public: true,
     ...opts,
     lifetime: 'SINGLETON',
@@ -104,18 +119,18 @@ export function asServiceClass<T = object>(
 }
 
 export function asUseCaseClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   opts: BuildResolverOptions<T> & { public: false },
 ): BuildResolver<T> & DisposableResolver<T>
 export function asUseCaseClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   opts?: BuildResolverOptions<T>,
 ): PublicResolver<T>
 export function asUseCaseClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
-  return asClass(Type, {
+  return asClass(Type as unknown as Constructor<T>, {
     public: true,
     ...opts,
     lifetime: 'SINGLETON',
@@ -123,10 +138,10 @@ export function asUseCaseClass<T = object>(
 }
 
 export function asRepositoryClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
-  return asClass(Type, {
+  return asClass(Type as unknown as Constructor<T>, {
     public: false,
     ...opts,
     lifetime: 'SINGLETON',
@@ -134,10 +149,10 @@ export function asRepositoryClass<T = object>(
 }
 
 export function asControllerClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
-  return asClass(Type, {
+  return asClass(Type as unknown as Constructor<T>, {
     public: false,
     ...opts,
     lifetime: 'SINGLETON',
@@ -167,7 +182,7 @@ export type SSEControllerModuleOptions = {
  * ```
  */
 export function asSSEControllerClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   sseOptions?: SSEControllerModuleOptions,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
@@ -208,7 +223,7 @@ export type DualModeControllerModuleOptions = {
  * ```
  */
 export function asDualModeControllerClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   dualModeOptions?: DualModeControllerModuleOptions,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
@@ -231,11 +246,11 @@ export type MessageQueueConsumerModuleOptions = {
 }
 
 export function asMessageQueueHandlerClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   mqOptions: MessageQueueConsumerModuleOptions,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
-  return asClass(Type, {
+  return asClass(Type as unknown as Constructor<T>, {
     // these follow message-queue-toolkit conventions
     asyncInit: 'start',
     asyncDispose: 'close',
@@ -257,11 +272,11 @@ export type EnqueuedJobWorkerModuleOptions = {
 }
 
 export function asEnqueuedJobWorkerClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   workerOptions: EnqueuedJobWorkerModuleOptions,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
-  return asClass(Type, {
+  return asClass(Type as unknown as Constructor<T>, {
     // these follow background-jobs-common conventions
     asyncInit: 'start',
     asyncDispose: 'dispose',
@@ -290,11 +305,11 @@ export function asEnqueuedJobWorkerClass<T = object>(
  * ```
  */
 export function asPgBossProcessorClass<T extends { start(): Promise<void>; stop(): Promise<void> }>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   processorOptions: EnqueuedJobWorkerModuleOptions,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
-  return asClass(Type, {
+  return asClass(Type as unknown as Constructor<T>, {
     asyncInit: 'start',
     asyncInitPriority: 20, // Initialize after pgBoss (priority 10)
     asyncDispose: 'stop',
@@ -316,11 +331,11 @@ export type PeriodicJobOptions = {
 }
 
 export function asPeriodicJobClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   workerOptions: PeriodicJobOptions,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
-  return asClass(Type, {
+  return asClass(Type as unknown as Constructor<T>, {
     // this follows background-jobs-common conventions
     eagerInject: 'register',
     asyncDispose: 'dispose',
@@ -341,21 +356,21 @@ export type JobQueueModuleOptions = {
 }
 
 export function asJobQueueClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   queueOptions: JobQueueModuleOptions,
   opts: BuildResolverOptions<T> & { public: false },
 ): BuildResolver<T> & DisposableResolver<T>
 export function asJobQueueClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   queueOptions: JobQueueModuleOptions,
   opts?: BuildResolverOptions<T>,
 ): PublicResolver<T>
 export function asJobQueueClass<T = object>(
-  Type: Constructor<T>,
+  Type: ClassValue<T>,
   queueOptions: JobQueueModuleOptions,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
-  return asClass(Type, {
+  return asClass(Type as unknown as Constructor<T>, {
     // these follow background-jobs-common conventions
     asyncInit: 'start',
     asyncDispose: 'dispose',

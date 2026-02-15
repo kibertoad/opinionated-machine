@@ -13,5 +13,17 @@
                 }
             }
         }
-    }
+    },
+    "overrides": [
+        {
+            "includes": ["*.spec.ts", "**/Test*.ts"],
+            "linter": {
+                "rules": {
+                    "correctness": {
+                        "noUnusedPrivateClassMembers": "off"
+                    }
+                }
+            }
+        }
+    ]
 }
