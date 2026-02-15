@@ -6,12 +6,7 @@ import {
   TestRepository,
   type TestServiceSecondary,
 } from '../test/TestModuleSecondary.ts'
-import type {
-  AvailableDependencies,
-  InferModuleDependencies,
-  InferPublicModuleDependencies,
-  InferStrictPublicModuleDependencies,
-} from './AbstractModule.ts'
+import type { InferModuleDependencies, InferPublicModuleDependencies } from './AbstractModule.ts'
 import type { PublicResolver } from './resolverFunctions.ts'
 import {
   asRepositoryClass,
@@ -58,57 +53,6 @@ describe('InferPublicModuleDependencies', () => {
     expectTypeOf<PublicDeps['testServiceSecondary']>().toEqualTypeOf<TestServiceSecondary>()
     // private dep is omitted
     expectTypeOf<PublicDeps>().not.toHaveProperty('testRepository')
-  })
-})
-
-describe('InferStrictPublicModuleDependencies', () => {
-  it('maps public dependencies to their unwrapped types', () => {
-    type StrictDeps = InferStrictPublicModuleDependencies<TestModule>
-
-    expectTypeOf<StrictDeps['testService']>().toEqualTypeOf<TestService>()
-  })
-
-  it('maps non-public dependencies to never', () => {
-    type StrictDeps = InferStrictPublicModuleDependencies<TestModule>
-
-    expectTypeOf<StrictDeps['testExpendable']>().toBeNever()
-    expectTypeOf<StrictDeps['messageQueueConsumer']>().toBeNever()
-    expectTypeOf<StrictDeps['jobWorker']>().toBeNever()
-    expectTypeOf<StrictDeps['periodicJob']>().toBeNever()
-  })
-
-  it('maps secondary module private deps to never', () => {
-    type StrictDeps = InferStrictPublicModuleDependencies<TestModuleSecondary>
-
-    expectTypeOf<StrictDeps['testServiceSecondary']>().toEqualTypeOf<TestServiceSecondary>()
-    expectTypeOf<StrictDeps['testRepository']>().toBeNever()
-  })
-})
-
-describe('AvailableDependencies', () => {
-  it('provides any for unknown keys when used without type params', () => {
-    type Deps = AvailableDependencies
-    expectTypeOf<Deps['anything']>().toBeAny()
-  })
-
-  it('provides typed access for known deps and any for unknown keys', () => {
-    type Known = { testService: TestService }
-    type Deps = AvailableDependencies<Known>
-
-    expectTypeOf<Deps['testService']>().toEqualTypeOf<TestService>()
-    expectTypeOf<Deps['unknownDep']>().toBeAny()
-  })
-
-  it('preserves never for strict public deps (prevents accessing private deps from other modules)', () => {
-    type StrictDeps = InferStrictPublicModuleDependencies<TestModuleSecondary>
-    type Deps = AvailableDependencies<StrictDeps>
-
-    // public dep is typed
-    expectTypeOf<Deps['testServiceSecondary']>().toEqualTypeOf<TestServiceSecondary>()
-    // private dep stays never (not overridden by index signature)
-    expectTypeOf<Deps['testRepository']>().toBeNever()
-    // unknown dep is any
-    expectTypeOf<Deps['localDep']>().toBeAny()
   })
 })
 

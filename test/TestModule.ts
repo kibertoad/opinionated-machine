@@ -1,7 +1,6 @@
 import { asClass } from 'awilix'
 import {
   AbstractModule,
-  type AvailableDependencies,
   type InferModuleDependencies,
   type MandatoryNameAndRegistrationPair,
 } from '../lib/AbstractModule.js'
@@ -133,11 +132,13 @@ export class TestModule extends AbstractModule {
         return new TestService(cradle)
       }),
 
-      testFunction: asSingletonFunction(({ testHelper }: AvailableDependencies): (() => void) => {
-        return () => {
-          testHelper.process()
-        }
-      }),
+      testFunction: asSingletonFunction(
+        ({ testHelper }: { testHelper: TestModuleDependencies['testHelper'] }) => {
+          return () => {
+            testHelper.process()
+          }
+        },
+      ),
 
       testExpendable: asClass(ExpendableTestService),
 
