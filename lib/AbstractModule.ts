@@ -79,15 +79,22 @@ export type InferPublicModuleDependencies<M extends AbstractModule> =
  * and type safety for cross-module deps, while allowing freeform access to same-module
  * deps that cannot be explicitly typed without circular self-reference.
  *
+ * The generic parameter should be a type that combines the public dependencies of all other
+ * modules and any global infrastructural dependencies (e.g. logger, config) available in
+ * the DI container — everything that is safe to reference without circular self-reference.
+ *
  * @example
  * ```typescript
- * // In a class constructor — otherModuleService is typed, localDep is accessible without error
+ * // Combine public deps from other modules and global infrastructure into a single type
+ * type KnownDependencies = AuthModulePublicDeps & BillingModulePublicDeps & GlobalDeps
+ *
+ * // In a class constructor — auth and billing deps are typed, same-module deps are accessible without error
  * export class MyService {
- *   constructor({ otherModuleService, localDep }: AvailableDependencies<OtherModulePublicDeps>) { ... }
+ *   constructor({ authService, localDep }: AvailableDependencies<KnownDependencies>) { ... }
  * }
  *
  * // In an asFunction callback — same pattern
- * myFn: asFunction(({ otherModuleService, localDep }: AvailableDependencies<OtherModulePublicDeps>) => { ... })
+ * myFn: asFunction(({ authService, localDep }: AvailableDependencies<KnownDependencies>) => { ... })
  * ```
  *
  * @see README.md for an alternative pattern using `InferCradleFromResolvers` for full type safety.

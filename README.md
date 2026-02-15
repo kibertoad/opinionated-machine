@@ -140,21 +140,26 @@ Because `InferModuleDependencies` is inferred from the module's own `resolveDepe
 
 `AvailableDependencies` merges all known external public dependencies (which are safe from circular references) with a permissive index signature for in-module references. This gives autocompletion and type safety for cross-module deps, while allowing freeform access to same-module deps that cannot be explicitly typed without circular self-reference.
 
+The generic parameter should be a type that combines the public dependencies of all other modules and any global infrastructural dependencies (e.g. logger, config) available in the DI container — everything that is safe to reference without circular self-reference.
+
 Works in both class constructors and `asFunction` callbacks:
 
 ```ts
 import { type AvailableDependencies } from 'opinionated-machine'
 
-// In a class constructor
+// Combine public deps from other modules and global infrastructure into a single type
+type KnownDependencies = AuthModulePublicDeps & BillingModulePublicDeps & GlobalDeps
+
+// In a class constructor — cross-module deps are typed, same-module deps are accessible without error
 export class MyService {
-  constructor({ otherModuleService, localDep }: AvailableDependencies<OtherModulePublicDeps>) {
-    // otherModuleService — fully typed via OtherModulePublicDeps
+  constructor({ authService, localDep }: AvailableDependencies<KnownDependencies>) {
+    // authService — fully typed via AuthModulePublicDeps
     // localDep — typed as `any`, no circular reference
   }
 }
 
 // In an asFunction callback — same pattern
-myFn: asFunction(({ otherModuleService, localDep }: AvailableDependencies<OtherModulePublicDeps>) => { ... })
+myFn: asFunction(({ authService, localDep }: AvailableDependencies<KnownDependencies>) => { ... })
 ```
 
 #### Pattern 2: Resolver grouping with `InferCradleFromResolvers` (full type safety)
