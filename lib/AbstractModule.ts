@@ -74,54 +74,23 @@ export type InferPublicModuleDependencies<M extends AbstractModule> =
  * Utility type for typing the cradle parameter in any DI-managed construction — whether
  * via `asClass` (constructor injection) or `asFunction` callbacks.
  *
- * Because `InferModuleDependencies` is inferred from the module's own `resolveDependencies()`
- * return type, services and functions defined within that module cannot reference it without
- * creating a circular type dependency. There are two patterns to work around this:
- *
- * **Pattern 1: `AvailableDependencies` (recommended for most cases)**
- *
  * Merges all known external public dependencies (which are safe from circular references)
  * with a permissive index signature for in-module references. This gives autocompletion
  * and type safety for cross-module deps, while allowing freeform access to same-module
  * deps that cannot be explicitly typed without circular self-reference.
  *
- * Works in both class constructors and `asFunction` callbacks:
- *
+ * @example
  * ```typescript
- * // In a class constructor
+ * // In a class constructor — otherModuleService is typed, localDep is accessible without error
  * export class MyService {
  *   constructor({ otherModuleService, localDep }: AvailableDependencies<OtherModulePublicDeps>) { ... }
  * }
  *
- * // In an asFunction callback
+ * // In an asFunction callback — same pattern
  * myFn: asFunction(({ otherModuleService, localDep }: AvailableDependencies<OtherModulePublicDeps>) => { ... })
  * ```
  *
- * **Pattern 2: Resolver grouping with `InferCradleFromResolvers` (full type safety)**
- *
- * For `asFunction` callbacks inside `resolveDependencies()`, you can extract sibling
- * resolvers into a `const` and use awilix's `InferCradleFromResolvers` to get fully
- * typed access — no `any` fallback. This works because `typeof deps` is resolved
- * before the function that references it, breaking the cycle:
- *
- * ```typescript
- * import { asFunction, type InferCradleFromResolvers } from 'awilix'
- *
- * resolveDependencies(diOptions: DependencyInjectionOptions) {
- *   const deps = {
- *     myService: asServiceClass(MyService),
- *     myRepo: asRepositoryClass(MyRepository),
- *   }
- *
- *   return {
- *     ...deps,
- *     // myService and myRepo are fully typed — no `any`, no circular reference
- *     myFn: asFunction(({ myService }: InferCradleFromResolvers<typeof deps>) => {
- *       return () => myService.execute()
- *     }),
- *   }
- * }
- * ```
+ * @see README.md for an alternative pattern using `InferCradleFromResolvers` for full type safety.
  */
 export type AvailableDependencies<
   KnownDeps extends Record<string, unknown> = Record<string, unknown>,
