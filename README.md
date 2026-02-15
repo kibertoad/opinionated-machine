@@ -181,34 +181,19 @@ export type ModuleDependencies = InferModuleDependencies<MyModule>
 
 **Prefer class-based resolvers wherever possible** — they provide full type safety with no `any` fallback and no extra annotations needed.
 
-#### Function-based resolvers (`asSingletonFunction` with `AvailableDependencies`)
+#### Function-based resolvers (`asSingletonFunction`)
 
-Function-based resolvers (`asSingletonFunction`) cannot use the `ClassValue<T>` trick because functions don't have a `prototype` property that separates return type from parameter types. For these cases, use `AvailableDependencies`:
+Function-based resolvers (`asSingletonFunction`) cannot use the `ClassValue<T>` trick because functions don't have a `prototype` property that separates return type from parameter types. There are two patterns to avoid circular dependencies:
+
+**Pattern 1: `AvailableDependencies` (recommended for cross-module deps)**
+
+When the function depends on dependencies from **other modules**, use `AvailableDependencies` with `InferStrictPublicModuleDependencies`. Cross-module deps are fully typed and stay in sync with their source modules automatically — no manual type mapping that can drift. Same-module deps fall through to `any` via the permissive index signature.
+
+Since `any` types contaminate TypeScript's return type inference, an **explicit return type annotation is required**:
 
 ```ts
 import { type AvailableDependencies, asSingletonFunction } from 'opinionated-machine'
 
-export class MyModule extends AbstractModule {
-  resolveDependencies(diOptions: DependencyInjectionOptions) {
-    return {
-      myService: asServiceClass(MyService),
-      myHelper: asSingletonClass(MyHelper),
-
-      // AvailableDependencies provides `any` for destructured properties,
-      // avoiding circular reference. Explicit return type annotation is required.
-      myFactory: asSingletonFunction(
-        ({ myHelper }: AvailableDependencies): (() => void) => {
-          return () => myHelper.process()
-        },
-      ),
-    }
-  }
-}
-```
-
-When you need typed access to cross-module dependencies inside a function resolver, pass them as the type parameter. Use `InferStrictPublicModuleDependencies` to prevent accidental access to private deps:
-
-```ts
 type KnownDeps = InferStrictPublicModuleDependencies<AuthModule> & InferStrictPublicModuleDependencies<BillingModule>
 
 myFactory: asSingletonFunction(
@@ -220,15 +205,29 @@ myFactory: asSingletonFunction(
 )
 ```
 
-**Alternative: explicit return type annotations without `AvailableDependencies`**
-
-If the function just passes the cradle through to a class constructor, you can use an explicit return type annotation. The parameter stays untyped (`any` from awilix's `FunctionReturning<T>`), and the return type tells TypeScript what the resolver produces:
+When all dependencies are from the same module, you can use bare `AvailableDependencies` without type parameters:
 
 ```ts
-myServiceFromFunction: asSingletonFunction((cradle): MyService => {
-  return new MyService(cradle) // cradle is any, MyService constructor validates at runtime
-}),
+myFactory: asSingletonFunction(
+  ({ myHelper }: AvailableDependencies): (() => void) => {
+    return () => myHelper.process()
+  },
+),
 ```
+
+**Pattern 2: Explicit inline types (best for same-module or mixed deps)**
+
+List the dependencies you need directly as an inline type. This gives full type safety with no `any` fallback, and avoids circular deps since the inline type doesn't reference `InferModuleDependencies`. No explicit return type annotation is needed — TypeScript infers the correct return type from the fully typed function body:
+
+```ts
+myFactory: asSingletonFunction(
+  ({ myHelper, myService }: { myHelper: MyHelper; myService: MyService }) => {
+    return () => myHelper.process()
+  },
+),
+```
+
+Note that this pattern relies on manual type mapping — if the dependency's type changes, you need to update the inline type manually. For cross-module deps, prefer Pattern 1 which stays in sync automatically.
 
 You can also use the explicit generic pattern if you prefer (e.g. for `isolatedDeclarations` mode):
 
