@@ -6,7 +6,11 @@ import {
   TestRepository,
   type TestServiceSecondary,
 } from '../test/TestModuleSecondary.ts'
-import type { InferModuleDependencies, InferPublicModuleDependencies } from './AbstractModule.ts'
+import type {
+  AvailableDependencies,
+  InferModuleDependencies,
+  InferPublicModuleDependencies,
+} from './AbstractModule.ts'
 import type { PublicResolver } from './resolverFunctions.ts'
 import {
   asRepositoryClass,
@@ -25,7 +29,7 @@ describe('InferModuleDependencies', () => {
 })
 
 describe('InferPublicModuleDependencies', () => {
-  it('includes public and excludes private dependencies', () => {
+  it('resolves public dependencies to their unwrapped types', () => {
     type PublicDeps = InferPublicModuleDependencies<TestModule>
 
     // asServiceClass → public, resolved to unwrapped type
@@ -34,15 +38,62 @@ describe('InferPublicModuleDependencies', () => {
     expectTypeOf<PublicDeps>().toHaveProperty('queue')
     // asEnqueuedJobQueueManagerFunction → public
     expectTypeOf<PublicDeps>().toHaveProperty('queueManager')
+  })
 
-    // raw asClass → private
-    expectTypeOf<PublicDeps>().not.toHaveProperty('testExpendable')
-    // asMessageQueueHandlerClass → private
-    expectTypeOf<PublicDeps>().not.toHaveProperty('messageQueueConsumer')
-    // asEnqueuedJobWorkerClass → private
-    expectTypeOf<PublicDeps>().not.toHaveProperty('jobWorker')
-    // asPeriodicJobClass → private
-    expectTypeOf<PublicDeps>().not.toHaveProperty('periodicJob')
+  it('maps non-public dependencies to never', () => {
+    type PublicDeps = InferPublicModuleDependencies<TestModule>
+
+    // raw asClass → private, mapped to never
+    expectTypeOf<PublicDeps['testExpendable']>().toBeNever()
+    // asMessageQueueHandlerClass → private, mapped to never
+    expectTypeOf<PublicDeps['messageQueueConsumer']>().toBeNever()
+    // asEnqueuedJobWorkerClass → private, mapped to never
+    expectTypeOf<PublicDeps['jobWorker']>().toBeNever()
+    // asPeriodicJobClass → private, mapped to never
+    expectTypeOf<PublicDeps['periodicJob']>().toBeNever()
+  })
+
+  it('prevents injection of private deps through AvailableDependencies', () => {
+    type PublicDeps = InferPublicModuleDependencies<TestModuleSecondary>
+    type Deps = AvailableDependencies<PublicDeps>
+
+    // public dep is properly typed
+    expectTypeOf<Deps['testServiceSecondary']>().toEqualTypeOf<TestServiceSecondary>()
+    // private dep is never — not any
+    expectTypeOf<Deps['testRepository']>().toBeNever()
+    // unknown dep falls through to any via index signature
+    expectTypeOf<Deps['somethingElse']>().toBeAny()
+  })
+})
+
+describe('AvailableDependencies', () => {
+  it('provides typed access for external public deps and any for local deps', () => {
+    type PublicDeps = InferPublicModuleDependencies<TestModuleSecondary>
+    type Deps = AvailableDependencies<PublicDeps>
+
+    // public dep from external module — fully typed
+    expectTypeOf<Deps['testServiceSecondary']>().toEqualTypeOf<TestServiceSecondary>()
+    // private dep from external module — blocked as never
+    expectTypeOf<Deps['testRepository']>().toBeNever()
+    // local dep (not in any known type) — falls through to any via index signature
+    expectTypeOf<Deps['testFunction']>().toBeAny()
+  })
+
+  it('supports combining multiple external public dep types', () => {
+    type CombinedPublicDeps = InferPublicModuleDependencies<TestModuleSecondary> &
+      InferPublicModuleDependencies<TestModule>
+    type Deps = AvailableDependencies<CombinedPublicDeps>
+
+    // public deps from TestModuleSecondary
+    expectTypeOf<Deps['testServiceSecondary']>().toEqualTypeOf<TestServiceSecondary>()
+    // public deps from TestModule
+    expectTypeOf<Deps['testService']>().toEqualTypeOf<TestService>()
+    // private dep from TestModuleSecondary — still blocked
+    expectTypeOf<Deps['testRepository']>().toBeNever()
+    // private dep from TestModule — still blocked
+    expectTypeOf<Deps['testExpendable']>().toBeNever()
+    // unknown dep — any
+    expectTypeOf<Deps['unknownDep']>().toBeAny()
   })
 })
 

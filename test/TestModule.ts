@@ -21,17 +21,18 @@ import type {
   TestServiceSecondary,
 } from './TestModuleSecondary.js'
 
+export class TestHelper {
+  process() {}
+}
+
 export class TestService {
   public counter = 0
   private readonly _testFunction: () => Promise<void>
-  private readonly _testServiceSecondary: TestServiceSecondary
+  private readonly _testHelper: TestHelper
 
-  constructor({
-    testFunction,
-    testServiceSecondary,
-  }: AvailableDependencies<TestModuleSecondaryPublicDependencies>) {
+  constructor({ testFunction, testHelper }: AvailableDependencies) {
     this._testFunction = testFunction
-    this._testServiceSecondary = testServiceSecondary
+    this._testHelper = testHelper
   }
 
   execute() {}
@@ -118,30 +119,21 @@ export class PeriodicJob {
 export class TestModule extends AbstractModule {
   resolveDependencies(diOptions: DependencyInjectionOptions) {
     const deps = {
+      testHelper: asClass(TestHelper),
       testService: asServiceClass(TestService),
       testServiceWithTransitive: asServiceClass(TestServiceWithTransitive),
-      testServiceFromFunction: asFunction(
-        ({
-          testFunction,
-          testServiceSecondary,
-        }: AvailableDependencies<TestModuleSecondaryPublicDependencies>) => {
-          return new TestService({
-            testServiceSecondary,
-            testFunction,
-          })
-        },
-      ),
+      testServiceFromFunction: asFunction((cradle: AvailableDependencies) => {
+        return new TestService(cradle)
+      }),
     }
 
     return {
       ...deps,
-      testFunction: asFunction(
-        ({ testServiceWithTransitive }: InferCradleFromResolvers<typeof deps>) => {
-          return () => {
-            return testServiceWithTransitive.execute()
-          }
-        },
-      ),
+      testFunction: asFunction(({ testHelper }: InferCradleFromResolvers<typeof deps>) => {
+        return () => {
+          testHelper.process()
+        }
+      }),
 
       testExpendable: asClass(TestService),
 

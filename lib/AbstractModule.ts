@@ -39,34 +39,45 @@ export type InferModuleDependencies<M extends AbstractModule> =
     : never
 
 /**
- * Infers only the **public** dependency types from the return type of `resolveDependencies()`.
+ * Infers the **public** dependency types from the return type of `resolveDependencies()`,
+ * while mapping non-public dependencies to `never`.
  *
  * When a module is used as a secondary module, only resolvers marked with `public: true`
  * (i.e. those created via `asServiceClass`, `asUseCaseClass`, `asJobQueueClass`, or
- * `asEnqueuedJobQueueManagerFunction`) are exposed. This type automatically filters
- * to just those public dependencies.
+ * `asEnqueuedJobQueueManagerFunction`) are exposed. Non-public resolvers are retained
+ * as `never` to prevent accidental injection — when combined with {@link AvailableDependencies},
+ * the `never` type takes precedence over the permissive index signature, ensuring that
+ * private dependencies cannot be accessed through the type system.
  *
  * @example
  * ```typescript
  * export class MyModule extends AbstractModule {
  *   resolveDependencies(diOptions: DependencyInjectionOptions) {
  *     return {
- *       myService: asServiceClass(MyService),       // public
- *       myRepo: asRepositoryClass(MyRepository),     // private
+ *       myService: asServiceClass(MyService),       // public → MyService
+ *       myRepo: asRepositoryClass(MyRepository),     // private → never
  *     }
  *   }
  * }
  *
- * // Inferred as { myService: MyService }
+ * // Inferred as { myService: MyService; myRepo: never }
  * export type MyModulePublicDependencies = InferPublicModuleDependencies<MyModule>
+ *
+ * // When used with AvailableDependencies, myRepo is never — cannot be injected
+ * constructor({ myService, myRepo }: AvailableDependencies<MyModulePublicDependencies>) {
+ *   myService.execute() // ✓ typed as MyService
+ *   myRepo.find()       // ✗ type error — myRepo is never
+ * }
  * ```
  */
 export type InferPublicModuleDependencies<M extends AbstractModule> =
   ReturnType<M['resolveDependencies']> extends infer R
     ? {
-        [K in keyof R as R[K] extends { readonly __publicResolver: true }
-          ? K
-          : never]: R[K] extends Resolver<infer T> ? T : never
+        [K in keyof R]: R[K] extends { readonly __publicResolver: true }
+          ? R[K] extends Resolver<infer T>
+            ? T
+            : never
+          : never
       }
     : never
 

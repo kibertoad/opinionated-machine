@@ -128,8 +128,17 @@ The `InferModuleDependencies` utility type extracts the dependency types from th
 When a module is used as a secondary module, only resolvers marked as **public** (`asServiceClass`, `asUseCaseClass`, `asJobQueueClass`, `asEnqueuedJobQueueManagerFunction`) are exposed. Use `InferPublicModuleDependencies` to infer only the public dependencies:
 
 ```ts
-// Inferred as { service: Service } — repositories and other private resolvers are excluded
+// Inferred as { service: Service; repo: never } — private resolvers are mapped to never
 export type MyModulePublicDependencies = InferPublicModuleDependencies<MyModule>
+```
+
+Non-public dependencies are mapped to `never` rather than omitted. This ensures that when combined with `AvailableDependencies`, private dependencies cannot be accidentally injected — the `never` type takes precedence over the permissive index signature:
+
+```ts
+constructor({ service, repo }: AvailableDependencies<MyModulePublicDependencies>) {
+  service.execute() // ✓ typed as Service
+  repo.find()       // ✗ type error — repo is never
+}
 ```
 
 ### Avoiding circular dependencies in typed cradle parameters
