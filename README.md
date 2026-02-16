@@ -350,7 +350,8 @@ s3Client: asSingletonFunction(
 You can use concrete types instead of indexed access when the return type is dynamic or difficult to spell out explicitly. Because concrete types don't reference `InferModuleDependencies`, there is no circularity, so TypeScript can infer the return type for you:
 
 ```ts
-// Return type inferred automatically — no explicit annotation needed
+// Return type inferred automatically — Config is a concrete type that doesn't
+// reference InferModuleDependencies, so there's no circular reference.
 redisConfig: asSingletonFunction(
   ({ config }: { config: Config }) => {
     return config.getRedisConfig()
