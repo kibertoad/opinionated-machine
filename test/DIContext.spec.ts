@@ -3,7 +3,7 @@ import { asClass, createContainer, type NameAndRegistrationPair } from 'awilix'
 import { fastify } from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { describe, expect, it } from 'vitest'
-import type { AbstractModule, UnionToIntersection } from '../lib/AbstractModule.js'
+import type { AbstractModule } from '../lib/AbstractModule.js'
 import { type DependencyInjectionOptions, DIContext } from '../lib/DIContext.js'
 import { TestController } from './TestController.js'
 import {
@@ -264,9 +264,11 @@ describe('opinionated-machine', () => {
 
   describe('secondary modules', () => {
     it('resolves public dependencies from a secondary module', async () => {
-      const context = createContext<
-        UnionToIntersection<TestModuleDependencies | TestModuleSecondaryPublicDependencies>
-      >({}, {}, [new TestModuleSecondary()])
+      const context = createContext<TestModuleDependencies & TestModuleSecondaryPublicDependencies>(
+        {},
+        {},
+        [new TestModuleSecondary()],
+      )
 
       const { testServiceSecondary } = context.diContainer.cradle
 
@@ -274,17 +276,21 @@ describe('opinionated-machine', () => {
     })
 
     it('does not resolve private dependency from a secondary module', () => {
-      const context = createContext<
-        UnionToIntersection<TestModuleDependencies | TestModuleSecondaryDependencies>
-      >({}, {}, [new TestModuleSecondary()])
+      const context = createContext<TestModuleDependencies & TestModuleSecondaryDependencies>(
+        {},
+        {},
+        [new TestModuleSecondary()],
+      )
 
       expect(() => context.diContainer.cradle.testRepository).toThrowError(/Could not resolve/)
     })
 
     it('resolves transitive dependencies from a secondary module', async () => {
-      const context = createContext<
-        UnionToIntersection<TestModuleDependencies | TestModuleSecondaryPublicDependencies>
-      >({}, {}, [new TestModuleSecondary()])
+      const context = createContext<TestModuleDependencies & TestModuleSecondaryPublicDependencies>(
+        {},
+        {},
+        [new TestModuleSecondary()],
+      )
 
       const { testServiceWithTransitive } = context.diContainer.cradle
 

@@ -4,6 +4,7 @@ Very opinionated DI framework for fastify, built on top of awilix
 ## Table of Contents
 
 - [Basic usage](#basic-usage)
+  - [Managing global public dependencies across modules](#managing-global-public-dependencies-across-modules)
   - [Avoiding circular dependencies in typed cradle parameters](#avoiding-circular-dependencies-in-typed-cradle-parameters)
 - [Defining controllers](#defining-controllers)
 - [Putting it all together](#putting-it-all-together)
@@ -130,6 +131,124 @@ When a module is used as a secondary module, only resolvers marked as **public**
 ```ts
 // Inferred as { service: Service } — private resolvers are omitted
 export type MyModulePublicDependencies = InferPublicModuleDependencies<MyModule>
+```
+
+### Managing global public dependencies across modules
+
+When your application has multiple secondary modules, you need a single type that combines all their public dependencies. The library exports an empty `PublicDependencies` interface that each module can augment via TypeScript's [module augmentation](https://www.typescriptlang.org/docs/handbook/declaration-merging.html#module-augmentation). Each module file adds its own public deps to this shared interface using `declare module`. The augmentations are **project-wide** — they apply everywhere as long as the augmenting file is part of your TypeScript compilation (included in `tsconfig.json`), with no explicit import chain required.
+
+Start with a `CommonModule` that provides shared infrastructure dependencies (logger, config, etc.), then add domain modules that each augment the same interface independently.
+
+```ts
+// CommonModule.ts — shared infrastructure
+import { AbstractModule, type InferPublicModuleDependencies } from 'opinionated-machine'
+
+export class CommonModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
+    return {
+      config: asSingletonFunction(() => loadConfig()),     // private — omitted
+      logger: asServiceClass(Logger),                      // public
+      eventEmitter: asServiceClass(AppEventEmitter),       // public
+    }
+  }
+}
+
+declare module 'opinionated-machine' {
+  interface PublicDependencies extends InferPublicModuleDependencies<CommonModule> {}
+}
+```
+
+```ts
+// UsersModule.ts — no need to import CommonModule's type
+import { AbstractModule, type InferPublicModuleDependencies } from 'opinionated-machine'
+
+export class UsersModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
+    return {
+      userService: asServiceClass(UserService),         // public
+      userRepository: asRepositoryClass(UserRepository), // private — omitted
+    }
+  }
+}
+
+declare module 'opinionated-machine' {
+  interface PublicDependencies extends InferPublicModuleDependencies<UsersModule> {}
+}
+```
+
+```ts
+// BillingModule.ts — independent, no chain
+import { AbstractModule, type InferPublicModuleDependencies } from 'opinionated-machine'
+
+export class BillingModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
+    return {
+      billingService: asServiceClass(BillingService),       // public
+      paymentGateway: asRepositoryClass(PaymentGateway),     // private — omitted
+    }
+  }
+}
+
+declare module 'opinionated-machine' {
+  interface PublicDependencies extends InferPublicModuleDependencies<BillingModule> {}
+}
+```
+
+Importing `PublicDependencies` from anywhere gives you the full accumulated type: `{ logger: Logger; eventEmitter: AppEventEmitter; userService: UserService; billingService: BillingService }`. Private dependencies (`config`, `userRepository`, `paymentGateway`) are omitted automatically. No explicit import chain between modules is needed — each module augments the interface independently.
+
+#### Typing constructor dependencies within a module
+
+Classes within a module can access both the module's own dependencies (including private ones like repositories) and all public dependencies from other modules. Combine `InferModuleDependencies` with `PublicDependencies` to get the full cradle type available at runtime:
+
+```ts
+// UsersModule.ts
+import {
+  AbstractModule,
+  type InferModuleDependencies,
+  type InferPublicModuleDependencies,
+  type PublicDependencies,
+} from 'opinionated-machine'
+
+// Module's own deps (public + private) merged with all public deps from other modules
+type UsersModuleInjectables = InferModuleDependencies<UsersModule> & PublicDependencies
+
+export class UserService {
+  private readonly repository: UserRepository
+  private readonly logger: Logger  // from CommonModule's public deps
+
+  constructor(dependencies: UsersModuleInjectables) {
+    this.repository = dependencies.userRepository  // own private dep — accessible
+    this.logger = dependencies.logger              // public dep from another module — accessible
+    // dependencies.billingRepository              // private dep from another module — type error
+  }
+}
+
+class UserRepository {}
+
+export class UsersModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
+    return {
+      userService: asServiceClass(UserService),
+      userRepository: asRepositoryClass(UserRepository),
+    }
+  }
+}
+
+declare module 'opinionated-machine' {
+  interface PublicDependencies extends InferPublicModuleDependencies<UsersModule> {}
+}
+```
+
+This gives each class access to exactly what the DI container provides at runtime: the module's own registered dependencies plus all public dependencies from secondary modules. Private dependencies from other modules are excluded at the type level, matching the runtime behavior.
+
+#### Constructing the combined dependency type for `DIContext`
+
+Use `PublicDependencies` when building the full dependency type:
+
+```ts
+import type { PublicDependencies } from 'opinionated-machine'
+
+type Dependencies = InferModuleDependencies<PrimaryModule> & PublicDependencies
 ```
 
 ### Avoiding circular dependencies in typed cradle parameters
