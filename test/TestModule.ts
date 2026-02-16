@@ -158,10 +158,12 @@ export class TestModule extends AbstractModule {
         },
       ),
 
-      // Wrapping a third-party class with non-DI-compatible constructor
-      thirdPartyClient: asSingletonFunction(({ config }: { config: Config }): ThirdPartyClient => {
-        return new ThirdPartyClient({ region: config.region })
-      }),
+      // Wrapping a third-party class: indexed access + explicit return type
+      thirdPartyClient: asSingletonFunction(
+        ({ config }: { config: TestModuleDependencies['config'] }): ThirdPartyClient => {
+          return new ThirdPartyClient({ region: config.region })
+        },
+      ),
 
       testExpendable: asClass(ExpendableTestService),
 

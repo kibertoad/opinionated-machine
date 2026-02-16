@@ -289,9 +289,7 @@ export type ModuleDependencies = InferModuleDependencies<MyModule>
 
 #### Function-based resolvers (`asSingletonFunction`)
 
-Function-based resolvers (`asSingletonFunction`) cannot use the `ClassValue<T>` trick because functions don't have a `prototype` property that separates return type from parameter types. This creates a circular type dependency: TypeScript needs to resolve the function's return type to determine the resolver's `T`, but if the function body uses dependency types from `InferModuleDependencies`, that requires resolving the full return type of `resolveDependencies()` — which includes the function being inferred.
-
-**Use concrete parameter types and an explicit return type annotation:**
+Function-based resolvers (`asSingletonFunction`) cannot use the `ClassValue<T>` trick because functions don't have a `prototype` property that separates return type from parameter types. Use **indexed access** on `InferModuleDependencies` to type individual dependencies, and **always provide an explicit return type annotation** on the factory function:
 
 ```ts
 import { S3Client } from '@aws-sdk/client-s3'
@@ -301,7 +299,10 @@ config: asSingletonClass(Config),
 logger: asServiceClass(Logger),
 
 s3Client: asSingletonFunction(
-  ({ config, logger }: { config: Config; logger: Logger }): S3Client => {
+  ({ config, logger }: {
+    config: ModuleDependencies['config']
+    logger: ModuleDependencies['logger']
+  }): S3Client => {
     return new S3Client({
       region: config.awsRegion,
       credentials: { accessKeyId: config.awsAccessKey, secretAccessKey: config.awsSecretKey },
@@ -309,35 +310,46 @@ s3Client: asSingletonFunction(
     })
   },
 ),
+
+// ...
+
+// At the bottom of the file:
+export type ModuleDependencies = InferModuleDependencies<MyModule>
 ```
 
-Both the concrete parameter types and explicit return type annotation are required. Without the return type, TypeScript attempts to infer it from the function body, which requires resolving the parameter types, which triggers the circular reference through `InferModuleDependencies`.
+Indexed access types (`ModuleDependencies['config']`) are resolved **lazily** by TypeScript — it looks up individual properties without computing the entire `ModuleDependencies` type, avoiding the cycle. Each dependency stays in sync with the module's resolvers automatically.
 
-**Why not indexed access (`ModuleDependencies['config']`)?**
-
-Indexed access on `InferModuleDependencies` (e.g. `ModuleDependencies['config']`) is sometimes suggested as a way to stay in sync with the module's resolvers automatically. While it avoids the circular reference at the _type parameter_ level, it still triggers circularity whenever the dependency's type is used in any expression that participates in return type inference — which includes property access, method calls, and passing values to constructors:
+For cross-module dependencies, use `InferPublicModuleDependencies`:
 
 ```ts
-// BREAKS — config.awsRegion triggers circular resolution
+type CommonDeps = InferPublicModuleDependencies<CommonModule>
+
+redis: asSingletonFunction(
+  ({ config }: { config: CommonDeps['config'] }): Redis => {
+    return new Redis({ host: config.redis.host, port: config.redis.port })
+  },
+),
+```
+
+**The explicit return type is critical.** Without it, TypeScript attempts to infer the return type from the function body, which requires resolving the parameter types, which triggers the circular reference:
+
+```ts
+// BREAKS — no explicit return type, TypeScript infers it from the body,
+// requiring config's type to be resolved, triggering the cycle:
 s3Client: asSingletonFunction(
   ({ config }: { config: ModuleDependencies['config'] }) => {
     return new S3Client({ region: config.awsRegion })
   },
 ),
-
-// WORKS — but only because the return type is independent of the dependency
-myFactory: asSingletonFunction(
-  ({ myHelper }: { myHelper: ModuleDependencies['myHelper'] }) => {
-    return () => { myHelper.process() }
-  },
-),
 ```
 
-Adding an explicit return type annotation makes indexed access work, but at that point it provides little benefit over using concrete types directly — the concrete types are simpler, more readable, and if the resolver changes type you'll get a type error either way.
+The only case where an explicit return type can be omitted is when the return type is entirely independent of the dependency types (e.g. returning a lambda whose type doesn't propagate the dependency's type). In practice, this is rare — always annotate the return type to be safe.
 
-**Preferred alternative: class wrapper**
+**Note:** `Pick<ModuleDependencies, 'a' | 'b'>` does **not** work — `Pick` requires `keyof ModuleDependencies`, which forces TypeScript to resolve the entire type and triggers the circular reference. Each property must be accessed individually via indexed access.
 
-When adapting a third-party class with an incompatible constructor, wrapping the adaptation logic in a class and using `asSingletonClass` is the preferred approach. The constructor can reference `ModuleDependencies` directly since `ClassValue<T>` breaks the cycle automatically, no return type annotation is needed, and it scales cleanly to any number of dependencies:
+**Fallback: class wrapper**
+
+If you don't want to annotate the return type, or the adapter needs many dependencies and the indexed access syntax becomes too verbose, wrap the adaptation logic in a class and use `asSingletonClass` instead. The constructor can reference `ModuleDependencies` directly since `ClassValue<T>` breaks the cycle automatically — no return type annotation needed:
 
 ```ts
 import { S3Client } from '@aws-sdk/client-s3'
@@ -383,7 +395,7 @@ s3ClientProvider: asSingletonClass(S3ClientProvider),
 // this.s3ClientProvider.client.send(new PutObjectCommand({ ... }))
 ```
 
-Use `asSingletonFunction` for simple zero-dependency factories (e.g. `asSingletonFunction(() => loadConfig())`). For anything that takes dependencies and uses them in the return expression, prefer class wrappers.
+This is more heavyweight than a function resolver but provides full type safety with no explicit return type needed, and scales cleanly to any number of dependencies.
 
 You can also use the explicit generic pattern if you prefer (e.g. for `isolatedDeclarations` mode):
 
