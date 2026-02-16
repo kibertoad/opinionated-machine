@@ -143,22 +143,22 @@ export class TestModule extends AbstractModule {
       testService: asServiceClass(TestService),
       testServiceWithTransitive: asServiceClass(TestServiceWithTransitive),
 
-      // asSingletonFunction: use concrete parameter types and explicit return type
+      // asSingletonFunction: indexed access + explicit return type
       testServiceFromFunction: asSingletonFunction(
-        ({ testHelper }: { testHelper: TestHelper }): TestService => {
+        ({ testHelper }: { testHelper: TestModuleDependencies['testHelper'] }): TestService => {
           return new TestService({ testFunction: () => {}, testHelper } as TestModuleDependencies)
         },
       ),
 
       testFunction: asSingletonFunction(
-        ({ testHelper }: { testHelper: TestHelper }): (() => void) => {
+        ({ testHelper }: { testHelper: TestModuleDependencies['testHelper'] }): (() => void) => {
           return () => {
             testHelper.process()
           }
         },
       ),
 
-      // Wrapping a third-party class: indexed access + explicit return type
+      // Wrapping a third-party class with non-DI-compatible constructor
       thirdPartyClient: asSingletonFunction(
         ({ config }: { config: TestModuleDependencies['config'] }): ThirdPartyClient => {
           return new ThirdPartyClient({ region: config.region })

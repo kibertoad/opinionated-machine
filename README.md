@@ -343,13 +343,26 @@ s3Client: asSingletonFunction(
 ),
 ```
 
-The only case where an explicit return type can be omitted is when the return type is entirely independent of the dependency types (e.g. returning a lambda whose type doesn't propagate the dependency's type). In practice, this is rare — always annotate the return type to be safe.
-
 **Note:** `Pick<ModuleDependencies, 'a' | 'b'>` does **not** work — `Pick` requires `keyof ModuleDependencies`, which forces TypeScript to resolve the entire type and triggers the circular reference. Each property must be accessed individually via indexed access.
+
+**Alternative: concrete parameter types**
+
+You can use concrete types instead of indexed access when the return type is dynamic or difficult to spell out explicitly. Because concrete types don't reference `InferModuleDependencies`, there is no circularity, so TypeScript can infer the return type for you:
+
+```ts
+// Return type inferred automatically — no explicit annotation needed
+redisConfig: asSingletonFunction(
+  ({ config }: { config: Config }) => {
+    return config.getRedisConfig()
+  },
+),
+```
+
+The trade-off is that parameter types won't auto-sync if the module's resolver changes — but you'll still get a type error at the resolver level if the types diverge.
 
 **Fallback: class wrapper**
 
-If you don't want to annotate the return type, or the adapter needs many dependencies and the indexed access syntax becomes too verbose, wrap the adaptation logic in a class and use `asSingletonClass` instead. The constructor can reference `ModuleDependencies` directly since `ClassValue<T>` breaks the cycle automatically — no return type annotation needed:
+If the adapter needs many dependencies and the inline syntax becomes too verbose, wrap the adaptation logic in a class and use `asSingletonClass` instead. The constructor can reference `ModuleDependencies` directly since `ClassValue<T>` breaks the cycle automatically — no return type annotation needed:
 
 ```ts
 import { S3Client } from '@aws-sdk/client-s3'
