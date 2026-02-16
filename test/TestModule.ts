@@ -26,6 +26,19 @@ export class TestHelper {
   process() {}
 }
 
+// Simulates a third-party class with non-DI-compatible constructor
+export class ThirdPartyClient {
+  // biome-ignore lint/complexity/noUselessConstructor: for testing
+  constructor(_opts: { region: string }) {}
+  doWork(): string {
+    return 'done'
+  }
+}
+
+export class Config {
+  readonly region: string = 'us-east-1'
+}
+
 export class ExpendableTestService {
   public counter = 0
   execute() {}
@@ -125,18 +138,30 @@ export class PeriodicJob {
 export class TestModule extends AbstractModule {
   resolveDependencies(diOptions: DependencyInjectionOptions) {
     return {
+      config: asSingletonClass(Config),
       testHelper: asSingletonClass(TestHelper),
       testService: asServiceClass(TestService),
       testServiceWithTransitive: asServiceClass(TestServiceWithTransitive),
-      testServiceFromFunction: asSingletonFunction((cradle): TestService => {
-        return new TestService(cradle)
-      }),
+
+      // asSingletonFunction: indexed access + explicit return type
+      testServiceFromFunction: asSingletonFunction(
+        ({ testHelper }: { testHelper: TestModuleDependencies['testHelper'] }): TestService => {
+          return new TestService({ testFunction: () => {}, testHelper } as TestModuleDependencies)
+        },
+      ),
 
       testFunction: asSingletonFunction(
-        ({ testHelper }: { testHelper: TestModuleDependencies['testHelper'] }) => {
+        ({ testHelper }: { testHelper: TestModuleDependencies['testHelper'] }): (() => void) => {
           return () => {
             testHelper.process()
           }
+        },
+      ),
+
+      // Wrapping a third-party class with non-DI-compatible constructor
+      thirdPartyClient: asSingletonFunction(
+        ({ config }: { config: TestModuleDependencies['config'] }): ThirdPartyClient => {
+          return new ThirdPartyClient({ region: config.region })
         },
       ),
 

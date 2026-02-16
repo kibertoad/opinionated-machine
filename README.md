@@ -289,19 +289,25 @@ export type ModuleDependencies = InferModuleDependencies<MyModule>
 
 #### Function-based resolvers (`asSingletonFunction`)
 
-Function-based resolvers (`asSingletonFunction`) cannot use the `ClassValue<T>` trick because functions don't have a `prototype` property that separates return type from parameter types. Use **indexed access** on `InferModuleDependencies` to type individual dependencies without triggering a circular reference:
+Function-based resolvers (`asSingletonFunction`) cannot use the `ClassValue<T>` trick because functions don't have a `prototype` property that separates return type from parameter types. Use **indexed access** on `InferModuleDependencies` to type individual dependencies, and **always provide an explicit return type annotation** on the factory function:
 
 ```ts
-// Inside resolveDependencies():
-myHelper: asSingletonClass(MyHelper),
-myService: asServiceClass(MyService),
+import { S3Client } from '@aws-sdk/client-s3'
 
-myFactory: asSingletonFunction(
-  ({ myHelper, myService }: {
-    myHelper: ModuleDependencies['myHelper']
-    myService: ModuleDependencies['myService']
-  }) => {
-    return () => myHelper.process()
+// Inside resolveDependencies():
+config: asSingletonClass(Config),
+logger: asServiceClass(Logger),
+
+s3Client: asSingletonFunction(
+  ({ config, logger }: {
+    config: ModuleDependencies['config']
+    logger: ModuleDependencies['logger']
+  }): S3Client => {
+    return new S3Client({
+      region: config.awsRegion,
+      credentials: { accessKeyId: config.awsAccessKey, secretAccessKey: config.awsSecretKey },
+      logger,
+    })
   },
 ),
 
@@ -311,46 +317,57 @@ myFactory: asSingletonFunction(
 export type ModuleDependencies = InferModuleDependencies<MyModule>
 ```
 
-This works because TypeScript resolves indexed access types (`ModuleDependencies['myHelper']`) **lazily** — it looks up individual properties without computing the entire `ModuleDependencies` type, avoiding the cycle. Each dependency is fully typed and stays in sync with the module's resolvers automatically. No explicit return type annotation is needed.
+Indexed access types (`ModuleDependencies['config']`) are resolved **lazily** by TypeScript — it looks up individual properties without computing the entire `ModuleDependencies` type, avoiding the cycle. Each dependency stays in sync with the module's resolvers automatically.
 
 For cross-module dependencies, use `InferPublicModuleDependencies`:
 
 ```ts
-type OtherDeps = InferPublicModuleDependencies<OtherModule>
+type CommonDeps = InferPublicModuleDependencies<CommonModule>
 
-myFactory: asSingletonFunction(
-  ({ externalService }: { externalService: OtherDeps['externalService'] }) => {
-    return new MyFactory(externalService)
+redis: asSingletonFunction(
+  ({ config }: { config: CommonDeps['config'] }): Redis => {
+    return new Redis({ host: config.redis.host, port: config.redis.port })
+  },
+),
+```
+
+**The explicit return type is critical.** Without it, TypeScript attempts to infer the return type from the function body, which requires resolving the parameter types, which triggers the circular reference:
+
+```ts
+// BREAKS — no explicit return type, TypeScript infers it from the body,
+// requiring config's type to be resolved, triggering the cycle:
+s3Client: asSingletonFunction(
+  ({ config }: { config: ModuleDependencies['config'] }) => {
+    return new S3Client({ region: config.awsRegion })
   },
 ),
 ```
 
 **Note:** `Pick<ModuleDependencies, 'a' | 'b'>` does **not** work — `Pick` requires `keyof ModuleDependencies`, which forces TypeScript to resolve the entire type and triggers the circular reference. Each property must be accessed individually via indexed access.
 
-**Alternative: class wrapper**
+**Alternative: concrete parameter types**
 
-When adapting a third-party class with an incompatible constructor, `asSingletonFunction` is typically used to bridge the gap between the DI cradle and the library's API. If the adapter needs many dependencies, the indexed access syntax can become verbose. In that case, wrap the adaptation logic in a class and use `asSingletonClass` instead — the constructor can reference `ModuleDependencies` directly since `ClassValue<T>` breaks the cycle automatically:
+You can use concrete types instead of indexed access when the return type is dynamic or difficult to spell out explicitly. Because concrete types don't reference `InferModuleDependencies`, there is no circularity, so TypeScript can infer the return type for you:
 
 ```ts
-// Third-party library — constructor is incompatible with DI cradle
-import { S3Client } from '@aws-sdk/client-s3'
-
-// With asSingletonFunction, each dep needs indexed access:
-s3Client: asSingletonFunction(
-  ({ config, logger }: {
-    config: ModuleDependencies['config']
-    logger: ModuleDependencies['logger']
-  }) => {
-    return new S3Client({
-      region: config.awsRegion,
-      credentials: { accessKeyId: config.awsAccessKey, secretAccessKey: config.awsSecretKey },
-      logger,
-    })
+// Return type inferred automatically — no explicit annotation needed
+redisConfig: asSingletonFunction(
+  ({ config }: { config: Config }) => {
+    return config.getRedisConfig()
   },
 ),
+```
 
-// With a class wrapper, reference ModuleDependencies directly.
-// If you need to add domain-specific methods, the wrapper becomes a full adapter:
+The trade-off is that parameter types won't auto-sync if the module's resolver changes — but you'll still get a type error at the resolver level if the types diverge.
+
+**Fallback: class wrapper**
+
+If the adapter needs many dependencies and the inline syntax becomes too verbose, wrap the adaptation logic in a class and use `asSingletonClass` instead. The constructor can reference `ModuleDependencies` directly since `ClassValue<T>` breaks the cycle automatically — no return type annotation needed:
+
+```ts
+import { S3Client } from '@aws-sdk/client-s3'
+
+// Full adapter — adds domain-specific methods:
 class S3StorageAdapter {
   private readonly client: S3Client
 
@@ -371,8 +388,7 @@ class S3StorageAdapter {
 // In resolveDependencies():
 s3StorageAdapter: asSingletonClass(S3StorageAdapter),
 
-// If you just need the third-party instance as-is without adding any logic,
-// use a simple container to avoid re-wrapping every method:
+// Thin wrapper — just bridges the constructor signature:
 class S3ClientProvider {
   readonly client: S3Client
 
@@ -392,7 +408,7 @@ s3ClientProvider: asSingletonClass(S3ClientProvider),
 // this.s3ClientProvider.client.send(new PutObjectCommand({ ... }))
 ```
 
-This is more heavyweight than a function resolver but provides full type safety with no indexed access needed, and scales cleanly to any number of dependencies.
+This is more heavyweight than a function resolver but provides full type safety with no explicit return type needed, and scales cleanly to any number of dependencies.
 
 You can also use the explicit generic pattern if you prefer (e.g. for `isolatedDeclarations` mode):
 
