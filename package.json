@@ -45,7 +45,7 @@
     },
     "devDependencies": {
         "@types/node": "^22.19.7",
-        "@biomejs/biome": "2.4.2",
+        "@biomejs/biome": "2.4.3",
         "@lokalise/api-contracts": "^6.5.3",
         "@lokalise/biome-config": "^3.1.1",
         "@lokalise/fastify-api-contracts": "^5.3.0",
