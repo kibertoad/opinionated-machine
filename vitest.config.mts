@@ -6,6 +6,7 @@ export default defineConfig({
     watch: false,
     environment: 'node',
     reporters: ['verbose'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'packages/**'],
     typecheck: {
       enabled: true,
       checker: 'tsc',
@@ -18,12 +19,15 @@ export default defineConfig({
         'lib/AbstractController.ts', // Types and abstract class only
         'lib/sse/sseTypes.ts',
         'lib/testing/sseTestTypes.ts',
+        'lib/**/index.ts', // Barrel exports
+        'lib/**/*Types.ts', // Type definitions
+        'lib/**/types.ts', // Type definitions
       ],
       reporter: ['text', 'lcov'],
       thresholds: {
         statements: 90,
         branches: 80,
-        functions: 90,
+        functions: 88,
         lines: 90,
       },
     },

@@ -1,0 +1,59 @@
+---
+name: sse-rooms-redis
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'packages/sse-rooms-redis/**'
+      - 'lib/sse/rooms/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/sse-rooms-redis/**'
+      - 'lib/sse/rooms/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/sse-rooms-redis
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+
+      - name: Install all dependencies
+        run: npm install
+        working-directory: .
+
+      - name: Build root package
+        run: npm run build
+        working-directory: .
+
+      - name: Run Tests
+        run: npm test
+
+      - name: Run Linting
+        run: npm run lint

@@ -5,6 +5,7 @@ import type {
   SSEEventSchemas,
 } from '@lokalise/api-contracts'
 import type { z } from 'zod'
+import type { SSERoomManagerConfig } from './rooms/types.ts'
 
 // Re-export types that are used locally
 export type { SSEEventSchemas, AllContractEventNames, ExtractEventSchema }
@@ -97,4 +98,25 @@ export type SSEControllerConfig = {
    * @default false
    */
   enableConnectionSpy?: boolean
+
+  /**
+   * Enable room support for this controller.
+   * Rooms allow broadcasting to groups of connections.
+   *
+   * Pass an empty object `{}` to enable rooms with defaults.
+   * Pass configuration to customize behavior (e.g., add Redis adapter).
+   *
+   * @example Single-node deployment (in-memory)
+   * ```typescript
+   * { rooms: {} }
+   * ```
+   *
+   * @example Multi-node deployment (Redis)
+   * ```typescript
+   * import { RedisAdapter } from '@opinionated-machine/sse-rooms-redis'
+   *
+   * { rooms: { adapter: new RedisAdapter({ pubClient, subClient }) } }
+   * ```
+   */
+  rooms?: SSERoomManagerConfig
 }

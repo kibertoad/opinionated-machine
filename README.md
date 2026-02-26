@@ -1465,6 +1465,173 @@ if (this.hasConnectionSpy()) {
 }
 ```
 
+### SSE Rooms
+
+SSE Rooms provide Socket.IO-style room functionality for grouping connections and broadcasting messages to specific groups. Common use cases include:
+
+- **Multi-tenant systems** - Broadcast announcements to all users within an organization or team
+- **Live dashboards** - Multiple users viewing the same dashboard join a room to receive real-time metric updates
+- **Stock tickers** - Users subscribe to specific symbols; each symbol is a room receiving price updates
+- **Sports/game scores** - Users following specific matches join those rooms for live score updates
+
+#### Enabling Rooms
+
+Enable rooms by passing a `rooms` configuration to `asSSEControllerClass`:
+
+```ts
+import { AbstractSSEController, asSSEControllerClass, buildHandler } from 'opinionated-machine'
+
+class DashboardSSEController extends AbstractSSEController<typeof contracts> {
+  public static contracts = { dashboardStream: dashboardStreamContract } as const
+
+  constructor(deps: Dependencies, sseConfig?: SSEControllerConfig) {
+    super(deps, sseConfig)
+  }
+
+  // ... handlers
+}
+
+// In your module
+resolveControllers(diOptions: DependencyInjectionOptions) {
+  return {
+    dashboardController: asSSEControllerClass(DashboardSSEController, {
+      diOptions,
+      rooms: {}, // Enable rooms with default config
+    }),
+  }
+}
+```
+
+#### Session Room Operations
+
+When rooms are enabled, each SSE session has access to room operations via `session.rooms`:
+
+```ts
+private handleDashboardStream = buildHandler(dashboardStreamContract, {
+  sse: async (request, sse) => {
+    const session = sse.start('keepAlive')
+
+    // Join one or more rooms
+    session.rooms.join(`dashboard:${request.params.dashboardId}`)
+    session.rooms.join(['org:acme', 'plan:enterprise']) // Multiple rooms
+
+    // Leave rooms
+    session.rooms.leave('plan:enterprise')
+  },
+})
+```
+
+#### Broadcasting to Rooms
+
+Use `broadcastToRoom()` from your controller to send type-safe messages to all connections in a room. Event names and data are validated against your contract schemas at compile time:
+
+```ts
+class DashboardSSEController extends AbstractSSEController<typeof contracts> {
+  // Send metrics update to everyone viewing the dashboard
+  // Event name and data are type-checked against contract's sseEvents
+  async broadcastMetricsUpdate(dashboardId: string, metrics: DashboardMetrics) {
+    const count = await this.broadcastToRoom(
+      `dashboard:${dashboardId}`,
+      'metricsUpdate', // Must be a valid event name from contracts
+      metrics,         // Must match the schema for 'metricsUpdate'
+    )
+    console.log(`Metrics sent to ${count} viewers`)
+  }
+
+  // Broadcast to a room
+  async broadcastChange(dashboardId: string, change: DashboardChange) {
+    await this.broadcastToRoom(
+      `dashboard:${dashboardId}`,
+      'change',
+      change,
+    )
+  }
+
+  // Broadcast to multiple rooms (connections in any room receive it, de-duplicated)
+  async announceFeature(feature: string) {
+    const count = await this.broadcastToRoom(
+      ['premium', 'beta-testers'],
+      'featureFlag',
+      { flag: feature, enabled: true },
+    )
+    // Each connection receives the message only once, even if in multiple rooms
+  }
+
+  // Local-only broadcast (skip Redis propagation in multi-node setups)
+  async localAnnouncement(room: string, message: string) {
+    await this.broadcastToRoom(room, 'announcement', { message }, { local: true })
+  }
+}
+```
+
+#### Room Query Methods
+
+Controllers have access to room query methods:
+
+```ts
+class DashboardSSEController extends AbstractSSEController<typeof contracts> {
+  // Get all connection IDs in a room
+  getDashboardViewers(dashboardId: string): string[] {
+    return this.getConnectionsInRoom(`dashboard:${dashboardId}`)
+  }
+
+  // Get count of connections in a room
+  getDashboardViewerCount(dashboardId: string): number {
+    return this.getConnectionCountInRoom(`dashboard:${dashboardId}`)
+  }
+
+  // Get all rooms a specific connection is in
+  getConnectionRooms(connectionId: string): string[] {
+    return this.getRooms(connectionId)
+  }
+
+  // Manually join/leave rooms from controller (useful for admin operations)
+  moveToRoom(connectionId: string, fromRoom: string, toRoom: string) {
+    this.leaveRoom(connectionId, fromRoom)
+    this.joinRoom(connectionId, toRoom)
+  }
+}
+```
+
+#### Auto-Leave on Disconnect
+
+When a connection closes (client disconnect or server close), it automatically leaves all rooms. No manual cleanup is required.
+
+#### Multi-Node Deployments with Redis
+
+For multi-node deployments where connections may be distributed across servers, use the Redis adapter from `@opinionated-machine/sse-rooms-redis`:
+
+```ts
+import { RedisAdapter } from '@opinionated-machine/sse-rooms-redis'
+import Redis from 'ioredis'
+
+class DashboardSSEController extends AbstractSSEController<typeof contracts> {
+  constructor(deps: { redis: Redis }, sseConfig?: SSEControllerConfig) {
+    super(deps, sseConfig)
+  }
+}
+
+// In your module
+resolveControllers(diOptions: DependencyInjectionOptions & { redis: Redis }) {
+  return {
+    dashboardController: asSSEControllerClass(DashboardSSEController, {
+      diOptions,
+      rooms: {
+        adapter: new RedisAdapter({
+          pubClient: diOptions.redis,
+          subClient: diOptions.redis.duplicate(), // Separate connection for subscriptions
+          channelPrefix: 'myapp:sse:room:', // Optional, default: 'sse:room:'
+        }),
+      },
+    }),
+  }
+}
+```
+
+The Redis adapter uses Pub/Sub for cross-node message propagation. When you call `broadcastToRoom()`, the message is published to Redis and delivered to all nodes that have connections in that room.
+
+See the [@opinionated-machine/sse-rooms-redis](./packages/sse-rooms-redis/README.md) package for detailed documentation on Redis adapter configuration and usage.
+
 ### SSE Test Utilities
 
 The library provides utilities for testing SSE endpoints.

@@ -30,6 +30,16 @@ export {
   type SSELogger,
   type SSEMessage,
 } from './AbstractSSEController.js'
+// Re-export room types and classes
+export {
+  InMemoryAdapter,
+  type RoomBroadcastOptions,
+  type SSERoomAdapter,
+  SSERoomManager,
+  type SSERoomManagerConfig,
+  type SSERoomMessageHandler,
+  type SSERoomOperations,
+} from './rooms/index.js'
 export { type SSESessionEvent, SSESessionSpy } from './SSESessionSpy.js'
 export {
   type ParsedSSEEvent,
