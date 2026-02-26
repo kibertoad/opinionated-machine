@@ -475,15 +475,16 @@ export const sseRespondValidationContract = buildContract({
  * GET SSE route for testing room functionality
  */
 export const roomStreamContract = buildContract({
+  method: 'get',
   pathResolver: (params) => `/api/rooms/${params.roomId}/stream`,
-  params: z.object({
+  requestPathParamsSchema: z.object({
     roomId: z.string(),
   }),
-  query: z.object({
+  requestQuerySchema: z.object({
     userId: z.string().optional(),
   }),
-  requestHeaders: z.object({}),
-  sseEvents: {
+  requestHeaderSchema: z.object({}),
+  serverSentEventSchemas: {
     message: z.object({
       from: z.string(),
       text: z.string(),

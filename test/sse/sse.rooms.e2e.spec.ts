@@ -60,7 +60,7 @@ describe('SSE Rooms E2E', () => {
   let controller: TestRoomSSEController
 
   beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestRoomSSEModuleControllers>({ injectionMode: 'PROXY' })
     context = new DIContext<TestRoomSSEModuleControllers, object>(
       container,
       { isTestMode: true },
@@ -402,7 +402,7 @@ describe('SSE Rooms E2E', () => {
 
     beforeEach(async () => {
       mockAdapter = new MockAdapter()
-      const container = createContainer({ injectionMode: 'PROXY' })
+      const container = createContainer<TestRoomSSEModuleControllers>({ injectionMode: 'PROXY' })
       mockContext = new DIContext<TestRoomSSEModuleControllers, object>(
         container,
         { isTestMode: true },
