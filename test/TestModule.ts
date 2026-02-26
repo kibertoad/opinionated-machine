@@ -1,5 +1,9 @@
 import { asClass } from 'awilix'
-import { AbstractModule, type MandatoryNameAndRegistrationPair } from '../lib/AbstractModule.js'
+import {
+  AbstractModule,
+  type InferModuleDependencies,
+  type MandatoryNameAndRegistrationPair,
+} from '../lib/AbstractModule.js'
 import type { DependencyInjectionOptions } from '../lib/DIContext.js'
 import {
   asControllerClass,
@@ -9,6 +13,8 @@ import {
   asMessageQueueHandlerClass,
   asPeriodicJobClass,
   asServiceClass,
+  asSingletonClass,
+  asSingletonFunction,
 } from '../lib/resolverFunctions.js'
 import { TestController } from './TestController.js'
 import type {
@@ -16,8 +22,37 @@ import type {
   TestServiceSecondary,
 } from './TestModuleSecondary.js'
 
+export class TestHelper {
+  process() {}
+}
+
+// Simulates a third-party class with non-DI-compatible constructor
+export class ThirdPartyClient {
+  // biome-ignore lint/complexity/noUselessConstructor: for testing
+  constructor(_opts: { region: string }) {}
+  doWork(): string {
+    return 'done'
+  }
+}
+
+export class Config {
+  readonly region: string = 'us-east-1'
+}
+
+export class ExpendableTestService {
+  public counter = 0
+  execute() {}
+}
+
 export class TestService {
   public counter = 0
+  private readonly _testFunction: () => void
+  private readonly _testHelper: TestHelper
+
+  constructor({ testFunction, testHelper }: TestModuleDependencies) {
+    this._testFunction = testFunction
+    this._testHelper = testHelper
+  }
 
   execute() {}
 }
@@ -100,26 +135,37 @@ export class PeriodicJob {
   }
 }
 
-export type TestModuleDependencies = {
-  testService: TestService
-  testServiceWithTransitive: TestServiceWithTransitive
-  testExpendable: TestService
-  messageQueueConsumer: TestMessageQueueConsumer
-  jobWorker: JobWorker
-  queueManager: QueueManager
-  queue: Queue
-  periodicJob: PeriodicJob
-}
-
-export class TestModule extends AbstractModule<TestModuleDependencies> {
-  resolveDependencies(
-    diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<TestModuleDependencies> {
+export class TestModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
     return {
+      config: asSingletonClass(Config),
+      testHelper: asSingletonClass(TestHelper),
       testService: asServiceClass(TestService),
       testServiceWithTransitive: asServiceClass(TestServiceWithTransitive),
 
-      testExpendable: asClass(TestService),
+      // asSingletonFunction: indexed access + explicit return type
+      testServiceFromFunction: asSingletonFunction(
+        ({ testHelper }: { testHelper: TestModuleDependencies['testHelper'] }): TestService => {
+          return new TestService({ testFunction: () => {}, testHelper } as TestModuleDependencies)
+        },
+      ),
+
+      testFunction: asSingletonFunction(
+        ({ testHelper }: { testHelper: TestModuleDependencies['testHelper'] }): (() => void) => {
+          return () => {
+            testHelper.process()
+          }
+        },
+      ),
+
+      // Wrapping a third-party class with non-DI-compatible constructor
+      thirdPartyClient: asSingletonFunction(
+        ({ config }: { config: TestModuleDependencies['config'] }): ThirdPartyClient => {
+          return new ThirdPartyClient({ region: config.region })
+        },
+      ),
+
+      testExpendable: asClass(ExpendableTestService),
 
       messageQueueConsumer: asMessageQueueHandlerClass(TestMessageQueueConsumer, {
         queueName: TestMessageQueueConsumer.QUEUE_ID,
@@ -153,3 +199,5 @@ export class TestModule extends AbstractModule<TestModuleDependencies> {
     }
   }
 }
+
+export type TestModuleDependencies = InferModuleDependencies<TestModule>

@@ -1,8 +1,10 @@
 export { AbstractController, type BuildRoutesReturnType } from './lib/AbstractController.js'
 export {
   AbstractModule,
+  type InferModuleDependencies,
+  type InferPublicModuleDependencies,
   type MandatoryNameAndRegistrationPair,
-  type UnionToIntersection,
+  type PublicDependencies,
 } from './lib/AbstractModule.js'
 export {
   AbstractTestContextFactory,

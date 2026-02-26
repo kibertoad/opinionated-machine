@@ -318,7 +318,7 @@ export class TestDefaultMethodDualModeController extends AbstractDualModeControl
 
 /**
  * Controller for testing sync response validation failure.
- * When returnInvalid is true, returns data that doesn't match the syncResponseBody schema.
+ * When returnInvalid is true, returns data that doesn't match the successResponseBodySchema.
  */
 export type TestJsonValidationContracts = {
   jsonValidationTest: typeof jsonValidationContract
@@ -388,8 +388,8 @@ export class TestStatusCodeValidationDualModeController extends AbstractDualMode
   }
 
   // Note: For error responses (non-2xx), TypeScript handler return types don't account for
-  // responseSchemasByStatusCode which allows different response shapes per status code.
-  // We use 'as any' only for error responses since the type system only knows about syncResponseBody.
+  // responseBodySchemasByStatusCode which allows different response shapes per status code.
+  // We use 'as any' only for error responses since the type system only knows about successResponseBodySchema.
   private handleStatusCodeValidation = buildHandler(statusCodeValidationContract, {
     sync: (request, reply) => {
       const { returnStatus, returnValid } = request.body
@@ -397,7 +397,7 @@ export class TestStatusCodeValidationDualModeController extends AbstractDualMode
       if (returnStatus === 400) {
         reply.code(400)
         if (returnValid) {
-          // Valid 400 response per responseSchemasByStatusCode
+          // Valid 400 response per responseBodySchemasByStatusCode
           // TypeScript doesn't know about error response schemas, so we cast
           return { error: 'Bad Request', details: ['Invalid input', 'Missing field'] } as any
         }
@@ -408,14 +408,14 @@ export class TestStatusCodeValidationDualModeController extends AbstractDualMode
       if (returnStatus === 404) {
         reply.code(404)
         if (returnValid) {
-          // Valid 404 response per responseSchemasByStatusCode
+          // Valid 404 response per responseBodySchemasByStatusCode
           return { error: 'Not Found', resourceId: 'item-123' } as any
         }
         // Invalid 404 response - missing 'resourceId' field (for testing validation failure)
         return { error: 'Not Found', wrongField: 'invalid' } as any
       }
 
-      // Success case - 200 (matches syncResponseBody) - no cast needed
+      // Success case - 200 (matches successResponseBodySchema) - no cast needed
       return { success: true, data: 'OK' }
     },
     sse: async (_request, sse) => {

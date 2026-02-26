@@ -43,7 +43,7 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
 
   beforeEach(async () => {
     // Setup context with isTestMode to enable connection spying
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
@@ -375,7 +375,7 @@ describe('SSE HTTP E2E (error handling)', () => {
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
@@ -457,7 +457,7 @@ describe('SSE HTTP E2E (serialization)', () => {
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
@@ -535,7 +535,7 @@ describe('SSE HTTP E2E (event metadata)', () => {
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
@@ -662,7 +662,7 @@ describe('SSE HTTP E2E (connection lifecycle)', () => {
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
@@ -758,7 +758,7 @@ describe('SSE HTTP E2E (SSESessionSpy edge cases)', () => {
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
@@ -1120,7 +1120,7 @@ describe('SSE HTTP E2E (awaitServerConnection option)', () => {
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
@@ -1265,7 +1265,7 @@ describe('SSE HTTP E2E (server closes connection)', () => {
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
@@ -1391,7 +1391,7 @@ describe('SSE HTTP E2E (logger error handling)', () => {
       error: vi.fn(),
     }
 
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestLoggerSSEModuleDependencies>({ injectionMode: 'PROXY' })
     context = new DIContext<TestLoggerSSEModuleDependencies, object>(
       container,
       { isTestMode: true },
@@ -1465,7 +1465,9 @@ describe('SSE HTTP E2E (onConnect error handling)', () => {
       error: vi.fn(),
     }
 
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestOnConnectErrorSSEModuleDependencies>({
+      injectionMode: 'PROXY',
+    })
     context = new DIContext<TestOnConnectErrorSSEModuleDependencies, object>(
       container,
       { isTestMode: true },
@@ -1540,7 +1542,9 @@ describe('SSE HTTP E2E (onReconnect error handling)', () => {
       error: vi.fn(),
     }
 
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestOnReconnectErrorSSEModuleDependencies>({
+      injectionMode: 'PROXY',
+    })
     context = new DIContext<TestOnReconnectErrorSSEModuleDependencies, object>(
       container,
       { isTestMode: true },
@@ -1618,7 +1622,9 @@ describe('SSE Inject E2E (event validation)', () => {
   let context: DIContext<TestValidationSSEModuleDependencies, object>
 
   beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
+    const container = createContainer<TestValidationSSEModuleDependencies>({
+      injectionMode: 'PROXY',
+    })
     context = new DIContext<TestValidationSSEModuleDependencies, object>(
       container,
       { isTestMode: true },

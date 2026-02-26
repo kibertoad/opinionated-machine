@@ -65,12 +65,12 @@ export type SSEMessage<T = unknown> = {
  * This type provides compile-time type checking for event names and their
  * corresponding data payloads based on the contract's event schemas.
  *
- * @template Events - Map of event name to Zod schema (from contract.sseEvents)
+ * @template Events - Map of event name to Zod schema (from contract.serverSentEventSchemas)
  *
  * @example
  * ```typescript
- * // Given a contract with sseEvents:
- * // sseEvents: { chunk: z.object({ content: z.string() }), done: z.object({ tokens: z.number() }) }
+ * // Given a contract with serverSentEventSchemas:
+ * // serverSentEventSchemas: { chunk: z.object({ content: z.string() }), done: z.object({ tokens: z.number() }) }
  *
  * // The sender will be typed as:
  * send('chunk', { content: 'hello' })  // OK

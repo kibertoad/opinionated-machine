@@ -6,13 +6,87 @@ export type MandatoryNameAndRegistrationPair<T> = {
 }
 
 /**
- * Use this utility type to combine dependencies from multiple modules into full context list of dependencies
+ * Infers the module's dependency types from the return type of `resolveDependencies()`.
+ *
+ * This eliminates the need to manually define a `ModuleDependencies` type that duplicates
+ * information already present in the resolver return value.
+ *
+ * @example
+ * ```typescript
+ * export class MyModule extends AbstractModule {
+ *   resolveDependencies(diOptions: DependencyInjectionOptions) {
+ *     return {
+ *       myService: asServiceClass(MyService),
+ *       myRepo: asRepositoryClass(MyRepository),
+ *     }
+ *   }
+ * }
+ *
+ * // Inferred as { myService: MyService; myRepo: MyRepository }
+ * export type MyModuleDependencies = InferModuleDependencies<MyModule>
+ * ```
  */
-export type UnionToIntersection<U> =
-  // biome-ignore lint/suspicious/noExplicitAny: we accept anything here
-  (U extends any ? (x: U) => void : never) extends (x: infer I) => void ? I : never
+export type InferModuleDependencies<M extends AbstractModule> =
+  ReturnType<M['resolveDependencies']> extends infer R
+    ? { [K in keyof R]: R[K] extends Resolver<infer T> ? T : never }
+    : never
 
-export abstract class AbstractModule<ModuleDependencies, ExternalDependencies = never> {
+/**
+ * Infers only the **public** dependency types from the return type of `resolveDependencies()`,
+ * omitting non-public dependencies entirely.
+ *
+ * When a module is used as a secondary module, only resolvers marked with `public: true`
+ * (i.e. those created via `asServiceClass`, `asUseCaseClass`, `asJobQueueClass`, or
+ * `asEnqueuedJobQueueManagerFunction`) are exposed. Non-public resolvers are filtered out.
+ *
+ * @example
+ * ```typescript
+ * export class MyModule extends AbstractModule {
+ *   resolveDependencies(diOptions: DependencyInjectionOptions) {
+ *     return {
+ *       myService: asServiceClass(MyService),       // public → MyService
+ *       myRepo: asRepositoryClass(MyRepository),     // private → omitted
+ *     }
+ *   }
+ * }
+ *
+ * // Inferred as { myService: MyService }
+ * export type MyModulePublicDependencies = InferPublicModuleDependencies<MyModule>
+ * ```
+ */
+export type InferPublicModuleDependencies<M extends AbstractModule> =
+  ReturnType<M['resolveDependencies']> extends infer R
+    ? {
+        [K in keyof R as R[K] extends { readonly __publicResolver: true }
+          ? K
+          : never]: R[K] extends Resolver<infer T> ? T : never
+      }
+    : never
+
+/**
+ * Augmentation target for accumulating public dependencies across modules.
+ *
+ * Each module augments this interface via `declare module` to register its
+ * public dependencies. The augmentations are project-wide — they apply
+ * everywhere as long as the augmenting file is part of the TypeScript
+ * compilation, with no explicit import chain required.
+ *
+ * @example
+ * ```typescript
+ * // In your module file:
+ * declare module 'opinionated-machine' {
+ *   interface PublicDependencies extends InferPublicModuleDependencies<MyModule> {}
+ * }
+ *
+ * // In any consumer file:
+ * import type { PublicDependencies } from 'opinionated-machine'
+ * // PublicDependencies contains all augmented public deps
+ * ```
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: augmentation target for progressive public dependency accumulation
+export interface PublicDependencies {}
+
+export abstract class AbstractModule<ModuleDependencies = unknown, ExternalDependencies = never> {
   public abstract resolveDependencies(
     diOptions: DependencyInjectionOptions,
     externalDependencies: ExternalDependencies,

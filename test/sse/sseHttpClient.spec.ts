@@ -15,7 +15,7 @@ describe('SSEHttpClient', () => {
     let context: DIContext<TestSSEModuleDependencies, object>
 
     beforeEach(async () => {
-      const container = createContainer({ injectionMode: 'PROXY' })
+      const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
       context = new DIContext<TestSSEModuleDependencies, object>(
         container,
         { isTestMode: true },
@@ -116,7 +116,7 @@ describe('SSEHttpClient', () => {
     let context: DIContext<TestSSEModuleDependencies, object>
 
     beforeEach(async () => {
-      const container = createContainer({ injectionMode: 'PROXY' })
+      const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
       context = new DIContext<TestSSEModuleDependencies, object>(
         container,
         { isTestMode: true },
@@ -209,7 +209,7 @@ describe('SSEHttpClient', () => {
     let context: DIContext<TestSSEModuleDependencies, object>
 
     beforeEach(async () => {
-      const container = createContainer({ injectionMode: 'PROXY' })
+      const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
       context = new DIContext<TestSSEModuleDependencies, object>(
         container,
         { isTestMode: true },
@@ -319,7 +319,7 @@ describe('SSEHttpClient', () => {
     let context: DIContext<TestSSEModuleDependencies, object>
 
     beforeEach(async () => {
-      const container = createContainer({ injectionMode: 'PROXY' })
+      const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
       context = new DIContext<TestSSEModuleDependencies, object>(
         container,
         { isTestMode: true },

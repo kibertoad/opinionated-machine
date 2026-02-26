@@ -57,7 +57,7 @@ export class DIContext<
   private readonly appConfig: Config
 
   constructor(
-    diContainer: AwilixContainer,
+    diContainer: AwilixContainer<Dependencies>,
     options: DependencyInjectionOptions,
     appConfig: Config,
     awilixManager?: AwilixManager,
@@ -155,7 +155,7 @@ export class DIContext<
       }
     }
 
-    this.diContainer.register(targetDiConfig)
+    this.diContainer.register(targetDiConfig as Record<string, Resolver<unknown>>)
 
     // append dependency overrides
     // @ts-expect-error FixMe check this later

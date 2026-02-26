@@ -1,8 +1,5 @@
-import { buildDeleteRoute, buildGetRoute, buildPayloadRoute } from '@lokalise/api-contracts'
-import {
-  buildFastifyNoPayloadRoute,
-  buildFastifyPayloadRoute,
-} from '@lokalise/fastify-api-contracts'
+import { buildRestContract } from '@lokalise/api-contracts'
+import { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
 import { boolean, z } from 'zod/v4'
 import { AbstractController, type BuildRoutesReturnType } from '../lib/AbstractController.js'
 import type { TestModuleDependencies, TestService } from './TestModule.js'
@@ -15,19 +12,21 @@ const PATH_PARAMS_SCHEMA = z.object({
   userId: z.string(),
 })
 
-const deleteContract = buildDeleteRoute({
+const deleteContract = buildRestContract({
+  method: 'delete',
   successResponseBodySchema: RESPONSE_BODY_SCHEMA,
   requestPathParamsSchema: PATH_PARAMS_SCHEMA,
   pathResolver: (pathParams) => `/users/${pathParams.userId}`,
 })
 
-const getContract = buildGetRoute({
+const getContract = buildRestContract({
+  method: 'get',
   successResponseBodySchema: RESPONSE_BODY_SCHEMA,
   requestPathParamsSchema: PATH_PARAMS_SCHEMA,
   pathResolver: (pathParams) => `/users/${pathParams.userId}`,
 })
 
-const updateContract = buildPayloadRoute({
+const updateContract = buildRestContract({
   method: 'patch',
   requestBodySchema: REQUEST_BODY_SCHEMA,
   successResponseBodySchema: z.undefined(),
@@ -37,7 +36,7 @@ const updateContract = buildPayloadRoute({
   pathResolver: (pathParams) => `/users/${pathParams.userId}`,
 })
 
-const createContract = buildPayloadRoute({
+const createContract = buildRestContract({
   method: 'post',
   requestBodySchema: REQUEST_BODY_SCHEMA,
   successResponseBodySchema: RESPONSE_BODY_SCHEMA,
@@ -58,16 +57,13 @@ export class TestController extends AbstractController<typeof TestController.con
     this.service = testService
   }
 
-  private getItem = buildFastifyNoPayloadRoute(
-    TestController.contracts.getItem,
-    async (req, reply) => {
-      req.log.info(req.params.userId)
-      this.service.execute()
-      await reply.status(200).send({ success: true })
-    },
-  )
+  private getItem = buildFastifyRoute(TestController.contracts.getItem, async (req, reply) => {
+    req.log.info(req.params.userId)
+    this.service.execute()
+    await reply.status(200).send({ success: true })
+  })
 
-  private deleteItem = buildFastifyNoPayloadRoute(
+  private deleteItem = buildFastifyRoute(
     TestController.contracts.deleteItem,
     async (req, reply) => {
       req.log.info(req.params.userId)
@@ -76,14 +72,11 @@ export class TestController extends AbstractController<typeof TestController.con
     },
   )
 
-  private createItem = buildFastifyPayloadRoute(
-    TestController.contracts.createItem,
-    async (_, reply) => {
-      await reply.status(200).send({ success: true })
-    },
-  )
+  private createItem = buildFastifyRoute(TestController.contracts.createItem, async (_, reply) => {
+    await reply.status(200).send({ success: true })
+  })
 
-  private updateItem = buildFastifyPayloadRoute(
+  private updateItem = buildFastifyRoute(
     TestController.contracts.updateItem,
     async (req, reply) => {
       req.log.info(req.params.userId)

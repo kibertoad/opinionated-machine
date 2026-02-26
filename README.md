@@ -4,6 +4,8 @@ Very opinionated DI framework for fastify, built on top of awilix
 ## Table of Contents
 
 - [Basic usage](#basic-usage)
+  - [Managing global public dependencies across modules](#managing-global-public-dependencies-across-modules)
+  - [Avoiding circular dependencies in typed cradle parameters](#avoiding-circular-dependencies-in-typed-cradle-parameters)
 - [Defining controllers](#defining-controllers)
 - [Putting it all together](#putting-it-all-together)
 - [Resolver Functions](#resolver-functions)
@@ -58,7 +60,7 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Overview](#overview)
   - [Defining Dual-Mode Contracts](#defining-dual-mode-contracts)
   - [Response Headers (Sync Mode)](#response-headers-sync-mode)
-  - [Status-Specific Response Schemas (responseSchemasByStatusCode)](#status-specific-response-schemas-responseschemasbystatuscode)
+  - [Status-Specific Response Schemas (responseBodySchemasByStatusCode)](#status-specific-response-schemas-responsebodyschemasbystatuscode)
   - [Implementing Dual-Mode Controllers](#implementing-dual-mode-controllers)
   - [Registering Dual-Mode Controllers](#registering-dual-mode-controllers)
   - [Accept Header Routing](#accept-header-routing)
@@ -69,20 +71,12 @@ Very opinionated DI framework for fastify, built on top of awilix
 Define a module, or several modules, that will be used for resolving dependency graphs, using awilix:
 
 ```ts
-import { AbstractModule, asSingletonClass, asMessageQueueHandlerClass, asJobWorkerClass, asJobQueueClass, asControllerClass } from 'opinionated-machine'
+import { AbstractModule, type InferModuleDependencies, asSingletonClass, asMessageQueueHandlerClass, asEnqueuedJobWorkerClass, asJobQueueClass, asControllerClass } from 'opinionated-machine'
 
-export type ModuleDependencies = {
-    service: Service
-    messageQueueConsumer: MessageQueueConsumer
-    jobWorker: JobWorker
-    queueManager: QueueManager
-}
-
-export class MyModule extends AbstractModule<ModuleDependencies, ExternalDependencies> {
+export class MyModule extends AbstractModule {
     resolveDependencies(
         diOptions: DependencyInjectionOptions,
-        _externalDependencies: ExternalDependencies,
-    ): MandatoryNameAndRegistrationPair<ModuleDependencies> {
+    ) {
         return {
             service: asSingletonClass(Service),
 
@@ -103,7 +97,7 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
             }),
 
             // by default disposal methods from `background-jobs-commons` job queue manager
-            // will be assumed. If different values are necessary, specify "asyncDispose" fields 
+            // will be assumed. If different values are necessary, specify "asyncDispose" fields
             // in the second config object
             queueManager: asJobQueueClass(
                 QueueManager,
@@ -125,6 +119,316 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
         }
     }
 }
+
+// Dependencies are inferred from the return type of resolveDependencies()
+export type ModuleDependencies = InferModuleDependencies<MyModule>
+```
+
+The `InferModuleDependencies` utility type extracts the dependency types from the resolvers returned by `resolveDependencies()`, so you don't need to maintain a separate type manually.
+
+When a module is used as a secondary module, only resolvers marked as **public** (`asServiceClass`, `asUseCaseClass`, `asJobQueueClass`, `asEnqueuedJobQueueManagerFunction`) are exposed. Use `InferPublicModuleDependencies` to infer only the public dependencies (private ones are omitted entirely):
+
+```ts
+// Inferred as { service: Service } — private resolvers are omitted
+export type MyModulePublicDependencies = InferPublicModuleDependencies<MyModule>
+```
+
+### Managing global public dependencies across modules
+
+When your application has multiple secondary modules, you need a single type that combines all their public dependencies. The library exports an empty `PublicDependencies` interface that each module can augment via TypeScript's [module augmentation](https://www.typescriptlang.org/docs/handbook/declaration-merging.html#module-augmentation). Each module file adds its own public deps to this shared interface using `declare module`. The augmentations are **project-wide** — they apply everywhere as long as the augmenting file is part of your TypeScript compilation (included in `tsconfig.json`), with no explicit import chain required.
+
+Start with a `CommonModule` that provides shared infrastructure dependencies (logger, config, etc.), then add domain modules that each augment the same interface independently.
+
+```ts
+// CommonModule.ts — shared infrastructure
+import { AbstractModule, type InferPublicModuleDependencies } from 'opinionated-machine'
+
+export class CommonModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
+    return {
+      config: asSingletonFunction(() => loadConfig()),     // private — omitted
+      logger: asServiceClass(Logger),                      // public
+      eventEmitter: asServiceClass(AppEventEmitter),       // public
+    }
+  }
+}
+
+declare module 'opinionated-machine' {
+  interface PublicDependencies extends InferPublicModuleDependencies<CommonModule> {}
+}
+```
+
+```ts
+// UsersModule.ts — no need to import CommonModule's type
+import { AbstractModule, type InferPublicModuleDependencies } from 'opinionated-machine'
+
+export class UsersModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
+    return {
+      userService: asServiceClass(UserService),         // public
+      userRepository: asRepositoryClass(UserRepository), // private — omitted
+    }
+  }
+}
+
+declare module 'opinionated-machine' {
+  interface PublicDependencies extends InferPublicModuleDependencies<UsersModule> {}
+}
+```
+
+```ts
+// BillingModule.ts — independent, no chain
+import { AbstractModule, type InferPublicModuleDependencies } from 'opinionated-machine'
+
+export class BillingModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
+    return {
+      billingService: asServiceClass(BillingService),       // public
+      paymentGateway: asRepositoryClass(PaymentGateway),     // private — omitted
+    }
+  }
+}
+
+declare module 'opinionated-machine' {
+  interface PublicDependencies extends InferPublicModuleDependencies<BillingModule> {}
+}
+```
+
+Importing `PublicDependencies` from anywhere gives you the full accumulated type: `{ logger: Logger; eventEmitter: AppEventEmitter; userService: UserService; billingService: BillingService }`. Private dependencies (`config`, `userRepository`, `paymentGateway`) are omitted automatically. No explicit import chain between modules is needed — each module augments the interface independently.
+
+#### Typing constructor dependencies within a module
+
+Classes within a module can access both the module's own dependencies (including private ones like repositories) and all public dependencies from other modules. Combine `InferModuleDependencies` with `PublicDependencies` to get the full cradle type available at runtime:
+
+```ts
+// UsersModule.ts
+import {
+  AbstractModule,
+  type InferModuleDependencies,
+  type InferPublicModuleDependencies,
+  type PublicDependencies,
+} from 'opinionated-machine'
+
+// Module's own deps (public + private) merged with all public deps from other modules
+type UsersModuleInjectables = InferModuleDependencies<UsersModule> & PublicDependencies
+
+export class UserService {
+  private readonly repository: UserRepository
+  private readonly logger: Logger  // from CommonModule's public deps
+
+  constructor(dependencies: UsersModuleInjectables) {
+    this.repository = dependencies.userRepository  // own private dep — accessible
+    this.logger = dependencies.logger              // public dep from another module — accessible
+    // dependencies.billingRepository              // private dep from another module — type error
+  }
+}
+
+class UserRepository {}
+
+export class UsersModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
+    return {
+      userService: asServiceClass(UserService),
+      userRepository: asRepositoryClass(UserRepository),
+    }
+  }
+}
+
+declare module 'opinionated-machine' {
+  interface PublicDependencies extends InferPublicModuleDependencies<UsersModule> {}
+}
+```
+
+This gives each class access to exactly what the DI container provides at runtime: the module's own registered dependencies plus all public dependencies from secondary modules. Private dependencies from other modules are excluded at the type level, matching the runtime behavior.
+
+#### Constructing the combined dependency type for `DIContext`
+
+Use `PublicDependencies` when building the full dependency type:
+
+```ts
+import type { PublicDependencies } from 'opinionated-machine'
+
+type Dependencies = InferModuleDependencies<PrimaryModule> & PublicDependencies
+```
+
+### Avoiding circular dependencies in typed cradle parameters
+
+Because `InferModuleDependencies` is inferred from the module's own `resolveDependencies()` return type, classes and functions that reference it inside the same module could create a circular type dependency. The library handles this automatically for class-based resolvers. For function-based resolvers, use the indexed access pattern described below.
+
+#### Class-based resolvers (recommended — works automatically)
+
+All class-based resolver functions (`asSingletonClass`, `asServiceClass`, `asRepositoryClass`, etc.) use a `ClassValue<T>` type internally, which infers the instance type from the class's `prototype` property rather than its constructor signature. This means classes can freely reference `InferModuleDependencies` in their constructors without causing circular type dependencies:
+
+```ts
+import { AbstractModule, type InferModuleDependencies, asServiceClass, asSingletonClass } from 'opinionated-machine'
+
+export class MyService {
+  // Constructor references ModuleDependencies — no circular dependency!
+  constructor({ myHelper }: ModuleDependencies) {
+    // myHelper is fully typed as MyHelper
+  }
+}
+
+export class MyHelper {
+  process() {}
+}
+
+export class MyModule extends AbstractModule {
+  resolveDependencies(diOptions: DependencyInjectionOptions) {
+    return {
+      myService: asServiceClass(MyService),   // ClassValue<T> breaks the cycle
+      myHelper: asSingletonClass(MyHelper),
+    }
+  }
+}
+
+export type ModuleDependencies = InferModuleDependencies<MyModule>
+```
+
+**Prefer class-based resolvers wherever possible** — they provide full type safety with no `any` fallback and no extra annotations needed.
+
+#### Function-based resolvers (`asSingletonFunction`)
+
+Function-based resolvers (`asSingletonFunction`) cannot use the `ClassValue<T>` trick because functions don't have a `prototype` property that separates return type from parameter types. Use **indexed access** on `InferModuleDependencies` to type individual dependencies, and **always provide an explicit return type annotation** on the factory function:
+
+```ts
+import { S3Client } from '@aws-sdk/client-s3'
+
+// Inside resolveDependencies():
+config: asSingletonClass(Config),
+logger: asServiceClass(Logger),
+
+s3Client: asSingletonFunction(
+  ({ config, logger }: {
+    config: ModuleDependencies['config']
+    logger: ModuleDependencies['logger']
+  }): S3Client => {
+    return new S3Client({
+      region: config.awsRegion,
+      credentials: { accessKeyId: config.awsAccessKey, secretAccessKey: config.awsSecretKey },
+      logger,
+    })
+  },
+),
+
+// ...
+
+// At the bottom of the file:
+export type ModuleDependencies = InferModuleDependencies<MyModule>
+```
+
+Indexed access types (`ModuleDependencies['config']`) are resolved **lazily** by TypeScript — it looks up individual properties without computing the entire `ModuleDependencies` type, avoiding the cycle. Each dependency stays in sync with the module's resolvers automatically.
+
+For cross-module dependencies, use `InferPublicModuleDependencies`:
+
+```ts
+type CommonDeps = InferPublicModuleDependencies<CommonModule>
+
+redis: asSingletonFunction(
+  ({ config }: { config: CommonDeps['config'] }): Redis => {
+    return new Redis({ host: config.redis.host, port: config.redis.port })
+  },
+),
+```
+
+**The explicit return type is critical.** Without it, TypeScript attempts to infer the return type from the function body, which requires resolving the parameter types, which triggers the circular reference:
+
+```ts
+// BREAKS — no explicit return type, TypeScript infers it from the body,
+// requiring config's type to be resolved, triggering the cycle:
+s3Client: asSingletonFunction(
+  ({ config }: { config: ModuleDependencies['config'] }) => {
+    return new S3Client({ region: config.awsRegion })
+  },
+),
+```
+
+**Note:** `Pick<ModuleDependencies, 'a' | 'b'>` does **not** work — `Pick` requires `keyof ModuleDependencies`, which forces TypeScript to resolve the entire type and triggers the circular reference. Each property must be accessed individually via indexed access.
+
+**Alternative: concrete parameter types**
+
+You can use concrete types instead of indexed access when the return type is dynamic or difficult to spell out explicitly. Because concrete types don't reference `InferModuleDependencies`, there is no circularity, so TypeScript can infer the return type for you:
+
+```ts
+// Return type inferred automatically — Config is a concrete type that doesn't
+// reference InferModuleDependencies, so there's no circular reference.
+redisConfig: asSingletonFunction(
+  ({ config }: { config: Config }) => {
+    return config.getRedisConfig()
+  },
+),
+```
+
+The trade-off is that parameter types won't auto-sync if the module's resolver changes — but you'll still get a type error at the resolver level if the types diverge.
+
+**Fallback: class wrapper**
+
+If the adapter needs many dependencies and the inline syntax becomes too verbose, wrap the adaptation logic in a class and use `asSingletonClass` instead. The constructor can reference `ModuleDependencies` directly since `ClassValue<T>` breaks the cycle automatically — no return type annotation needed:
+
+```ts
+import { S3Client } from '@aws-sdk/client-s3'
+
+// Full adapter — adds domain-specific methods:
+class S3StorageAdapter {
+  private readonly client: S3Client
+
+  constructor({ config, logger }: ModuleDependencies) {
+    this.client = new S3Client({
+      region: config.awsRegion,
+      credentials: { accessKeyId: config.awsAccessKey, secretAccessKey: config.awsSecretKey },
+      logger,
+    })
+  }
+
+  async upload(bucket: string, key: string, body: Buffer): Promise<string> {
+    await this.client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body }))
+    return `https://${bucket}.s3.amazonaws.com/${key}`
+  }
+}
+
+// In resolveDependencies():
+s3StorageAdapter: asSingletonClass(S3StorageAdapter),
+
+// Thin wrapper — just bridges the constructor signature:
+class S3ClientProvider {
+  readonly client: S3Client
+
+  constructor({ config, logger }: ModuleDependencies) {
+    this.client = new S3Client({
+      region: config.awsRegion,
+      credentials: { accessKeyId: config.awsAccessKey, secretAccessKey: config.awsSecretKey },
+      logger,
+    })
+  }
+}
+
+// In resolveDependencies():
+s3ClientProvider: asSingletonClass(S3ClientProvider),
+
+// Consumers access the original instance directly:
+// this.s3ClientProvider.client.send(new PutObjectCommand({ ... }))
+```
+
+This is more heavyweight than a function resolver but provides full type safety with no explicit return type needed, and scales cleanly to any number of dependencies.
+
+You can also use the explicit generic pattern if you prefer (e.g. for `isolatedDeclarations` mode):
+
+```ts
+export type ModuleDependencies = {
+    service: Service
+    messageQueueConsumer: MessageQueueConsumer
+    jobWorker: JobWorker
+    queueManager: QueueManager
+}
+
+export class MyModule extends AbstractModule<ModuleDependencies, ExternalDependencies> {
+    resolveDependencies(
+        diOptions: DependencyInjectionOptions,
+        _externalDependencies: ExternalDependencies,
+    ): MandatoryNameAndRegistrationPair<ModuleDependencies> {
+        return { /* ... */ }
+    }
+}
 ```
 
 ## Defining controllers
@@ -132,8 +436,8 @@ export class MyModule extends AbstractModule<ModuleDependencies, ExternalDepende
 Controllers require using fastify-api-contracts and allow to define application routes.
 
 ```ts
-import { buildFastifyNoPayloadRoute } from '@lokalise/fastify-api-contracts'
-import { buildDeleteRoute } from '@lokalise/universal-ts-utils/api-contracts/apiContracts'
+import { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
+import { buildRestContract } from '@lokalise/api-contracts'
 import { z } from 'zod/v4'
 import { AbstractController } from 'opinionated-machine'
 
@@ -142,7 +446,8 @@ const PATH_PARAMS_SCHEMA = z.object({
   userId: z.string(),
 })
 
-const contract = buildDeleteRoute({
+const contract = buildRestContract({
+  method: 'delete',
   successResponseBodySchema: BODY_SCHEMA,
   requestPathParamsSchema: PATH_PARAMS_SCHEMA,
   pathResolver: (pathParams) => `/users/${pathParams.userId}`,
@@ -157,7 +462,7 @@ export class MyController extends AbstractController<typeof MyController.contrac
       this.service = testService
   }
 
-    private deleteItem = buildFastifyNoPayloadRoute(
+    private deleteItem = buildFastifyRoute(
         TestController.contracts.deleteItem,
         async (req, reply) => {
             req.log.info(req.params.userId)
@@ -400,30 +705,32 @@ await app.register(FastifySSEPlugin)
 
 ### Defining SSE Contracts
 
-Use `buildSseContract` from `@lokalise/api-contracts` to define SSE routes. The contract type is automatically determined based on the presence of `requestBody` and `syncResponseBody` fields. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
+Use `buildSseContract` from `@lokalise/api-contracts` to define SSE routes. The `method` field determines the HTTP method. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
 
 ```ts
 import { z } from 'zod'
 import { buildSseContract } from '@lokalise/api-contracts'
 
-// GET-based SSE stream with path params (no body = GET)
+// GET-based SSE stream with path params
 export const channelStreamContract = buildSseContract({
+  method: 'get',
   pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
-  params: z.object({ channelId: z.string() }),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  sseEvents: {
+  requestPathParamsSchema: z.object({ channelId: z.string() }),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  serverSentEventSchemas: {
     message: z.object({ content: z.string() }),
   },
 })
 
 // GET-based SSE stream without path params
 export const notificationsContract = buildSseContract({
+  method: 'get',
   pathResolver: () => '/api/notifications/stream',
-  params: z.object({}),
-  query: z.object({ userId: z.string().optional() }),
-  requestHeaders: z.object({}),
-  sseEvents: {
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({ userId: z.string().optional() }),
+  requestHeaderSchema: z.object({}),
+  serverSentEventSchemas: {
     notification: z.object({
       id: z.string(),
       message: z.string(),
@@ -431,18 +738,18 @@ export const notificationsContract = buildSseContract({
   },
 })
 
-// POST-based SSE stream (e.g., AI chat completions) - has requestBody = POST/PUT/PATCH
+// POST-based SSE stream (e.g., AI chat completions)
 export const chatCompletionContract = buildSseContract({
   method: 'post',
   pathResolver: () => '/api/chat/completions',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({
     message: z.string(),
     stream: z.literal(true),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     chunk: z.object({ content: z.string() }),
     done: z.object({ totalTokens: z.number() }),
   },
@@ -546,7 +853,7 @@ export class NotificationsSSEController extends AbstractSSEController<Contracts>
 
 ### Type-Safe SSE Handlers with `buildHandler`
 
-For automatic type inference of request parameters (similar to `buildFastifyPayloadRoute` for regular controllers), use `buildHandler`:
+For automatic type inference of request parameters (similar to `buildFastifyRoute` for regular controllers), use `buildHandler`:
 
 ```ts
 import {
@@ -601,11 +908,11 @@ import { type InferSSERequest, type SSEContext, type SSESession } from 'opiniona
 
 private handleStream = async (
   request: InferSSERequest<typeof chatCompletionContract>,
-  sse: SSEContext<typeof chatCompletionContract['sseEvents']>,
+  sse: SSEContext<typeof chatCompletionContract['serverSentEventSchemas']>,
 ) => {
   // request.body, request.params, etc. all typed from contract
   const session = sse.start('autoClose')
-  // session.send() is typed based on contract sseEvents
+  // session.send() is typed based on contract serverSentEventSchemas
   await session.send('chunk', { content: 'hello' })
   // 'autoClose' mode: connection closes when handler returns
 }
@@ -630,9 +937,9 @@ export class SimpleSSEController extends AbstractSSEController<Contracts> {
 Use `asSSEControllerClass` in your module's `resolveControllers` method alongside REST controllers. SSE controllers are automatically detected via the `isSSEController` flag and registered in the DI container:
 
 ```ts
-import { AbstractModule, asControllerClass, asSSEControllerClass, asServiceClass, type DependencyInjectionOptions } from 'opinionated-machine'
+import { AbstractModule, type InferModuleDependencies, asControllerClass, asSSEControllerClass, asServiceClass, type DependencyInjectionOptions } from 'opinionated-machine'
 
-export class NotificationsModule extends AbstractModule<Dependencies> {
+export class NotificationsModule extends AbstractModule {
   resolveDependencies() {
     return {
       notificationService: asServiceClass(NotificationService),
@@ -648,6 +955,8 @@ export class NotificationsModule extends AbstractModule<Dependencies> {
     }
   }
 }
+
+export type NotificationsModuleDependencies = InferModuleDependencies<NotificationsModule>
 ```
 
 ### Registering SSE Routes
@@ -1580,44 +1889,45 @@ Dual-mode contracts define endpoints that can return **either** a complete sync 
 - You're building OpenAI-style APIs where `stream: true` triggers SSE
 - You need polling fallback for clients that don't support SSE
 
-To create a dual-mode contract, include a `syncResponseBody` schema in your `buildSseContract` call:
-- Has `syncResponseBody` but no `requestBody` → GET dual-mode route
-- Has both `syncResponseBody` and `requestBody` → POST/PUT/PATCH dual-mode route
+To create a dual-mode contract, include a `successResponseBodySchema` in your `buildSseContract` call:
+- Has `successResponseBodySchema` but no `requestBodySchema` → GET dual-mode route
+- Has both `successResponseBodySchema` and `requestBodySchema` → POST/PUT/PATCH dual-mode route
 
 ```ts
 import { z } from 'zod'
 import { buildSseContract } from '@lokalise/api-contracts'
 
-// GET dual-mode route (polling or streaming job status) - has syncResponseBody, no requestBody
+// GET dual-mode route (polling or streaming job status)
 export const jobStatusContract = buildSseContract({
+  method: 'get',
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
-  params: z.object({ jobId: z.string().uuid() }),
-  query: z.object({ verbose: z.string().optional() }),
-  requestHeaders: z.object({}),
-  syncResponseBody: z.object({
+  requestPathParamsSchema: z.object({ jobId: z.string().uuid() }),
+  requestQuerySchema: z.object({ verbose: z.string().optional() }),
+  requestHeaderSchema: z.object({}),
+  successResponseBodySchema: z.object({
     status: z.enum(['pending', 'running', 'completed', 'failed']),
     progress: z.number(),
     result: z.string().optional(),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     progress: z.object({ percent: z.number(), message: z.string().optional() }),
     done: z.object({ result: z.string() }),
   },
 })
 
-// POST dual-mode route (OpenAI-style chat completion) - has both syncResponseBody and requestBody
+// POST dual-mode route (OpenAI-style chat completion)
 export const chatCompletionContract = buildSseContract({
   method: 'post',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
-  params: z.object({ chatId: z.string().uuid() }),
-  query: z.object({}),
-  requestHeaders: z.object({ authorization: z.string() }),
-  requestBody: z.object({ message: z.string() }),
-  syncResponseBody: z.object({
+  requestPathParamsSchema: z.object({ chatId: z.string().uuid() }),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({ authorization: z.string() }),
+  requestBodySchema: z.object({ message: z.string() }),
+  successResponseBodySchema: z.object({
     reply: z.string(),
     usage: z.object({ tokens: z.number() }),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     chunk: z.object({ delta: z.string() }),
     done: z.object({ usage: z.object({ total: z.number() }) }),
   },
@@ -1628,24 +1938,24 @@ export const chatCompletionContract = buildSseContract({
 
 ### Response Headers (Sync Mode)
 
-Dual-mode contracts support an optional `responseHeaders` schema to define and validate headers sent with sync responses. This is useful for documenting expected headers (rate limits, pagination, cache control) and validating that your handlers set them correctly:
+Dual-mode contracts support an optional `responseHeaderSchema` to define and validate headers sent with sync responses. This is useful for documenting expected headers (rate limits, pagination, cache control) and validating that your handlers set them correctly:
 
 ```ts
 export const rateLimitedContract = buildSseContract({
   method: 'post',
   pathResolver: () => '/api/rate-limited',
-  params: z.object({}),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({ data: z.string() }),
-  syncResponseBody: z.object({ result: z.string() }),
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({ data: z.string() }),
+  successResponseBodySchema: z.object({ result: z.string() }),
   // Define expected response headers
-  responseHeaders: z.object({
+  responseHeaderSchema: z.object({
     'x-ratelimit-limit': z.string(),
     'x-ratelimit-remaining': z.string(),
     'x-ratelimit-reset': z.string(),
   }),
-  sseEvents: {
+  serverSentEventSchemas: {
     result: z.object({ success: z.boolean() }),
   },
 })
@@ -1671,29 +1981,29 @@ handlers: buildHandler(rateLimitedContract, {
 
 If the handler doesn't set the required headers, validation will fail with a `RESPONSE_HEADERS_VALIDATION_FAILED` error.
 
-### Status-Specific Response Schemas (responseSchemasByStatusCode)
+### Status-Specific Response Schemas (responseBodySchemasByStatusCode)
 
-Dual-mode and SSE contracts support `responseSchemasByStatusCode` to define and validate responses for specific HTTP status codes. This is typically used for error responses (4xx, 5xx), but can define schemas for any status code where you need a different response shape:
+Dual-mode and SSE contracts support `responseBodySchemasByStatusCode` to define and validate responses for specific HTTP status codes. This is typically used for error responses (4xx, 5xx), but can define schemas for any status code where you need a different response shape:
 
 ```ts
 export const resourceContract = buildSseContract({
   method: 'post',
   pathResolver: (params) => `/api/resources/${params.id}`,
-  params: z.object({ id: z.string() }),
-  query: z.object({}),
-  requestHeaders: z.object({}),
-  requestBody: z.object({ data: z.string() }),
+  requestPathParamsSchema: z.object({ id: z.string() }),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({ data: z.string() }),
   // Success response (2xx)
-  syncResponseBody: z.object({
+  successResponseBodySchema: z.object({
     success: z.boolean(),
     data: z.string(),
   }),
   // Responses by status code (typically used for errors)
-  responseSchemasByStatusCode: {
+  responseBodySchemasByStatusCode: {
     400: z.object({ error: z.string(), details: z.array(z.string()) }),
     404: z.object({ error: z.string(), resourceId: z.string() }),
   },
-  sseEvents: {
+  serverSentEventSchemas: {
     result: z.object({ success: z.boolean() }),
   },
 })
@@ -1738,7 +2048,7 @@ sse.respond(404, { error: 'Not Found', details: [] })        // ✗ Error - wron
 sse.respond(500, { message: 'error' })                       // ✗ Error - 500 not defined in schema
 ```
 
-Only status codes defined in `responseSchemasByStatusCode` are allowed. To use an undefined status code, add it to the schema or use a type assertion.
+Only status codes defined in `responseBodySchemasByStatusCode` are allowed. To use an undefined status code, add it to the schema or use a type assertion.
 
 **Sync handlers (union typing with runtime validation):**
 
@@ -1752,22 +2062,22 @@ sync: (request, reply) => {
 }
 
 // The sync handler return type is automatically:
-// { success: boolean; data: string }           // from syncResponseBody
-// | { error: string; details: string[] }       // from responseSchemasByStatusCode[400]
-// | { error: string; resourceId: string }      // from responseSchemasByStatusCode[404]
+// { success: boolean; data: string }           // from successResponseBodySchema
+// | { error: string; details: string[] }       // from responseBodySchemasByStatusCode[400]
+// | { error: string; resourceId: string }      // from responseBodySchemasByStatusCode[404]
 ```
 
 **Validation behavior:**
 
-- **Success responses (2xx)**: Validated against `syncResponseBody` schema
-- **Non-2xx responses**: Validated against the matching schema in `responseSchemasByStatusCode` (if defined)
+- **Success responses (2xx)**: Validated against `successResponseBodySchema`
+- **Non-2xx responses**: Validated against the matching schema in `responseBodySchemasByStatusCode` (if defined)
 - **Validation failures**: Return 500 Internal Server Error (validation details are logged internally, not exposed to clients)
 
 **Validation priority for 2xx status codes:**
 
-- All 2xx responses (200, 201, 204, etc.) are validated against `syncResponseBody`
-- `responseSchemasByStatusCode` is only used for non-2xx status codes
-- If you define the same 2xx code in both, `syncResponseBody` takes precedence
+- All 2xx responses (200, 201, 204, etc.) are validated against `successResponseBodySchema`
+- `responseBodySchemasByStatusCode` is only used for non-2xx status codes
+- If you define the same 2xx code in both, `successResponseBodySchema` takes precedence
 
 ### Single Sync Handler
 
@@ -1776,7 +2086,7 @@ Dual-mode contracts use a single `sync` handler that returns the response data. 
 ```ts
 handlers: buildHandler(chatCompletionContract, {
   sync: async (request, reply) => {
-    // Return the response data matching syncResponseBody schema
+    // Return the response data matching successResponseBodySchema
     const result = await aiService.complete(request.body.message)
     return {
       reply: result.text,
@@ -1792,8 +2102,8 @@ handlers: buildHandler(chatCompletionContract, {
 ```
 
 TypeScript enforces the correct handler structure:
-- `syncResponseBody` contracts must use `sync` handler (returns response data)
-- `sseEvents` contracts must use `sse` handler (streams events)
+- `successResponseBodySchema` contracts must use `sync` handler (returns response data)
+- `serverSentEventSchemas` contracts must use `sse` handler (streams events)
 
 ### Implementing Dual-Mode Controllers
 
@@ -1877,7 +2187,7 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
 | `sync` | `(request, reply) => Response` |
 | `sse` | `(request, sse) => SSEHandlerResult` |
 
-The `sync` handler must return a value matching `syncResponseBody` schema. The `sse` handler uses `sse.start(mode)` to begin streaming (`'autoClose'` for request-response, `'keepAlive'` for long-lived sessions) and `session.send()` for type-safe event sending.
+The `sync` handler must return a value matching `successResponseBodySchema`. The `sse` handler uses `sse.start(mode)` to begin streaming (`'autoClose'` for request-response, `'keepAlive'` for long-lived sessions) and `session.send()` for type-safe event sending.
 
 ### Registering Dual-Mode Controllers
 
@@ -1886,12 +2196,13 @@ Use `asDualModeControllerClass` in your module:
 ```ts
 import {
   AbstractModule,
+  type InferModuleDependencies,
   asControllerClass,
   asDualModeControllerClass,
   asServiceClass,
 } from 'opinionated-machine'
 
-export class ChatModule extends AbstractModule<Dependencies> {
+export class ChatModule extends AbstractModule {
   resolveDependencies() {
     return {
       aiService: asServiceClass(AIService),
@@ -1907,6 +2218,8 @@ export class ChatModule extends AbstractModule<Dependencies> {
     }
   }
 }
+
+export type ChatModuleDependencies = InferModuleDependencies<ChatModule>
 ```
 
 Register dual-mode routes after the `@fastify/sse` plugin:

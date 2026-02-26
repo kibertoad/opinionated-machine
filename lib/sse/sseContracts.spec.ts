@@ -5,19 +5,19 @@ import { buildHandler } from '../routes/fastifyRouteTypes.ts'
 
 describe('sseContracts', () => {
   describe('buildContract (SSE with body)', () => {
-    const baseConfig = {
+    const baseFields = {
       pathResolver: () => '/api/test',
-      params: z.object({}),
-      query: z.object({}),
-      requestHeaders: z.object({}),
-      requestBody: z.object({ message: z.string() }),
-      sseEvents: {
+      requestPathParamsSchema: z.object({}),
+      requestQuerySchema: z.object({}),
+      requestHeaderSchema: z.object({}),
+      requestBodySchema: z.object({ message: z.string() }),
+      serverSentEventSchemas: {
         data: z.object({ value: z.string() }),
       },
     }
 
-    it('defaults method to post when not specified', () => {
-      const route = buildContract(baseConfig)
+    it('creates post SSE route', () => {
+      const route = buildContract({ method: 'post', ...baseFields })
 
       expect(route.method).toBe('post')
       expect(route.pathResolver({})).toBe('/api/test')
@@ -26,8 +26,8 @@ describe('sseContracts', () => {
 
     it('uses specified method when provided', () => {
       const route = buildContract({
-        ...baseConfig,
         method: 'put',
+        ...baseFields,
       })
 
       expect(route.method).toBe('put')
@@ -35,8 +35,8 @@ describe('sseContracts', () => {
 
     it('supports patch method', () => {
       const route = buildContract({
-        ...baseConfig,
         method: 'patch',
+        ...baseFields,
       })
 
       expect(route.method).toBe('patch')
@@ -46,11 +46,12 @@ describe('sseContracts', () => {
   describe('buildContract (SSE GET)', () => {
     it('creates get SSE route', () => {
       const route = buildContract({
+        method: 'get',
         pathResolver: () => '/api/stream',
-        params: z.object({}),
-        query: z.object({ userId: z.string() }),
-        requestHeaders: z.object({}),
-        sseEvents: {
+        requestPathParamsSchema: z.object({}),
+        requestQuerySchema: z.object({ userId: z.string() }),
+        requestHeaderSchema: z.object({}),
+        serverSentEventSchemas: {
           message: z.object({ text: z.string() }),
         },
       })
@@ -58,7 +59,7 @@ describe('sseContracts', () => {
       expect(route.method).toBe('get')
       expect(route.pathResolver({})).toBe('/api/stream')
       expect(route.isSSE).toBe(true)
-      expect(route.requestBody).toBeUndefined()
+      expect(route.requestBodySchema).toBeUndefined()
     })
   })
 
@@ -66,11 +67,11 @@ describe('sseContracts', () => {
     const testContract = buildContract({
       method: 'post',
       pathResolver: (params) => `/api/test/${params.id}/stream`,
-      params: z.object({ id: z.string() }),
-      query: z.object({ filter: z.string().optional() }),
-      requestHeaders: z.object({ authorization: z.string() }),
-      requestBody: z.object({ message: z.string(), count: z.number() }),
-      sseEvents: {
+      requestPathParamsSchema: z.object({ id: z.string() }),
+      requestQuerySchema: z.object({ filter: z.string().optional() }),
+      requestHeaderSchema: z.object({ authorization: z.string() }),
+      requestBodySchema: z.object({ message: z.string(), count: z.number() }),
+      serverSentEventSchemas: {
         chunk: z.object({ content: z.string() }),
         done: z.object({ totalTokens: z.number() }),
       },

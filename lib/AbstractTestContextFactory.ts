@@ -24,13 +24,13 @@ export abstract class AbstractTestContextFactory<
   constructor(
     externalDependencies: ExternalDependencies,
     allModules: readonly AbstractModule<unknown>[],
-    diContainer?: AwilixContainer,
+    diContainer?: AwilixContainer<Dependencies>,
   ) {
     this.externalDependencies = externalDependencies
     this.allModules = allModules
     this.diContainer =
       diContainer ??
-      createContainer({
+      createContainer<Dependencies>({
         injectionMode: 'PROXY',
       })
   }
