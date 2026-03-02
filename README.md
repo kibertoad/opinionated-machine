@@ -53,6 +53,8 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [Enabling Rooms](#enabling-rooms)
     - [Session Room Operations](#session-room-operations)
     - [Broadcasting to Rooms](#broadcasting-to-rooms)
+    - [Room Broadcaster (Decoupled Broadcasting)](#room-broadcaster-decoupled-broadcasting)
+    - [Room Name Helpers](#room-name-helpers)
     - [Room Query Methods](#room-query-methods)
     - [Auto-Leave on Disconnect](#auto-leave-on-disconnect)
     - [Multi-Node Deployments with Redis](#multi-node-deployments-with-redis)
@@ -1498,16 +1500,35 @@ class DashboardSSEController extends AbstractSSEController<typeof contracts> {
   // ... handlers
 }
 
-// In your module
+// In your module — distributed mode (production)
+// Resolves `sseRoomAdapter` from the DI cradle at construction time
 resolveControllers(diOptions: DependencyInjectionOptions) {
   return {
     dashboardController: asSSEControllerClass(DashboardSSEController, {
       diOptions,
-      rooms: {}, // Enable rooms with default config
+      rooms: true,
     }),
   }
 }
 ```
+
+```ts
+// In your module — local mode (dev/test)
+// Uses InMemoryAdapter, no DI lookup required
+resolveControllers(diOptions: DependencyInjectionOptions) {
+  return {
+    dashboardController: asSSEControllerClass(DashboardSSEController, {
+      diOptions,
+      rooms: { distributed: false },
+    }),
+  }
+}
+```
+
+The `rooms` option accepts:
+- `true` — shorthand for `{ distributed: true }`. Resolves `sseRoomAdapter` from the DI container (awilix throws if not registered).
+- `{ distributed: true }` — same as `true`. Production-optimized: adapter comes from DI.
+- `{ distributed: false }` — uses the built-in InMemoryAdapter with no DI lookup. Ideal for dev/test environments.
 
 #### Session Room Operations
 
@@ -1571,6 +1592,87 @@ class DashboardSSEController extends AbstractSSEController<typeof contracts> {
 }
 ```
 
+#### Room Broadcaster (Decoupled Broadcasting)
+
+The `broadcastToRoom()` method on the controller is `protected`, which means domain services (use cases, event handlers, message queue consumers) can't call it directly. The `SSERoomBroadcaster` solves this by providing a standalone object you can inject via DI:
+
+```ts
+import type { SSERoomBroadcaster } from 'opinionated-machine'
+
+// 1. Register the broadcaster in resolveDependencies() (NOT resolveControllers)
+class DashboardModule extends AbstractModule<DashboardModuleDependencies> {
+  resolveDependencies() {
+    return {
+      // Broadcaster extracted from controller — lazy resolution avoids circular deps
+      dashboardRoomBroadcaster: asSingletonFunction(
+        (cradle) => cradle.dashboardController.roomBroadcaster,
+      ),
+      metricsService: asSingletonFunction(
+        (cradle) => new MetricsService(cradle),
+      ),
+    }
+  }
+
+  resolveControllers(diOptions: DependencyInjectionOptions) {
+    return {
+      dashboardController: asSSEControllerClass(DashboardSSEController, {
+        diOptions,
+        rooms: true,
+      }),
+    }
+  }
+}
+
+// 2. Inject into domain services
+class MetricsService {
+  private broadcaster: SSERoomBroadcaster<typeof DashboardSSEController.contracts>
+
+  constructor(deps: { dashboardRoomBroadcaster: SSERoomBroadcaster<typeof DashboardSSEController.contracts> }) {
+    this.broadcaster = deps.dashboardRoomBroadcaster
+  }
+
+  async onMetricsUpdate(dashboardId: string, metrics: DashboardMetrics) {
+    // Same type-safe API as the controller's broadcastToRoom
+    await this.broadcaster.broadcastToRoom(
+      `dashboard:${dashboardId}`,
+      'metricsUpdate',
+      metrics,
+    )
+  }
+}
+```
+
+The broadcaster provides the same type-safe `broadcastToRoom()` signature as the controller, plus room query methods (`getConnectionsInRoom`, `getConnectionCountInRoom`).
+
+#### Room Name Helpers
+
+Room names are plain strings (like Socket.IO), but `defineRoom()` adds type-safe resolvers that ensure consistent naming across controllers and domain services:
+
+```ts
+import { defineRoom } from 'opinionated-machine'
+
+// Define typed room name resolvers
+const dashboardRoom = defineRoom<{ dashboardId: string }>(
+  ({ dashboardId }) => `dashboard:${dashboardId}`,
+)
+
+const projectChannelRoom = defineRoom<{ projectId: string; channelId: string }>(
+  ({ projectId, channelId }) => `project:${projectId}:channel:${channelId}`,
+)
+
+// In controller handler — params are type-checked
+session.rooms.join(dashboardRoom({ dashboardId: request.params.dashboardId }))
+
+// In domain service — same resolver, same type safety
+await broadcaster.broadcastToRoom(
+  dashboardRoom({ dashboardId }),
+  'metricsUpdate',
+  metrics,
+)
+```
+
+`defineRoom()` is a zero-overhead identity wrapper — it simply returns the function you pass in, typed as `RoomNameResolver<TParams>`. The value is purely at compile time: typos in room name patterns become type errors, and refactoring a room's naming scheme only requires changing one place.
+
 #### Room Query Methods
 
 Controllers have access to room query methods:
@@ -1606,36 +1708,41 @@ When a connection closes (client disconnect or server close), it automatically l
 
 #### Multi-Node Deployments with Redis
 
-For multi-node deployments where connections may be distributed across servers, use the Redis adapter from `@opinionated-machine/sse-rooms-redis`:
+For multi-node deployments where connections are distributed across servers, register a Redis adapter as `sseRoomAdapter` in your DI container. The controller auto-resolves it when `rooms: true` (the default):
 
 ```ts
 import { RedisAdapter } from '@opinionated-machine/sse-rooms-redis'
 import Redis from 'ioredis'
 
-class DashboardSSEController extends AbstractSSEController<typeof contracts> {
-  constructor(deps: { redis: Redis }, sseConfig?: SSEControllerConfig) {
-    super(deps, sseConfig)
+class InfraModule extends AbstractModule {
+  resolveDependencies() {
+    return {
+      // Register the adapter under the well-known label 'sseRoomAdapter'
+      sseRoomAdapter: asSingletonFunction((cradle: { redis: Redis }) =>
+        new RedisAdapter({
+          pubClient: cradle.redis,
+          subClient: cradle.redis.duplicate(),
+          channelPrefix: 'myapp:sse:room:', // Optional, default: 'sse:room:'
+        }),
+      ),
+    }
   }
 }
 
-// In your module
-resolveControllers(diOptions: DependencyInjectionOptions & { redis: Redis }) {
-  return {
-    dashboardController: asSSEControllerClass(DashboardSSEController, {
-      diOptions,
-      rooms: {
-        adapter: new RedisAdapter({
-          pubClient: diOptions.redis,
-          subClient: diOptions.redis.duplicate(), // Separate connection for subscriptions
-          channelPrefix: 'myapp:sse:room:', // Optional, default: 'sse:room:'
-        }),
-      },
-    }),
+class DashboardModule extends AbstractModule {
+  resolveControllers(diOptions: DependencyInjectionOptions) {
+    return {
+      // rooms: true → resolves 'sseRoomAdapter' from DI cradle automatically
+      dashboardController: asSSEControllerClass(DashboardSSEController, {
+        diOptions,
+        rooms: true,
+      }),
+    }
   }
 }
 ```
 
-The Redis adapter uses Pub/Sub for cross-node message propagation. When you call `broadcastToRoom()`, the message is published to Redis and delivered to all nodes that have connections in that room.
+The Redis adapter uses Pub/Sub for cross-node message propagation. When you call `broadcastToRoom()`, the message is published to Redis and delivered to all nodes that have connections in that room. If `sseRoomAdapter` is not registered in the DI container, awilix throws naturally at controller construction time.
 
 See the [@opinionated-machine/sse-rooms-redis](./packages/sse-rooms-redis/README.md) package for detailed documentation on Redis adapter configuration and usage.
 

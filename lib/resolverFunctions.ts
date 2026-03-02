@@ -9,6 +9,7 @@ import {
   isPeriodicJobEnabled,
   resolveJobQueuesEnabled,
 } from './diConfigUtils.js'
+import type { SSERoomDIConfig } from './sse/sseTypes.js'
 
 /**
  * Type-level representation of a class value that infers the instance type
@@ -161,6 +162,15 @@ export function asControllerClass<T = object>(
 
 export type SSEControllerModuleOptions = {
   diOptions: DependencyInjectionOptions
+  /**
+   * Enable room support for this controller.
+   *
+   * - `true` — shorthand for `{ distributed: true }` (resolve adapter from DI)
+   * - `{ distributed: true }` — resolve `sseRoomAdapter` from DI cradle (production default)
+   * - `{ distributed: false }` — InMemoryAdapter, no DI lookup (dev/test)
+   * - omitted `distributed` — defaults to `true`
+   */
+  rooms?: true | { distributed?: boolean }
 }
 
 /**
@@ -179,6 +189,9 @@ export type SSEControllerModuleOptions = {
  *
  * // With test mode (enables connection spy)
  * notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions }),
+ *
+ * // With rooms enabled
+ * dashboardController: asSSEControllerClass(DashboardSSEController, { diOptions, rooms: {} }),
  * ```
  */
 export function asSSEControllerClass<T = object>(
@@ -187,9 +200,20 @@ export function asSSEControllerClass<T = object>(
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
   const enableConnectionSpy = sseOptions?.diOptions.isTestMode ?? false
-  const sseConfig = enableConnectionSpy ? { enableConnectionSpy: true } : undefined
 
-  return asClassWithConfig(Type, sseConfig, {
+  // Normalize rooms option into SSERoomDIConfig
+  let roomsDIConfig: SSERoomDIConfig | undefined
+  if (sseOptions?.rooms != null) {
+    const distributed = sseOptions.rooms === true || (sseOptions.rooms.distributed ?? true)
+    roomsDIConfig = { distributed }
+  }
+
+  const sseConfig = {
+    ...(enableConnectionSpy && { enableConnectionSpy: true }),
+    ...(roomsDIConfig && { rooms: roomsDIConfig }),
+  }
+
+  return asClassWithConfig(Type, Object.keys(sseConfig).length > 0 ? sseConfig : undefined, {
     public: false,
     isSSEController: true,
     asyncDispose: 'closeAllConnections',

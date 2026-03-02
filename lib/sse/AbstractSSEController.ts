@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import type { SSEReplyInterface } from '@fastify/sse'
 import type {
   AllContractEventNames,
@@ -9,10 +8,12 @@ import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import type { z } from 'zod'
 import type { BuildFastifySSERoutesReturnType, SSESession } from '../routes/fastifyRouteTypes.ts'
+import { SSERoomBroadcaster } from './rooms/SSERoomBroadcaster.ts'
 import { SSERoomManager } from './rooms/SSERoomManager.ts'
-import type { RoomBroadcastOptions } from './rooms/types.ts'
+import type { RoomBroadcastOptions, SSERoomAdapter, SSERoomManagerConfig } from './rooms/types.ts'
 import { SSESessionSpy } from './SSESessionSpy.ts'
-import type { SSEControllerConfig, SSEMessage } from './sseTypes.ts'
+import type { SSEControllerConfig, SSEMessage, SSERoomDIConfig } from './sseTypes.ts'
+import { isRoomDIConfig } from './sseTypes.ts'
 
 // Re-export Fastify-specific types
 export type {
@@ -41,7 +42,9 @@ export type {
   SSEEventSender,
   SSELogger,
   SSEMessage,
+  SSERoomDIConfig,
 } from './sseTypes.ts'
+export { isRoomDIConfig } from './sseTypes.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
@@ -95,6 +98,9 @@ export abstract class AbstractSSEController<
   /** Room manager for room-based broadcasting (optional) */
   private readonly _roomManager?: SSERoomManager
 
+  /** Room broadcaster for decoupled room broadcasting (optional) */
+  private readonly _roomBroadcaster?: SSERoomBroadcaster<APIContracts>
+
   /** Maximum number of message IDs to cache per connection for deduplication */
   private static readonly MAX_DEDUP_CACHE_SIZE = 1000
 
@@ -123,13 +129,41 @@ export abstract class AbstractSSEController<
     }
 
     if (sseConfig?.rooms) {
-      this._roomManager = new SSERoomManager(sseConfig.rooms)
+      const roomManagerConfig = this.resolveRoomConfig(_dependencies, sseConfig.rooms)
+      this._roomManager = new SSERoomManager(roomManagerConfig)
+      this._roomBroadcaster = new SSERoomBroadcaster<APIContracts>(
+        this._roomManager,
+        (connectionId, message) => this.sendEvent(connectionId, message),
+      )
 
       // Wire up adapter message handler to forward to local connections
       this._roomManager.onRemoteMessage((room, message, _sourceNodeId) => {
         return this.handleRemoteBroadcast(room, message)
       })
     }
+  }
+
+  /**
+   * Resolve room configuration, handling both DI-based and legacy direct configs.
+   *
+   * - `SSERoomDIConfig` with `distributed: true` → resolve `sseRoomAdapter` from DI cradle
+   * - `SSERoomDIConfig` with `distributed: false` → InMemoryAdapter (SSERoomManager default)
+   * - `SSERoomManagerConfig` (legacy) → pass through as-is
+   */
+  private resolveRoomConfig(
+    dependencies: object,
+    roomsConfig: SSERoomDIConfig | SSERoomManagerConfig,
+  ): SSERoomManagerConfig {
+    if (!isRoomDIConfig(roomsConfig)) {
+      return roomsConfig // legacy direct config — pass through
+    }
+    if (!roomsConfig.distributed) {
+      return {} // InMemoryAdapter (SSERoomManager default)
+    }
+    // distributed: true — resolve adapter from DI cradle
+    // awilix throws naturally if 'sseRoomAdapter' is not registered
+    const adapter = (dependencies as Record<string, unknown>).sseRoomAdapter as SSERoomAdapter
+    return { adapter }
   }
 
   /**
@@ -160,6 +194,44 @@ export abstract class AbstractSSEController<
       )
     }
     return this._connectionSpy
+  }
+
+  /**
+   * Get the room broadcaster for decoupled room broadcasting.
+   *
+   * Use this to inject the broadcaster into domain services via DI,
+   * allowing them to broadcast to rooms without depending on the controller.
+   *
+   * @throws Error if rooms are not enabled in the controller config
+   *
+   * @example
+   * ```typescript
+   * // In your DI module
+   * dashboardRoomBroadcaster: asSingletonFunction(
+   *   (cradle) => cradle.dashboardController.roomBroadcaster,
+   * )
+   *
+   * // In a domain service
+   * class MetricsService {
+   *   constructor(private broadcaster: SSERoomBroadcaster<typeof contracts>) {}
+   *
+   *   async onMetricsUpdate(dashboardId: string, metrics: DashboardMetrics) {
+   *     await this.broadcaster.broadcastToRoom(
+   *       `dashboard:${dashboardId}`,
+   *       'metricsUpdate',
+   *       metrics,
+   *     )
+   *   }
+   * }
+   * ```
+   */
+  public get roomBroadcaster(): SSERoomBroadcaster<APIContracts> {
+    if (!this._roomBroadcaster) {
+      throw new Error(
+        'Rooms are not enabled. Pass { rooms: {} } to the controller config to enable rooms.',
+      )
+    }
+    return this._roomBroadcaster
   }
 
   /**
@@ -480,7 +552,7 @@ export abstract class AbstractSSEController<
    * })
    * ```
    */
-  protected async broadcastToRoom<EventName extends AllContractEventNames<APIContracts>>(
+  protected broadcastToRoom<EventName extends AllContractEventNames<APIContracts>>(
     room: string | string[],
     eventName: EventName,
     data: ExtractEventSchema<APIContracts, EventName> extends z.ZodTypeAny
@@ -488,53 +560,10 @@ export abstract class AbstractSSEController<
       : never,
     options?: RoomBroadcastOptions & { id?: string; retry?: number },
   ): Promise<number> {
-    if (!this._roomManager) {
-      return 0
+    if (!this._roomBroadcaster) {
+      return Promise.resolve(0)
     }
-
-    // Generate a stable message ID for deduplication if not provided
-    const messageId = options?.id ?? randomUUID()
-
-    const message: SSEMessage = {
-      event: eventName,
-      data,
-      id: messageId,
-      retry: options?.retry,
-    }
-
-    const rooms = Array.isArray(room) ? room : [room]
-    const connectionIds = this.collectRoomConnections(this._roomManager, rooms)
-
-    // Send to all local connections
-    let sent = 0
-    for (const connId of connectionIds) {
-      if (await this.sendEvent(connId, message)) {
-        sent++
-      }
-    }
-
-    // Publish to adapter for cross-node propagation (unless local-only)
-    // Only publish once with all rooms - adapter handles per-room delivery
-    if (!options?.local) {
-      for (const r of rooms) {
-        await this._roomManager.publish(r, message, options)
-      }
-    }
-
-    return sent
-  }
-
-  /**
-   * Collect unique connection IDs from multiple rooms.
-   */
-  private collectRoomConnections(roomManager: SSERoomManager, rooms: string[]): Set<string> {
-    const connectionIds = new Set<string>()
-    for (const r of rooms) {
-      for (const connId of roomManager.getConnectionsInRoom(r)) {
-        connectionIds.add(connId)
-      }
-    }
-    return connectionIds
+    return this._roomBroadcaster.broadcastToRoom(room, eventName, data, options)
   }
 
   /**
@@ -623,7 +652,7 @@ export abstract class AbstractSSEController<
    * @returns Array of connection IDs
    */
   protected getConnectionsInRoom(room: string): string[] {
-    return this._roomManager?.getConnectionsInRoom(room) ?? []
+    return this._roomBroadcaster?.getConnectionsInRoom(room) ?? []
   }
 
   /**
@@ -633,6 +662,6 @@ export abstract class AbstractSSEController<
    * @returns Number of connections
    */
   protected getConnectionCountInRoom(room: string): number {
-    return this._roomManager?.getConnectionCountInRoom(room) ?? 0
+    return this._roomBroadcaster?.getConnectionCountInRoom(room) ?? 0
   }
 }
