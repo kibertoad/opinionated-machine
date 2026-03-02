@@ -1654,7 +1654,7 @@ const projectChannelRoom = defineRoom<{ projectId: string; channelId: string }>(
 )
 
 // In controller handler — params are type-checked
-connection.rooms.join(dashboardRoom({ dashboardId: request.params.dashboardId }))
+session.rooms.join(dashboardRoom({ dashboardId: request.params.dashboardId }))
 
 // In domain service — same resolver, same type safety
 await broadcaster.broadcastToRoom(
