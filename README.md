@@ -1500,16 +1500,23 @@ class DashboardSSEController extends AbstractSSEController<typeof contracts> {
   // ... handlers
 }
 
-// In your module
+// In your module — distributed mode (production)
+// Resolves `sseRoomAdapter` from the DI cradle at construction time
 resolveControllers(diOptions: DependencyInjectionOptions) {
   return {
-    // Distributed mode (default) — resolves `sseRoomAdapter` from DI cradle at construction time
     dashboardController: asSSEControllerClass(DashboardSSEController, {
       diOptions,
       rooms: true,
     }),
+  }
+}
+```
 
-    // Dev/test mode — uses InMemoryAdapter, no DI lookup required
+```ts
+// In your module — local mode (dev/test)
+// Uses InMemoryAdapter, no DI lookup required
+resolveControllers(diOptions: DependencyInjectionOptions) {
+  return {
     dashboardController: asSSEControllerClass(DashboardSSEController, {
       diOptions,
       rooms: { distributed: false },
