@@ -285,7 +285,7 @@ describe('SSERoomBroadcaster integration', () => {
       )
 
       // Manually join conn1 to room-b as well (simulates being in multiple rooms)
-      controller._internalRoomManager!.join(conn1.id, 'room-b')
+      controller._internalRoomManager!.join(conn1.id, chatRoom({ roomId: 'room-b' }))
 
       // Connect another client only to room-b
       const { client: client2, serverConnection: conn2 } = await SSEHttpClient.connect(
@@ -299,7 +299,7 @@ describe('SSERoomBroadcaster integration', () => {
 
       // Broadcast to both rooms via broadcaster — conn1 should receive only once
       const sent = await controller.roomBroadcaster.broadcastToRoom(
-        ['room-a', 'room-b'],
+        [chatRoom({ roomId: 'room-a' }), chatRoom({ roomId: 'room-b' })],
         'message',
         { from: 'system', text: 'Multi-room announcement' },
         { local: true },
