@@ -1,17 +1,18 @@
-import { asFunction, createContainer } from 'awilix'
+import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   AbstractModule,
   AbstractSSEController,
   asSingletonFunction,
+  asSSEControllerClass,
   type BuildFastifySSERoutesReturnType,
   buildHandler,
   type DependencyInjectionOptions,
   DIContext,
   defineRoom,
+  type InferModuleDependencies,
   type MandatoryNameAndRegistrationPair,
-  type SSEControllerConfig,
   SSEHttpClient,
   type SSERoomBroadcaster,
   SSETestServer,
@@ -40,13 +41,6 @@ class BroadcasterTestController extends AbstractSSEController<BroadcasterTestCon
   public static contracts = {
     roomStream: roomStreamContract,
   } as const
-
-  constructor(deps: object, sseConfig?: SSEControllerConfig) {
-    super(deps, {
-      ...sseConfig,
-      rooms: sseConfig?.rooms ?? {},
-    })
-  }
 
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<BroadcasterTestContracts> {
     return {
@@ -112,25 +106,17 @@ class TestDomainService {
 // flags in the DI container; other entries are treated as REST controller resolvers.
 // ============================================================================
 
-type BroadcasterTestModuleDependencies = {
-  roomBroadcaster: SSERoomBroadcaster<BroadcasterTestContracts>
-  domainService: TestDomainService
-}
-
-type BroadcasterTestModuleControllers = {
-  broadcasterTestController: BroadcasterTestController
-}
-
-class BroadcasterTestModule extends AbstractModule<BroadcasterTestModuleDependencies> {
-  resolveDependencies(): MandatoryNameAndRegistrationPair<BroadcasterTestModuleDependencies> {
+class BroadcasterTestModule extends AbstractModule {
+  resolveDependencies() {
     return {
       // Broadcaster extracted from controller — registered as a dependency, not a controller
       roomBroadcaster: asSingletonFunction(
-        (cradle: BroadcasterTestModuleControllers) =>
+        (cradle: { broadcasterTestController: BroadcasterTestController }) =>
           cradle.broadcasterTestController.roomBroadcaster,
       ),
       domainService: asSingletonFunction(
-        (cradle: BroadcasterTestModuleDependencies) => new TestDomainService(cradle),
+        (cradle: { roomBroadcaster: SSERoomBroadcaster<BroadcasterTestContracts> }) =>
+          new TestDomainService(cradle),
       ),
     }
   }
@@ -138,24 +124,18 @@ class BroadcasterTestModule extends AbstractModule<BroadcasterTestModuleDependen
   override resolveControllers(
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
-    const enableConnectionSpy = diOptions.isTestMode ?? false
-    const sseConfig: SSEControllerConfig = {
-      ...(enableConnectionSpy && { enableConnectionSpy: true }),
-    }
-
     return {
-      broadcasterTestController: asFunction(
-        (cradle: object) => new BroadcasterTestController(cradle, sseConfig),
-        {
-          lifetime: 'SINGLETON',
-          isSSEController: true,
-          asyncDispose: 'closeAllConnections',
-          asyncDisposePriority: 5,
-        },
-      ),
+      broadcasterTestController: asSSEControllerClass(BroadcasterTestController, {
+        diOptions,
+        rooms: { distributed: false },
+      }),
     }
   }
 }
+
+// Infer types from module — no hand-written dependency/controller types
+type ModuleDeps = InferModuleDependencies<BroadcasterTestModule>
+type ContainerDeps = ModuleDeps & { broadcasterTestController: BroadcasterTestController }
 
 // ============================================================================
 // Tests
@@ -163,27 +143,21 @@ class BroadcasterTestModule extends AbstractModule<BroadcasterTestModuleDependen
 
 describe('SSERoomBroadcaster integration', () => {
   let server: SSETestServer<{
-    context: DIContext<BroadcasterTestModuleControllers, object>
+    context: DIContext<ContainerDeps, object>
   }>
-  let context: DIContext<BroadcasterTestModuleControllers, object>
+  let context: DIContext<ContainerDeps, object>
   let controller: BroadcasterTestController
   let domainService: TestDomainService
 
   beforeEach(async () => {
-    const container = createContainer<
-      BroadcasterTestModuleControllers & BroadcasterTestModuleDependencies
-    >({
+    const container = createContainer<ContainerDeps>({
       injectionMode: 'PROXY',
     })
-    context = new DIContext<BroadcasterTestModuleControllers, object>(
-      container,
-      { isTestMode: true },
-      {},
-    )
+    context = new DIContext<ContainerDeps, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new BroadcasterTestModule()] }, undefined)
 
-    controller = context.diContainer.resolve<BroadcasterTestController>('broadcasterTestController')
-    domainService = context.diContainer.resolve<TestDomainService>('domainService')
+    controller = context.diContainer.resolve('broadcasterTestController')
+    domainService = context.diContainer.resolve('domainService')
 
     server = await SSETestServer.create(
       (app) => {
@@ -201,6 +175,42 @@ describe('SSERoomBroadcaster integration', () => {
   afterEach(async () => {
     await server?.close()
   })
+
+  it(
+    'full e2e: client connects, domain service broadcasts via defineRoom, client receives event',
+    { timeout: 10000 },
+    async () => {
+      // 1. Client connects to a room
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/rooms/my-room/stream',
+        {
+          query: { userId: 'alice' },
+          awaitServerConnection: { controller },
+        },
+      )
+
+      // 2. Start collecting events on the client side BEFORE broadcasting
+      const eventsPromise = client.collectEvents(2, 5000)
+
+      // 3. Domain service broadcasts two events via the shared defineRoom resolver
+      await domainService.sendMessage('my-room', 'system', 'Welcome!')
+      await domainService.notifyUserJoined('my-room', 'bob')
+
+      // 4. Client receives both events with correct data
+      const events = await eventsPromise
+      expect(events).toHaveLength(2)
+
+      expect(events[0]?.event).toBe('message')
+      expect(JSON.parse(events[0]!.data)).toEqual({ from: 'system', text: 'Welcome!' })
+
+      expect(events[1]?.event).toBe('userJoined')
+      expect(JSON.parse(events[1]!.data)).toEqual({ userId: 'bob' })
+
+      client.close()
+      await controller.connectionSpy.waitForDisconnection(serverConnection.id)
+    },
+  )
 
   it('domain service can broadcast to room via broadcaster', { timeout: 10000 }, async () => {
     const { client, serverConnection } = await SSEHttpClient.connect(
@@ -321,8 +331,7 @@ describe('SSERoomBroadcaster integration', () => {
 
   it('broadcaster is the same singleton instance from controller and DI', () => {
     const fromController = controller.roomBroadcaster
-    const fromDI =
-      context.diContainer.resolve<SSERoomBroadcaster<BroadcasterTestContracts>>('roomBroadcaster')
+    const fromDI = context.diContainer.resolve('roomBroadcaster')
     expect(fromDI).toBe(fromController)
   })
 })

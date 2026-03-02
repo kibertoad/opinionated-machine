@@ -25,10 +25,12 @@ export {
 } from '../routes/index.js'
 export {
   AbstractSSEController,
+  isRoomDIConfig,
   type SSEControllerConfig,
   type SSEEventSender,
   type SSELogger,
   type SSEMessage,
+  type SSERoomDIConfig,
 } from './AbstractSSEController.js'
 // Re-export room types and classes
 export {

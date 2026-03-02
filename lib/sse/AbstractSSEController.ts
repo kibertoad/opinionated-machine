@@ -10,9 +10,10 @@ import type { z } from 'zod'
 import type { BuildFastifySSERoutesReturnType, SSESession } from '../routes/fastifyRouteTypes.ts'
 import { SSERoomBroadcaster } from './rooms/SSERoomBroadcaster.ts'
 import { SSERoomManager } from './rooms/SSERoomManager.ts'
-import type { RoomBroadcastOptions } from './rooms/types.ts'
+import type { RoomBroadcastOptions, SSERoomAdapter, SSERoomManagerConfig } from './rooms/types.ts'
 import { SSESessionSpy } from './SSESessionSpy.ts'
-import type { SSEControllerConfig, SSEMessage } from './sseTypes.ts'
+import type { SSEControllerConfig, SSEMessage, SSERoomDIConfig } from './sseTypes.ts'
+import { isRoomDIConfig } from './sseTypes.ts'
 
 // Re-export Fastify-specific types
 export type {
@@ -41,7 +42,9 @@ export type {
   SSEEventSender,
   SSELogger,
   SSEMessage,
+  SSERoomDIConfig,
 } from './sseTypes.ts'
+export { isRoomDIConfig } from './sseTypes.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
@@ -126,7 +129,8 @@ export abstract class AbstractSSEController<
     }
 
     if (sseConfig?.rooms) {
-      this._roomManager = new SSERoomManager(sseConfig.rooms)
+      const roomManagerConfig = this.resolveRoomConfig(_dependencies, sseConfig.rooms)
+      this._roomManager = new SSERoomManager(roomManagerConfig)
       this._roomBroadcaster = new SSERoomBroadcaster<APIContracts>(
         this._roomManager,
         (connectionId, message) => this.sendEvent(connectionId, message),
@@ -137,6 +141,29 @@ export abstract class AbstractSSEController<
         return this.handleRemoteBroadcast(room, message)
       })
     }
+  }
+
+  /**
+   * Resolve room configuration, handling both DI-based and legacy direct configs.
+   *
+   * - `SSERoomDIConfig` with `distributed: true` → resolve `sseRoomAdapter` from DI cradle
+   * - `SSERoomDIConfig` with `distributed: false` → InMemoryAdapter (SSERoomManager default)
+   * - `SSERoomManagerConfig` (legacy) → pass through as-is
+   */
+  private resolveRoomConfig(
+    dependencies: object,
+    roomsConfig: SSERoomDIConfig | SSERoomManagerConfig,
+  ): SSERoomManagerConfig {
+    if (!isRoomDIConfig(roomsConfig)) {
+      return roomsConfig // legacy direct config — pass through
+    }
+    if (!roomsConfig.distributed) {
+      return {} // InMemoryAdapter (SSERoomManager default)
+    }
+    // distributed: true — resolve adapter from DI cradle
+    // awilix throws naturally if 'sseRoomAdapter' is not registered
+    const adapter = (dependencies as Record<string, unknown>).sseRoomAdapter as SSERoomAdapter
+    return { adapter }
   }
 
   /**

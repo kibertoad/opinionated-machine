@@ -88,6 +88,24 @@ export type SSEEventSender<Events extends SSEEventSchemas> = <
 ) => Promise<boolean>
 
 /**
+ * Declarative room configuration resolved from DI at controller construction time.
+ *
+ * - `distributed: true` — resolve `sseRoomAdapter` from the DI cradle (production default)
+ * - `distributed: false` — use InMemoryAdapter with no DI lookup (dev/test)
+ */
+export type SSERoomDIConfig = { distributed: boolean }
+
+/**
+ * Type guard to distinguish DI-resolved room config from legacy direct config.
+ * Discriminant: only `SSERoomDIConfig` has the `distributed` key.
+ */
+export function isRoomDIConfig(
+  config: SSERoomManagerConfig | SSERoomDIConfig,
+): config is SSERoomDIConfig {
+  return 'distributed' in config
+}
+
+/**
  * Configuration options for SSE controllers.
  */
 export type SSEControllerConfig = {
@@ -103,20 +121,8 @@ export type SSEControllerConfig = {
    * Enable room support for this controller.
    * Rooms allow broadcasting to groups of connections.
    *
-   * Pass an empty object `{}` to enable rooms with defaults.
-   * Pass configuration to customize behavior (e.g., add Redis adapter).
-   *
-   * @example Single-node deployment (in-memory)
-   * ```typescript
-   * { rooms: {} }
-   * ```
-   *
-   * @example Multi-node deployment (Redis)
-   * ```typescript
-   * import { RedisAdapter } from '@opinionated-machine/sse-rooms-redis'
-   *
-   * { rooms: { adapter: new RedisAdapter({ pubClient, subClient }) } }
-   * ```
+   * - `SSERoomDIConfig` (recommended): declarative config resolved from DI
+   * - `SSERoomManagerConfig`: legacy direct config (pass-through)
    */
-  rooms?: SSERoomManagerConfig
+  rooms?: SSERoomManagerConfig | SSERoomDIConfig
 }

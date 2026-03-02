@@ -1503,13 +1503,25 @@ class DashboardSSEController extends AbstractSSEController<typeof contracts> {
 // In your module
 resolveControllers(diOptions: DependencyInjectionOptions) {
   return {
+    // Distributed mode (default) — resolves `sseRoomAdapter` from DI cradle at construction time
     dashboardController: asSSEControllerClass(DashboardSSEController, {
       diOptions,
-      rooms: {}, // Enable rooms with default config
+      rooms: true,
+    }),
+
+    // Dev/test mode — uses InMemoryAdapter, no DI lookup required
+    dashboardController: asSSEControllerClass(DashboardSSEController, {
+      diOptions,
+      rooms: { distributed: false },
     }),
   }
 }
 ```
+
+The `rooms` option accepts:
+- `true` — shorthand for `{ distributed: true }`. Resolves `sseRoomAdapter` from the DI container (awilix throws if not registered).
+- `{ distributed: true }` — same as `true`. Production-optimized: adapter comes from DI.
+- `{ distributed: false }` — uses the built-in InMemoryAdapter with no DI lookup. Ideal for dev/test environments.
 
 #### Session Room Operations
 
@@ -1598,7 +1610,7 @@ class DashboardModule extends AbstractModule<DashboardModuleDependencies> {
     return {
       dashboardController: asSSEControllerClass(DashboardSSEController, {
         diOptions,
-        rooms: {},
+        rooms: true,
       }),
     }
   }
@@ -1689,36 +1701,41 @@ When a connection closes (client disconnect or server close), it automatically l
 
 #### Multi-Node Deployments with Redis
 
-For multi-node deployments where connections may be distributed across servers, use the Redis adapter from `@opinionated-machine/sse-rooms-redis`:
+For multi-node deployments where connections are distributed across servers, register a Redis adapter as `sseRoomAdapter` in your DI container. The controller auto-resolves it when `rooms: true` (the default):
 
 ```ts
 import { RedisAdapter } from '@opinionated-machine/sse-rooms-redis'
 import Redis from 'ioredis'
 
-class DashboardSSEController extends AbstractSSEController<typeof contracts> {
-  constructor(deps: { redis: Redis }, sseConfig?: SSEControllerConfig) {
-    super(deps, sseConfig)
+class InfraModule extends AbstractModule {
+  resolveDependencies() {
+    return {
+      // Register the adapter under the well-known label 'sseRoomAdapter'
+      sseRoomAdapter: asSingletonFunction((cradle: { redis: Redis }) =>
+        new RedisAdapter({
+          pubClient: cradle.redis,
+          subClient: cradle.redis.duplicate(),
+          channelPrefix: 'myapp:sse:room:', // Optional, default: 'sse:room:'
+        }),
+      ),
+    }
   }
 }
 
-// In your module
-resolveControllers(diOptions: DependencyInjectionOptions & { redis: Redis }) {
-  return {
-    dashboardController: asSSEControllerClass(DashboardSSEController, {
-      diOptions,
-      rooms: {
-        adapter: new RedisAdapter({
-          pubClient: diOptions.redis,
-          subClient: diOptions.redis.duplicate(), // Separate connection for subscriptions
-          channelPrefix: 'myapp:sse:room:', // Optional, default: 'sse:room:'
-        }),
-      },
-    }),
+class DashboardModule extends AbstractModule {
+  resolveControllers(diOptions: DependencyInjectionOptions) {
+    return {
+      // rooms: true → resolves 'sseRoomAdapter' from DI cradle automatically
+      dashboardController: asSSEControllerClass(DashboardSSEController, {
+        diOptions,
+        rooms: true,
+      }),
+    }
   }
 }
 ```
 
-The Redis adapter uses Pub/Sub for cross-node message propagation. When you call `broadcastToRoom()`, the message is published to Redis and delivered to all nodes that have connections in that room.
+The Redis adapter uses Pub/Sub for cross-node message propagation. When you call `broadcastToRoom()`, the message is published to Redis and delivered to all nodes that have connections in that room. If `sseRoomAdapter` is not registered in the DI container, awilix throws naturally at controller construction time.
 
 See the [@opinionated-machine/sse-rooms-redis](./packages/sse-rooms-redis/README.md) package for detailed documentation on Redis adapter configuration and usage.
 
