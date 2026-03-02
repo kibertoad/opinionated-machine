@@ -1,6 +1,22 @@
 import type { SSEMessage } from '../sseTypes.js'
 
 /**
+ * A typed room name resolver function.
+ *
+ * Created via `defineRoom()`, this ensures consistent room naming
+ * across controllers and domain services.
+ *
+ * @template TParams - The parameters required to construct the room name
+ *
+ * @example
+ * ```typescript
+ * const dashboardRoom: RoomNameResolver<{ dashboardId: string }> =
+ *   ({ dashboardId }) => `dashboard:${dashboardId}`
+ * ```
+ */
+export type RoomNameResolver<TParams> = (params: TParams) => string
+
+/**
  * Options for broadcasting to rooms.
  */
 export type RoomBroadcastOptions = {

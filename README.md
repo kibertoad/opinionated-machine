@@ -54,6 +54,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [Session Room Operations](#session-room-operations)
     - [Broadcasting to Rooms](#broadcasting-to-rooms)
     - [Room Broadcaster (Decoupled Broadcasting)](#room-broadcaster-decoupled-broadcasting)
+    - [Room Name Helpers](#room-name-helpers)
     - [Room Query Methods](#room-query-methods)
     - [Auto-Leave on Disconnect](#auto-leave-on-disconnect)
     - [Multi-Node Deployments with Redis](#multi-node-deployments-with-redis)
@@ -1579,23 +1580,31 @@ The `broadcastToRoom()` method on the controller is `protected`, which means dom
 ```ts
 import type { SSERoomBroadcaster } from 'opinionated-machine'
 
-// 1. Access broadcaster from the controller
-const broadcaster = dashboardController.roomBroadcaster
+// 1. Register the broadcaster in resolveDependencies() (NOT resolveControllers)
+class DashboardModule extends AbstractModule<DashboardModuleDependencies> {
+  resolveDependencies() {
+    return {
+      // Broadcaster extracted from controller — lazy resolution avoids circular deps
+      dashboardRoomBroadcaster: asSingletonFunction(
+        (cradle) => cradle.dashboardController.roomBroadcaster,
+      ),
+      metricsService: asSingletonFunction(
+        (cradle) => new MetricsService(cradle),
+      ),
+    }
+  }
 
-// 2. Register in DI (awilix example)
-resolveControllers(diOptions: DependencyInjectionOptions) {
-  return {
-    dashboardController: asSSEControllerClass(DashboardSSEController, {
-      diOptions,
-      rooms: {},
-    }),
-    dashboardRoomBroadcaster: asSingletonFunction(
-      (cradle) => cradle.dashboardController.roomBroadcaster,
-    ),
+  resolveControllers(diOptions: DependencyInjectionOptions) {
+    return {
+      dashboardController: asSSEControllerClass(DashboardSSEController, {
+        diOptions,
+        rooms: {},
+      }),
+    }
   }
 }
 
-// 3. Inject into domain services
+// 2. Inject into domain services
 class MetricsService {
   private broadcaster: SSERoomBroadcaster<typeof DashboardSSEController.contracts>
 
@@ -1615,6 +1624,35 @@ class MetricsService {
 ```
 
 The broadcaster provides the same type-safe `broadcastToRoom()` signature as the controller, plus room query methods (`getConnectionsInRoom`, `getConnectionCountInRoom`).
+
+#### Room Name Helpers
+
+Room names are plain strings (like Socket.IO), but `defineRoom()` adds type-safe resolvers that ensure consistent naming across controllers and domain services:
+
+```ts
+import { defineRoom } from 'opinionated-machine'
+
+// Define typed room name resolvers
+const dashboardRoom = defineRoom<{ dashboardId: string }>(
+  ({ dashboardId }) => `dashboard:${dashboardId}`,
+)
+
+const projectChannelRoom = defineRoom<{ projectId: string; channelId: string }>(
+  ({ projectId, channelId }) => `project:${projectId}:channel:${channelId}`,
+)
+
+// In controller handler — params are type-checked
+connection.rooms.join(dashboardRoom({ dashboardId: request.params.dashboardId }))
+
+// In domain service — same resolver, same type safety
+await broadcaster.broadcastToRoom(
+  dashboardRoom({ dashboardId }),
+  'metricsUpdate',
+  metrics,
+)
+```
+
+`defineRoom()` is a zero-overhead identity wrapper — it simply returns the function you pass in, typed as `RoomNameResolver<TParams>`. The value is purely at compile time: typos in room name patterns become type errors, and refactoring a room's naming scheme only requires changing one place.
 
 #### Room Query Methods
 

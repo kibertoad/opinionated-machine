@@ -32,8 +32,10 @@ export {
 } from './AbstractSSEController.js'
 // Re-export room types and classes
 export {
+  defineRoom,
   InMemoryAdapter,
   type RoomBroadcastOptions,
+  type RoomNameResolver,
   type SSERoomAdapter,
   SSERoomBroadcaster,
   SSERoomManager,
