@@ -35,6 +35,7 @@ export {
   InMemoryAdapter,
   type RoomBroadcastOptions,
   type SSERoomAdapter,
+  SSERoomBroadcaster,
   SSERoomManager,
   type SSERoomManagerConfig,
   type SSERoomMessageHandler,

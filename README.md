@@ -53,6 +53,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [Enabling Rooms](#enabling-rooms)
     - [Session Room Operations](#session-room-operations)
     - [Broadcasting to Rooms](#broadcasting-to-rooms)
+    - [Room Broadcaster (Decoupled Broadcasting)](#room-broadcaster-decoupled-broadcasting)
     - [Room Query Methods](#room-query-methods)
     - [Auto-Leave on Disconnect](#auto-leave-on-disconnect)
     - [Multi-Node Deployments with Redis](#multi-node-deployments-with-redis)
@@ -1570,6 +1571,50 @@ class DashboardSSEController extends AbstractSSEController<typeof contracts> {
   }
 }
 ```
+
+#### Room Broadcaster (Decoupled Broadcasting)
+
+The `broadcastToRoom()` method on the controller is `protected`, which means domain services (use cases, event handlers, message queue consumers) can't call it directly. The `SSERoomBroadcaster` solves this by providing a standalone object you can inject via DI:
+
+```ts
+import type { SSERoomBroadcaster } from 'opinionated-machine'
+
+// 1. Access broadcaster from the controller
+const broadcaster = dashboardController.roomBroadcaster
+
+// 2. Register in DI (awilix example)
+resolveControllers(diOptions: DependencyInjectionOptions) {
+  return {
+    dashboardController: asSSEControllerClass(DashboardSSEController, {
+      diOptions,
+      rooms: {},
+    }),
+    dashboardRoomBroadcaster: asSingletonFunction(
+      (cradle) => cradle.dashboardController.roomBroadcaster,
+    ),
+  }
+}
+
+// 3. Inject into domain services
+class MetricsService {
+  private broadcaster: SSERoomBroadcaster<typeof DashboardSSEController.contracts>
+
+  constructor(deps: { dashboardRoomBroadcaster: SSERoomBroadcaster<typeof DashboardSSEController.contracts> }) {
+    this.broadcaster = deps.dashboardRoomBroadcaster
+  }
+
+  async onMetricsUpdate(dashboardId: string, metrics: DashboardMetrics) {
+    // Same type-safe API as the controller's broadcastToRoom
+    await this.broadcaster.broadcastToRoom(
+      `dashboard:${dashboardId}`,
+      'metricsUpdate',
+      metrics,
+    )
+  }
+}
+```
+
+The broadcaster provides the same type-safe `broadcastToRoom()` signature as the controller, plus room query methods (`getConnectionsInRoom`, `getConnectionCountInRoom`).
 
 #### Room Query Methods
 
