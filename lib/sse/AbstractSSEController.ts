@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { SSEReplyInterface } from '@fastify/sse'
 import type {
   AllContractEventNames,
@@ -8,12 +9,11 @@ import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import type { z } from 'zod'
 import type { BuildFastifySSERoutesReturnType, SSESession } from '../routes/fastifyRouteTypes.ts'
-import { SSERoomBroadcaster } from './rooms/SSERoomBroadcaster.ts'
-import { SSERoomManager } from './rooms/SSERoomManager.ts'
-import type { RoomBroadcastOptions, SSERoomAdapter, SSERoomManagerConfig } from './rooms/types.ts'
+import type { SSERoomBroadcaster } from './rooms/SSERoomBroadcaster.ts'
+import type { SSERoomManager } from './rooms/SSERoomManager.ts'
+import type { RoomBroadcastOptions } from './rooms/types.ts'
 import { SSESessionSpy } from './SSESessionSpy.ts'
-import type { SSEControllerConfig, SSEMessage, SSERoomDIConfig } from './sseTypes.ts'
-import { isRoomDIConfig } from './sseTypes.ts'
+import type { SSEControllerConfig, SSEMessage } from './sseTypes.ts'
 
 // Re-export Fastify-specific types
 export type {
@@ -42,9 +42,7 @@ export type {
   SSEEventSender,
   SSELogger,
   SSEMessage,
-  SSERoomDIConfig,
 } from './sseTypes.ts'
-export { isRoomDIConfig } from './sseTypes.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
@@ -99,10 +97,7 @@ export abstract class AbstractSSEController<
   private readonly _roomManager?: SSERoomManager
 
   /** Room broadcaster for decoupled room broadcasting (optional) */
-  private readonly _roomBroadcaster?: SSERoomBroadcaster<APIContracts>
-
-  /** Maximum number of message IDs to cache per connection for deduplication */
-  private static readonly MAX_DEDUP_CACHE_SIZE = 1000
+  private readonly _roomBroadcaster?: SSERoomBroadcaster
 
   /**
    * SSE controllers must override this constructor and call super with their
@@ -128,42 +123,11 @@ export abstract class AbstractSSEController<
       this._connectionSpy = new SSESessionSpy()
     }
 
-    if (sseConfig?.rooms) {
-      const roomManagerConfig = this.resolveRoomConfig(_dependencies, sseConfig.rooms)
-      this._roomManager = new SSERoomManager(roomManagerConfig)
-      this._roomBroadcaster = new SSERoomBroadcaster<APIContracts>(
-        this._roomManager,
-        (connectionId, message) => this.sendEvent(connectionId, message),
-      )
-
-      // Wire up adapter message handler to forward to local connections
-      this._roomManager.onRemoteMessage((room, message, _sourceNodeId) => {
-        return this.handleRemoteBroadcast(room, message)
-      })
+    if (sseConfig?.roomBroadcaster) {
+      this._roomBroadcaster = sseConfig.roomBroadcaster
+      this._roomManager = sseConfig.roomBroadcaster.roomManager
+      sseConfig.roomBroadcaster.registerSender((id, msg) => this.sendEvent(id, msg))
     }
-  }
-
-  /**
-   * Resolve room configuration, handling both DI-based and legacy direct configs.
-   *
-   * - `SSERoomDIConfig` with `distributed: true` → resolve `sseRoomAdapter` from DI cradle
-   * - `SSERoomDIConfig` with `distributed: false` → InMemoryAdapter (SSERoomManager default)
-   * - `SSERoomManagerConfig` (legacy) → pass through as-is
-   */
-  private resolveRoomConfig(
-    dependencies: object,
-    roomsConfig: SSERoomDIConfig | SSERoomManagerConfig,
-  ): SSERoomManagerConfig {
-    if (!isRoomDIConfig(roomsConfig)) {
-      return roomsConfig // legacy direct config — pass through
-    }
-    if (!roomsConfig.distributed) {
-      return {} // InMemoryAdapter (SSERoomManager default)
-    }
-    // distributed: true — resolve adapter from DI cradle
-    // awilix throws naturally if 'sseRoomAdapter' is not registered
-    const adapter = (dependencies as Record<string, unknown>).sseRoomAdapter as SSERoomAdapter
-    return { adapter }
   }
 
   /**
@@ -197,38 +161,32 @@ export abstract class AbstractSSEController<
   }
 
   /**
-   * Get the room broadcaster for decoupled room broadcasting.
+   * Get the shared room broadcaster instance.
    *
-   * Use this to inject the broadcaster into domain services via DI,
-   * allowing them to broadcast to rooms without depending on the controller.
+   * The broadcaster is the same singleton that's registered in DI as `sseRoomBroadcaster`.
+   * Domain services should resolve it directly from DI rather than going through the controller.
    *
    * @throws Error if rooms are not enabled in the controller config
    *
+   * **Required DI registrations** (must be registered before the controller):
+   * - `sseRoomManager` — `asValue(new SSERoomManager())` or `asSingletonFunction(() => new SSERoomManager(config))`
+   * - `sseRoomBroadcaster` — `asSingletonClass(SSERoomBroadcaster)`
+   *
    * @example
    * ```typescript
-   * // In your DI module
-   * dashboardRoomBroadcaster: asSingletonFunction(
-   *   (cradle) => cradle.dashboardController.roomBroadcaster,
-   * )
-   *
-   * // In a domain service
+   * // In a domain service — resolve broadcaster directly from DI
    * class MetricsService {
-   *   constructor(private broadcaster: SSERoomBroadcaster<typeof contracts>) {}
-   *
-   *   async onMetricsUpdate(dashboardId: string, metrics: DashboardMetrics) {
-   *     await this.broadcaster.broadcastToRoom(
-   *       `dashboard:${dashboardId}`,
-   *       'metricsUpdate',
-   *       metrics,
-   *     )
+   *   private readonly broadcaster: SSERoomBroadcaster
+   *   constructor(deps: { sseRoomBroadcaster: SSERoomBroadcaster }) {
+   *     this.broadcaster = deps.sseRoomBroadcaster
    *   }
    * }
    * ```
    */
-  public get roomBroadcaster(): SSERoomBroadcaster<APIContracts> {
+  public get roomBroadcaster(): SSERoomBroadcaster {
     if (!this._roomBroadcaster) {
       throw new Error(
-        'Rooms are not enabled. Pass { rooms: {} } to the controller config to enable rooms.',
+        'Rooms are not enabled. Pass { roomBroadcaster } to the controller config to enable rooms.',
       )
     }
     return this._roomBroadcaster
@@ -494,6 +452,7 @@ export abstract class AbstractSSEController<
 
     // Auto-leave all rooms on disconnect
     this._roomManager?.leaveAll(connectionId)
+    this._roomBroadcaster?.cleanupConnection(connectionId)
 
     this.connections.delete(connectionId)
   }
@@ -563,64 +522,13 @@ export abstract class AbstractSSEController<
     if (!this._roomBroadcaster) {
       return Promise.resolve(0)
     }
-    return this._roomBroadcaster.broadcastToRoom(room, eventName, data, options)
-  }
-
-  /**
-   * Check if a message has already been delivered to a connection (deduplication).
-   * Returns true if the message is a duplicate and should be skipped.
-   * @internal
-   */
-  private isDuplicateMessage(connection: SSESession, messageId: string | undefined): boolean {
-    if (!messageId) {
-      return false
+    const message: SSEMessage = {
+      event: eventName,
+      data,
+      id: options?.id ?? randomUUID(),
+      retry: options?.retry,
     }
-
-    // Initialize the dedup cache if needed
-    if (!connection.recentMessageIds) {
-      connection.recentMessageIds = new Set()
-    }
-
-    if (connection.recentMessageIds.has(messageId)) {
-      return true // Already delivered to this connection
-    }
-
-    // FIFO eviction: remove oldest entry if at capacity
-    if (connection.recentMessageIds.size >= AbstractSSEController.MAX_DEDUP_CACHE_SIZE) {
-      const oldest = connection.recentMessageIds.values().next().value as string
-      connection.recentMessageIds.delete(oldest)
-    }
-
-    connection.recentMessageIds.add(messageId)
-    return false
-  }
-
-  /**
-   * Handle broadcasts from other nodes (via adapter).
-   * This method is called when the adapter receives a message from another node.
-   * Deduplicates messages per-connection based on message ID to prevent duplicate
-   * delivery when a connection is in multiple rooms that all receive the same broadcast.
-   * @internal
-   */
-  private async handleRemoteBroadcast(room: string, message: SSEMessage): Promise<void> {
-    if (!this._roomManager) {
-      return
-    }
-
-    const connectionIds = this._roomManager.getConnectionsInRoom(room)
-    for (const connId of connectionIds) {
-      const connection = this.connections.get(connId)
-      if (!connection) {
-        continue
-      }
-
-      // Per-connection deduplication - skip if already delivered
-      if (this.isDuplicateMessage(connection, message.id)) {
-        continue
-      }
-
-      await this.sendEvent(connId, message)
-    }
+    return this._roomBroadcaster.broadcastMessage(room, message, options)
   }
 
   /**
