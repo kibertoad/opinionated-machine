@@ -9,7 +9,7 @@ import {
   isPeriodicJobEnabled,
   resolveJobQueuesEnabled,
 } from './diConfigUtils.js'
-import type { SSERoomDIConfig } from './sse/sseTypes.js'
+import type { SSEControllerConfig } from './sse/sseTypes.js'
 
 /**
  * Type-level representation of a class value that infers the instance type
@@ -162,15 +162,8 @@ export function asControllerClass<T = object>(
 
 export type SSEControllerModuleOptions = {
   diOptions: DependencyInjectionOptions
-  /**
-   * Enable room support for this controller.
-   *
-   * - `true` — shorthand for `{ distributed: true }` (resolve adapter from DI)
-   * - `{ distributed: true }` — resolve `sseRoomAdapter` from DI cradle (production default)
-   * - `{ distributed: false }` — InMemoryAdapter, no DI lookup (dev/test)
-   * - omitted `distributed` — defaults to `true`
-   */
-  rooms?: true | { distributed?: boolean }
+  /** Enable rooms. Resolves `sseRoomBroadcaster` from DI cradle. */
+  rooms?: boolean
 }
 
 /**
@@ -190,8 +183,8 @@ export type SSEControllerModuleOptions = {
  * // With test mode (enables connection spy)
  * notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions }),
  *
- * // With rooms enabled
- * dashboardController: asSSEControllerClass(DashboardSSEController, { diOptions, rooms: {} }),
+ * // With rooms enabled (resolves sseRoomBroadcaster from DI)
+ * dashboardController: asSSEControllerClass(DashboardSSEController, { diOptions, rooms: true }),
  * ```
  */
 export function asSSEControllerClass<T = object>(
@@ -199,28 +192,28 @@ export function asSSEControllerClass<T = object>(
   sseOptions?: SSEControllerModuleOptions,
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
+  const Ctor = Type as unknown as Constructor<T>
   const enableConnectionSpy = sseOptions?.diOptions.isTestMode ?? false
+  const enableRooms = sseOptions?.rooms ?? false
 
-  // Normalize rooms option into SSERoomDIConfig
-  let roomsDIConfig: SSERoomDIConfig | undefined
-  if (sseOptions?.rooms != null) {
-    const distributed = sseOptions.rooms === true || (sseOptions.rooms.distributed ?? true)
-    roomsDIConfig = { distributed }
-  }
-
-  const sseConfig = {
-    ...(enableConnectionSpy && { enableConnectionSpy: true }),
-    ...(roomsDIConfig && { rooms: roomsDIConfig }),
-  }
-
-  return asClassWithConfig(Type, Object.keys(sseConfig).length > 0 ? sseConfig : undefined, {
-    public: false,
-    isSSEController: true,
-    asyncDispose: 'closeAllConnections',
-    asyncDisposePriority: 5, // Close SSE connections early in shutdown
-    ...opts,
-    lifetime: 'SINGLETON',
-  })
+  return asFunction(
+    // biome-ignore lint/suspicious/noExplicitAny: Dynamic constructor invocation with cradle proxy
+    (cradle: any) => {
+      const sseConfig: SSEControllerConfig = {
+        ...(enableConnectionSpy && { enableConnectionSpy: true }),
+        ...(enableRooms && { roomBroadcaster: cradle.sseRoomBroadcaster }),
+      }
+      return new Ctor(cradle, Object.keys(sseConfig).length > 0 ? sseConfig : undefined)
+    },
+    {
+      public: false,
+      isSSEController: true,
+      asyncDispose: 'closeAllConnections',
+      asyncDisposePriority: 5, // Close SSE connections early in shutdown
+      ...opts,
+      lifetime: 'SINGLETON',
+    },
+  )
 }
 
 export type DualModeControllerModuleOptions = {

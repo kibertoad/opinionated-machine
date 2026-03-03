@@ -5,7 +5,7 @@ import type {
   SSEEventSchemas,
 } from '@lokalise/api-contracts'
 import type { z } from 'zod'
-import type { SSERoomManagerConfig } from './rooms/types.ts'
+import type { SSERoomBroadcaster } from './rooms/SSERoomBroadcaster.ts'
 
 // Re-export types that are used locally
 export type { SSEEventSchemas, AllContractEventNames, ExtractEventSchema }
@@ -88,24 +88,6 @@ export type SSEEventSender<Events extends SSEEventSchemas> = <
 ) => Promise<boolean>
 
 /**
- * Declarative room configuration resolved from DI at controller construction time.
- *
- * - `distributed: true` — resolve `sseRoomAdapter` from the DI cradle (production default)
- * - `distributed: false` — use InMemoryAdapter with no DI lookup (dev/test)
- */
-export type SSERoomDIConfig = { distributed: boolean }
-
-/**
- * Type guard to distinguish DI-resolved room config from legacy direct config.
- * Discriminant: only `SSERoomDIConfig` has the `distributed` key.
- */
-export function isRoomDIConfig(
-  config: SSERoomManagerConfig | SSERoomDIConfig,
-): config is SSERoomDIConfig {
-  return 'distributed' in config
-}
-
-/**
  * Configuration options for SSE controllers.
  */
 export type SSEControllerConfig = {
@@ -118,11 +100,9 @@ export type SSEControllerConfig = {
   enableConnectionSpy?: boolean
 
   /**
-   * Enable room support for this controller.
-   * Rooms allow broadcasting to groups of connections.
-   *
-   * - `SSERoomDIConfig` (recommended): declarative config resolved from DI
-   * - `SSERoomManagerConfig`: legacy direct config (pass-through)
+   * Shared room broadcaster from DI.
+   * When provided, the controller registers its sendEvent with the broadcaster
+   * and uses the broadcaster's room manager for room operations.
    */
-  rooms?: SSERoomManagerConfig | SSERoomDIConfig
+  roomBroadcaster?: SSERoomBroadcaster
 }

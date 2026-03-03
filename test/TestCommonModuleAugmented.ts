@@ -19,7 +19,7 @@ export class TestCommonModuleAugmented extends AbstractModule {
     return {
       logger: asServiceClass(Logger), // public
       eventEmitter: asServiceClass(EventEmitter), // public
-      config: asSingletonFunction(() => new Config()), // private
+      config: asSingletonFunction((): Config => new Config()), // private
     }
   }
 }

@@ -25,13 +25,12 @@ export {
 } from '../routes/index.js'
 export {
   AbstractSSEController,
-  isRoomDIConfig,
   type SSEControllerConfig,
   type SSEEventSender,
   type SSELogger,
   type SSEMessage,
-  type SSERoomDIConfig,
 } from './AbstractSSEController.js'
+export { defineEvent, type SSEEventDefinition } from './defineEvent.js'
 // Re-export room types and classes
 export {
   defineRoom,

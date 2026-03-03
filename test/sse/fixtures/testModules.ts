@@ -1,13 +1,14 @@
-import { asFunction } from 'awilix'
 import {
   AbstractModule,
   asServiceClass,
+  asSingletonClass,
   asSingletonFunction,
   asSSEControllerClass,
   type DependencyInjectionOptions,
   type MandatoryNameAndRegistrationPair,
-  type SSEControllerConfig,
   type SSELogger,
+  SSERoomBroadcaster,
+  SSERoomManager,
 } from '../../../index.js'
 import {
   StreamController,
@@ -206,7 +207,7 @@ export class TestLoggerSSEModule extends AbstractModule<TestLoggerSSEModuleDepen
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestLoggerSSEModuleDependencies> {
     const logger = this.mockLogger
     return {
-      logger: asSingletonFunction(() => logger),
+      logger: asSingletonFunction((): SSELogger => logger),
     }
   }
 
@@ -237,7 +238,7 @@ export class TestOnConnectErrorSSEModule extends AbstractModule<TestOnConnectErr
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestOnConnectErrorSSEModuleDependencies> {
     const logger = this.mockLogger
     return {
-      logger: asSingletonFunction(() => logger),
+      logger: asSingletonFunction((): SSELogger => logger),
     }
   }
 
@@ -270,7 +271,7 @@ export class TestOnReconnectErrorSSEModule extends AbstractModule<TestOnReconnec
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestOnReconnectErrorSSEModuleDependencies> {
     const logger = this.mockLogger
     return {
-      logger: asSingletonFunction(() => logger),
+      logger: asSingletonFunction((): SSELogger => logger),
     }
   }
 
@@ -349,7 +350,7 @@ export class TestOnCloseErrorSSEModule extends AbstractModule<TestOnCloseErrorSS
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestOnCloseErrorSSEModuleDependencies> {
     const logger = this.mockLogger
     return {
-      logger: asSingletonFunction(() => logger),
+      logger: asSingletonFunction((): SSELogger => logger),
     }
   }
 
@@ -585,7 +586,10 @@ export class TestRespondWithoutReturnModule extends AbstractModule<TestRespondWi
 /**
  * Module with room SSE controller for testing room functionality
  */
-export type TestRoomSSEModuleDependencies = Record<string, never>
+export type TestRoomSSEModuleDependencies = {
+  sseRoomManager: SSERoomManager
+  sseRoomBroadcaster: SSERoomBroadcaster
+}
 
 export type TestRoomSSEModuleControllers = {
   testRoomSSEController: TestRoomSSEController
@@ -607,30 +611,21 @@ export class TestRoomSSEModule extends AbstractModule<TestRoomSSEModuleDependenc
   }
 
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestRoomSSEModuleDependencies> {
-    return {}
+    const config = this.config
+    return {
+      sseRoomManager: asSingletonFunction((): SSERoomManager => new SSERoomManager(config?.rooms)),
+      sseRoomBroadcaster: asSingletonClass(SSERoomBroadcaster),
+    }
   }
 
   override resolveControllers(
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
-    // Build sseConfig with test mode + optional room config
-    const enableConnectionSpy = diOptions.isTestMode ?? false
-    const sseConfig: SSEControllerConfig = {
-      ...(enableConnectionSpy && { enableConnectionSpy: true }),
-      ...(this.config?.rooms && { rooms: this.config.rooms }),
-    }
-
-    // Use asFunction to pass custom sseConfig (asSSEControllerClass doesn't support custom room config)
     return {
-      testRoomSSEController: asFunction(
-        (cradle: any) => new TestRoomSSEController(cradle, sseConfig),
-        {
-          lifetime: 'SINGLETON',
-          isSSEController: true,
-          asyncDispose: 'closeAllConnections',
-          asyncDisposePriority: 5,
-        },
-      ),
+      testRoomSSEController: asSSEControllerClass(TestRoomSSEController, {
+        diOptions,
+        rooms: true,
+      }),
     }
   }
 }

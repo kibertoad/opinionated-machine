@@ -18,9 +18,9 @@ export function mergeConfigAndDependencyOverrides<Dependencies, Config extends o
   return configOverrides
     ? ({
         ...dependencyOverrides,
-        [configDependencyId]: asSingletonFunction(() => {
+        [configDependencyId]: asSingletonFunction((): Config => {
           // biome-ignore lint/style/noNonNullAssertion: there is a ternary condition above
-          return merge(baseConfig, configOverrides!)
+          return merge(baseConfig, configOverrides!) as Config
         }),
       } as NameAndRegistrationPair<Dependencies>)
     : dependencyOverrides

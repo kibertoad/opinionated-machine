@@ -1193,14 +1193,6 @@ export class TestRoomSSEController extends AbstractSSEController<TestRoomContrac
     roomStream: roomStreamContract,
   } as const
 
-  constructor(deps: object, sseConfig?: SSEControllerConfig) {
-    // Enable rooms for this controller
-    super(deps, {
-      ...sseConfig,
-      rooms: sseConfig?.rooms ?? {},
-    })
-  }
-
   public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestRoomContracts> {
     return {
       roomStream: this.handleRoomStream,

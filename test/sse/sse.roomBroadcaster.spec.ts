@@ -1,20 +1,23 @@
-import { createContainer } from 'awilix'
+import { asValue, createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   AbstractModule,
   AbstractSSEController,
-  asSingletonFunction,
+  asSingletonClass,
   asSSEControllerClass,
   type BuildFastifySSERoutesReturnType,
   buildHandler,
   type DependencyInjectionOptions,
   DIContext,
+  defineEvent,
   defineRoom,
   type InferModuleDependencies,
   type MandatoryNameAndRegistrationPair,
   SSEHttpClient,
-  type SSERoomBroadcaster,
+  SSERoomBroadcaster,
+  SSERoomManager,
   SSETestServer,
 } from '../../index.js'
 import { roomStreamContract } from './fixtures/testContracts.js'
@@ -24,6 +27,13 @@ import { roomStreamContract } from './fixtures/testContracts.js'
 // ============================================================================
 
 const chatRoom = defineRoom<{ roomId: string }>(({ roomId }) => `chat:${roomId}`)
+
+// ============================================================================
+// Event Definitions (type-safe, schema-validated)
+// ============================================================================
+
+const messageEvent = defineEvent('message', z.object({ from: z.string(), text: z.string() }))
+const userJoinedEvent = defineEvent('userJoined', z.object({ userId: z.string() }))
 
 // ============================================================================
 // Contracts
@@ -63,18 +73,18 @@ class BroadcasterTestController extends AbstractSSEController<BroadcasterTestCon
 // ============================================================================
 
 class TestDomainService {
-  private readonly broadcaster: SSERoomBroadcaster<BroadcasterTestContracts>
+  private readonly broadcaster: SSERoomBroadcaster
 
   constructor(deps: {
-    roomBroadcaster: SSERoomBroadcaster<BroadcasterTestContracts>
+    sseRoomBroadcaster: SSERoomBroadcaster
   }) {
-    this.broadcaster = deps.roomBroadcaster
+    this.broadcaster = deps.sseRoomBroadcaster
   }
 
   sendMessage(roomId: string, from: string, text: string): Promise<number> {
     return this.broadcaster.broadcastToRoom(
       chatRoom({ roomId }),
-      'message',
+      messageEvent,
       { from, text },
       { local: true },
     )
@@ -83,7 +93,7 @@ class TestDomainService {
   notifyUserJoined(roomId: string, userId: string): Promise<number> {
     return this.broadcaster.broadcastToRoom(
       chatRoom({ roomId }),
-      'userJoined',
+      userJoinedEvent,
       { userId },
       { local: true },
     )
@@ -99,25 +109,15 @@ class TestDomainService {
 }
 
 // ============================================================================
-// Module — wires controller, broadcaster, and domain service together
-//
-// Key insight: roomBroadcaster goes in resolveDependencies(), NOT resolveControllers().
-// resolveControllers() only registers entries with isSSEController/isDualModeController
-// flags in the DI container; other entries are treated as REST controller resolvers.
+// Module — room infra registered in resolveDependencies, shared via DI
 // ============================================================================
 
 class BroadcasterTestModule extends AbstractModule {
   resolveDependencies() {
     return {
-      // Broadcaster extracted from controller — registered as a dependency, not a controller
-      roomBroadcaster: asSingletonFunction(
-        (cradle: { broadcasterTestController: BroadcasterTestController }) =>
-          cradle.broadcasterTestController.roomBroadcaster,
-      ),
-      domainService: asSingletonFunction(
-        (cradle: { roomBroadcaster: SSERoomBroadcaster<BroadcasterTestContracts> }) =>
-          new TestDomainService(cradle),
-      ),
+      sseRoomManager: asValue(new SSERoomManager()),
+      sseRoomBroadcaster: asSingletonClass(SSERoomBroadcaster),
+      domainService: asSingletonClass(TestDomainService),
     }
   }
 
@@ -127,7 +127,7 @@ class BroadcasterTestModule extends AbstractModule {
     return {
       broadcasterTestController: asSSEControllerClass(BroadcasterTestController, {
         diOptions,
-        rooms: { distributed: false },
+        rooms: true,
       }),
     }
   }
@@ -177,7 +177,7 @@ describe('SSERoomBroadcaster integration', () => {
   })
 
   it(
-    'full e2e: client connects, domain service broadcasts via defineRoom, client receives event',
+    'full e2e: client connects, domain service broadcasts via defineEvent, client receives event',
     { timeout: 10000 },
     async () => {
       // 1. Client connects to a room
@@ -193,7 +193,7 @@ describe('SSERoomBroadcaster integration', () => {
       // 2. Start collecting events on the client side BEFORE broadcasting
       const eventsPromise = client.collectEvents(2, 5000)
 
-      // 3. Domain service broadcasts two events via the shared defineRoom resolver
+      // 3. Domain service broadcasts two events via the shared defineEvent resolver
       await domainService.sendMessage('my-room', 'system', 'Welcome!')
       await domainService.notifyUserJoined('my-room', 'bob')
 
@@ -308,10 +308,9 @@ describe('SSERoomBroadcaster integration', () => {
       )
 
       // Broadcast to both rooms via broadcaster — conn1 should receive only once
-      const sent = await controller.roomBroadcaster.broadcastToRoom(
+      const sent = await controller.roomBroadcaster.broadcastMessage(
         [chatRoom({ roomId: 'room-a' }), chatRoom({ roomId: 'room-b' })],
-        'message',
-        { from: 'system', text: 'Multi-room announcement' },
+        { event: 'message', data: { from: 'system', text: 'Multi-room announcement' } },
         { local: true },
       )
       // conn1 is in both rooms but counted once, conn2 is in room-b
@@ -331,7 +330,7 @@ describe('SSERoomBroadcaster integration', () => {
 
   it('broadcaster is the same singleton instance from controller and DI', () => {
     const fromController = controller.roomBroadcaster
-    const fromDI = context.diContainer.resolve('roomBroadcaster')
+    const fromDI = context.diContainer.resolve('sseRoomBroadcaster')
     expect(fromDI).toBe(fromController)
   })
 })

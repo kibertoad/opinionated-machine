@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { SSEMessage, SSERoomAdapter, SSERoomMessageHandler } from '../../index.js'
 import { DIContext, SSEHttpClient, SSETestServer } from '../../index.js'
 import type { TestRoomSSEController } from './fixtures/testControllers.js'
-import { TestRoomSSEModule, type TestRoomSSEModuleControllers } from './fixtures/testModules.js'
+import {
+  TestRoomSSEModule,
+  type TestRoomSSEModuleControllers,
+  type TestRoomSSEModuleDependencies,
+} from './fixtures/testModules.js'
 
 /**
  * Mock adapter for testing remote broadcast deduplication.
@@ -54,14 +58,16 @@ class MockAdapter implements SSERoomAdapter {
  */
 describe('SSE Rooms E2E', () => {
   let server: SSETestServer<{
-    context: DIContext<TestRoomSSEModuleControllers, object>
+    context: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
   }>
-  let context: DIContext<TestRoomSSEModuleControllers, object>
+  let context: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
   let controller: TestRoomSSEController
 
   beforeEach(async () => {
-    const container = createContainer<TestRoomSSEModuleControllers>({ injectionMode: 'PROXY' })
-    context = new DIContext<TestRoomSSEModuleControllers, object>(
+    const container = createContainer<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers>(
+      { injectionMode: 'PROXY' },
+    )
+    context = new DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>(
       container,
       { isTestMode: true },
       {},
@@ -395,19 +401,20 @@ describe('SSE Rooms E2E', () => {
   describe('remote broadcast deduplication', () => {
     let mockAdapter: MockAdapter
     let mockServer: SSETestServer<{
-      context: DIContext<TestRoomSSEModuleControllers, object>
+      context: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
     }>
-    let mockContext: DIContext<TestRoomSSEModuleControllers, object>
+    let mockContext: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
     let mockController: TestRoomSSEController
 
     beforeEach(async () => {
       mockAdapter = new MockAdapter()
-      const container = createContainer<TestRoomSSEModuleControllers>({ injectionMode: 'PROXY' })
-      mockContext = new DIContext<TestRoomSSEModuleControllers, object>(
-        container,
-        { isTestMode: true },
-        {},
-      )
+      const container = createContainer<
+        TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers
+      >({ injectionMode: 'PROXY' })
+      mockContext = new DIContext<
+        TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers,
+        object
+      >(container, { isTestMode: true }, {})
       mockContext.registerDependencies(
         {
           modules: [new TestRoomSSEModule({ rooms: { adapter: mockAdapter, nodeId: 'node-1' } })],
