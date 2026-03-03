@@ -155,7 +155,7 @@ import { AbstractModule, type InferPublicModuleDependencies } from 'opinionated-
 export class CommonModule extends AbstractModule {
   resolveDependencies(diOptions: DependencyInjectionOptions) {
     return {
-      config: asSingletonFunction(() => loadConfig()),     // private — omitted
+      config: asSingletonFunction((): Config => loadConfig()),     // private — omitted
       logger: asServiceClass(Logger),                      // public
       eventEmitter: asServiceClass(AppEventEmitter),       // public
     }
@@ -558,7 +558,7 @@ service: asSingletonClass(MyService)
 Basic singleton function resolver. Use when you need to resolve a dependency using a factory function.
 
 ```ts
-config: asSingletonFunction(() => loadConfig())
+config: asSingletonFunction((): Config => loadConfig())
 ```
 
 #### `asClassWithConfig(Type, config, opts?)`
@@ -1706,12 +1706,11 @@ For multi-node deployments where connections are distributed across servers, pas
 
 ```ts
 import { RedisAdapter } from '@opinionated-machine/sse-rooms-redis'
-import Redis from 'ioredis'
 
 class InfraModule extends AbstractModule {
   resolveDependencies() {
     return {
-      sseRoomManager: asSingletonFunction(() =>
+      sseRoomManager: asSingletonFunction(({ redis }: { redis: Redis }): SSERoomManager =>
         new SSERoomManager({
           adapter: new RedisAdapter({
             pubClient: redis,

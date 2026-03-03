@@ -207,7 +207,7 @@ export class TestLoggerSSEModule extends AbstractModule<TestLoggerSSEModuleDepen
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestLoggerSSEModuleDependencies> {
     const logger = this.mockLogger
     return {
-      logger: asSingletonFunction(() => logger),
+      logger: asSingletonFunction((): SSELogger => logger),
     }
   }
 
@@ -238,7 +238,7 @@ export class TestOnConnectErrorSSEModule extends AbstractModule<TestOnConnectErr
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestOnConnectErrorSSEModuleDependencies> {
     const logger = this.mockLogger
     return {
-      logger: asSingletonFunction(() => logger),
+      logger: asSingletonFunction((): SSELogger => logger),
     }
   }
 
@@ -271,7 +271,7 @@ export class TestOnReconnectErrorSSEModule extends AbstractModule<TestOnReconnec
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestOnReconnectErrorSSEModuleDependencies> {
     const logger = this.mockLogger
     return {
-      logger: asSingletonFunction(() => logger),
+      logger: asSingletonFunction((): SSELogger => logger),
     }
   }
 
@@ -350,7 +350,7 @@ export class TestOnCloseErrorSSEModule extends AbstractModule<TestOnCloseErrorSS
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestOnCloseErrorSSEModuleDependencies> {
     const logger = this.mockLogger
     return {
-      logger: asSingletonFunction(() => logger),
+      logger: asSingletonFunction((): SSELogger => logger),
     }
   }
 
@@ -613,7 +613,7 @@ export class TestRoomSSEModule extends AbstractModule<TestRoomSSEModuleDependenc
   resolveDependencies(): MandatoryNameAndRegistrationPair<TestRoomSSEModuleDependencies> {
     const config = this.config
     return {
-      sseRoomManager: asSingletonFunction(() => new SSERoomManager(config?.rooms)),
+      sseRoomManager: asSingletonFunction((): SSERoomManager => new SSERoomManager(config?.rooms)),
       sseRoomBroadcaster: asSingletonClass(SSERoomBroadcaster),
     }
   }

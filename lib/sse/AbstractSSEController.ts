@@ -169,7 +169,7 @@ export abstract class AbstractSSEController<
    * @throws Error if rooms are not enabled in the controller config
    *
    * **Required DI registrations** (must be registered before the controller):
-   * - `sseRoomManager` — `asValue(new SSERoomManager())` or `asSingletonFunction(() => new SSERoomManager(config))`
+   * - `sseRoomManager` — `asValue(new SSERoomManager())` or `asSingletonFunction((): SSERoomManager => new SSERoomManager(config))`
    * - `sseRoomBroadcaster` — `asSingletonClass(SSERoomBroadcaster)`
    *
    * @example
