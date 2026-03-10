@@ -347,6 +347,7 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
   const url = extractPathTemplate(contract.pathResolver, contract.requestPathParamsSchema)
 
   const routeOptions: RouteOptions = {
+    ...(options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}),
     method: contract.method,
     url,
     sse: buildSSEConfig(options), // Enable SSE support with optional per-route config
@@ -403,6 +404,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
   const url = extractPathTemplate(contract.pathResolver, contract.requestPathParamsSchema)
 
   const routeOptions: RouteOptions = {
+    ...(options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}),
     method: contract.method,
     url,
     sse: buildSSEConfig(options), // Enable SSE support with optional per-route config
