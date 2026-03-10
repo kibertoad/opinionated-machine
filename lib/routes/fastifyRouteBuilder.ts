@@ -12,6 +12,7 @@ import type { AbstractSSEController } from '../sse/AbstractSSEController.ts'
 import type {
   DualModeRouteHandler,
   FastifyDualModeHandlerConfig,
+  FastifyDualModeRouteOptions,
   FastifySSEHandlerConfig,
   FastifySSERouteOptions,
   SSERouteHandler,
@@ -33,7 +34,7 @@ export { extractPathTemplate }
  * Returns true for basic SSE support, or an object with custom serializer/heartbeat.
  */
 function buildSSEConfig(
-  options: FastifySSERouteOptions | undefined,
+  options: FastifySSERouteOptions | FastifyDualModeRouteOptions | undefined,
 ): true | { serializer?: (data: unknown) => string; heartbeatInterval?: number } {
   if (!options?.serializer && options?.heartbeatInterval === undefined) {
     return true
