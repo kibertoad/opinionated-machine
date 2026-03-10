@@ -3,7 +3,8 @@ import type {
   AnySSEContractDefinition,
   HttpStatusCode,
 } from '@lokalise/api-contracts'
-import type { FastifyReply, FastifyRequest } from 'fastify'
+import type { ApiContractMetadataToRouteMapper } from '@lokalise/fastify-api-contracts'
+import type {FastifyReply, FastifyRequest, RouteOptions} from 'fastify'
 import type { z } from 'zod'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type { SSERoomOperations } from '../sse/rooms/types.ts'
@@ -461,6 +462,24 @@ export type FastifySSERouteOptions = {
    * @default 30000
    */
   heartbeatInterval?: number
+
+  /**
+   * Maps contract metadata to additional Fastify route options.
+   *
+   * Called with the contract's `metadata` field and its return value is merged into the
+   * Fastify route options. Useful for attaching cross-cutting concerns (auth, rate limiting,
+   * tracing, etc.) driven by metadata defined in the contract rather than in the route handler.
+   *
+   * @example
+   * ```typescript
+   * buildHandler(myContract, { sse: handler }, {
+   *   contractMetadataToRouteMapper: (metadata) => ({
+   *     config: { rateLimit: metadata.rateLimit },
+   *   }),
+   * })
+   * ```
+   */
+  contractMetadataToRouteMapper?: ApiContractMetadataToRouteMapper
 }
 
 /**
