@@ -12,7 +12,6 @@ import type { AbstractSSEController } from '../sse/AbstractSSEController.ts'
 import type {
   DualModeRouteHandler,
   FastifyDualModeHandlerConfig,
-  FastifyDualModeRouteOptions,
   FastifySSEHandlerConfig,
   FastifySSERouteOptions,
   SSERouteHandler,
@@ -34,7 +33,7 @@ export { extractPathTemplate }
  * Returns true for basic SSE support, or an object with custom serializer/heartbeat.
  */
 function buildSSEConfig(
-  options: FastifySSERouteOptions | FastifyDualModeRouteOptions | undefined,
+  options: FastifySSERouteOptions | undefined,
 ): true | { serializer?: (data: unknown) => string; heartbeatInterval?: number } {
   if (!options?.serializer && options?.heartbeatInterval === undefined) {
     return true
@@ -348,6 +347,7 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
   const url = extractPathTemplate(contract.pathResolver, contract.requestPathParamsSchema)
 
   const routeOptions: RouteOptions = {
+    ...(options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}),
     method: contract.method,
     url,
     sse: buildSSEConfig(options), // Enable SSE support with optional per-route config

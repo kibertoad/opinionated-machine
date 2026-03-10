@@ -4,7 +4,7 @@ import type {
   HttpStatusCode,
 } from '@lokalise/api-contracts'
 import type { ApiContractMetadataToRouteMapper } from '@lokalise/fastify-api-contracts'
-import type {FastifyReply, FastifyRequest, RouteOptions} from 'fastify'
+import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type { SSERoomOperations } from '../sse/rooms/types.ts'
