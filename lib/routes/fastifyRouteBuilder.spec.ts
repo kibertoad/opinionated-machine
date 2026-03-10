@@ -92,7 +92,32 @@ describe('buildFastifyRoute', () => {
         url: '/api/test/:testPostParam',
       })
     })
-    
+
+    it('should set sse config with serializer when serializer is provided', () => {
+      const serializer = (data: unknown) => JSON.stringify(data)
+      const handler = buildHandler(
+        sseGetContract,
+        { sse: async (_req, _sse) => await Promise.resolve() },
+        { serializer },
+      )
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ serializer })
+    })
+
+    it('should set sse config with heartbeatInterval when heartbeatInterval is provided', () => {
+      const handler = buildHandler(
+        sseGetContract,
+        { sse: async (_req, _sse) => await Promise.resolve() },
+        { heartbeatInterval: 5000 },
+      )
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ heartbeatInterval: 5000 })
+    })
+
     describe('contractMetadataToRouteMapper', () => {
       it('should use contract metadata mapper', () => {
         const onRequestHook = vi.fn()
