@@ -467,8 +467,9 @@ export type FastifySSERouteOptions = {
    * Maps contract metadata to additional Fastify route options.
    *
    * Called with the contract's `metadata` field and its return value is merged into the
-   * Fastify route options. Useful for attaching cross-cutting concerns (auth, rate limiting,
-   * tracing, etc.) driven by metadata defined in the contract rather than in the route handler.
+   * Fastify route options as a base. It is useful for attaching cross-cutting concerns
+   * (auth, rate limiting, tracing, etc.) driven by metadata defined in the contract rather
+   * than in the route handler.
    *
    * @example
    * ```typescript
