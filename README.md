@@ -1079,6 +1079,7 @@ private handleAdminStream = buildHandler(adminStreamContract, {
 | `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
 | `serializer` | Custom serializer for SSE data (e.g., for custom JSON encoding) |
 | `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages |
+| `contractMetadataToRouteMapper` | Maps contract metadata to Fastify route options (see below) |
 
 **onClose reason parameter:**
 - `'server'`: Server explicitly closed the session (via `closeConnection()` or `autoClose` mode)
@@ -1095,6 +1096,41 @@ options: {
   heartbeatInterval: 30000, // Send heartbeat every 30 seconds
 }
 ```
+
+#### `contractMetadataToRouteMapper`
+
+Allows attaching cross-cutting behavior (auth, rate limiting, tracing, etc.) to a route based on metadata defined in the
+contract.
+
+The return value is merged into Fastify's `RouteOptions` as a base.
+The mapper can return any of: `config`, `bodyLimit`, `onRequest`, `preParsing`, `preValidation`, `preHandler`,
+`preSerialization`, `onSend`, `onResponse`, `onError`, `onTimeout`, `onRequestAbort`.
+
+```ts
+// In the contract definition
+const adminStreamContract = buildSseContract({
+  method: 'get',
+  pathResolver: () => '/api/admin/stream',
+  // ...schemas...
+  metadata: { requiresAuth: true, rateLimit: 100 },
+})
+
+// In the controller — driven by metadata, not duplicated per-route
+private handleAdminStream = buildHandler(adminStreamContract, {
+  sse: async (request, sse) => {
+    const session = sse.start('keepAlive')
+    // ...
+  },
+}, {
+  contractMetadataToRouteMapper: (metadata) => ({
+    config: { rateLimit: metadata.rateLimit },
+    onRequest: metadata.requiresAuth ? authHook : undefined,
+  }),
+})
+```
+
+This is the same API as `contractMetadataToRouteMapper` in `@lokalise/fastify-api-contracts`, making it straightforward 
+to share a single mapper function across REST, SSE, and dual-mode routes.
 
 ### SSE Session Methods
 
@@ -2284,6 +2320,11 @@ export class ChatDualModeController extends AbstractDualModeController<Contracts
     // Optional: SSE lifecycle hooks
     onConnect: (session) => console.log('Client connected:', session.id),
     onClose: (session, reason) => console.log(`Client disconnected (${reason}):`, session.id),
+    // Optional: attach behavior driven by contract metadata
+    contractMetadataToRouteMapper: (metadata) => ({
+      config: { rateLimit: metadata.rateLimit },
+      onRequest: metadata.requiresAuth ? authHook : undefined,
+    }),
   })
 }
 ```
