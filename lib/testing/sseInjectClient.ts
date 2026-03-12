@@ -1,5 +1,5 @@
-import type { FastifyInstance } from 'fastify'
 import { type ParsedSSEEvent, parseSSEEvents } from '../sse/sseParser.ts'
+import type { AnyFastifyInstance } from './AnyFastifyInstance.ts'
 import type { SSEConnectOptions, SSETestConnection } from './sseTestTypes.ts'
 
 /**
@@ -172,15 +172,13 @@ export class SSEInjectConnection implements SSETestConnection {
  * ```
  */
 export class SSEInjectClient {
-  // biome-ignore lint/suspicious/noExplicitAny: Fastify instance types are complex
-  private readonly app: FastifyInstance<any, any, any, any>
+  private readonly app: AnyFastifyInstance
 
   /**
    * Create a new SSE inject client.
    * @param app - Fastify instance (does not need to be listening)
    */
-  // biome-ignore lint/suspicious/noExplicitAny: Fastify instance types are complex
-  constructor(app: FastifyInstance<any, any, any, any>) {
+  constructor(app: AnyFastifyInstance) {
     this.app = app
   }
 
