@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify'
+import type { AnyFastifyInstance } from './AnyFastifyInstance.ts'
 
 /**
  * Test server wrapper that starts a Fastify app on a random port for testing.
@@ -19,11 +19,11 @@ import type { FastifyInstance } from 'fastify'
  */
 export class SSETestServer {
   /** The Fastify instance */
-  readonly app: FastifyInstance
+  readonly app: AnyFastifyInstance
   /** Base URL for the running server (e.g., "http://localhost:3000") */
   readonly baseUrl: string
 
-  private constructor(app: FastifyInstance, baseUrl: string) {
+  private constructor(app: AnyFastifyInstance, baseUrl: string) {
     this.app = app
     this.baseUrl = baseUrl
   }
@@ -53,7 +53,7 @@ export class SSETestServer {
    * await server.close()
    * ```
    */
-  static async start(app: FastifyInstance): Promise<SSETestServer> {
+  static async start(app: AnyFastifyInstance): Promise<SSETestServer> {
     await app.listen({ port: 0 })
     const address = app.server.address()
     const baseUrl = typeof address === 'string' ? address : `http://localhost:${address?.port}`

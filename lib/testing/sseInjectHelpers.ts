@@ -1,6 +1,6 @@
 import type { RoutePathResolver, SSEContractDefinition } from '@lokalise/api-contracts'
-import type { FastifyInstance } from 'fastify'
 import type { z } from 'zod'
+import type { AnyFastifyInstance } from './AnyFastifyInstance.ts'
 import type { InjectPayloadSSEOptions, InjectSSEOptions, InjectSSEResult } from './sseTestTypes.ts'
 
 /**
@@ -76,8 +76,7 @@ export function injectSSE<
     Record<string, z.ZodTypeAny>
   >,
 >(
-  // biome-ignore lint/suspicious/noExplicitAny: Fastify instance types are complex
-  app: FastifyInstance<any, any, any, any>,
+  app: AnyFastifyInstance,
   contract: Contract,
   options?: InjectSSEOptions<Contract>,
 ): InjectSSEResult {
@@ -143,8 +142,7 @@ export function injectPayloadSSE<
     Record<string, z.ZodTypeAny>
   >,
 >(
-  // biome-ignore lint/suspicious/noExplicitAny: Fastify instance types are complex
-  app: FastifyInstance<any, any, any, any>,
+  app: AnyFastifyInstance,
   contract: Contract,
   options: InjectPayloadSSEOptions<Contract>,
 ): InjectSSEResult {
