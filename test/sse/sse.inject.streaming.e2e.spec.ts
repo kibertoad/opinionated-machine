@@ -1,7 +1,8 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DIContext, injectPayloadSSE, parseSSEEvents, SSETestServer } from '../../index.js'
+import { DIContext, injectPayloadSSE, parseSSEEvents } from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import {
   chatCompletionContract,
   largeContentStreamContract,
@@ -21,7 +22,7 @@ import { TestOpenAIStyleSSEModule, TestPostSSEModule } from './fixtures/testModu
  */
 
 describe('SSE Inject E2E (OpenAI-style streaming)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -29,7 +30,7 @@ describe('SSE Inject E2E (OpenAI-style streaming)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -192,7 +193,7 @@ describe('SSE Inject E2E (OpenAI-style streaming)', () => {
  * - The "[DONE]" terminator pattern works as expected
  */
 describe('SSE Inject E2E (OpenAI-style streaming with string terminator)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -200,7 +201,7 @@ describe('SSE Inject E2E (OpenAI-style streaming with string terminator)', () =>
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestOpenAIStyleSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },

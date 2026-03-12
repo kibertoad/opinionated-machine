@@ -2,7 +2,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DIContext, SSEHttpClient, SSETestServer } from '../../index.js'
+import { DIContext, SSEHttpClient } from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import type { TestSSEController } from './fixtures/testControllers.js'
 import { TestSSEModule, type TestSSEModuleDependencies } from './fixtures/testModules.js'
 
@@ -11,7 +12,9 @@ import { TestSSEModule, type TestSSEModuleDependencies } from './fixtures/testMo
  */
 describe('SSEHttpClient', () => {
   describe('collectEvents timeout handling', () => {
-    let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+    let server: SSETestServerWithResources<{
+      context: DIContext<TestSSEModuleDependencies, object>
+    }>
     let context: DIContext<TestSSEModuleDependencies, object>
 
     beforeEach(async () => {
@@ -23,7 +26,7 @@ describe('SSEHttpClient', () => {
       )
       context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-      server = await SSETestServer.create(
+      server = await createSSETestServer(
         (app) => {
           context.registerSSERoutes(app)
         },
@@ -112,7 +115,9 @@ describe('SSEHttpClient', () => {
   })
 
   describe('collectEvents with immediate timeout', () => {
-    let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+    let server: SSETestServerWithResources<{
+      context: DIContext<TestSSEModuleDependencies, object>
+    }>
     let context: DIContext<TestSSEModuleDependencies, object>
 
     beforeEach(async () => {
@@ -124,7 +129,7 @@ describe('SSEHttpClient', () => {
       )
       context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-      server = await SSETestServer.create(
+      server = await createSSETestServer(
         (app) => {
           context.registerSSERoutes(app)
         },
@@ -205,7 +210,9 @@ describe('SSEHttpClient', () => {
   })
 
   describe('events() with AbortSignal', () => {
-    let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+    let server: SSETestServerWithResources<{
+      context: DIContext<TestSSEModuleDependencies, object>
+    }>
     let context: DIContext<TestSSEModuleDependencies, object>
 
     beforeEach(async () => {
@@ -217,7 +224,7 @@ describe('SSEHttpClient', () => {
       )
       context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-      server = await SSETestServer.create(
+      server = await createSSETestServer(
         (app) => {
           context.registerSSERoutes(app)
         },
@@ -315,7 +322,9 @@ describe('SSEHttpClient', () => {
   })
 
   describe('resource cleanup', () => {
-    let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+    let server: SSETestServerWithResources<{
+      context: DIContext<TestSSEModuleDependencies, object>
+    }>
     let context: DIContext<TestSSEModuleDependencies, object>
 
     beforeEach(async () => {
@@ -327,7 +336,7 @@ describe('SSEHttpClient', () => {
       )
       context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-      server = await SSETestServer.create(
+      server = await createSSETestServer(
         (app) => {
           context.registerSSERoutes(app)
         },

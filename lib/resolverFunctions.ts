@@ -218,6 +218,8 @@ export function asSSEControllerClass<T = object>(
 
 export type DualModeControllerModuleOptions = {
   diOptions: DependencyInjectionOptions
+  /** Enable rooms. Resolves `sseRoomBroadcaster` from DI cradle. */
+  rooms?: boolean
 }
 
 /**
@@ -237,6 +239,9 @@ export type DualModeControllerModuleOptions = {
  *
  * // With test mode (enables connection spy)
  * chatController: asDualModeControllerClass(ChatController, { diOptions }),
+ *
+ * // With rooms enabled (resolves sseRoomBroadcaster from DI)
+ * dashboardController: asDualModeControllerClass(DashboardController, { diOptions, rooms: true }),
  * ```
  */
 export function asDualModeControllerClass<T = object>(
@@ -245,16 +250,27 @@ export function asDualModeControllerClass<T = object>(
   opts?: BuildResolverOptions<T>,
 ): BuildResolver<T> & DisposableResolver<T> {
   const enableConnectionSpy = dualModeOptions?.diOptions.isTestMode ?? false
-  const config = enableConnectionSpy ? { enableConnectionSpy: true } : undefined
+  const enableRooms = dualModeOptions?.rooms ?? false
 
-  return asClassWithConfig(Type, config, {
-    public: false,
-    isDualModeController: true,
-    asyncDispose: 'closeAllConnections',
-    asyncDisposePriority: 5, // Close connections early in shutdown
-    ...opts,
-    lifetime: 'SINGLETON',
-  })
+  return asFunction(
+    // biome-ignore lint/suspicious/noExplicitAny: Dynamic constructor invocation with cradle proxy
+    (cradle: any) => {
+      const Ctor = Type as unknown as Constructor<T>
+      const sseConfig: SSEControllerConfig = {
+        ...(enableConnectionSpy && { enableConnectionSpy: true }),
+        ...(enableRooms && { roomBroadcaster: cradle.sseRoomBroadcaster }),
+      }
+      return new Ctor(cradle, Object.keys(sseConfig).length > 0 ? sseConfig : undefined)
+    },
+    {
+      public: false,
+      isDualModeController: true,
+      asyncDispose: 'closeAllConnections',
+      asyncDisposePriority: 5, // Close connections early in shutdown
+      ...opts,
+      lifetime: 'SINGLETON',
+    },
+  )
 }
 
 export type MessageQueueConsumerModuleOptions = {

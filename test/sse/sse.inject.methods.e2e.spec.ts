@@ -9,8 +9,8 @@ import {
   injectSSE,
   parseSSEEvents,
   type SSELogger,
-  SSETestServer,
 } from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import {
   getStreamTestContract,
   isConnectedTestStreamContract,
@@ -45,7 +45,7 @@ describe('SSE Inject E2E (onClose error handling)', () => {
       undefined,
     )
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -96,7 +96,7 @@ describe('SSE Inject E2E (onClose error handling)', () => {
         'testOnCloseErrorSSEController',
       ) as TestOnCloseErrorSSEController
 
-      const server = await SSETestServer.create(
+      const server = await createSSETestServer(
         (app) => {
           app.route(
             buildFastifyRoute(
@@ -146,7 +146,7 @@ describe('SSE Inject E2E (onClose error handling)', () => {
 })
 
 describe('SSE Inject E2E (isConnected method)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -154,7 +154,7 @@ describe('SSE Inject E2E (isConnected method)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestIsConnectedSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -194,7 +194,7 @@ describe('SSE Inject E2E (isConnected method)', () => {
 })
 
 describe('SSE Inject E2E (sendStream method)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -202,7 +202,7 @@ describe('SSE Inject E2E (sendStream method)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSendStreamSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -267,7 +267,7 @@ describe('SSE Inject E2E (sendStream method)', () => {
 })
 
 describe('SSE Inject E2E (getStream method)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -275,7 +275,7 @@ describe('SSE Inject E2E (getStream method)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestGetStreamSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },

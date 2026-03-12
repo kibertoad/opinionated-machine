@@ -182,4 +182,24 @@ export const statusCodeValidationContract = buildContract({
   },
 })
 
+/**
+ * GET dual-mode route for dashboard updates.
+ * Sync mode returns current status snapshot.
+ * SSE mode uses keepAlive for long-lived streaming of live updates.
+ */
+export const keepaliveDashboardContract = buildContract({
+  method: 'get',
+  pathResolver: () => '/api/dashboard/updates',
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({ dashboardId: z.string().optional() }),
+  requestHeaderSchema: z.object({}),
+  successResponseBodySchema: z.object({
+    status: z.string(),
+    activeConnections: z.number(),
+  }),
+  serverSentEventSchemas: {
+    update: z.object({ type: z.string(), value: z.number() }),
+  },
+})
+
 // NOTE: Multi-format contracts removed - multi-format support is deprecated

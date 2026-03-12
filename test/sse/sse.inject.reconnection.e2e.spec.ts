@@ -1,7 +1,8 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DIContext, injectSSE, parseSSEEvents, SSETestServer } from '../../index.js'
+import { DIContext, injectSSE, parseSSEEvents } from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import { asyncReconnectStreamContract, reconnectStreamContract } from './fixtures/testContracts.js'
 import {
   TestReconnectSSEModule,
@@ -21,7 +22,9 @@ import {
  * The server doesn't track previous sessions - it just responds to the header.
  */
 describe('SSE Inject E2E (Last-Event-ID reconnection)', () => {
-  let server: SSETestServer<{ context: DIContext<TestReconnectSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{
+    context: DIContext<TestReconnectSSEModuleDependencies, object>
+  }>
   let context: DIContext<TestReconnectSSEModuleDependencies, object>
 
   beforeEach(async () => {
@@ -33,7 +36,7 @@ describe('SSE Inject E2E (Last-Event-ID reconnection)', () => {
     )
     context.registerDependencies({ modules: [new TestReconnectSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },

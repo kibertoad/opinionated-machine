@@ -2,7 +2,8 @@ import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { SSEMessage, SSERoomAdapter, SSERoomMessageHandler } from '../../index.js'
-import { DIContext, SSEHttpClient, SSETestServer } from '../../index.js'
+import { DIContext, SSEHttpClient } from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import type { TestRoomSSEController } from './fixtures/testControllers.js'
 import {
   TestRoomSSEModule,
@@ -57,7 +58,7 @@ class MockAdapter implements SSERoomAdapter {
  * - Room queries (getConnectionsInRoom, getRooms, etc.)
  */
 describe('SSE Rooms E2E', () => {
-  let server: SSETestServer<{
+  let server: SSETestServerWithResources<{
     context: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
   }>
   let context: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
@@ -76,7 +77,7 @@ describe('SSE Rooms E2E', () => {
 
     controller = context.diContainer.resolve<TestRoomSSEController>('testRoomSSEController')
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -400,7 +401,7 @@ describe('SSE Rooms E2E', () => {
 
   describe('remote broadcast deduplication', () => {
     let mockAdapter: MockAdapter
-    let mockServer: SSETestServer<{
+    let mockServer: SSETestServerWithResources<{
       context: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
     }>
     let mockContext: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
@@ -425,7 +426,7 @@ describe('SSE Rooms E2E', () => {
       mockController =
         mockContext.diContainer.resolve<TestRoomSSEController>('testRoomSSEController')
 
-      mockServer = await SSETestServer.create(
+      mockServer = await createSSETestServer(
         (app) => {
           mockContext.registerSSERoutes(app)
         },

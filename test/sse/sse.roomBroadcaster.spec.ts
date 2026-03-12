@@ -18,8 +18,8 @@ import {
   SSEHttpClient,
   SSERoomBroadcaster,
   SSERoomManager,
-  SSETestServer,
 } from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import { roomStreamContract } from './fixtures/testContracts.js'
 
 // ============================================================================
@@ -142,7 +142,7 @@ type ContainerDeps = ModuleDeps & { broadcasterTestController: BroadcasterTestCo
 // ============================================================================
 
 describe('SSERoomBroadcaster integration', () => {
-  let server: SSETestServer<{
+  let server: SSETestServerWithResources<{
     context: DIContext<ContainerDeps, object>
   }>
   let context: DIContext<ContainerDeps, object>
@@ -159,7 +159,7 @@ describe('SSERoomBroadcaster integration', () => {
     controller = context.diContainer.resolve('broadcasterTestController')
     domainService = context.diContainer.resolve('domainService')
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },

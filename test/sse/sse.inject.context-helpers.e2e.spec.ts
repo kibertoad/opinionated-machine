@@ -1,7 +1,8 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { describe, expect, it } from 'vitest'
-import { DIContext, parseSSEEvents, SSETestServer } from '../../index.js'
+import { DIContext, parseSSEEvents } from '../../index.js'
+import { createSSETestServer } from '../sseTestServerFactory.js'
 import type { TestSSEController } from './fixtures/testControllers.js'
 import { TestSSEModule } from './fixtures/testModules.js'
 
@@ -22,7 +23,7 @@ describe('SSE Inject E2E (deprecated setupSSESession)', () => {
     // Get the controller from the module
     const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         // Use the deprecated setupSSESession directly in a custom route
         app.route({
@@ -86,7 +87,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
 
     const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route({
           method: 'GET',
@@ -144,7 +145,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
     const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
     let hasErrorResult = false
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route({
           method: 'GET',
@@ -198,7 +199,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
     const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
     let thrownError: Error | null = null
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route({
           method: 'GET',
@@ -257,7 +258,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
     const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
     let thrownError: Error | null = null
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route({
           method: 'GET',
@@ -314,7 +315,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
     const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
     let thrownError: Error | null = null
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route({
           method: 'GET',
@@ -373,7 +374,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
     const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
     let thrownError: Error | null = null
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route({
           method: 'GET',
@@ -430,7 +431,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
     const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
     let thrownError: Error | null = null
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route({
           method: 'GET',
@@ -489,7 +490,7 @@ describe('SSE Inject E2E (sendHeaders and context helpers)', () => {
     const controller = context.diContainer.resolve<TestSSEController>('testSSEController')
     let connectionFromGetter: unknown = null
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route({
           method: 'GET',
