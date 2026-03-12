@@ -1,7 +1,8 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DIContext, SSEInjectClient, SSETestServer } from '../../index.js'
+import { DIContext, SSEInjectClient } from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import { chatCompletionContract } from './fixtures/testContracts.js'
 import {
   TestAuthSSEModule,
@@ -19,11 +20,11 @@ import {
  * where the handler sends events and then closes the connection (like OpenAI completions).
  *
  * Note: SSEInjectClient uses Fastify's inject() which doesn't require a running server,
- * but we use SSETestServer to get a properly configured Fastify app with @fastify/sse.
+ * but we use createSSETestServer to get a properly configured Fastify app with @fastify/sse.
  */
 describe('SSEInjectClient E2E', () => {
   describe('POST requests (OpenAI-style streaming)', () => {
-    let server: SSETestServer<{ context: DIContext<object, object> }>
+    let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
     let client: SSEInjectClient
 
     beforeEach(async () => {
@@ -31,7 +32,7 @@ describe('SSEInjectClient E2E', () => {
       const context = new DIContext<object, object>(container, { isTestMode: true }, {})
       context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
 
-      server = await SSETestServer.create(
+      server = await createSSETestServer(
         (app) => {
           context.registerSSERoutes(app)
         },
@@ -110,7 +111,7 @@ describe('SSEInjectClient E2E', () => {
   })
 
   describe('GET requests with authentication', () => {
-    let server: SSETestServer<{ context: DIContext<object, object> }>
+    let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
     let client: SSEInjectClient
 
     beforeEach(async () => {
@@ -118,7 +119,7 @@ describe('SSEInjectClient E2E', () => {
       const context = new DIContext<object, object>(container, { isTestMode: true }, {})
       context.registerDependencies({ modules: [new TestAuthSSEModule()] }, undefined)
 
-      server = await SSETestServer.create(
+      server = await createSSETestServer(
         (app) => {
           context.registerSSERoutes(app)
         },
@@ -162,7 +163,7 @@ describe('SSEInjectClient E2E', () => {
   })
 
   describe('GET requests with path params', () => {
-    let server: SSETestServer<{ context: DIContext<object, object> }>
+    let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
     let client: SSEInjectClient
 
     beforeEach(async () => {
@@ -170,7 +171,7 @@ describe('SSEInjectClient E2E', () => {
       const context = new DIContext<object, object>(container, { isTestMode: true }, {})
       context.registerDependencies({ modules: [new TestChannelSSEModule()] }, undefined)
 
-      server = await SSETestServer.create(
+      server = await createSSETestServer(
         (app) => {
           context.registerSSERoutes(app)
         },
@@ -206,7 +207,7 @@ describe('SSEInjectClient E2E', () => {
   })
 
   describe('connection state', () => {
-    let server: SSETestServer<{ context: DIContext<object, object> }>
+    let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
     let client: SSEInjectClient
 
     beforeEach(async () => {
@@ -214,7 +215,7 @@ describe('SSEInjectClient E2E', () => {
       const context = new DIContext<object, object>(container, { isTestMode: true }, {})
       context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
 
-      server = await SSETestServer.create(
+      server = await createSSETestServer(
         (app) => {
           context.registerSSERoutes(app)
         },

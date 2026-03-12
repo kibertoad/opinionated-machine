@@ -9,7 +9,6 @@ export { SSEInjectClient, SSEInjectConnection } from './sseInjectClient.js'
 export { injectPayloadSSE, injectSSE } from './sseInjectHelpers.js'
 export { SSETestServer } from './sseTestServer.js'
 export type {
-  CreateSSETestServerOptions,
   InjectPayloadSSEOptions,
   InjectSSEOptions,
   InjectSSEResult,

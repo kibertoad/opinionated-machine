@@ -8,8 +8,8 @@ import {
   parseSSEEvents,
   SSEHttpClient,
   type SSELogger,
-  SSETestServer,
 } from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import { validationTestStreamContract } from './fixtures/testContracts.js'
 import type { TestSSEController } from './fixtures/testControllers.js'
 import {
@@ -38,7 +38,7 @@ import {
  */
 
 describe('SSE HTTP E2E (long-lived connections)', () => {
-  let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
@@ -47,7 +47,7 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -371,7 +371,7 @@ describe('SSE HTTP E2E (long-lived connections)', () => {
 })
 
 describe('SSE HTTP E2E (error handling)', () => {
-  let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
@@ -379,7 +379,7 @@ describe('SSE HTTP E2E (error handling)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -453,7 +453,7 @@ describe('SSE HTTP E2E (error handling)', () => {
 })
 
 describe('SSE HTTP E2E (serialization)', () => {
-  let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
@@ -461,7 +461,7 @@ describe('SSE HTTP E2E (serialization)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -531,7 +531,7 @@ describe('SSE HTTP E2E (serialization)', () => {
 })
 
 describe('SSE HTTP E2E (event metadata)', () => {
-  let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
@@ -539,7 +539,7 @@ describe('SSE HTTP E2E (event metadata)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -658,7 +658,7 @@ describe('SSE HTTP E2E (event metadata)', () => {
 })
 
 describe('SSE HTTP E2E (connection lifecycle)', () => {
-  let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
@@ -666,7 +666,7 @@ describe('SSE HTTP E2E (connection lifecycle)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -754,7 +754,7 @@ describe('SSE HTTP E2E (connection lifecycle)', () => {
 })
 
 describe('SSE HTTP E2E (SSESessionSpy edge cases)', () => {
-  let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
@@ -762,7 +762,7 @@ describe('SSE HTTP E2E (SSESessionSpy edge cases)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1031,7 +1031,7 @@ describe('SSE HTTP E2E (SSESessionSpy edge cases)', () => {
 })
 
 describe('SSE HTTP E2E (authentication)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -1039,7 +1039,7 @@ describe('SSE HTTP E2E (authentication)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestAuthSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1076,7 +1076,7 @@ describe('SSE HTTP E2E (authentication)', () => {
 })
 
 describe('SSE HTTP E2E (path parameters)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -1084,7 +1084,7 @@ describe('SSE HTTP E2E (path parameters)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestChannelSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1116,7 +1116,7 @@ describe('SSE HTTP E2E (path parameters)', () => {
 })
 
 describe('SSE HTTP E2E (awaitServerConnection option)', () => {
-  let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
@@ -1124,7 +1124,7 @@ describe('SSE HTTP E2E (awaitServerConnection option)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1167,7 +1167,7 @@ describe('SSE HTTP E2E (awaitServerConnection option)', () => {
 })
 
 describe('SSE HTTP E2E (large content streaming)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -1175,7 +1175,7 @@ describe('SSE HTTP E2E (large content streaming)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1261,7 +1261,7 @@ describe('SSE HTTP E2E (large content streaming)', () => {
 })
 
 describe('SSE HTTP E2E (server closes connection)', () => {
-  let server: SSETestServer<{ context: DIContext<TestSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
   let context: DIContext<TestSSEModuleDependencies, object>
 
   beforeEach(async () => {
@@ -1269,7 +1269,7 @@ describe('SSE HTTP E2E (server closes connection)', () => {
     context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1381,7 +1381,9 @@ describe('SSE HTTP E2E (server closes connection)', () => {
 })
 
 describe('SSE HTTP E2E (logger error handling)', () => {
-  let server: SSETestServer<{ context: DIContext<TestLoggerSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{
+    context: DIContext<TestLoggerSSEModuleDependencies, object>
+  }>
   let context: DIContext<TestLoggerSSEModuleDependencies, object>
   let mockLogger: SSELogger
 
@@ -1399,7 +1401,7 @@ describe('SSE HTTP E2E (logger error handling)', () => {
     )
     context.registerDependencies({ modules: [new TestLoggerSSEModule(mockLogger)] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1455,7 +1457,9 @@ describe('SSE HTTP E2E (logger error handling)', () => {
 })
 
 describe('SSE HTTP E2E (onConnect error handling)', () => {
-  let server: SSETestServer<{ context: DIContext<TestOnConnectErrorSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{
+    context: DIContext<TestOnConnectErrorSSEModuleDependencies, object>
+  }>
   let context: DIContext<TestOnConnectErrorSSEModuleDependencies, object>
   let mockLogger: SSELogger
 
@@ -1478,7 +1482,7 @@ describe('SSE HTTP E2E (onConnect error handling)', () => {
       undefined,
     )
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1530,7 +1534,7 @@ describe('SSE HTTP E2E (onConnect error handling)', () => {
 })
 
 describe('SSE HTTP E2E (onReconnect error handling)', () => {
-  let server: SSETestServer<{
+  let server: SSETestServerWithResources<{
     context: DIContext<TestOnReconnectErrorSSEModuleDependencies, object>
   }>
   let context: DIContext<TestOnReconnectErrorSSEModuleDependencies, object>
@@ -1555,7 +1559,7 @@ describe('SSE HTTP E2E (onReconnect error handling)', () => {
       undefined,
     )
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -1618,7 +1622,9 @@ describe('SSE HTTP E2E (onReconnect error handling)', () => {
  * for runtime validation of event data before sending.
  */
 describe('SSE Inject E2E (event validation)', () => {
-  let server: SSETestServer<{ context: DIContext<TestValidationSSEModuleDependencies, object> }>
+  let server: SSETestServerWithResources<{
+    context: DIContext<TestValidationSSEModuleDependencies, object>
+  }>
   let context: DIContext<TestValidationSSEModuleDependencies, object>
 
   beforeEach(async () => {
@@ -1632,7 +1638,7 @@ describe('SSE Inject E2E (event validation)', () => {
     )
     context.registerDependencies({ modules: [new TestValidationSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },

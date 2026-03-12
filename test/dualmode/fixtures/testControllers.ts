@@ -12,6 +12,7 @@ import {
   errorTestContract,
   jobStatusContract,
   jsonValidationContract,
+  keepaliveDashboardContract,
   statusCodeValidationContract,
 } from './testContracts.js'
 
@@ -423,6 +424,63 @@ export class TestStatusCodeValidationDualModeController extends AbstractDualMode
       await connection.send('result', { success: true })
     },
   })
+}
+
+/**
+ * Dashboard dual-mode controller with keepAlive SSE and room support.
+ * Sync mode returns a status snapshot.
+ * SSE mode opens a keepAlive connection, joins a room based on dashboardId,
+ * and receives live updates via room broadcasts.
+ */
+export type TestKeepaliveContracts = {
+  keepaliveDashboard: typeof keepaliveDashboardContract
+}
+
+export class TestKeepaliveDualModeController extends AbstractDualModeController<TestKeepaliveContracts> {
+  public static contracts = {
+    keepaliveDashboard: keepaliveDashboardContract,
+  } as const
+
+  public buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<TestKeepaliveContracts> {
+    return {
+      keepaliveDashboard: this.handleDashboard,
+    }
+  }
+
+  private handleDashboard = buildHandler(keepaliveDashboardContract, {
+    sync: () => {
+      return {
+        status: 'ok',
+        activeConnections: this.testGetConnectionCount(),
+      }
+    },
+    sse: (request, sse) => {
+      const session = sse.start('keepAlive')
+      const dashboardId = request.query.dashboardId
+      if (dashboardId) {
+        session.rooms.join(`dashboard:${dashboardId}`)
+      }
+    },
+  })
+
+  public testPushUpdate(connectionId: string, data: { type: string; value: number }) {
+    return this.sendDualModeEventInternal(connectionId, {
+      event: 'update',
+      data,
+    })
+  }
+
+  public testBroadcastUpdate(data: { type: string; value: number }) {
+    return this.broadcast({ event: 'update', data })
+  }
+
+  public testBroadcastToRoom(room: string, data: { type: string; value: number }) {
+    return this.broadcastToRoom(room, 'update', data)
+  }
+
+  public testGetConnectionCount() {
+    return this.getConnectionCount()
+  }
 }
 
 // NOTE: Multi-format controllers removed - multi-format support is deprecated

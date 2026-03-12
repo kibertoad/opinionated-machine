@@ -13,8 +13,8 @@ import {
   DIContext,
   SSEHttpClient,
   SSEInjectClient,
-  SSETestServer,
 } from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import { defaultMethodContract } from './fixtures/testContracts.js'
 import type {
   GenericDualModeController,
@@ -47,7 +47,7 @@ import {
  */
 
 describe('Dual-Mode Accept Header Routing', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
   let injectClient: SSEInjectClient
 
@@ -56,7 +56,7 @@ describe('Dual-Mode Accept Header Routing', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerDualModeRoutes(app)
       },
@@ -187,7 +187,7 @@ describe('Dual-Mode Accept Header Routing', () => {
 })
 
 describe('Dual-Mode Path Parameters', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
   let injectClient: SSEInjectClient
 
@@ -196,7 +196,7 @@ describe('Dual-Mode Path Parameters', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestConversationDualModeModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerDualModeRoutes(app)
       },
@@ -254,7 +254,7 @@ describe('Dual-Mode Path Parameters', () => {
 })
 
 describe('Dual-Mode GET Routes', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
   let controller: TestJobStatusDualModeController
   let injectClient: SSEInjectClient
@@ -264,7 +264,7 @@ describe('Dual-Mode GET Routes', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestJobStatusDualModeModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerDualModeRoutes(app)
       },
@@ -324,7 +324,7 @@ describe('Dual-Mode GET Routes', () => {
 })
 
 describe('Dual-Mode Authentication', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
   let injectClient: SSEInjectClient
 
@@ -333,7 +333,7 @@ describe('Dual-Mode Authentication', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestAuthenticatedDualModeModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerDualModeRoutes(app)
       },
@@ -405,7 +405,7 @@ describe('Dual-Mode Authentication', () => {
 })
 
 describe('Dual-Mode Default Mode Override', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -413,7 +413,7 @@ describe('Dual-Mode Default Mode Override', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestDefaultModeDualModeModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerDualModeRoutes(app)
       },
@@ -464,7 +464,7 @@ describe('Dual-Mode Default Mode Override', () => {
 })
 
 describe('Dual-Mode SSE Error Handling', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
   let injectClient: SSEInjectClient
 
@@ -473,7 +473,7 @@ describe('Dual-Mode SSE Error Handling', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestErrorDualModeModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerDualModeRoutes(app)
       },
@@ -520,7 +520,7 @@ describe('Dual-Mode SSE Error Handling', () => {
 })
 
 describe('Dual-Mode Real HTTP Client', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
   let controller: TestJobStatusDualModeController
 
@@ -529,7 +529,7 @@ describe('Dual-Mode Real HTTP Client', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestJobStatusDualModeModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerDualModeRoutes(app)
       },
@@ -575,7 +575,7 @@ describe('Dual-Mode Real HTTP Client', () => {
 })
 
 describe('Dual-Mode Default Method', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -583,7 +583,7 @@ describe('Dual-Mode Default Method', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestDefaultMethodDualModeModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerDualModeRoutes(app)
       },
@@ -637,7 +637,7 @@ describe('Dual-Mode Default Method', () => {
 })
 
 describe('Dual-Mode JSON Response Validation', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -645,7 +645,7 @@ describe('Dual-Mode JSON Response Validation', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestJsonValidationDualModeModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerDualModeRoutes(app)
       },
@@ -721,7 +721,7 @@ describe('Dual-Mode Controller Methods', () => {
     const context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestChatDualModeModule()] }, undefined)
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         context.registerDualModeRoutes(app)
       },
@@ -1006,7 +1006,7 @@ describe('Dual-Mode Response Headers', () => {
       }),
     )
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route(route)
       },
@@ -1075,7 +1075,7 @@ describe('Dual-Mode Response Headers', () => {
       }),
     )
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route(route)
       },
@@ -1140,7 +1140,7 @@ describe('Dual-Mode Response Headers', () => {
       }),
     )
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route(route)
       },
@@ -1172,7 +1172,7 @@ describe('Dual-Mode Response Headers', () => {
 })
 
 describe('Dual-Mode responseSchemasByStatusCode Validation', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -1183,7 +1183,7 @@ describe('Dual-Mode responseSchemasByStatusCode Validation', () => {
       undefined,
     )
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerDualModeRoutes(app)
       },

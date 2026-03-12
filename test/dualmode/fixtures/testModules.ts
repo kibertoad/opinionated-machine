@@ -1,8 +1,12 @@
 import {
   AbstractModule,
   asDualModeControllerClass,
+  asSingletonClass,
+  asSingletonFunction,
   type DependencyInjectionOptions,
   type MandatoryNameAndRegistrationPair,
+  SSERoomBroadcaster,
+  SSERoomManager,
 } from '../../../index.js'
 import {
   GenericDualModeController,
@@ -14,6 +18,7 @@ import {
   TestErrorDualModeController,
   TestJobStatusDualModeController,
   TestJsonValidationDualModeController,
+  TestKeepaliveDualModeController,
   TestStatusCodeValidationDualModeController,
 } from './testControllers.js'
 
@@ -232,6 +237,34 @@ export class TestStatusCodeValidationDualModeModule extends AbstractModule<TestS
         TestStatusCodeValidationDualModeController,
         { diOptions },
       ),
+    }
+  }
+}
+
+/**
+ * Module with keepAlive dual-mode controller for testing long-lived SSE + rooms.
+ */
+export type TestKeepaliveDualModeModuleDependencies = {
+  sseRoomManager: SSERoomManager
+  sseRoomBroadcaster: SSERoomBroadcaster
+}
+
+export class TestKeepaliveDualModeModule extends AbstractModule<TestKeepaliveDualModeModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestKeepaliveDualModeModuleDependencies> {
+    return {
+      sseRoomManager: asSingletonFunction(() => new SSERoomManager()),
+      sseRoomBroadcaster: asSingletonClass(SSERoomBroadcaster),
+    }
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testKeepaliveDualModeController: asDualModeControllerClass(TestKeepaliveDualModeController, {
+        diOptions,
+        rooms: true,
+      }),
     }
   }
 }

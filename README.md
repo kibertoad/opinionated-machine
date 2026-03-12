@@ -61,7 +61,6 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [SSE Test Utilities](#sse-test-utilities)
     - [Quick Reference](#quick-reference)
     - [Inject vs HTTP Comparison](#inject-vs-http-comparison)
-    - [SSETestServer](#ssetestserver)
     - [SSEHttpClient](#ssehttpclient)
     - [SSEInjectClient](#sseinjectclient)
     - [Contract-Aware Inject Helpers](#contract-aware-inject-helpers)
@@ -1392,40 +1391,47 @@ type ParsedSSEEvent = {
 
 ### Testing SSE Controllers
 
-Enable the connection spy for testing by passing `isTestMode: true` in diOptions:
+The test client depends on the session mode:
+
+| Session Mode | Test Client | Why |
+|-------------|-------------|--------|
+| `autoClose` | `SSEInjectClient` or `injectSSE`/`injectPayloadSSE` | Handler completes and closes connection; all events available at once |
+| `keepAlive` | `SSEHttpClient` | Connection stays open; events arrive incrementally via server push |
+
+Enable the connection spy by passing `isTestMode: true` in diOptions (required for `awaitServerConnection`).
+
+#### Testing keepAlive SSE (long-lived connections)
+
+Use `SSEHttpClient` against your running app. The key pattern:
+
+1. Connect with `awaitServerConnection` to eliminate the race condition
+2. Call `collectEvents()` **before** pushing events (they arrive asynchronously)
+3. Push events from the server via `sendEventInternal()` or `broadcastToRoom()`
+4. Await the collected events
+5. Always call `client.close()` to release the connection
 
 ```ts
-import { createContainer } from 'awilix'
-import { DIContext, SSETestServer, SSEHttpClient } from 'opinionated-machine'
+import { SSEHttpClient, SSETestServer } from 'opinionated-machine'
 
 describe('NotificationsSSEController', () => {
+  let app: AppInstance
   let server: SSETestServer
   let controller: NotificationsSSEController
 
-  beforeEach(async () => {
-    // Create test server with isTestMode enabled
-    server = await SSETestServer.create(
-      async (app) => {
-        // Register your SSE routes here
-      },
-      {
-        setup: async () => {
-          // Set up DI container and resources
-          return { context }
-        },
-      }
-    )
+  beforeAll(async () => {
+    app = await getApp({ /* your test config */ })
+    controller = app.diContainer.resolve('notificationsSSEController')
 
-    controller = server.resources.context.diContainer.cradle.notificationsSSEController
+    // SSETestServer.start() starts your app on a random port and provides baseUrl
+    server = await SSETestServer.start(app)
   })
 
-  afterEach(async () => {
-    await server.resources.context.destroy()
+  afterAll(async () => {
     await server.close()
   })
 
-  it('receives notifications over SSE', async () => {
-    // Connect with awaitServerConnection to eliminate race condition
+  it('receives notifications over keepAlive SSE', async () => {
+    // 1. Connect with awaitServerConnection to eliminate race condition
     const { client, serverConnection } = await SSEHttpClient.connect(
       server.baseUrl,
       '/api/notifications/stream',
@@ -1437,30 +1443,51 @@ describe('NotificationsSSEController', () => {
 
     expect(client.response.ok).toBe(true)
 
-    // Start collecting events
+    // 2. Start collecting events BEFORE pushing (they arrive asynchronously)
     const eventsPromise = client.collectEvents(2)
 
-    // Send events from server (serverConnection is ready immediately)
-    await controller.sendEvent(serverConnection.id, {
+    // 3. Push events from server
+    await controller.sendEventInternal(serverConnection.id, {
       event: 'notification',
       data: { id: '1', message: 'Hello!' },
     })
-
-    await controller.sendEvent(serverConnection.id, {
+    await controller.sendEventInternal(serverConnection.id, {
       event: 'notification',
       data: { id: '2', message: 'World!' },
     })
 
-    // Wait for events
+    // 4. Await collected events
     const events = await eventsPromise
 
     expect(events).toHaveLength(2)
     expect(JSON.parse(events[0].data)).toEqual({ id: '1', message: 'Hello!' })
     expect(JSON.parse(events[1].data)).toEqual({ id: '2', message: 'World!' })
 
-    // Clean up
+    // 5. Clean up
     client.close()
   })
+})
+```
+
+#### Testing autoClose SSE (request-response streaming)
+
+Use `SSEInjectClient` or the contract-aware `injectSSE`/`injectPayloadSSE` helpers. No real HTTP server needed - all events are available immediately after the handler completes:
+
+```ts
+import { SSEInjectClient } from 'opinionated-machine'
+
+it('streams chat completions', async () => {
+  const client = new SSEInjectClient(app) // works without app.listen()
+
+  const conn = await client.connectWithBody(
+    '/api/chat/completions',
+    { message: 'Hello world' },
+  )
+
+  expect(conn.getStatusCode()).toBe(200)
+  const events = conn.getReceivedEvents()
+  const chunks = events.filter((e) => e.event === 'chunk')
+  expect(chunks.length).toBeGreaterThan(0)
 })
 ```
 
@@ -1784,77 +1811,31 @@ The library provides utilities for testing SSE endpoints.
 - **Inject** - Uses Fastify's built-in `inject()` to simulate HTTP requests directly in-memory, without network overhead. No `listen()` required. Handler must close the session for the request to complete.
 - **Real HTTP** - Actual HTTP via `fetch()`. Requires the server to be listening. Supports long-lived sessions.
 
-#### Quick Reference
+#### Which test client should I use?
 
-| Utility | Connection | Requires Contract | Use Case |
-|---------|------------|-------------------|----------|
-| `SSEInjectClient` | Inject (in-memory) | No | Request-response SSE without contracts |
-| `injectSSE` / `injectPayloadSSE` | Inject (in-memory) | **Yes** | Request-response SSE with type-safe contracts |
-| `SSEHttpClient` | Real HTTP | No | Long-lived SSE connections |
+**Pick based on your SSE session mode:**
+
+| Session Mode | Test Client | Reason |
+|-------------|-------------|--------|
+| `autoClose` | `SSEInjectClient` or `injectSSE`/`injectPayloadSSE` | Handler completes and closes connection; all events available at once |
+| `keepAlive` | `SSEHttpClient` | Connection stays open; events arrive incrementally via server push |
 
 `SSEInjectClient` and `injectSSE`/`injectPayloadSSE` do the same thing (Fastify inject), but `injectSSE`/`injectPayloadSSE` provide type safety via contracts while `SSEInjectClient` works with raw URLs.
 
-#### Inject vs HTTP Comparison
+#### Detailed Comparison
 
 | Feature | Inject (`SSEInjectClient`, `injectSSE`) | HTTP (`SSEHttpClient`) |
 |---------|----------------------------------------|------------------------|
 | **Connection** | Fastify's `inject()` - in-memory | Real HTTP via `fetch()` |
 | **Event delivery** | All events returned at once (after handler closes) | Events arrive incrementally |
 | **Connection lifecycle** | Handler must close for request to complete | Can stay open indefinitely |
-| **Server requirement** | No `listen()` needed | Requires running server |
-| **Best for** | OpenAI-style streaming, batch exports | Notifications, live feeds, chat |
-
-#### SSETestServer
-
-Creates a test server with `@fastify/sse` pre-configured:
-
-```ts
-import { SSETestServer, SSEHttpClient } from 'opinionated-machine'
-
-// Basic usage
-const server = await SSETestServer.create(async (app) => {
-  app.get('/api/events', async (request, reply) => {
-    reply.sse({ event: 'message', data: { hello: 'world' } })
-    reply.sse.close()
-  })
-})
-
-// Connect and test
-const client = await SSEHttpClient.connect(server.baseUrl, '/api/events')
-const events = await client.collectEvents(1)
-expect(events[0].event).toBe('message')
-
-// Cleanup
-client.close()
-await server.close()
-```
-
-With custom resources (DI container, controllers):
-
-```ts
-const server = await SSETestServer.create(
-  async (app) => {
-    // Register routes using resources from setup
-    myController.registerRoutes(app)
-  },
-  {
-    configureApp: async (app) => {
-      app.setValidatorCompiler(validatorCompiler)
-    },
-    setup: async () => {
-      // Resources are available via server.resources
-      const container = createContainer()
-      return { container }
-    },
-  }
-)
-
-const { container } = server.resources
-```
+| **Server requirement** | No `listen()` needed | Requires a listening server (`SSETestServer.start(app)` or manual `app.listen()`) |
+| **Best for** | `autoClose` SSE (OpenAI-style, batch exports) | `keepAlive` SSE (notifications, live feeds, rooms) |
+| **Dual-mode sync** | Use `app.inject()` with `accept: 'application/json'` | Same |
 
 #### SSEHttpClient
 
-For testing long-lived SSE connections using real HTTP:
+For testing `keepAlive` SSE connections using real HTTP. Requires a listening server — use `SSETestServer.start(app)` to start your app on a random port:
 
 ```ts
 import { SSEHttpClient } from 'opinionated-machine'
@@ -1965,7 +1946,7 @@ client.close()
 
 #### SSEInjectClient
 
-For testing request-response style SSE streams (like OpenAI completions):
+For testing `autoClose` SSE streams (like OpenAI completions). Uses Fastify's `inject()` - no `app.listen()` needed:
 
 ```ts
 import { SSEInjectClient } from 'opinionated-machine'
@@ -1983,7 +1964,7 @@ const conn = await client.connectWithBody(
   { model: 'gpt-4', messages: [...], stream: true },
 )
 
-// All events are available immediately (inject waits for complete response)
+// All events are available immediately (inject waits for handler to complete)
 expect(conn.getStatusCode()).toBe(200)
 const events = conn.getReceivedEvents()
 const chunks = events.filter(e => e.event === 'chunk')
@@ -2364,6 +2345,8 @@ export class ChatModule extends AbstractModule {
       usersController: asControllerClass(UsersController),
       // Dual-mode controller (auto-detected via isDualModeController flag)
       chatController: asDualModeControllerClass(ChatDualModeController, { diOptions }),
+      // Dual-mode controller with rooms enabled
+      dashboardController: asDualModeControllerClass(DashboardController, { diOptions, rooms: true }),
     }
   }
 }
@@ -2439,44 +2422,35 @@ The matching priority is: `text/event-stream` (SSE) > exact matches > subtype wi
 
 ### Testing Dual-Mode Controllers
 
-Test both sync and SSE modes:
+The testing approach depends on the SSE session mode:
+
+| SSE Mode | Test Client | Why |
+|----------|-------------|-----|
+| `autoClose` | `SSEInjectClient` or `injectSSE`/`injectPayloadSSE` | Handler completes and closes the connection, so all events are available at once via inject |
+| `keepAlive` | `SSEHttpClient` + `SSETestServer.start(app)` | Connection stays open after handler returns; events arrive incrementally from server pushes |
+
+#### Testing autoClose dual-mode (request-response streaming)
+
+Use `SSEInjectClient` for dual-mode controllers where the SSE handler uses `autoClose`. No real HTTP server needed - Fastify's inject returns all events after the handler completes:
 
 ```ts
-import { createContainer } from 'awilix'
-import { DIContext, SSETestServer, SSEInjectClient } from 'opinionated-machine'
+import { SSEInjectClient } from 'opinionated-machine'
 
 describe('ChatDualModeController', () => {
-  let server: SSETestServer
+  let app: AppInstance
   let injectClient: SSEInjectClient
 
-  beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
-    const context = new DIContext(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new ChatModule()] }, undefined)
-
-    server = await SSETestServer.create(
-      (app) => {
-        context.registerDualModeRoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-
-    injectClient = new SSEInjectClient(server.app)
+  beforeAll(async () => {
+    app = await getApp({ /* your test config */ })
+    injectClient = new SSEInjectClient(app)
   })
 
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
+  afterAll(async () => {
+    await app.diContainer.dispose()
   })
 
   it('returns sync response for Accept: application/json', async () => {
-    const response = await server.app.inject({
+    const response = await app.inject({
       method: 'POST',
       url: '/api/chats/550e8400-e29b-41d4-a716-446655440000/completions',
       headers: {
@@ -2511,6 +2485,119 @@ describe('ChatDualModeController', () => {
 
     expect(chunks.length).toBeGreaterThan(0)
     expect(doneEvents).toHaveLength(1)
+  })
+})
+```
+
+#### Testing keepAlive dual-mode (long-lived connections)
+
+Use `SSEHttpClient` against your running app, the same pattern as single-mode keepAlive SSE. For test lifecycle convenience, you can use `SSETestServer.start(app)` to start your pre-configured app on a random port:
+
+```ts
+import { SSEHttpClient, SSETestServer } from 'opinionated-machine'
+
+describe('DashboardDualModeController', () => {
+  let app: AppInstance
+  let server: SSETestServer
+  let controller: DashboardController
+
+  beforeAll(async () => {
+    app = await getApp({ /* your test config */ })
+    controller = app.diContainer.resolve('dashboardController')
+
+    // SSETestServer.start() takes your pre-configured app and starts it on a random port
+    server = await SSETestServer.start(app)
+  })
+
+  afterAll(async () => {
+    await app.diContainer.dispose()
+    await server.close()
+  })
+
+  // Sync mode works the same as autoClose — use Fastify inject
+  it('returns JSON for sync requests', async () => {
+    const response = await app.inject({
+      method: 'get',
+      url: '/api/dashboard/updates',
+      headers: { accept: 'application/json' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('application/json')
+  })
+
+  // keepAlive SSE requires SSEHttpClient with awaitServerConnection
+  it('receives server-pushed events over keepAlive SSE', async () => {
+    // 1. Connect with awaitServerConnection to eliminate race condition
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/dashboard/updates',
+      { awaitServerConnection: { controller } },
+    )
+
+    // 2. Start collecting events BEFORE pushing (they arrive asynchronously)
+    const eventsPromise = client.collectEvents(2)
+
+    // 3. Push events from the server side
+    await controller.pushUpdate(serverConnection.id, {
+      event: 'update',
+      data: { type: 'metric', value: 42 },
+    })
+    await controller.pushUpdate(serverConnection.id, {
+      event: 'update',
+      data: { type: 'alert', value: 100 },
+    })
+
+    // 4. Await collected events
+    const events = await eventsPromise
+    expect(events).toHaveLength(2)
+    expect(JSON.parse(events[0].data)).toEqual({ type: 'metric', value: 42 })
+
+    // 5. Always close the client to release the connection
+    client.close()
+  })
+
+  // keepAlive SSE + rooms
+  it('receives room broadcasts over keepAlive SSE', async () => {
+    const { client } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/dashboard/updates',
+      {
+        query: { dashboardId: 'dash-1' },
+        awaitServerConnection: { controller },
+      },
+    )
+
+    // Broadcast to the room
+    const eventsPromise = client.collectEvents(1)
+    await controller.broadcastToRoom('dashboard:dash-1', 'update', {
+      type: 'room-update',
+      value: 99,
+    })
+
+    const events = await eventsPromise
+    expect(JSON.parse(events[0].data)).toEqual({ type: 'room-update', value: 99 })
+
+    client.close()
+  })
+
+  // Sync and SSE can coexist concurrently
+  it('sync requests work while keepAlive SSE connections are active', async () => {
+    // Establish keepAlive SSE connection
+    const { client: sseClient } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/dashboard/updates',
+      { awaitServerConnection: { controller } },
+    )
+
+    // Sync request works while SSE is connected
+    const response = await app.inject({
+      method: 'get',
+      url: '/api/dashboard/updates',
+      headers: { accept: 'application/json' },
+    })
+    expect(response.statusCode).toBe(200)
+
+    sseClient.close()
   })
 })
 

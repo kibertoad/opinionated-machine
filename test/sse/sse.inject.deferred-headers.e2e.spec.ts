@@ -7,8 +7,8 @@ import {
   injectPayloadSSE,
   injectSSE,
   parseSSEEvents,
-  SSETestServer,
 } from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import {
   deferredHeaders404Contract,
   deferredHeaders422Contract,
@@ -57,7 +57,7 @@ import {
  * 6. Handler returns (session mode determines lifecycle: autoClose closes, keepAlive stays open)
  */
 describe('SSE Inject E2E (deferred headers - HTTP error before streaming)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -69,7 +69,7 @@ describe('SSE Inject E2E (deferred headers - HTTP error before streaming)', () =
       'testDeferredHeaders404Controller',
     )
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         app.route(buildFastifyRoute(controller, controller.buildSSERoutes().deferred404))
       },
@@ -132,7 +132,7 @@ describe('SSE Inject E2E (deferred headers - HTTP error before streaming)', () =
 })
 
 describe('SSE Inject E2E (deferred headers - 422 validation)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -144,7 +144,7 @@ describe('SSE Inject E2E (deferred headers - 422 validation)', () => {
       'testDeferredHeaders422Controller',
     )
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         app.route(buildFastifyRoute(controller, controller.buildSSERoutes().validate))
       },
@@ -221,7 +221,7 @@ describe('SSE Inject E2E (deferred headers - error detection)', () => {
         'testForgottenStartController',
       )
 
-      const server = await SSETestServer.create(
+      const server = await createSSETestServer(
         (app) => {
           app.route(buildFastifyRoute(controller, controller.buildSSERoutes().forgottenStart))
         },
@@ -259,7 +259,7 @@ describe('SSE Inject E2E (deferred headers - error detection)', () => {
       'testErrorAfterStartController',
     )
 
-    const server = await SSETestServer.create(
+    const server = await createSSETestServer(
       (app) => {
         app.route(buildFastifyRoute(controller, controller.buildSSERoutes().errorAfterStart))
       },
@@ -299,7 +299,7 @@ describe('SSE Inject E2E (deferred headers - error detection)', () => {
 })
 
 describe('SSE Inject E2E (deferred headers - PublicNonRecoverableError)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -311,7 +311,7 @@ describe('SSE Inject E2E (deferred headers - PublicNonRecoverableError)', () => 
       'testPublicErrorController',
     )
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         app.route(buildFastifyRoute(controller, controller.buildSSERoutes().publicError))
       },
@@ -402,7 +402,7 @@ describe('SSE Inject E2E (deferred headers - non-Error throw)', () => {
         'testNonErrorThrowController',
       )
 
-      const server = await SSETestServer.create(
+      const server = await createSSETestServer(
         (app) => {
           app.route(buildFastifyRoute(controller, controller.buildSSERoutes().nonErrorThrow))
         },
@@ -435,7 +435,7 @@ describe('SSE Inject E2E (deferred headers - non-Error throw)', () => {
 })
 
 describe('SSE Inject E2E (deferred headers - sse.respond() without return)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -447,7 +447,7 @@ describe('SSE Inject E2E (deferred headers - sse.respond() without return)', () 
       'testRespondWithoutReturnController',
     )
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         app.route(buildFastifyRoute(controller, controller.buildSSERoutes().respondWithoutReturn))
       },

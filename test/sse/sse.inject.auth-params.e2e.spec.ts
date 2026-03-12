@@ -1,12 +1,13 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DIContext, injectSSE, parseSSEEvents, SSETestServer } from '../../index.js'
+import { DIContext, injectSSE, parseSSEEvents } from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import { authenticatedStreamContract, channelStreamContract } from './fixtures/testContracts.js'
 import { TestAuthSSEModule, TestChannelSSEModule } from './fixtures/testModules.js'
 
 describe('SSE Inject E2E (authentication)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -14,7 +15,7 @@ describe('SSE Inject E2E (authentication)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestAuthSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },
@@ -71,7 +72,7 @@ describe('SSE Inject E2E (authentication)', () => {
 })
 
 describe('SSE Inject E2E (path parameters)', () => {
-  let server: SSETestServer<{ context: DIContext<object, object> }>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
   let context: DIContext<object, object>
 
   beforeEach(async () => {
@@ -79,7 +80,7 @@ describe('SSE Inject E2E (path parameters)', () => {
     context = new DIContext<object, object>(container, { isTestMode: true }, {})
     context.registerDependencies({ modules: [new TestChannelSSEModule()] }, undefined)
 
-    server = await SSETestServer.create(
+    server = await createSSETestServer(
       (app) => {
         context.registerSSERoutes(app)
       },

@@ -1,5 +1,4 @@
 import type { AnySSEContractDefinition } from '@lokalise/api-contracts'
-import type { FastifyInstance } from 'fastify'
 import type { z } from 'zod'
 import type { ParsedSSEEvent } from '../sse/sseParser.ts'
 
@@ -104,21 +103,4 @@ export type InjectSSEResult = {
    * Parse the body with `parseSSEEvents()` to get individual events.
    */
   closed: Promise<SSEResponse>
-}
-
-/**
- * Options for creating an SSE test server.
- */
-export type CreateSSETestServerOptions<T> = {
-  /**
-   * Configure the Fastify instance before SSE routes are registered.
-   * Use this to add plugins, validators, etc.
-   */
-  // biome-ignore lint/suspicious/noExplicitAny: Fastify instance types are complex
-  configureApp?: (app: FastifyInstance<any, any, any, any>) => void | Promise<void>
-  /**
-   * Custom setup function that returns resources to be cleaned up.
-   * The returned value will be passed to the cleanup function.
-   */
-  setup?: () => T | Promise<T>
 }
