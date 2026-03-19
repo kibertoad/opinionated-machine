@@ -9,11 +9,7 @@ type TestMetadata =
 describe('defineEventMetadata', () => {
   describe('guard creation', () => {
     it('should return an object with a guard function for each value', () => {
-      const guards = defineEventMetadata<TestMetadata>()('scope', [
-        'project',
-        'team',
-        'global',
-      ])
+      const guards = defineEventMetadata<TestMetadata>()('scope', ['project', 'team', 'global'])
 
       expect(guards).toHaveProperty('project')
       expect(guards).toHaveProperty('team')
@@ -24,19 +20,13 @@ describe('defineEventMetadata', () => {
     })
 
     it('should create guards for string discriminant values', () => {
-      const guards = defineEventMetadata<TestMetadata>()('scope', [
-        'project',
-        'team',
-        'global',
-      ])
+      const guards = defineEventMetadata<TestMetadata>()('scope', ['project', 'team', 'global'])
 
       expect(guards.project({ scope: 'project', projectId: 'p1' })).toBe(true)
     })
 
     it('should create guards for numeric discriminant values', () => {
-      type NumericMetadata =
-        | { code: 1; message: string }
-        | { code: 2; error: string }
+      type NumericMetadata = { code: 1; message: string } | { code: 2; error: string }
 
       const guards = defineEventMetadata<NumericMetadata>()('code', [1, 2])
 
@@ -48,11 +38,7 @@ describe('defineEventMetadata', () => {
 
   describe('type narrowing', () => {
     it('should return true when metadata matches the discriminant value', () => {
-      const guards = defineEventMetadata<TestMetadata>()('scope', [
-        'project',
-        'team',
-        'global',
-      ])
+      const guards = defineEventMetadata<TestMetadata>()('scope', ['project', 'team', 'global'])
 
       expect(guards.project({ scope: 'project', projectId: 'p1' })).toBe(true)
       expect(guards.team({ scope: 'team', teamId: 't1' })).toBe(true)
@@ -60,11 +46,7 @@ describe('defineEventMetadata', () => {
     })
 
     it('should return false when metadata does not match', () => {
-      const guards = defineEventMetadata<TestMetadata>()('scope', [
-        'project',
-        'team',
-        'global',
-      ])
+      const guards = defineEventMetadata<TestMetadata>()('scope', ['project', 'team', 'global'])
 
       expect(guards.project({ scope: 'team', teamId: 't1' })).toBe(false)
       expect(guards.team({ scope: 'global' })).toBe(false)
@@ -72,11 +54,7 @@ describe('defineEventMetadata', () => {
     })
 
     it('should narrow the type after a positive check', () => {
-      const guards = defineEventMetadata<TestMetadata>()('scope', [
-        'project',
-        'team',
-        'global',
-      ])
+      const guards = defineEventMetadata<TestMetadata>()('scope', ['project', 'team', 'global'])
 
       const metadata: TestMetadata = { scope: 'project', projectId: 'p1' }
 
@@ -107,11 +85,7 @@ describe('defineEventMetadata', () => {
     })
 
     it('should produce independent guard functions', () => {
-      const guards = defineEventMetadata<TestMetadata>()('scope', [
-        'project',
-        'team',
-        'global',
-      ])
+      const guards = defineEventMetadata<TestMetadata>()('scope', ['project', 'team', 'global'])
 
       expect(guards.project).not.toBe(guards.team)
       expect(guards.team).not.toBe(guards.global)

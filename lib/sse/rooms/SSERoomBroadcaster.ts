@@ -88,7 +88,11 @@ export class SSERoomBroadcaster {
     room: string | string[],
     event: SSEEventDefinition<string, T>,
     data: z.input<T>,
-    options?: RoomBroadcastOptions & { id?: string; retry?: number; metadata?: Record<string, unknown> },
+    options?: RoomBroadcastOptions & {
+      id?: string
+      retry?: number
+      metadata?: Record<string, unknown>
+    },
   ): Promise<number> {
     const message: SSEMessage = {
       event: event.event,

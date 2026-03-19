@@ -59,6 +59,16 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [Auto-Leave on Disconnect](#auto-leave-on-disconnect)
     - [Multi-Node Deployments with Redis](#multi-node-deployments-with-redis)
   - [SSE Subscriptions](#sse-subscriptions)
+    - [Defining Event Metadata](#defining-event-metadata)
+    - [Defining Resolvers](#defining-resolvers)
+    - [Configuring the Manager](#configuring-the-manager)
+    - [Integrating with a Controller](#integrating-with-a-controller)
+    - [Publishing Events](#publishing-events)
+    - [Refreshing Preferences Mid-Connection](#refreshing-preferences-mid-connection)
+    - [Pipeline Semantics](#pipeline-semantics)
+    - [Multi-Node Support](#multi-node-support)
+    - [Data Loading with layered-loader](#data-loading-with-layered-loader)
+    - [Testing](#testing)
   - [SSE Test Utilities](#sse-test-utilities)
     - [Quick Reference](#quick-reference)
     - [Inject vs HTTP Comparison](#inject-vs-http-comparison)
@@ -1900,7 +1910,9 @@ class NotificationController extends AbstractSSEController<Contracts> {
   private handleStream = buildHandler(contract, {
     sse: (request, sse) => {
       const session = sse.start('keepAlive')
-      this.subscriptionManager.handleConnect(session)
+      this.subscriptionManager.handleConnect(session).catch(() => {
+        // Handle connection setup failure (e.g., resolver threw)
+      })
     },
   }, {
     onClose: (session) => {
@@ -1922,6 +1934,11 @@ const result = await subscriptionManager.publish({
 // result: { delivered: 5, filtered: 2 }
 ```
 
+`targetRooms` controls routing:
+- **Specific rooms** (`['project:123']`) — broadcast to those rooms, filter via resolver pipeline
+- **`undefined`** (omitted) — broadcast to all rooms of all managed connections
+- **Empty array** (`[]`) — no-op, returns `{ delivered: 0, filtered: 0 }`
+
 #### Refreshing Preferences Mid-Connection
 
 When a user updates preferences (e.g., mutes an event type), refresh their active connections:
@@ -1941,6 +1958,9 @@ The manager diffs rooms and joins/leaves as needed — no reconnection required.
 - `allow` does not short-circuit — subsequent resolvers can still deny
 - If all resolvers return `defer`, `defaultPolicy` applies (default: `deny`)
 - Resolver `evaluate()` errors are treated as `deny`
+- Resolver `refresh()` errors are caught per-resolver — the failed resolver keeps its previous state while remaining resolvers continue refreshing
+- Later resolvers in the array receive the accumulated `userContext` from earlier resolvers — use spread (`{ ...ctx.userContext, ...newFields }`) to preserve prior resolver data
+- `defaultPolicy` defaults to `'deny'` when not specified
 
 #### Multi-Node Support
 

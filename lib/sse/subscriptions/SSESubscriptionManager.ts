@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import type { SSEMessage } from '../sseTypes.js'
 import type { SSERoomBroadcaster } from '../rooms/SSERoomBroadcaster.js'
 import type { SSERoomManager } from '../rooms/SSERoomManager.js'
+import type { SSEMessage } from '../sseTypes.js'
 import type {
   FilterVerdict,
   IncomingEvent,
@@ -31,8 +31,9 @@ export class SSESubscriptionManager<
   TUserContext,
   TMetadata extends Record<string, unknown> = Record<string, unknown>,
 > {
-  private readonly config: SSESubscriptionManagerConfig<TUserContext, TMetadata>
-    & { defaultPolicy: 'allow' | 'deny' }
+  private readonly config: SSESubscriptionManagerConfig<TUserContext, TMetadata> & {
+    defaultPolicy: 'allow' | 'deny'
+  }
   private readonly connectionStates: Map<string, ConnectionState<TUserContext>> = new Map()
   private readonly userConnections: Map<string, Set<string>> = new Map()
   private readonly deps: {
@@ -172,6 +173,19 @@ export class SSESubscriptionManager<
     return { ...counters }
   }
 
+  /**
+   * Pre-delivery filter registered with the broadcaster.
+   * Evaluates the resolver pipeline for a connection and returns whether
+   * the message should be delivered.
+   *
+   * Returns `true` for connections not managed by this subscription manager,
+   * so non-subscription SSE streams are unaffected.
+   *
+   * @param connectionId - The connection to evaluate
+   * @param message - The SSE message being delivered
+   * @param metadata - Optional metadata (cast to TMetadata — callers must ensure shape matches)
+   * @returns Whether the message should be delivered to this connection
+   */
   shouldDeliver(
     connectionId: string,
     message: SSEMessage,
@@ -199,73 +213,12 @@ export class SSESubscriptionManager<
       throw new Error(`Unknown connection: ${connectionId}`)
     }
 
-    let userContext = state.context.userContext as TUserContext
-    const resolverRooms = new Map(state.resolverRooms)
-
-    // Run resolver refresh chain in order.
-    // If a resolver's refresh() throws, keep its previous rooms and context,
-    // log the error, and continue refreshing remaining resolvers.
-    for (const resolver of this.config.resolvers) {
-      if (!resolver.refresh) continue
-
-      const ctx: SubscriptionContext<TUserContext> = {
-        connectionId,
-        request: state.context.request,
-        userContext,
-        rooms: state.context.rooms,
-      }
-
-      try {
-        const result = await resolver.refresh(ctx)
-        userContext = result.userContext
-        resolverRooms.set(resolver.name, new Set(result.rooms ?? []))
-      } catch (err) {
-        this.config.logger?.error(
-          { err, resolver: resolver.name, connectionId },
-          'Resolver refresh error, keeping previous state for this resolver',
-        )
-        // Keep existing resolverRooms entry and userContext for this resolver
-      }
-    }
-
-    // Compute new room union across all resolvers (including non-refreshed)
-    const newUnion = new Set<string>()
-    for (const rooms of resolverRooms.values()) {
-      for (const room of rooms) {
-        newUnion.add(room)
-      }
-    }
-
-    // Diff rooms
-    const currentRooms = state.context.rooms
-    const toJoin: string[] = []
-    const toLeave: string[] = []
-
-    for (const room of newUnion) {
-      if (!currentRooms.has(room)) toJoin.push(room)
-    }
-    for (const room of currentRooms) {
-      if (!newUnion.has(room)) toLeave.push(room)
-    }
-
-    // Apply room changes
-    if (toJoin.length > 0) {
-      this.deps.sseRoomManager.join(connectionId, toJoin)
-    }
-    if (toLeave.length > 0) {
-      this.deps.sseRoomManager.leave(connectionId, toLeave)
-    }
-
-    // Store new state
-    const newContext: SubscriptionContext<TUserContext> = {
-      connectionId,
-      request: state.context.request,
-      userContext,
-      rooms: newUnion,
-    }
+    const { userContext, resolverRooms } = await this.runRefreshChain(connectionId, state)
+    const newUnion = this.computeRoomUnion(resolverRooms)
+    this.applyRoomDiff(connectionId, state.context.rooms, newUnion)
 
     this.connectionStates.set(connectionId, {
-      context: newContext,
+      context: { connectionId, request: state.context.request, userContext, rooms: newUnion },
       resolverRooms,
     })
   }
@@ -285,6 +238,67 @@ export class SSESubscriptionManager<
 
   getConnectionContext(connectionId: string): SubscriptionContext<TUserContext> | undefined {
     return this.connectionStates.get(connectionId)?.context
+  }
+
+  private async runRefreshChain(
+    connectionId: string,
+    state: ConnectionState<TUserContext>,
+  ): Promise<{ userContext: TUserContext; resolverRooms: Map<string, Set<string>> }> {
+    let userContext = state.context.userContext as TUserContext
+    const resolverRooms = new Map(state.resolverRooms)
+
+    for (const resolver of this.config.resolvers) {
+      if (!resolver.refresh) continue
+
+      const ctx: SubscriptionContext<TUserContext> = {
+        connectionId,
+        request: state.context.request,
+        userContext,
+        rooms: state.context.rooms,
+      }
+
+      try {
+        const result = await resolver.refresh(ctx)
+        userContext = result.userContext
+        resolverRooms.set(resolver.name, new Set(result.rooms ?? []))
+      } catch (err) {
+        this.config.logger?.error(
+          { err, resolver: resolver.name, connectionId },
+          'Resolver refresh error, keeping previous state for this resolver',
+        )
+      }
+    }
+
+    return { userContext, resolverRooms }
+  }
+
+  private computeRoomUnion(resolverRooms: Map<string, Set<string>>): Set<string> {
+    const union = new Set<string>()
+    for (const rooms of resolverRooms.values()) {
+      for (const room of rooms) {
+        union.add(room)
+      }
+    }
+    return union
+  }
+
+  private applyRoomDiff(
+    connectionId: string,
+    currentRooms: ReadonlySet<string>,
+    newRooms: ReadonlySet<string>,
+  ): void {
+    const toJoin: string[] = []
+    const toLeave: string[] = []
+
+    for (const room of newRooms) {
+      if (!currentRooms.has(room)) toJoin.push(room)
+    }
+    for (const room of currentRooms) {
+      if (!newRooms.has(room)) toLeave.push(room)
+    }
+
+    if (toJoin.length > 0) this.deps.sseRoomManager.join(connectionId, toJoin)
+    if (toLeave.length > 0) this.deps.sseRoomManager.leave(connectionId, toLeave)
   }
 
   private async evaluatePipeline(
@@ -363,11 +377,9 @@ export class SSESubscriptionManager<
 
     if (allRooms.size > 0) {
       // Broadcast to all rooms — the pre-delivery filter will evaluate each connection
-      await this.deps.sseRoomBroadcaster.broadcastMessage(
-        [...allRooms],
-        message,
-        { metadata: event.metadata as Record<string, unknown> },
-      )
+      await this.deps.sseRoomBroadcaster.broadcastMessage([...allRooms], message, {
+        metadata: event.metadata as Record<string, unknown>,
+      })
     }
 
     // Note: Connections with no rooms cannot be reached via room-based broadcast.

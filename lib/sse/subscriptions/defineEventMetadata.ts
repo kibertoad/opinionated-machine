@@ -10,18 +10,14 @@ export type ExtractMetadata<
 /**
  * A type guard function for a specific variant of event metadata.
  */
-export type MetadataGuard<
-  TMetadata,
-  TVariant extends TMetadata,
-> = (metadata: TMetadata) => metadata is TVariant
+export type MetadataGuard<TMetadata, TVariant extends TMetadata> = (
+  metadata: TMetadata,
+) => metadata is TVariant
 
 /**
  * Map of discriminant values to their corresponding type guard functions.
  */
-export type MetadataGuards<
-  TMetadata,
-  TField extends keyof TMetadata,
-> = {
+export type MetadataGuards<TMetadata, TField extends keyof TMetadata> = {
   [V in TMetadata[TField] & (string | number)]: MetadataGuard<
     TMetadata,
     ExtractMetadata<TMetadata, TField, V>
@@ -67,7 +63,7 @@ export function defineEventMetadata<TMetadata extends Record<string, unknown>>()
     const guards = {} as MetadataGuards<TMetadata, TField>
 
     for (const value of values) {
-      (guards as Record<string, unknown>)[String(value)] = (
+      ;(guards as Record<string, unknown>)[String(value)] = (
         metadata: TMetadata,
       ): metadata is ExtractMetadata<TMetadata, TField, typeof value> => {
         return metadata[field] === value

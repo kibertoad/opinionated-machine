@@ -1,11 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SSEMessage } from '../sseTypes.js'
+import { describe, expect, it, vi } from 'vitest'
 import { SSERoomBroadcaster } from '../rooms/SSERoomBroadcaster.js'
 import { SSERoomManager } from '../rooms/SSERoomManager.js'
 import type { SSERoomAdapter } from '../rooms/types.js'
 import { SSESubscriptionManager } from './SSESubscriptionManager.js'
 import type {
-  FilterVerdict,
   IncomingEvent,
   SSESubscriptionManagerConfig,
   SubscriptionContext,
@@ -89,7 +87,7 @@ describe('SSESubscriptionManager', () => {
           rooms: ['room-a'],
         }),
       })
-      const { manager, roomManager, sendEvent } = createTestManager({ resolvers: [resolver] })
+      const { manager, sendEvent } = createTestManager({ resolvers: [resolver] })
 
       const session = createMockSession('conn-1')
       await manager.handleConnect(session)
@@ -154,7 +152,7 @@ describe('SSESubscriptionManager', () => {
       const callOrder: string[] = []
       const resolver1 = createMockResolver({
         name: 'resolver-1',
-        onConnect: vi.fn().mockImplementation(async () => {
+        onConnect: vi.fn().mockImplementation(() => {
           callOrder.push('resolver-1')
           return {
             userContext: { userId: 'user-1', projectIds: new Set(), mutedEventTypes: new Set() },
@@ -164,7 +162,7 @@ describe('SSESubscriptionManager', () => {
       })
       const resolver2 = createMockResolver({
         name: 'resolver-2',
-        onConnect: vi.fn().mockImplementation(async () => {
+        onConnect: vi.fn().mockImplementation(() => {
           callOrder.push('resolver-2')
           return {
             userContext: { userId: 'user-1', projectIds: new Set(), mutedEventTypes: new Set() },
@@ -231,14 +229,22 @@ describe('SSESubscriptionManager', () => {
       const resolver1 = createMockResolver({
         name: 'r1',
         onConnect: vi.fn().mockResolvedValue({
-          userContext: { userId: 'user-1', projectIds: new Set(['p1']), mutedEventTypes: new Set() },
+          userContext: {
+            userId: 'user-1',
+            projectIds: new Set(['p1']),
+            mutedEventTypes: new Set(),
+          },
           rooms: ['room-a'],
         }),
       })
       const resolver2 = createMockResolver({
         name: 'r2',
         onConnect: vi.fn().mockResolvedValue({
-          userContext: { userId: 'user-1', projectIds: new Set(['p1', 'p2']), mutedEventTypes: new Set() },
+          userContext: {
+            userId: 'user-1',
+            projectIds: new Set(['p1', 'p2']),
+            mutedEventTypes: new Set(),
+          },
           rooms: ['room-b'],
         }),
       })
@@ -258,7 +264,7 @@ describe('SSESubscriptionManager', () => {
 
       const resolver1 = createMockResolver({
         name: 'r1',
-        onConnect: vi.fn().mockImplementation(async (ctx: SubscriptionContext<TestUserContext>) => {
+        onConnect: vi.fn().mockImplementation((ctx: SubscriptionContext<TestUserContext>) => {
           capturedContexts.push({ ...ctx.userContext })
           return {
             userContext: {
@@ -272,7 +278,7 @@ describe('SSESubscriptionManager', () => {
       })
       const resolver2 = createMockResolver({
         name: 'r2',
-        onConnect: vi.fn().mockImplementation(async (ctx: SubscriptionContext<TestUserContext>) => {
+        onConnect: vi.fn().mockImplementation((ctx: SubscriptionContext<TestUserContext>) => {
           capturedContexts.push({ ...ctx.userContext })
           return {
             userContext: {
@@ -397,10 +403,12 @@ describe('SSESubscriptionManager', () => {
       // Each resolver must have an onConnect to join rooms
       const resolversWithConnect = resolvers.map((r) => ({
         ...r,
-        onConnect: r.onConnect ?? vi.fn().mockResolvedValue({
-          userContext: { userId: 'user-1', projectIds: new Set(), mutedEventTypes: new Set() },
-          rooms: ['room-a'],
-        }),
+        onConnect:
+          r.onConnect ??
+          vi.fn().mockResolvedValue({
+            userContext: { userId: 'user-1', projectIds: new Set(), mutedEventTypes: new Set() },
+            rooms: ['room-a'],
+          }),
       }))
 
       const result = createTestManager({ resolvers: resolversWithConnect, ...overrides })
@@ -658,13 +666,11 @@ describe('SSESubscriptionManager', () => {
     it('should return correct delivered/filtered counts', async () => {
       const resolver = createMockResolver({
         name: 'r1',
-        evaluate: vi.fn().mockImplementation(
-          (ctx: SubscriptionContext<TestUserContext>) => {
-            if (ctx.connectionId === 'conn-1') return { action: 'allow' as const }
-            if (ctx.connectionId === 'conn-2') return { action: 'deny' as const }
-            return { action: 'allow' as const }
-          },
-        ),
+        evaluate: vi.fn().mockImplementation((ctx: SubscriptionContext<TestUserContext>) => {
+          if (ctx.connectionId === 'conn-1') return { action: 'allow' as const }
+          if (ctx.connectionId === 'conn-2') return { action: 'deny' as const }
+          return { action: 'allow' as const }
+        }),
         onConnect: vi.fn().mockResolvedValue({
           userContext: { userId: 'user-1', projectIds: new Set(), mutedEventTypes: new Set() },
           rooms: ['room-a'],
@@ -915,7 +921,11 @@ describe('SSESubscriptionManager', () => {
           rooms: ['room-a'],
         }),
         refresh: vi.fn().mockResolvedValue({
-          userContext: { userId: 'user-1', projectIds: new Set(['new']), mutedEventTypes: new Set() },
+          userContext: {
+            userId: 'user-1',
+            projectIds: new Set(['new']),
+            mutedEventTypes: new Set(),
+          },
           rooms: ['room-a'],
         }),
       })
@@ -934,7 +944,9 @@ describe('SSESubscriptionManager', () => {
     it('should throw for unknown connectionId', async () => {
       const { manager } = createTestManager()
 
-      await expect(manager.refreshConnection('unknown')).rejects.toThrow('Unknown connection: unknown')
+      await expect(manager.refreshConnection('unknown')).rejects.toThrow(
+        'Unknown connection: unknown',
+      )
     })
 
     it('should pass accumulated context through refresh chain', async () => {
@@ -946,7 +958,7 @@ describe('SSESubscriptionManager', () => {
           userContext: { userId: 'user-1', projectIds: new Set(), mutedEventTypes: new Set() },
           rooms: ['room-a'],
         }),
-        refresh: vi.fn().mockImplementation(async (ctx: SubscriptionContext<TestUserContext>) => {
+        refresh: vi.fn().mockImplementation((ctx: SubscriptionContext<TestUserContext>) => {
           capturedContexts.push({ ...ctx.userContext })
           return {
             userContext: {
@@ -961,10 +973,14 @@ describe('SSESubscriptionManager', () => {
       const resolver2 = createMockResolver({
         name: 'r2',
         onConnect: vi.fn().mockResolvedValue({
-          userContext: { userId: 'user-1', projectIds: new Set(['from-r1']), mutedEventTypes: new Set() },
+          userContext: {
+            userId: 'user-1',
+            projectIds: new Set(['from-r1']),
+            mutedEventTypes: new Set(),
+          },
           rooms: ['room-b'],
         }),
-        refresh: vi.fn().mockImplementation(async (ctx: SubscriptionContext<TestUserContext>) => {
+        refresh: vi.fn().mockImplementation((ctx: SubscriptionContext<TestUserContext>) => {
           capturedContexts.push({ ...ctx.userContext })
           return {
             userContext: {
@@ -997,11 +1013,19 @@ describe('SSESubscriptionManager', () => {
       const resolver2 = createMockResolver({
         name: 'r2',
         onConnect: vi.fn().mockResolvedValue({
-          userContext: { userId: 'user-1', projectIds: new Set(['p1']), mutedEventTypes: new Set() },
+          userContext: {
+            userId: 'user-1',
+            projectIds: new Set(['p1']),
+            mutedEventTypes: new Set(),
+          },
           rooms: ['room-b'],
         }),
         refresh: vi.fn().mockResolvedValue({
-          userContext: { userId: 'user-1', projectIds: new Set(['p1', 'p2']), mutedEventTypes: new Set() },
+          userContext: {
+            userId: 'user-1',
+            projectIds: new Set(['p1', 'p2']),
+            mutedEventTypes: new Set(),
+          },
           rooms: ['room-b', 'room-c'],
         }),
       })
@@ -1024,7 +1048,11 @@ describe('SSESubscriptionManager', () => {
   describe('refreshUser', () => {
     it('should refresh all connections for a userId', async () => {
       const refreshFn = vi.fn().mockResolvedValue({
-        userContext: { userId: 'user-1', projectIds: new Set(['refreshed']), mutedEventTypes: new Set() },
+        userContext: {
+          userId: 'user-1',
+          projectIds: new Set(['refreshed']),
+          mutedEventTypes: new Set(),
+        },
         rooms: ['room-a'],
       })
       const resolver = createMockResolver({
@@ -1045,8 +1073,12 @@ describe('SSESubscriptionManager', () => {
       await manager.refreshUser('user-1')
 
       expect(refreshFn).toHaveBeenCalledTimes(2)
-      expect(manager.getConnectionContext('conn-1')!.userContext.projectIds).toEqual(new Set(['refreshed']))
-      expect(manager.getConnectionContext('conn-2')!.userContext.projectIds).toEqual(new Set(['refreshed']))
+      expect(manager.getConnectionContext('conn-1')!.userContext.projectIds).toEqual(
+        new Set(['refreshed']),
+      )
+      expect(manager.getConnectionContext('conn-2')!.userContext.projectIds).toEqual(
+        new Set(['refreshed']),
+      )
     })
 
     it('should throw if resolveUserId not configured', async () => {
@@ -1076,7 +1108,11 @@ describe('SSESubscriptionManager', () => {
       const resolver = createMockResolver({
         name: 'r1',
         onConnect: vi.fn().mockResolvedValue({
-          userContext: { userId: 'user-1', projectIds: new Set(['p1']), mutedEventTypes: new Set() },
+          userContext: {
+            userId: 'user-1',
+            projectIds: new Set(['p1']),
+            mutedEventTypes: new Set(),
+          },
           rooms: ['room-a'],
         }),
       })

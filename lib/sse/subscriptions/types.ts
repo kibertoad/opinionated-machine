@@ -21,9 +21,7 @@ export type SubscriptionContext<TUserContext> = Readonly<{
  *
  * @template TMetadata - Discriminated union of event metadata shapes
  */
-export type IncomingEvent<
-  TMetadata extends Record<string, unknown> = Record<string, unknown>,
-> = {
+export type IncomingEvent<TMetadata extends Record<string, unknown> = Record<string, unknown>> = {
   /** Event name (maps to SSE `event` field) */
   eventName: string
   /** Event payload (delivered to client as SSE data) */
@@ -76,8 +74,16 @@ export interface SubscriptionResolver<
   /**
    * Called once when a connection is established.
    * Hydrate user context and declare initial room memberships.
+   *
+   * Resolvers run in array order. Each resolver receives the accumulated
+   * `userContext` from all prior resolvers — use spread to preserve it.
+   *
+   * If this method throws, `handleConnect()` rejects and the connection
+   * is not tracked by the subscription manager.
    */
-  onConnect?(ctx: SubscriptionContext<TUserContext>): Promise<ResolverResult<TUserContext>>
+  onConnect?(
+    ctx: SubscriptionContext<TUserContext>,
+  ): ResolverResult<TUserContext> | Promise<ResolverResult<TUserContext>>
 
   /**
    * Evaluate whether an event should be delivered to this connection.
@@ -92,8 +98,13 @@ export interface SubscriptionResolver<
    * Re-hydrate user context and room memberships.
    * Called when external state changes (e.g., user updates preferences).
    * Manager diffs the returned rooms against the previous set.
+   *
+   * If this method throws, the error is logged and this resolver keeps
+   * its previous state (rooms + context). Other resolvers continue refreshing.
    */
-  refresh?(ctx: SubscriptionContext<TUserContext>): Promise<ResolverResult<TUserContext>>
+  refresh?(
+    ctx: SubscriptionContext<TUserContext>,
+  ): ResolverResult<TUserContext> | Promise<ResolverResult<TUserContext>>
 }
 
 /**

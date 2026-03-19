@@ -356,11 +356,15 @@ describe('SSERoomBroadcaster', () => {
       roomManager.join('conn-1', 'room-a')
 
       const metadata = { scope: 'project', projectId: '123' }
-      await broadcaster.broadcastMessage('room-a', {
-        event: 'testEvent',
-        data: { foo: 'bar' },
-        id: 'msg-1',
-      }, { metadata })
+      await broadcaster.broadcastMessage(
+        'room-a',
+        {
+          event: 'testEvent',
+          data: { foo: 'bar' },
+          id: 'msg-1',
+        },
+        { metadata },
+      )
 
       expect(filter).toHaveBeenCalledWith(
         'conn-1',
@@ -393,7 +397,12 @@ describe('SSERoomBroadcaster', () => {
       // Simulate remote broadcast via adapter — the room manager's handler
       // doesn't return the promise, so we need to await the microtask queue
       const adapterOnMessage = (adapter.onMessage as ReturnType<typeof vi.fn>).mock.calls[0]![0]
-      adapterOnMessage('room-a', { event: 'test', data: {}, id: 'remote-1' }, 'other-node', undefined)
+      adapterOnMessage(
+        'room-a',
+        { event: 'test', data: {}, id: 'remote-1' },
+        'other-node',
+        undefined,
+      )
       await new Promise((r) => setTimeout(r, 0))
 
       // conn-1 should be filtered out, conn-2 should receive
@@ -409,7 +418,12 @@ describe('SSERoomBroadcaster', () => {
 
       const metadata = { scope: 'team', teamId: 'eng' }
       const adapterOnMessage = (adapter.onMessage as ReturnType<typeof vi.fn>).mock.calls[0]![0]
-      adapterOnMessage('room-a', { event: 'test', data: {}, id: 'remote-1' }, 'other-node', metadata)
+      adapterOnMessage(
+        'room-a',
+        { event: 'test', data: {}, id: 'remote-1' },
+        'other-node',
+        metadata,
+      )
       await new Promise((r) => setTimeout(r, 0))
 
       expect(filter).toHaveBeenCalledWith(
@@ -425,11 +439,15 @@ describe('SSERoomBroadcaster', () => {
       roomManager.join('conn-1', 'room-a')
 
       const metadata = { scope: 'project', projectId: '123' }
-      await broadcaster.broadcastMessage('room-a', {
-        event: 'testEvent',
-        data: { foo: 'bar' },
-        id: 'msg-1',
-      }, { metadata })
+      await broadcaster.broadcastMessage(
+        'room-a',
+        {
+          event: 'testEvent',
+          data: { foo: 'bar' },
+          id: 'msg-1',
+        },
+        { metadata },
+      )
 
       expect(adapter.publish).toHaveBeenCalledWith(
         'room-a',

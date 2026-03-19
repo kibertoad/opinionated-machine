@@ -62,8 +62,8 @@ export {
   type MetadataGuards,
   type PublishResult,
   type ResolverResult,
-  type SSESubscriptionManagerConfig,
   SSESubscriptionManager,
+  type SSESubscriptionManagerConfig,
   type SubscriptionContext,
   type SubscriptionResolver,
 } from './subscriptions/index.js'

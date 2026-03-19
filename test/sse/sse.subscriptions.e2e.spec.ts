@@ -70,77 +70,65 @@ describe('SSE Subscriptions E2E', () => {
   })
 
   describe('project announcements — full scenario', () => {
-    it(
-      'delivers to project member who has not muted',
-      { timeout: 10000 },
-      async () => {
-        // Setup: user-1 is a member of project-A
-        projectService.setMemberships('user-1', ['project-A'])
+    it('delivers to project member who has not muted', { timeout: 10000 }, async () => {
+      // Setup: user-1 is a member of project-A
+      projectService.setMemberships('user-1', ['project-A'])
 
-        const { client, serverConnection } = await SSEHttpClient.connect(
-          server.baseUrl,
-          '/api/subscriptions/stream',
-          {
-            query: { userId: 'user-1' },
-            awaitServerConnection: { controller },
-          },
-        )
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/subscriptions/stream',
+        {
+          query: { userId: 'user-1' },
+          awaitServerConnection: { controller },
+        },
+      )
 
-        // Wait for subscription manager to process handleConnect
-        await new Promise((r) => setTimeout(r, 50))
+      // Wait for subscription manager to process handleConnect
+      await new Promise((r) => setTimeout(r, 50))
 
-        // Verify rooms were joined
-        const ctx = controller.subscriptionManager.getConnectionContext(serverConnection.id)
-        expect(ctx).toBeDefined()
-        expect(ctx!.userContext.projectIds.has('project-A')).toBe(true)
-        expect(ctx!.rooms.has('project:project-A')).toBe(true)
+      // Verify rooms were joined
+      const ctx = controller.subscriptionManager.getConnectionContext(serverConnection.id)
+      expect(ctx).toBeDefined()
+      expect(ctx!.userContext.projectIds.has('project-A')).toBe(true)
+      expect(ctx!.rooms.has('project:project-A')).toBe(true)
 
-        // Publish a project announcement
-        const result = await controller.subscriptionManager.publish({
-          eventName: 'announcement',
-          data: { message: 'New feature!' },
-          targetRooms: ['project:project-A'],
-          metadata: { scope: 'project', projectId: 'project-A' } as TestEventMetadata,
-        })
+      // Publish a project announcement
+      const result = await controller.subscriptionManager.publish({
+        eventName: 'announcement',
+        data: { message: 'New feature!' },
+        targetRooms: ['project:project-A'],
+        metadata: { scope: 'project', projectId: 'project-A' } as TestEventMetadata,
+      })
 
-        expect(result.delivered).toBe(1)
-        expect(result.filtered).toBe(0)
+      expect(result.delivered).toBe(1)
+      expect(result.filtered).toBe(0)
 
-        client.close()
-      },
-    )
+      client.close()
+    })
 
-    it(
-      'filters from project member who muted announcements',
-      { timeout: 10000 },
-      async () => {
-        projectService.setMemberships('user-2', ['project-A'])
-        preferencesService.setMutedTypes('user-2', ['announcement'])
+    it('filters from project member who muted announcements', { timeout: 10000 }, async () => {
+      projectService.setMemberships('user-2', ['project-A'])
+      preferencesService.setMutedTypes('user-2', ['announcement'])
 
-        const { client, serverConnection } = await SSEHttpClient.connect(
-          server.baseUrl,
-          '/api/subscriptions/stream',
-          {
-            query: { userId: 'user-2' },
-            awaitServerConnection: { controller },
-          },
-        )
+      const { client } = await SSEHttpClient.connect(server.baseUrl, '/api/subscriptions/stream', {
+        query: { userId: 'user-2' },
+        awaitServerConnection: { controller },
+      })
 
-        await new Promise((r) => setTimeout(r, 50))
+      await new Promise((r) => setTimeout(r, 50))
 
-        const result = await controller.subscriptionManager.publish({
-          eventName: 'announcement',
-          data: { message: 'New feature!' },
-          targetRooms: ['project:project-A'],
-          metadata: { scope: 'project', projectId: 'project-A' } as TestEventMetadata,
-        })
+      const result = await controller.subscriptionManager.publish({
+        eventName: 'announcement',
+        data: { message: 'New feature!' },
+        targetRooms: ['project:project-A'],
+        metadata: { scope: 'project', projectId: 'project-A' } as TestEventMetadata,
+      })
 
-        expect(result.delivered).toBe(0)
-        expect(result.filtered).toBe(1)
+      expect(result.delivered).toBe(0)
+      expect(result.filtered).toBe(1)
 
-        client.close()
-      },
-    )
+      client.close()
+    })
 
     it(
       'filters from non-project-member regardless of mute settings',
@@ -149,7 +137,7 @@ describe('SSE Subscriptions E2E', () => {
         // user-3 is NOT a member of project-A
         projectService.setMemberships('user-3', ['project-B'])
 
-        const { client, serverConnection } = await SSEHttpClient.connect(
+        const { client } = await SSEHttpClient.connect(
           server.baseUrl,
           '/api/subscriptions/stream',
           {
@@ -186,7 +174,7 @@ describe('SSE Subscriptions E2E', () => {
         // Not muted initially
         preferencesService.setMutedTypes('user-4', [])
 
-        const { client, serverConnection } = await SSEHttpClient.connect(
+        const { client } = await SSEHttpClient.connect(
           server.baseUrl,
           '/api/subscriptions/stream',
           {
@@ -284,23 +272,15 @@ describe('SSE Subscriptions E2E', () => {
         // member-2 has muted announcements
         preferencesService.setMutedTypes('member-2', ['announcement'])
 
-        const conn1 = await SSEHttpClient.connect(
-          server.baseUrl,
-          '/api/subscriptions/stream',
-          {
-            query: { userId: 'member-1' },
-            awaitServerConnection: { controller },
-          },
-        )
+        const conn1 = await SSEHttpClient.connect(server.baseUrl, '/api/subscriptions/stream', {
+          query: { userId: 'member-1' },
+          awaitServerConnection: { controller },
+        })
 
-        const conn2 = await SSEHttpClient.connect(
-          server.baseUrl,
-          '/api/subscriptions/stream',
-          {
-            query: { userId: 'member-2' },
-            awaitServerConnection: { controller },
-          },
-        )
+        const conn2 = await SSEHttpClient.connect(server.baseUrl, '/api/subscriptions/stream', {
+          query: { userId: 'member-2' },
+          awaitServerConnection: { controller },
+        })
 
         await new Promise((r) => setTimeout(r, 50))
 
@@ -328,7 +308,7 @@ describe('SSE Subscriptions E2E', () => {
       async () => {
         projectService.setMemberships('user-6', ['project-A'])
 
-        const { client, serverConnection } = await SSEHttpClient.connect(
+        const { client } = await SSEHttpClient.connect(
           server.baseUrl,
           '/api/subscriptions/stream',
           {
@@ -358,34 +338,30 @@ describe('SSE Subscriptions E2E', () => {
   })
 
   describe('disconnect cleanup', () => {
-    it(
-      'removes connection state on disconnect',
-      { timeout: 10000 },
-      async () => {
-        projectService.setMemberships('user-7', ['project-A'])
+    it('removes connection state on disconnect', { timeout: 10000 }, async () => {
+      projectService.setMemberships('user-7', ['project-A'])
 
-        const { client, serverConnection } = await SSEHttpClient.connect(
-          server.baseUrl,
-          '/api/subscriptions/stream',
-          {
-            query: { userId: 'user-7' },
-            awaitServerConnection: { controller },
-          },
-        )
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/subscriptions/stream',
+        {
+          query: { userId: 'user-7' },
+          awaitServerConnection: { controller },
+        },
+      )
 
-        await new Promise((r) => setTimeout(r, 50))
+      await new Promise((r) => setTimeout(r, 50))
 
-        expect(controller.subscriptionManager.getConnectionContext(serverConnection.id)).toBeDefined()
+      expect(controller.subscriptionManager.getConnectionContext(serverConnection.id)).toBeDefined()
 
-        client.close()
+      client.close()
 
-        // Wait for disconnect to propagate
-        await new Promise((r) => setTimeout(r, 100))
+      // Wait for disconnect to propagate
+      await new Promise((r) => setTimeout(r, 100))
 
-        expect(
-          controller.subscriptionManager.getConnectionContext(serverConnection.id),
-        ).toBeUndefined()
-      },
-    )
+      expect(
+        controller.subscriptionManager.getConnectionContext(serverConnection.id),
+      ).toBeUndefined()
+    })
   })
 })

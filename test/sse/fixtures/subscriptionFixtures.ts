@@ -1,26 +1,24 @@
 import { buildSseContract as buildContract } from '@lokalise/api-contracts'
 import { z } from 'zod'
 import {
+  AbstractModule,
   AbstractSSEController,
+  asSingletonClass,
+  asSingletonFunction,
+  asSSEControllerClass,
   type BuildFastifySSERoutesReturnType,
   buildHandler,
+  type DependencyInjectionOptions,
   defineEventMetadata,
+  type FilterVerdict,
+  type IncomingEvent,
+  type MandatoryNameAndRegistrationPair,
+  type ResolverResult,
   type SSEControllerConfig,
-  type SSESession,
   SSERoomBroadcaster,
   SSERoomManager,
   SSESubscriptionManager,
   type SubscriptionContext,
-  type SubscriptionResolver,
-  type FilterVerdict,
-  type ResolverResult,
-  type IncomingEvent,
-  AbstractModule,
-  type MandatoryNameAndRegistrationPair,
-  type DependencyInjectionOptions,
-  asSingletonFunction,
-  asSingletonClass,
-  asSSEControllerClass,
 } from '../../../index.js'
 
 // ============================================================================
@@ -33,9 +31,7 @@ export type TestUserContext = {
   mutedEventTypes: Set<string>
 }
 
-export type TestEventMetadata =
-  | { scope: 'project'; projectId: string }
-  | { scope: 'global' }
+export type TestEventMetadata = { scope: 'project'; projectId: string } | { scope: 'global' }
 
 export const testMeta = defineEventMetadata<TestEventMetadata>()('scope', ['project', 'global'])
 
@@ -98,9 +94,7 @@ export class ProjectMembershipResolver {
     this.projectService = projectService
   }
 
-  async onConnect(
-    ctx: SubscriptionContext<TestUserContext>,
-  ): Promise<ResolverResult<TestUserContext>> {
+  onConnect(ctx: SubscriptionContext<TestUserContext>): ResolverResult<TestUserContext> {
     const memberships = this.projectService.getMemberships(ctx.userContext.userId)
     const projectIds = new Set(memberships)
 
@@ -122,9 +116,7 @@ export class ProjectMembershipResolver {
     return { action: 'defer' }
   }
 
-  async refresh(
-    ctx: SubscriptionContext<TestUserContext>,
-  ): Promise<ResolverResult<TestUserContext>> {
+  refresh(ctx: SubscriptionContext<TestUserContext>): ResolverResult<TestUserContext> {
     const memberships = this.projectService.getMemberships(ctx.userContext.userId)
     const projectIds = new Set(memberships)
 
@@ -143,9 +135,7 @@ export class MutePreferencesResolver {
     this.preferencesService = preferencesService
   }
 
-  async onConnect(
-    ctx: SubscriptionContext<TestUserContext>,
-  ): Promise<ResolverResult<TestUserContext>> {
+  onConnect(ctx: SubscriptionContext<TestUserContext>): ResolverResult<TestUserContext> {
     const mutedTypes = this.preferencesService.getMutedTypes(ctx.userContext.userId)
     return {
       userContext: { ...ctx.userContext, mutedEventTypes: new Set(mutedTypes) },
@@ -163,9 +153,7 @@ export class MutePreferencesResolver {
     return { action: 'defer' }
   }
 
-  async refresh(
-    ctx: SubscriptionContext<TestUserContext>,
-  ): Promise<ResolverResult<TestUserContext>> {
+  refresh(ctx: SubscriptionContext<TestUserContext>): ResolverResult<TestUserContext> {
     const mutedTypes = this.preferencesService.getMutedTypes(ctx.userContext.userId)
     return {
       userContext: { ...ctx.userContext, mutedEventTypes: new Set(mutedTypes) },

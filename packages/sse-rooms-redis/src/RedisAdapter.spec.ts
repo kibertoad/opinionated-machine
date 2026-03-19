@@ -325,12 +325,7 @@ describe('RedisAdapter', () => {
       const payload = { v: 1, m: { event: 'test', data: {} }, n: 'other-node' }
       subClient.simulateMessage('sse:room:my-room', JSON.stringify(payload))
 
-      expect(handler).toHaveBeenCalledWith(
-        'my-room',
-        expect.any(Object),
-        'other-node',
-        undefined,
-      )
+      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node', undefined)
     })
 
     it('should ignore unknown protocol versions', async () => {
@@ -352,12 +347,7 @@ describe('RedisAdapter', () => {
       const payload = { v: 2, m: { event: 'test', data: {} }, n: 'other-node', meta: undefined }
       subClient.simulateMessage('sse:room:my-room', JSON.stringify(payload))
 
-      expect(handler).toHaveBeenCalledWith(
-        'my-room',
-        expect.any(Object),
-        'other-node',
-        undefined,
-      )
+      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node', undefined)
     })
   })
 })

@@ -99,7 +99,11 @@ export class RedisAdapter implements SSERoomAdapter {
     this.subscribedChannels.delete(channel)
   }
 
-  async publish(room: string, message: SSEMessage, metadata?: Record<string, unknown>): Promise<void> {
+  async publish(
+    room: string,
+    message: SSEMessage,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
     const channel = this.getChannelName(room)
 
     // Use v2 only when metadata is present, v1 otherwise (smaller payload)
