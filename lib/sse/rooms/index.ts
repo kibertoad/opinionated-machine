@@ -7,6 +7,7 @@ export { SSERoomBroadcaster } from './SSERoomBroadcaster.js'
 export { SSERoomManager } from './SSERoomManager.js'
 // Types
 export type {
+  PreDeliveryFilter,
   RoomBroadcastOptions,
   RoomNameResolver,
   SSERoomAdapter,
