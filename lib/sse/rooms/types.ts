@@ -71,7 +71,7 @@ export type SSERoomAdapter = {
    * @param room - The room to publish to
    * @param message - The SSE message to broadcast
    */
-  publish(room: string, message: SSEMessage): Promise<void>
+  publish(room: string, message: SSEMessage, metadata?: Record<string, unknown>): Promise<void>
 
   /**
    * Register a handler for messages received from other nodes.
@@ -89,7 +89,23 @@ export type SSERoomMessageHandler = (
   room: string,
   message: SSEMessage,
   sourceNodeId: string,
+  metadata?: Record<string, unknown>,
 ) => void | Promise<void>
+
+/**
+ * Pre-delivery filter called before sending to each connection.
+ * Returns true to deliver, false to skip.
+ *
+ * Used by SSESubscriptionManager to inject resolver pipeline evaluation
+ * into the broadcaster's delivery path.
+ *
+ * When no filter is set, all connections receive all messages (existing behavior).
+ */
+export type PreDeliveryFilter = (
+  connectionId: string,
+  message: SSEMessage,
+  metadata?: Record<string, unknown>,
+) => Promise<boolean> | boolean
 
 /**
  * Configuration for the SSE Room Manager.

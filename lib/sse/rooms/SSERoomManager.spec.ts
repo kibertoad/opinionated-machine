@@ -294,7 +294,7 @@ describe('SSERoomManager', () => {
       const message = { event: 'test', data: { foo: 'bar' } }
       await manager.publish('room-a', message)
 
-      expect(adapter.publish).toHaveBeenCalledWith('room-a', message)
+      expect(adapter.publish).toHaveBeenCalledWith('room-a', message, undefined)
     })
 
     it('should not call adapter.publish when local: true', async () => {
@@ -341,7 +341,7 @@ describe('SSERoomManager', () => {
       const message = { event: 'test', data: { foo: 'bar' } }
       onMessageHandler('room-a', message, 'node-2')
 
-      expect(handler).toHaveBeenCalledWith('room-a', message, 'node-2')
+      expect(handler).toHaveBeenCalledWith('room-a', message, 'node-2', undefined)
     })
 
     it('should not call handler for messages from same node', () => {

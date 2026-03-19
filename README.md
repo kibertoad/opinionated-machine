@@ -58,6 +58,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [Room Query Methods](#room-query-methods)
     - [Auto-Leave on Disconnect](#auto-leave-on-disconnect)
     - [Multi-Node Deployments with Redis](#multi-node-deployments-with-redis)
+  - [SSE Subscriptions](#sse-subscriptions)
   - [SSE Test Utilities](#sse-test-utilities)
     - [Quick Reference](#quick-reference)
     - [Inject vs HTTP Comparison](#inject-vs-http-comparison)
@@ -1802,6 +1803,181 @@ class DashboardModule extends AbstractModule {
 The Redis adapter uses Pub/Sub for cross-node message propagation. When you call `broadcastToRoom()`, the message is published to Redis and delivered to all nodes that have connections in that room.
 
 See the [@opinionated-machine/sse-rooms-redis](./packages/sse-rooms-redis/README.md) package for detailed documentation on Redis adapter configuration and usage.
+
+### SSE Subscriptions
+
+SSE Subscriptions add user-centered event filtering on top of SSE Rooms. Users connect once to a universal stream, and a **resolver pipeline** determines which events reach them based on membership, preferences, and arbitrary business rules.
+
+#### Defining Event Metadata
+
+Define a discriminated union describing all event scopes, then create type-safe guards with `defineEventMetadata()`:
+
+```typescript
+import { defineEventMetadata } from 'opinionated-machine'
+
+type EventMetadata =
+  | { scope: 'project'; projectId: string }
+  | { scope: 'team'; teamId: string }
+  | { scope: 'global' }
+
+const meta = defineEventMetadata<EventMetadata>()('scope', ['project', 'team', 'global'])
+
+// In resolvers, guards narrow the type:
+if (meta.project(event.metadata)) {
+  event.metadata.projectId // TypeScript knows this is string
+}
+```
+
+#### Defining Resolvers
+
+Resolvers are stateless filters evaluated in pipeline order. Each resolver can `allow`, `deny`, or `defer`:
+
+```typescript
+import type { SubscriptionResolver, SubscriptionContext, FilterVerdict } from 'opinionated-machine'
+
+class ProjectMembershipResolver {
+  readonly name = 'project-membership'
+
+  async onConnect(ctx: SubscriptionContext<UserCtx>) {
+    const memberships = await this.membershipLoader.get(ctx.userContext.userId)
+    const projectIds = new Set(memberships.map(m => m.projectId))
+    return {
+      userContext: { ...ctx.userContext, projectIds },
+      rooms: Array.from(projectIds).map(id => `project:${id}`),
+    }
+  }
+
+  evaluate(ctx: SubscriptionContext<UserCtx>, event: IncomingEvent<EventMetadata>): FilterVerdict {
+    if (meta.project(event.metadata)) {
+      return ctx.userContext.projectIds.has(event.metadata.projectId)
+        ? { action: 'allow' }
+        : { action: 'deny', reason: 'not a project member' }
+    }
+    return { action: 'defer' }
+  }
+
+  async refresh(ctx: SubscriptionContext<UserCtx>) {
+    // Re-fetch memberships on demand
+    const memberships = await this.membershipLoader.get(ctx.userContext.userId)
+    const projectIds = new Set(memberships.map(m => m.projectId))
+    return {
+      userContext: { ...ctx.userContext, projectIds },
+      rooms: Array.from(projectIds).map(id => `project:${id}`),
+    }
+  }
+}
+```
+
+#### Configuring the Manager
+
+```typescript
+import { SSESubscriptionManager } from 'opinionated-machine'
+
+const subscriptionManager = new SSESubscriptionManager<UserCtx, EventMetadata>(
+  {
+    resolveUserContext: async (request) => ({
+      userId: request.user.id,
+      projectIds: new Set(),
+      mutedEventTypes: new Set(),
+    }),
+    resolvers: [
+      new ProjectMembershipResolver(membershipLoader),
+      new MutePreferencesResolver(prefsLoader),
+    ],
+    defaultPolicy: 'deny',
+    resolveUserId: (ctx) => ctx.userId,
+  },
+  { sseRoomManager, sseRoomBroadcaster },
+)
+```
+
+#### Integrating with a Controller
+
+Wire `handleConnect` and `handleDisconnect` into the SSE session lifecycle:
+
+```typescript
+class NotificationController extends AbstractSSEController<Contracts> {
+  private handleStream = buildHandler(contract, {
+    sse: (request, sse) => {
+      const session = sse.start('keepAlive')
+      this.subscriptionManager.handleConnect(session)
+    },
+  }, {
+    onClose: (session) => {
+      this.subscriptionManager.handleDisconnect(session)
+    },
+  })
+}
+```
+
+#### Publishing Events
+
+```typescript
+const result = await subscriptionManager.publish({
+  eventName: 'announcement',
+  data: { message: 'New feature released!' },
+  targetRooms: ['project:123'],
+  metadata: { scope: 'project', projectId: '123' },
+})
+// result: { delivered: 5, filtered: 2 }
+```
+
+#### Refreshing Preferences Mid-Connection
+
+When a user updates preferences (e.g., mutes an event type), refresh their active connections:
+
+```typescript
+// In your REST endpoint handler:
+await prefsLoader.invalidateCacheFor(userId)
+await subscriptionManager.refreshUser(userId)
+```
+
+The manager diffs rooms and joins/leaves as needed — no reconnection required.
+
+#### Pipeline Semantics
+
+- Resolvers are evaluated in array order
+- First `deny` short-circuits — event is not delivered
+- `allow` does not short-circuit — subsequent resolvers can still deny
+- If all resolvers return `defer`, `defaultPolicy` applies (default: `deny`)
+- Resolver `evaluate()` errors are treated as `deny`
+
+#### Multi-Node Support
+
+- Metadata flows through the adapter chain (Redis pub/sub) alongside the SSE message
+- Resolver pipeline runs locally on each node for its own connections
+- Wire format v2 is backward-compatible with v1 (older nodes simply have no metadata)
+- Use `layered-loader` for distributed cache invalidation across nodes
+
+#### Data Loading with layered-loader
+
+`layered-loader` is recommended (not required) for resolver data loading. It provides in-memory → Redis → DB caching with TTL, refresh-ahead, and distributed invalidation:
+
+```typescript
+import { Loader } from 'layered-loader'
+
+const membershipLoader = new Loader<ProjectMembership[]>({
+  inMemoryCache: { cacheType: 'lru-map', ttlInMsecs: 120_000, maxItems: 500 },
+  asyncCache: new RedisCache(redis, { json: true, ttlInMsecs: 900_000 }),
+  dataSources: [membershipDataSource],
+})
+```
+
+#### Testing
+
+Create mock resolvers for unit tests:
+
+```typescript
+const mockResolver = {
+  name: 'mock',
+  evaluate: vi.fn().mockReturnValue({ action: 'allow' }),
+}
+
+const manager = new SSESubscriptionManager(
+  { resolveUserContext: async () => mockContext, resolvers: [mockResolver] },
+  { sseRoomManager, sseRoomBroadcaster },
+)
+```
 
 ### SSE Test Utilities
 

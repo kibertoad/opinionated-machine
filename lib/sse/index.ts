@@ -35,6 +35,7 @@ export { defineEvent, type SSEEventDefinition } from './defineEvent.js'
 export {
   defineRoom,
   InMemoryAdapter,
+  type PreDeliveryFilter,
   type RoomBroadcastOptions,
   type RoomNameResolver,
   type SSERoomAdapter,
@@ -51,3 +52,18 @@ export {
   parseSSEBuffer,
   parseSSEEvents,
 } from './sseParser.js'
+// SSE Subscriptions
+export {
+  defineEventMetadata,
+  type ExtractMetadata,
+  type FilterVerdict,
+  type IncomingEvent,
+  type MetadataGuard,
+  type MetadataGuards,
+  type PublishResult,
+  type ResolverResult,
+  type SSESubscriptionManagerConfig,
+  SSESubscriptionManager,
+  type SubscriptionContext,
+  type SubscriptionResolver,
+} from './subscriptions/index.js'
