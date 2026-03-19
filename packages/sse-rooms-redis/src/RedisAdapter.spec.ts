@@ -188,6 +188,7 @@ describe('RedisAdapter', () => {
         'my-room',
         { event: 'test', data: { foo: 'bar' } },
         'other-node',
+        undefined,
       )
     })
 
@@ -235,6 +236,7 @@ describe('RedisAdapter', () => {
         'chat:general', // Room name extracted correctly
         expect.any(Object),
         'other-node',
+        undefined,
       )
     })
 
@@ -257,7 +259,95 @@ describe('RedisAdapter', () => {
       }
       subClient.simulateMessage('custom:prefix:my-room', JSON.stringify(payload))
 
-      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node')
+      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node', undefined)
+    })
+  })
+
+  describe('v2 wire format with metadata', () => {
+    it('should publish as v2 format when metadata is present', async () => {
+      const message = { event: 'test', data: { foo: 'bar' } }
+      const metadata = { scope: 'project', projectId: '123' }
+
+      await adapter.publish('my-room', message, metadata)
+
+      const publishedJson = (pubClient.publish as ReturnType<typeof vi.fn>).mock.calls[0]![1]
+      const parsed = JSON.parse(publishedJson)
+      expect(parsed).toMatchObject({
+        v: 2,
+        m: message,
+        n: 'test-node-1',
+        meta: metadata,
+      })
+    })
+
+    it('should publish as v1 format when metadata is absent', async () => {
+      const message = { event: 'test', data: { foo: 'bar' } }
+
+      await adapter.publish('my-room', message)
+
+      const publishedJson = (pubClient.publish as ReturnType<typeof vi.fn>).mock.calls[0]![1]
+      const parsed = JSON.parse(publishedJson)
+      expect(parsed).toMatchObject({
+        v: 1,
+        m: message,
+        n: 'test-node-1',
+      })
+      expect(parsed.meta).toBeUndefined()
+    })
+
+    it('should decode v2 messages and pass metadata to handler', async () => {
+      const handler = vi.fn()
+      adapter.onMessage(handler)
+      await adapter.connect()
+
+      const metadata = { scope: 'team', teamId: 'eng' }
+      const payload = {
+        v: 2,
+        m: { event: 'test', data: { foo: 'bar' } },
+        n: 'other-node',
+        meta: metadata,
+      }
+      subClient.simulateMessage('sse:room:my-room', JSON.stringify(payload))
+
+      expect(handler).toHaveBeenCalledWith(
+        'my-room',
+        { event: 'test', data: { foo: 'bar' } },
+        'other-node',
+        metadata,
+      )
+    })
+
+    it('should decode v1 messages with metadata as undefined', async () => {
+      const handler = vi.fn()
+      adapter.onMessage(handler)
+      await adapter.connect()
+
+      const payload = { v: 1, m: { event: 'test', data: {} }, n: 'other-node' }
+      subClient.simulateMessage('sse:room:my-room', JSON.stringify(payload))
+
+      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node', undefined)
+    })
+
+    it('should ignore unknown protocol versions', async () => {
+      const handler = vi.fn()
+      adapter.onMessage(handler)
+      await adapter.connect()
+
+      const payload = { v: 99, m: { event: 'test', data: {} }, n: 'other-node' }
+      subClient.simulateMessage('sse:room:my-room', JSON.stringify(payload))
+
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('should handle v2 messages with meta: undefined', async () => {
+      const handler = vi.fn()
+      adapter.onMessage(handler)
+      await adapter.connect()
+
+      const payload = { v: 2, m: { event: 'test', data: {} }, n: 'other-node', meta: undefined }
+      subClient.simulateMessage('sse:room:my-room', JSON.stringify(payload))
+
+      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node', undefined)
     })
   })
 })

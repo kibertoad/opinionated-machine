@@ -99,13 +99,17 @@ export class RedisAdapter implements SSERoomAdapter {
     this.subscribedChannels.delete(channel)
   }
 
-  async publish(room: string, message: SSEMessage): Promise<void> {
+  async publish(
+    room: string,
+    message: SSEMessage,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
     const channel = this.getChannelName(room)
-    const payload: RedisRoomMessage = {
-      v: 1,
-      m: message,
-      n: this.nodeId,
-    }
+
+    // Use v2 only when metadata is present, v1 otherwise (smaller payload)
+    const payload: RedisRoomMessage = metadata
+      ? { v: 2, m: message, n: this.nodeId, meta: metadata }
+      : { v: 1, m: message, n: this.nodeId }
 
     await this.pubClient.publish(channel, JSON.stringify(payload))
   }
@@ -139,13 +143,14 @@ export class RedisAdapter implements SSERoomAdapter {
     try {
       const payload = JSON.parse(rawMessage) as RedisRoomMessage
 
-      // Validate protocol version
-      if (payload.v !== 1) {
+      // Accept both v1 and v2
+      if (payload.v !== 1 && payload.v !== 2) {
         return // Unknown protocol version, skip
       }
 
       const room = this.getRoomFromChannel(channel)
-      this.messageHandler(room, payload.m, payload.n)
+      const metadata = payload.v === 2 ? payload.meta : undefined
+      this.messageHandler(room, payload.m, payload.n, metadata)
     } catch {
       // Invalid JSON or message format, skip
     }

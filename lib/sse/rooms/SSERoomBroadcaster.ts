@@ -3,7 +3,7 @@ import type { z } from 'zod'
 import type { SSEEventDefinition } from '../defineEvent.js'
 import type { SSEMessage } from '../sseTypes.js'
 import type { SSERoomManager } from './SSERoomManager.js'
-import type { RoomBroadcastOptions } from './types.js'
+import type { PreDeliveryFilter, RoomBroadcastOptions } from './types.js'
 
 /** Maximum number of message IDs to cache per connection for deduplication */
 const MAX_DEDUP_CACHE_SIZE = 1000
@@ -36,14 +36,24 @@ export class SSERoomBroadcaster {
   private readonly _roomManager: SSERoomManager
   private readonly senders: ((connId: string, msg: SSEMessage) => Promise<boolean>)[] = []
   private readonly dedupCache: Map<string, Set<string>> = new Map()
+  private preDeliveryFilter?: PreDeliveryFilter
 
   constructor(deps: { sseRoomManager: SSERoomManager }) {
     this._roomManager = deps.sseRoomManager
 
     // Wire up adapter message handler to forward remote broadcasts to local connections
-    this._roomManager.onRemoteMessage((room, message, _sourceNodeId) => {
-      return this.handleRemoteBroadcast(room, message)
+    this._roomManager.onRemoteMessage((room, message, _sourceNodeId, metadata) => {
+      return this.handleRemoteBroadcast(room, message, metadata)
     })
+  }
+
+  /**
+   * Set a pre-delivery filter that runs before sending to each connection.
+   * Used by SSESubscriptionManager for resolver pipeline evaluation.
+   * Only one filter can be active at a time.
+   */
+  setPreDeliveryFilter(filter: PreDeliveryFilter): void {
+    this.preDeliveryFilter = filter
   }
 
   /**
@@ -78,7 +88,11 @@ export class SSERoomBroadcaster {
     room: string | string[],
     event: SSEEventDefinition<string, T>,
     data: z.input<T>,
-    options?: RoomBroadcastOptions & { id?: string; retry?: number },
+    options?: RoomBroadcastOptions & {
+      id?: string
+      retry?: number
+      metadata?: Record<string, unknown>
+    },
   ): Promise<number> {
     const message: SSEMessage = {
       event: event.event,
@@ -102,7 +116,7 @@ export class SSERoomBroadcaster {
   async broadcastMessage(
     room: string | string[],
     message: SSEMessage,
-    options?: RoomBroadcastOptions,
+    options?: RoomBroadcastOptions & { metadata?: Record<string, unknown> },
   ): Promise<number> {
     const rooms = Array.isArray(room) ? room : [room]
     const connectionIds = this.collectRoomConnections(rooms)
@@ -110,6 +124,11 @@ export class SSERoomBroadcaster {
     // Send to all local connections
     let sent = 0
     for (const connId of connectionIds) {
+      // Check pre-delivery filter if set
+      if (this.preDeliveryFilter) {
+        const allowed = await this.preDeliveryFilter(connId, message, options?.metadata)
+        if (!allowed) continue
+      }
       if (await this.sendToConnection(connId, message)) {
         sent++
       }
@@ -118,7 +137,7 @@ export class SSERoomBroadcaster {
     // Publish to adapter for cross-node propagation (unless local-only)
     if (!options?.local) {
       for (const r of rooms) {
-        await this._roomManager.publish(r, message, options)
+        await this._roomManager.publish(r, message, options, options?.metadata)
       }
     }
 
@@ -169,11 +188,19 @@ export class SSERoomBroadcaster {
    * Handle broadcasts from other nodes (via adapter).
    * Deduplicates messages per-connection based on message ID.
    */
-  private async handleRemoteBroadcast(room: string, message: SSEMessage): Promise<void> {
+  private async handleRemoteBroadcast(
+    room: string,
+    message: SSEMessage,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
     const connectionIds = this._roomManager.getConnectionsInRoom(room)
     for (const connId of connectionIds) {
       if (this.isDuplicateMessage(connId, message.id)) {
         continue
+      }
+      if (this.preDeliveryFilter) {
+        const allowed = await this.preDeliveryFilter(connId, message, metadata)
+        if (!allowed) continue
       }
       await this.sendToConnection(connId, message)
     }

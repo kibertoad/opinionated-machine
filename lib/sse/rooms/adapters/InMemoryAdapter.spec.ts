@@ -27,6 +27,17 @@ describe('InMemoryAdapter', () => {
     await expect(adapter.publish('room-a', { event: 'test', data: {} })).resolves.toBeUndefined()
   })
 
+  it('should accept optional metadata parameter in publish', async () => {
+    const adapter = new InMemoryAdapter()
+    await expect(
+      adapter.publish(
+        'room-a',
+        { event: 'test', data: {} },
+        { scope: 'project', projectId: '123' },
+      ),
+    ).resolves.toBeUndefined()
+  })
+
   it('should store message handler via onMessage', () => {
     const adapter = new InMemoryAdapter()
     const handler = vi.fn()

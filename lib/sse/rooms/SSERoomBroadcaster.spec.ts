@@ -101,6 +101,7 @@ describe('SSERoomBroadcaster', () => {
           event: 'testEvent',
           data: { foo: 'bar' },
         }),
+        undefined,
       )
     })
 
@@ -117,10 +118,12 @@ describe('SSERoomBroadcaster', () => {
       expect(adapter.publish).toHaveBeenCalledWith(
         'room-a',
         expect.objectContaining({ event: 'testEvent' }),
+        undefined,
       )
       expect(adapter.publish).toHaveBeenCalledWith(
         'room-b',
         expect.objectContaining({ event: 'testEvent' }),
+        undefined,
       )
     })
 
@@ -291,6 +294,196 @@ describe('SSERoomBroadcaster', () => {
   describe('roomManager getter', () => {
     it('should expose the underlying room manager', () => {
       expect(broadcaster.roomManager).toBe(roomManager)
+    })
+  })
+
+  describe('pre-delivery filter', () => {
+    it('should call filter before sending to each connection', async () => {
+      const filter = vi.fn().mockReturnValue(true)
+      broadcaster.setPreDeliveryFilter(filter)
+
+      roomManager.join('conn-1', 'room-a')
+      roomManager.join('conn-2', 'room-a')
+
+      await broadcaster.broadcastMessage('room-a', {
+        event: 'testEvent',
+        data: { foo: 'bar' },
+        id: 'msg-1',
+      })
+
+      expect(filter).toHaveBeenCalledTimes(2)
+    })
+
+    it('should skip connection when filter returns false', async () => {
+      const filter = vi.fn().mockImplementation((connId: string) => connId !== 'conn-2')
+      broadcaster.setPreDeliveryFilter(filter)
+
+      roomManager.join('conn-1', 'room-a')
+      roomManager.join('conn-2', 'room-a')
+      roomManager.join('conn-3', 'room-a')
+
+      const sent = await broadcaster.broadcastMessage('room-a', {
+        event: 'testEvent',
+        data: { foo: 'bar' },
+        id: 'msg-1',
+      })
+
+      expect(sent).toBe(2)
+      expect(sendEvent).toHaveBeenCalledTimes(2)
+      expect(sendEvent).not.toHaveBeenCalledWith('conn-2', expect.anything())
+    })
+
+    it('should send to connection when filter returns true', async () => {
+      const filter = vi.fn().mockReturnValue(true)
+      broadcaster.setPreDeliveryFilter(filter)
+
+      roomManager.join('conn-1', 'room-a')
+
+      const sent = await broadcaster.broadcastMessage('room-a', {
+        event: 'testEvent',
+        data: { foo: 'bar' },
+        id: 'msg-1',
+      })
+
+      expect(sent).toBe(1)
+      expect(sendEvent).toHaveBeenCalledTimes(1)
+    })
+
+    it('should pass metadata to filter', async () => {
+      const filter = vi.fn().mockReturnValue(true)
+      broadcaster.setPreDeliveryFilter(filter)
+
+      roomManager.join('conn-1', 'room-a')
+
+      const metadata = { scope: 'project', projectId: '123' }
+      await broadcaster.broadcastMessage(
+        'room-a',
+        {
+          event: 'testEvent',
+          data: { foo: 'bar' },
+          id: 'msg-1',
+        },
+        { metadata },
+      )
+
+      expect(filter).toHaveBeenCalledWith(
+        'conn-1',
+        expect.objectContaining({ event: 'testEvent' }),
+        metadata,
+      )
+    })
+
+    it('should not affect delivery when no filter is set', async () => {
+      // No filter set — default behavior
+      roomManager.join('conn-1', 'room-a')
+      roomManager.join('conn-2', 'room-a')
+
+      const sent = await broadcaster.broadcastMessage('room-a', {
+        event: 'testEvent',
+        data: { foo: 'bar' },
+        id: 'msg-1',
+      })
+
+      expect(sent).toBe(2)
+    })
+
+    it('should apply filter during remote broadcast handling', async () => {
+      const filter = vi.fn().mockImplementation((connId: string) => connId !== 'conn-1')
+      broadcaster.setPreDeliveryFilter(filter)
+
+      roomManager.join('conn-1', 'room-a')
+      roomManager.join('conn-2', 'room-a')
+
+      // Simulate remote broadcast via adapter — the room manager's handler
+      // doesn't return the promise, so we need to await the microtask queue
+      const adapterOnMessage = (adapter.onMessage as ReturnType<typeof vi.fn>).mock.calls[0]![0]
+      adapterOnMessage(
+        'room-a',
+        { event: 'test', data: {}, id: 'remote-1' },
+        'other-node',
+        undefined,
+      )
+      await new Promise((r) => setTimeout(r, 0))
+
+      // conn-1 should be filtered out, conn-2 should receive
+      expect(sendEvent).toHaveBeenCalledTimes(1)
+      expect(sendEvent).toHaveBeenCalledWith('conn-2', expect.objectContaining({ event: 'test' }))
+    })
+
+    it('should pass metadata from remote broadcast to filter', async () => {
+      const filter = vi.fn().mockReturnValue(true)
+      broadcaster.setPreDeliveryFilter(filter)
+
+      roomManager.join('conn-1', 'room-a')
+
+      const metadata = { scope: 'team', teamId: 'eng' }
+      const adapterOnMessage = (adapter.onMessage as ReturnType<typeof vi.fn>).mock.calls[0]![0]
+      adapterOnMessage(
+        'room-a',
+        { event: 'test', data: {}, id: 'remote-1' },
+        'other-node',
+        metadata,
+      )
+      await new Promise((r) => setTimeout(r, 0))
+
+      expect(filter).toHaveBeenCalledWith(
+        'conn-1',
+        expect.objectContaining({ event: 'test' }),
+        metadata,
+      )
+    })
+  })
+
+  describe('metadata in broadcastMessage', () => {
+    it('should pass metadata to adapter.publish via room manager', async () => {
+      roomManager.join('conn-1', 'room-a')
+
+      const metadata = { scope: 'project', projectId: '123' }
+      await broadcaster.broadcastMessage(
+        'room-a',
+        {
+          event: 'testEvent',
+          data: { foo: 'bar' },
+          id: 'msg-1',
+        },
+        { metadata },
+      )
+
+      expect(adapter.publish).toHaveBeenCalledWith(
+        'room-a',
+        expect.objectContaining({ event: 'testEvent' }),
+        metadata,
+      )
+    })
+
+    it('should not pass metadata to adapter when not provided', async () => {
+      roomManager.join('conn-1', 'room-a')
+
+      await broadcaster.broadcastMessage('room-a', {
+        event: 'testEvent',
+        data: { foo: 'bar' },
+        id: 'msg-1',
+      })
+
+      expect(adapter.publish).toHaveBeenCalledWith(
+        'room-a',
+        expect.objectContaining({ event: 'testEvent' }),
+        undefined,
+      )
+    })
+
+    it('should pass metadata from broadcastToRoom options through to broadcastMessage', async () => {
+      const testEvent = { event: 'testEvent' } as any
+      roomManager.join('conn-1', 'room-a')
+
+      const metadata = { scope: 'global' }
+      await broadcaster.broadcastToRoom('room-a', testEvent, { foo: 'bar' }, { metadata })
+
+      expect(adapter.publish).toHaveBeenCalledWith(
+        'room-a',
+        expect.objectContaining({ event: 'testEvent' }),
+        metadata,
+      )
     })
   })
 })

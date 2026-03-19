@@ -65,12 +65,9 @@ export type RedisAdapterConfig = {
 
 /**
  * Message format for Redis pub/sub.
+ * v2 adds optional metadata for subscription filtering.
+ * v1 messages are still accepted on receive for backward compatibility.
  */
-export type RedisRoomMessage = {
-  /** Protocol version for future compatibility */
-  v: 1
-  /** The SSE message to broadcast */
-  m: SSEMessage
-  /** Source node ID */
-  n: string
-}
+export type RedisRoomMessage =
+  | { v: 1; m: SSEMessage; n: string }
+  | { v: 2; m: SSEMessage; n: string; meta?: Record<string, unknown> }
