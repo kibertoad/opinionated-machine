@@ -35,8 +35,9 @@ export {
   type SSEStartOptions,
   // SSE stream message type
   type SSEStreamMessage,
-  // Sync mode handler type
+  // Sync mode handler types
   type SyncModeHandler,
+  type SyncModeReply,
 } from './fastifyRouteTypes.js'
 
 // Route utilities

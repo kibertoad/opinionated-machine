@@ -17,6 +17,7 @@ export {
   type RegisterDualModeRoutesOptions,
   type SSEModeHandler,
   type SyncModeHandler,
+  type SyncModeReply,
 } from '../routes/index.js'
 export {
   AbstractDualModeController,

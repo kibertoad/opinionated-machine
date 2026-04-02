@@ -2206,7 +2206,9 @@ sync: (request, reply) => {
 
 ### Single Sync Handler
 
-Dual-mode contracts use a single `sync` handler that returns the response data. The framework handles content-type negotiation automatically:
+Dual-mode contracts use a single `sync` handler that returns the response data. The framework validates the return value against the contract schema, then sends it. Do not call `reply.send()` — return the data directly instead. Use `reply.code()` to set status codes and `reply.header()` to set response headers.
+
+> **Note:** The `reply` parameter is typed as `SyncModeReply`, which omits `send()` to prevent accidental misuse. The framework handles sending the response after validation.
 
 ```ts
 handlers: buildHandler(chatCompletionContract, {

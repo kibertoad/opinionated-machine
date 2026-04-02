@@ -552,8 +552,22 @@ export type InferSSERequest<Contract extends AnySSEContractDefinition> = Fastify
 // ============================================================================
 
 /**
+ * Reply object available to sync handlers.
+ *
+ * Unlike the full FastifyReply, this omits `send()` because the framework handles
+ * sending the response after validation. Sync handlers should return the response body
+ * directly instead of calling `reply.send()`.
+ *
+ * Use `reply.code()` to set status codes and `reply.header()` to set response headers.
+ */
+export type SyncModeReply = Omit<FastifyReply, 'send'>
+
+/**
  * Handler function for sync (non-streaming) mode.
- * Signature matches Fastify's `(request, reply)` pattern.
+ *
+ * The handler should return the response body directly. The framework will validate it
+ * against the contract schema and send it. Use `reply.code()` / `reply.header()` to set
+ * status codes and headers, but do not call `reply.send()`.
  *
  * @template Params - Path parameters type
  * @template Query - Query string parameters type
@@ -569,7 +583,7 @@ export type SyncModeHandler<
   SyncResponse = unknown,
 > = (
   request: FastifyRequest<{ Params: Params; Querystring: Query; Headers: Headers; Body: Body }>,
-  reply: FastifyReply,
+  reply: SyncModeReply,
 ) => SyncResponse | Promise<SyncResponse>
 
 /**
