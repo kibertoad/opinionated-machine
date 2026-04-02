@@ -1,5 +1,5 @@
 import FastifySSEPlugin from '@fastify/sse'
-import fastify, { type FastifyInstance } from 'fastify'
+import fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { SSETestServer } from '../index.js'
 
 /**
@@ -15,6 +15,10 @@ export type CreateSSETestServerOptions<T> = {
    * Custom setup function that returns resources available via `result.resources`.
    */
   setup?: () => T | Promise<T>
+  /**
+   * Options passed to the Fastify constructor (e.g. logger configuration).
+   */
+  serverOptions?: FastifyServerOptions
 }
 
 export type SSETestServerWithResources<T> = SSETestServer & { resources: T }
@@ -40,7 +44,7 @@ export async function createSSETestServer<T = undefined>(
   options?: CreateSSETestServerOptions<T>,
 ): Promise<SSETestServerWithResources<T>> {
   // Create Fastify app
-  const app = fastify()
+  const app = fastify(options?.serverOptions)
 
   // Register SSE plugin (type assertion needed due to @fastify/sse's module.exports pattern)
   await app.register(FastifySSEPlugin as unknown as Parameters<typeof app.register>[0])
