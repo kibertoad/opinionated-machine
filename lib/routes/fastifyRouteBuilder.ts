@@ -176,6 +176,22 @@ async function handleSyncMode<Contract extends AnyDualModeContractDefinition>(
   // biome-ignore lint/suspicious/noExplicitAny: Handler type depends on contract
   const response = await (handlers as any).sync(request, reply)
 
+  // If the handler already called reply.send() directly (e.g. reply.status(200).send(data)),
+  // the reply is already sent. Skip validation and sending to avoid errors.
+  // Note: this means response validation is bypassed when handlers send replies directly.
+  // Handlers should return the response body and let the framework send it.
+  if (reply.sent) {
+    request.log.warn({
+      msg: 'Sync handler sent response directly, bypassing response validation',
+      tag: 'response_sent_directly',
+      method: request.method,
+      url: request.url,
+      routePath: request.routeOptions?.url,
+      reqId: request.id,
+    })
+    return
+  }
+
   // Get the status code that was set by the handler (defaults to 200)
   const statusCode = reply.statusCode ?? 200
 

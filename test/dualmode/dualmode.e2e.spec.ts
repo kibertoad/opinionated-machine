@@ -699,6 +699,79 @@ describe('Dual-Mode JSON Response Validation', () => {
   })
 })
 
+describe('Dual-Mode sync handler that calls reply.send() directly', () => {
+  it(
+    'handles reply.sent gracefully when handler calls reply.send() directly',
+    { timeout: 10000 },
+    async () => {
+      const container = createContainer({ injectionMode: 'PROXY' })
+      const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+      context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
+
+      const controller: GenericDualModeController = context.diContainer.resolve(
+        'genericDualModeController',
+      )
+
+      const replyDotSendContract = buildContract({
+        method: 'post',
+        pathResolver: () => '/api/reply-send-test',
+        requestPathParamsSchema: z.object({}),
+        requestQuerySchema: z.object({}),
+        requestHeaderSchema: z.object({}),
+        requestBodySchema: z.object({ data: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { result: z.object({ success: z.boolean() }) },
+      })
+
+      const route = buildFastifyRoute(
+        controller,
+        buildHandler(replyDotSendContract, {
+          // Simulates the common Fastify pattern where handler calls reply.send() directly
+          // instead of returning the response body. This would be a type error with SyncModeReply
+          // (which omits send()), so we cast to any to test the runtime safety net.
+          sync: ((request: any, reply: any) => {
+            reply.send({ result: request.body.data })
+          }) as any,
+          sse: (_request, sse) => {
+            sse.start('autoClose')
+          },
+        }),
+      )
+
+      const server = await createSSETestServer(
+        (app) => {
+          app.route(route)
+        },
+        {
+          configureApp: (app) => {
+            app.setValidatorCompiler(validatorCompiler)
+            app.setSerializerCompiler(serializerCompiler)
+          },
+          setup: () => ({ context }),
+        },
+      )
+
+      const response = await server.app.inject({
+        method: 'post',
+        url: '/api/reply-send-test',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        payload: { data: 'hello' },
+      })
+
+      // Should succeed with 200 even though handler used reply.send() instead of returning
+      expect(response.statusCode).toBe(200)
+      const body = JSON.parse(response.body)
+      expect(body.result).toBe('hello')
+
+      await context.destroy()
+      await server.close()
+    },
+  )
+})
+
 describe('Dual-Mode Controller Methods', () => {
   it('buildSSERoutes returns empty object', async () => {
     const container = createContainer({ injectionMode: 'PROXY' })

@@ -1,5 +1,5 @@
 import { buildSseContract } from '@lokalise/api-contracts'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { z } from 'zod/v4'
 import {
   AbstractDualModeController,
@@ -8,6 +8,7 @@ import {
   type BuildFastifySSERoutesReturnType,
   type DualModeRouteHandler,
   type SSERouteHandler,
+  type SyncModeReply,
 } from '../../index.js'
 import { buildFastifyRoute } from './fastifyRouteBuilder.ts'
 import { buildHandler } from './fastifyRouteTypes.ts'
@@ -301,6 +302,49 @@ describe('buildFastifyRoute', () => {
         const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
         expect(routeOptions).toBeDefined()
+      })
+    })
+
+    it('should not have send() on SyncModeReply', () => {
+      expectTypeOf<SyncModeReply>().not.toHaveProperty('send')
+    })
+
+    it('should return SyncModeReply from fluent setters', () => {
+      expectTypeOf<SyncModeReply['code']>().returns.toEqualTypeOf<SyncModeReply>()
+      expectTypeOf<SyncModeReply['status']>().returns.toEqualTypeOf<SyncModeReply>()
+      expectTypeOf<SyncModeReply['header']>().returns.toEqualTypeOf<SyncModeReply>()
+      expectTypeOf<SyncModeReply['headers']>().returns.toEqualTypeOf<SyncModeReply>()
+      expectTypeOf<SyncModeReply['removeHeader']>().returns.toEqualTypeOf<SyncModeReply>()
+      expectTypeOf<SyncModeReply['type']>().returns.toEqualTypeOf<SyncModeReply>()
+      expectTypeOf<SyncModeReply['serializer']>().returns.toEqualTypeOf<SyncModeReply>()
+      expectTypeOf<SyncModeReply['hijack']>().returns.toEqualTypeOf<SyncModeReply>()
+      expectTypeOf<SyncModeReply['removeTrailer']>().returns.toEqualTypeOf<SyncModeReply>()
+    })
+
+    it('should preserve non-fluent FastifyReply properties', () => {
+      expectTypeOf<SyncModeReply>().toHaveProperty('statusCode')
+      expectTypeOf<SyncModeReply>().toHaveProperty('raw')
+      expectTypeOf<SyncModeReply>().toHaveProperty('elapsedTime')
+      expectTypeOf<SyncModeReply>().toHaveProperty('getHeader')
+      expectTypeOf<SyncModeReply>().toHaveProperty('hasHeader')
+    })
+
+    it('should reject reply.send() via chained fluent setters at compile time', () => {
+      buildHandler(dualModeGetContract, {
+        sync: (_req, reply) => {
+          // @ts-expect-error - send() should not exist after code()
+          reply.code(200).send({ result: 'ok' })
+          // @ts-expect-error - send() should not exist after status()
+          reply.status(200).send({ result: 'ok' })
+          // @ts-expect-error - send() should not exist after header()
+          reply.header('x-test', 'value').send({ result: 'ok' })
+          // @ts-expect-error - send() should not exist after type()
+          reply.type('application/json').send({ result: 'ok' })
+          // @ts-expect-error - send() should not exist after multi-chain
+          reply.code(201).header('x-test', 'value').type('application/json').send({ result: 'ok' })
+          return { result: 'ok' }
+        },
+        sse: async (_req, _sse) => await Promise.resolve(),
       })
     })
   })
