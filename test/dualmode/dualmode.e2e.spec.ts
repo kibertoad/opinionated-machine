@@ -1,3 +1,4 @@
+import { Writable } from 'node:stream'
 import {
   type AnyDualModeContractDefinition,
   type AnySSEContractDefinition,
@@ -738,6 +739,23 @@ describe('Dual-Mode sync handler that calls reply.send() directly', () => {
         }),
       )
 
+      // Capture log output to detect Fastify's "reply.sent = true" error.
+      // Without the reply.sent guard, the handler returns undefined which fails
+      // response validation. The error is thrown after reply.send() was already called,
+      // so Fastify can't send a 500 — instead it logs an error-level message:
+      // "Promise errored, but reply.sent = true was set"
+      const logs: Record<string, unknown>[] = []
+      const logStream = new Writable({
+        write(chunk, _encoding, callback) {
+          try {
+            logs.push(JSON.parse(chunk.toString()))
+          } catch {
+            // ignore non-JSON lines
+          }
+          callback()
+        },
+      })
+
       const server = await createSSETestServer(
         (app) => {
           app.route(route)
@@ -748,6 +766,7 @@ describe('Dual-Mode sync handler that calls reply.send() directly', () => {
             app.setSerializerCompiler(serializerCompiler)
           },
           setup: () => ({ context }),
+          serverOptions: { logger: { stream: logStream, level: 'error' } },
         },
       )
 
@@ -761,10 +780,19 @@ describe('Dual-Mode sync handler that calls reply.send() directly', () => {
         payload: { data: 'hello' },
       })
 
-      // Should succeed with 200 even though handler used reply.send() instead of returning
+      // Allow async error logging to flush
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
       expect(response.statusCode).toBe(200)
       const body = JSON.parse(response.body)
       expect(body.result).toBe('hello')
+
+      // Without the reply.sent guard, Fastify logs an error because the validation
+      // error is thrown after reply.send() was already called
+      const doubleSendErrors = logs.filter(
+        (l) => typeof l.msg === 'string' && l.msg.includes('reply.sent'),
+      )
+      expect(doubleSendErrors).toHaveLength(0)
 
       await context.destroy()
       await server.close()
