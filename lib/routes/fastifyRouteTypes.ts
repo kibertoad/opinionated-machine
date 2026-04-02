@@ -558,9 +558,32 @@ export type InferSSERequest<Contract extends AnySSEContractDefinition> = Fastify
  * sending the response after validation. Sync handlers should return the response body
  * directly instead of calling `reply.send()`.
  *
+ * Fluent setters (code, status, header, etc.) are overridden to return SyncModeReply
+ * so that chaining `.send()` after them is a compile-time error.
+ *
  * Use `reply.code()` to set status codes and `reply.header()` to set response headers.
  */
-export type SyncModeReply = Omit<FastifyReply, 'send'>
+// Extracts keys of FastifyReply whose return type extends FastifyReply (fluent setters).
+// If Fastify adds a new fluent method, it will appear in this type automatically.
+type FastifyReplyFluentKeys = {
+  [K in keyof FastifyReply]: FastifyReply[K] extends (...args: never[]) => infer R
+    ? [R] extends [FastifyReply]
+      ? K
+      : never
+    : never
+}[keyof FastifyReply]
+
+// Replaces FastifyReply return types with NewReturn in a function type.
+// Preserves the original parameter signatures from FastifyReply.
+type ReplaceReturn<F, NewReturn> = F extends (...args: infer A) => FastifyReply
+  ? (...args: A) => NewReturn
+  : F
+
+// Automatically transforms all fluent FastifyReply methods to return SyncModeReply
+// instead of FastifyReply, keeping parameter signatures in sync with Fastify.
+export type SyncModeReply = Omit<FastifyReply, 'send' | FastifyReplyFluentKeys> & {
+  [K in Exclude<FastifyReplyFluentKeys, 'send'>]: ReplaceReturn<FastifyReply[K], SyncModeReply>
+}
 
 /**
  * Handler function for sync (non-streaming) mode.

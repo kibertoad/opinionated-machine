@@ -181,6 +181,14 @@ async function handleSyncMode<Contract extends AnyDualModeContractDefinition>(
   // Note: this means response validation is bypassed when handlers send replies directly.
   // Handlers should return the response body and let the framework send it.
   if (reply.sent) {
+    request.log.warn({
+      msg: 'Sync handler sent response directly, bypassing response validation',
+      tag: 'response_sent_directly',
+      method: request.method,
+      url: request.url,
+      routePath: request.routeOptions?.url,
+      reqId: request.id,
+    })
     return
   }
 
