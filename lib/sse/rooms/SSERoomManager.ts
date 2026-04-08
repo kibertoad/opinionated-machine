@@ -65,12 +65,12 @@ export class SSERoomManager {
     this.nodeId = config.nodeId ?? randomUUID()
 
     // Set up adapter message handler
-    this.adapter.onMessage((room, message, sourceNodeId) => {
+    this.adapter.onMessage((room, message, sourceNodeId, metadata) => {
       // Skip messages from this node (we already handled them locally)
       if (sourceNodeId === this.nodeId) {
         return
       }
-      this.messageHandler?.(room, message, sourceNodeId)
+      return this.messageHandler?.(room, message, sourceNodeId, metadata)
     })
   }
 
@@ -259,11 +259,16 @@ export class SSERoomManager {
    * @param message - The SSE message to broadcast
    * @param options - Broadcast options
    */
-  async publish(room: string, message: SSEMessage, options?: RoomBroadcastOptions): Promise<void> {
+  async publish(
+    room: string,
+    message: SSEMessage,
+    options?: RoomBroadcastOptions,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
     if (options?.local) {
       return // Skip adapter for local-only broadcasts
     }
 
-    await this.adapter.publish(room, message)
+    await this.adapter.publish(room, message, metadata)
   }
 }
