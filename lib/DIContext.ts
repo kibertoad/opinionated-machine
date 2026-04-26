@@ -17,6 +17,7 @@ import {
   type RegisterDualModeRoutesOptions,
   type RegisterSSERoutesOptions,
 } from './routes/index.js'
+import type { AbstractApiController } from './api-contracts/AbstractApiController.js'
 import type { AbstractSSEController } from './sse/AbstractSSEController.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
@@ -54,6 +55,8 @@ export class DIContext<
   private readonly sseControllerNames: string[]
   // Dual-mode controller dependency names (resolved from container to preserve singletons)
   private readonly dualModeControllerNames: string[]
+  // ApiContract controller dependency names (resolved from container to preserve singletons)
+  private readonly apiControllerNames: string[]
   private readonly appConfig: Config
 
   constructor(
@@ -77,6 +80,7 @@ export class DIContext<
     this.controllerResolvers = []
     this.sseControllerNames = []
     this.dualModeControllerNames = []
+    this.apiControllerNames = []
   }
 
   private registerModule(
@@ -110,6 +114,12 @@ export class DIContext<
         } else if (resolver.isSSEController) {
           // SSE controller: register in DI container and track name for route registration
           this.sseControllerNames.push(name)
+          // @ts-expect-error we can't really ensure type-safety here
+          targetDiConfig[name] = resolver
+          // @ts-expect-error isApiController is a custom property on the resolver
+        } else if (resolver.isApiController) {
+          // ApiContract controller: register in DI container and track name for route registration
+          this.apiControllerNames.push(name)
           // @ts-expect-error we can't really ensure type-safety here
           targetDiConfig[name] = resolver
         } else {
@@ -183,6 +193,15 @@ export class DIContext<
       for (const route of Object.values(routes)) {
         // Cast needed: GET/DELETE routes have body:undefined, POST/PATCH have body:unknown
         // The union is incompatible with app.route() due to handler contravariance
+        app.route(route as RouteType)
+      }
+    }
+
+    for (const controllerName of this.apiControllerNames) {
+      // biome-ignore lint/suspicious/noExplicitAny: ApiContract types are controller-specific
+      const controller: AbstractApiController<any> = this.diContainer.resolve(controllerName)
+      const routes = controller.buildRoutes()
+      for (const route of routes) {
         app.route(route as RouteType)
       }
     }
