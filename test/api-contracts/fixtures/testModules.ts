@@ -8,7 +8,11 @@ import {
   SSERoomManager,
 } from '../../../index.js'
 import { asApiControllerClass } from '../../../lib/api-contracts/asApiControllerClass.ts'
-import { TestApiController, TestApiRoomController } from './testControllers.ts'
+import {
+  TestApiController,
+  TestApiErrorController,
+  TestApiRoomController,
+} from './testControllers.ts'
 
 // ============================================================================
 // Non-SSE + dual-mode module
@@ -43,6 +47,24 @@ export type TestApiRoomModuleDependencies = {
 
 export type TestApiRoomModuleControllers = {
   testApiRoomController: TestApiRoomController
+}
+
+export type TestApiErrorModuleControllers = {
+  testApiErrorController: TestApiErrorController
+}
+
+export class TestApiErrorModule extends AbstractModule<object> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<object> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testApiErrorController: asApiControllerClass(TestApiErrorController, { diOptions }),
+    }
+  }
 }
 
 export class TestApiRoomModule extends AbstractModule<TestApiRoomModuleDependencies> {

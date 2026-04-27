@@ -3,7 +3,14 @@ import {
   apiCreateUserContract,
   apiFeedContract,
   apiGetUserContract,
+  apiHeaderFailContract,
+  apiHeaderSuccessContract,
   apiRoomStreamContract,
+  apiSseNoStartContract,
+  apiSsePostErrorContract,
+  apiSsePreErrorContract,
+  apiSseRespondContract,
+  apiValidationFailContract,
 } from './testContracts.ts'
 
 // ============================================================================
@@ -91,5 +98,53 @@ export class TestApiRoomController extends AbstractApiController<TestApiRoomCont
 
   public get testRoomsEnabled(): boolean {
     return this._internalRoomManager !== undefined
+  }
+}
+
+// ============================================================================
+// Error-path controller
+// ============================================================================
+
+type TestApiErrorContracts = {
+  sseRespond: typeof apiSseRespondContract
+  sseNoStart: typeof apiSseNoStartContract
+  ssePreError: typeof apiSsePreErrorContract
+  ssePostError: typeof apiSsePostErrorContract
+  validationFail: typeof apiValidationFailContract
+  headerSuccess: typeof apiHeaderSuccessContract
+  headerFail: typeof apiHeaderFailContract
+}
+
+export class TestApiErrorController extends AbstractApiController<TestApiErrorContracts> {
+  public buildApiRoutes() {
+    return {
+      sseRespond: buildApiHandler(apiSseRespondContract, (_request, sse) => {
+        sse.respond(404, { error: 'not found' })
+      }),
+
+      sseNoStart: buildApiHandler(apiSseNoStartContract, () => {
+        // intentionally does nothing — exercises the no-start/no-respond error path
+      }),
+
+      ssePreError: buildApiHandler(apiSsePreErrorContract, () => {
+        throw Object.assign(new Error('pre-start error'), { httpStatusCode: 422 })
+      }),
+
+      ssePostError: buildApiHandler(apiSsePostErrorContract, (_request, sse) => {
+        sse.start('autoClose')
+        throw new Error('post-start error')
+      }),
+
+      validationFail: buildApiHandler(apiValidationFailContract, () => ({
+        value: 123 as unknown as string,
+      })),
+
+      headerSuccess: buildApiHandler(apiHeaderSuccessContract, (_request, reply) => {
+        reply.header('x-api-version', '1.0')
+        return { ok: true }
+      }),
+
+      headerFail: buildApiHandler(apiHeaderFailContract, () => ({ ok: true })),
+    }
   }
 }
