@@ -1,4 +1,3 @@
-import type { ApiControllerSseConfig } from '../../../lib/api-contracts/AbstractApiController.ts'
 import { AbstractApiController, buildApiHandler } from '../../../lib/api-contracts/index.ts'
 import {
   apiCreateUserContract,
@@ -25,7 +24,7 @@ export class TestApiController extends AbstractApiController<TestApiContracts> {
         name: 'Alice',
       })),
 
-      createUser: buildApiHandler(apiCreateUserContract, async (request, reply) => {
+      createUser: buildApiHandler(apiCreateUserContract, (request, reply) => {
         reply.code(201)
         return { id: '1', name: request.body.name }
       }),
@@ -53,13 +52,9 @@ type TestApiRoomContracts = {
 }
 
 export class TestApiRoomController extends AbstractApiController<TestApiRoomContracts> {
-  constructor(deps: object, sseConfig?: ApiControllerSseConfig) {
-    super(deps, sseConfig)
-  }
-
   public buildApiRoutes() {
     return {
-      roomStream: buildApiHandler(apiRoomStreamContract, async (request, sse) => {
+      roomStream: buildApiHandler(apiRoomStreamContract, (request, sse) => {
         const { roomId } = request.params
         const session = sse.start('keepAlive')
         session.rooms.join(roomId)
@@ -91,7 +86,7 @@ export class TestApiRoomController extends AbstractApiController<TestApiRoomCont
     data: { from: string; text: string },
   ): Promise<number> {
     if (!this._internalRoomBroadcaster) return 0
-    return this._internalRoomBroadcaster.broadcastMessage(room, { event: eventName, data })
+    return await this._internalRoomBroadcaster.broadcastMessage(room, { event: eventName, data })
   }
 
   public get testRoomsEnabled(): boolean {

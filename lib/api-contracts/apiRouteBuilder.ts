@@ -1,23 +1,23 @@
 import { randomUUID } from 'node:crypto'
 import {
-  ContractNoBody,
   type ApiContract,
-  type SseSchemaByEventName,
-  getSuccessResponseSchema,
+  type ApiContractResponse,
+  ContractNoBody,
   getSseSchemaByEventName,
+  getSuccessResponseSchema,
   hasAnySuccessSseResponse,
   isAnyOfResponses,
   isBlobResponse,
   isSseResponse,
   isTextResponse,
   mapApiContractToPath,
+  type SseSchemaByEventName,
   SUCCESSFUL_HTTP_STATUS_CODES,
 } from '@lokalise/api-contracts'
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
 import type {
   SSEContext,
-  SSEHandlerResult,
   SSESession,
   SSESessionMode,
   SSEStartOptions,
@@ -45,24 +45,21 @@ export type ApiRouteInternalRoomContext = {
 
 type ResponseMode = 'non-sse' | 'sse' | 'dual'
 
-function getContractResponseMode(contract: ApiContract): ResponseMode {
-  const hasSse = hasAnySuccessSseResponse(contract)
-  if (!hasSse) return 'non-sse'
+function isSuccessResponseDual(value: ApiContractResponse): boolean {
+  if (value === ContractNoBody || isTextResponse(value) || isBlobResponse(value)) return true
+  if (!isSseResponse(value) && !isAnyOfResponses(value)) return true
+  if (isAnyOfResponses(value)) {
+    return value.responses.some((response: ApiContractResponse) => !isSseResponse(response))
+  }
+  return false
+}
 
+function getContractResponseMode(contract: ApiContract): ResponseMode {
+  if (!hasAnySuccessSseResponse(contract)) return 'non-sse'
   for (const code of SUCCESSFUL_HTTP_STATUS_CODES) {
     const value = contract.responsesByStatusCode[code]
-    if (!value) continue
-
-    if (value === ContractNoBody || isTextResponse(value) || isBlobResponse(value)) return 'dual'
-    if (!isSseResponse(value) && !isAnyOfResponses(value)) return 'dual'
-
-    if (isAnyOfResponses(value)) {
-      for (const response of value.responses) {
-        if (!isSseResponse(response)) return 'dual'
-      }
-    }
+    if (value && isSuccessResponseDual(value)) return 'dual'
   }
-
   return 'sse'
 }
 
@@ -72,7 +69,8 @@ function buildSSERouteConfig(
   if (!options?.serializer && options?.heartbeatInterval === undefined) return true
   const sseConfig: { serializer?: (data: unknown) => string; heartbeatInterval?: number } = {}
   if (options.serializer) sseConfig.serializer = options.serializer
-  if (options.heartbeatInterval !== undefined) sseConfig.heartbeatInterval = options.heartbeatInterval
+  if (options.heartbeatInterval !== undefined)
+    sseConfig.heartbeatInterval = options.heartbeatInterval
   return sseConfig
 }
 
@@ -145,7 +143,7 @@ async function handleApiSyncRoute(
     reply.type('application/json')
   }
 
-  return reply.send(response) as unknown as void
+  return reply.send(response) as unknown as undefined
 }
 
 // ============================================================================
@@ -271,10 +269,10 @@ function buildApiSSEContext(
       return session
     },
 
-    // biome-ignore lint/suspicious/noExplicitAny: respond typing is enforced by contract at call site
     respond: ((code: number, body: unknown) => {
       responseData = { code, body }
       return { _type: 'respond' as const, code, body }
+      // biome-ignore lint/suspicious/noExplicitAny: respond typing is enforced by contract at call site
     }) as any,
 
     sendHeaders: () => {
@@ -459,12 +457,19 @@ function buildApiRouteCore<Contract extends ApiContract>(
       url,
       sse: buildSSERouteConfig(options),
       schema: baseSchema,
-      handler: async (request, reply) => {
+      handler: (request, reply) => {
         const responseMode = determineMode(request.headers.accept, defaultMode)
         if (responseMode === 'json') {
           return handleApiSyncRoute(contract, dualHandlers.nonSse, request, reply)
         }
-        return handleApiSseRoute(dualHandlers.sse, eventSchemas, options, request, reply, roomContext)
+        return handleApiSseRoute(
+          dualHandlers.sse,
+          eventSchemas,
+          options,
+          request,
+          reply,
+          roomContext,
+        )
       },
     }
     if (options?.preHandler) routeOptions.preHandler = options.preHandler

@@ -1,11 +1,11 @@
 import type {
   ApiContract,
+  ContractNoBody,
   ContractResponseMode,
   InferNonSseSuccessResponses,
   InferSseSuccessResponses,
   PayloadApiContract,
 } from '@lokalise/api-contracts'
-import { ContractNoBody } from '@lokalise/api-contracts'
 import type { FastifyRequest } from 'fastify'
 import type { z } from 'zod/v4'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
@@ -23,14 +23,13 @@ import type {
 type InferOptSchema<T, Fallback = unknown> =
   NonNullable<T> extends z.ZodType ? z.output<NonNullable<T>> : Fallback
 
-type InferApiBodyType<Contract extends ApiContract> =
-  Contract extends PayloadApiContract
-    ? Contract['requestBodySchema'] extends typeof ContractNoBody
-      ? undefined
-      : NonNullable<Contract['requestBodySchema']> extends z.ZodType
-        ? z.output<NonNullable<Contract['requestBodySchema']>>
-        : undefined
-    : undefined
+type InferApiBodyType<Contract extends ApiContract> = Contract extends PayloadApiContract
+  ? Contract['requestBodySchema'] extends typeof ContractNoBody
+    ? undefined
+    : NonNullable<Contract['requestBodySchema']> extends z.ZodType
+      ? z.output<NonNullable<Contract['requestBodySchema']>>
+      : undefined
+  : undefined
 
 /**
  * Infer the FastifyRequest type from an ApiContract.
@@ -87,12 +86,13 @@ export type ApiSseHandler<Contract extends ApiContract> = (
  * - `'sse'`     — bare `ApiSseHandler` function
  * - `'dual'`    — `{ nonSse, sse }` object, branched by `Accept` header
  */
-export type InferApiHandler<Contract extends ApiContract> =
-  [ContractResponseMode<Contract['responsesByStatusCode']>] extends ['dual']
-    ? { nonSse: ApiNonSseHandler<Contract>; sse: ApiSseHandler<Contract> }
-    : [ContractResponseMode<Contract['responsesByStatusCode']>] extends ['sse']
-      ? ApiSseHandler<Contract>
-      : ApiNonSseHandler<Contract>
+export type InferApiHandler<Contract extends ApiContract> = [
+  ContractResponseMode<Contract['responsesByStatusCode']>,
+] extends ['dual']
+  ? { nonSse: ApiNonSseHandler<Contract>; sse: ApiSseHandler<Contract> }
+  : [ContractResponseMode<Contract['responsesByStatusCode']>] extends ['sse']
+    ? ApiSseHandler<Contract>
+    : ApiNonSseHandler<Contract>
 
 // ============================================================================
 // Route Options

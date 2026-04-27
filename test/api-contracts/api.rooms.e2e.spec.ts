@@ -53,17 +53,21 @@ describe('AbstractApiController — Rooms E2E', () => {
   })
 
   describe('session.rooms.join', () => {
-    it('joins the room derived from the path parameter on connect', { timeout: 10000 }, async () => {
-      const { client, serverConnection } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/general/stream',
-        { awaitServerConnection: { controller } },
-      )
+    it(
+      'joins the room derived from the path parameter on connect',
+      { timeout: 10000 },
+      async () => {
+        const { client, serverConnection } = await SSEHttpClient.connect(
+          server.baseUrl,
+          '/api/rooms/general/stream',
+          { awaitServerConnection: { controller } },
+        )
 
-      expect(controller.testGetConnectionsInRoom('general')).toContain(serverConnection.id)
+        expect(controller.testGetConnectionsInRoom('general')).toContain(serverConnection.id)
 
-      client.close()
-    })
+        client.close()
+      },
+    )
 
     it('does not add the connection to unrelated rooms', { timeout: 10000 }, async () => {
       const { client, serverConnection } = await SSEHttpClient.connect(

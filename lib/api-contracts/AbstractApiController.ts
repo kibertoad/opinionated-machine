@@ -9,8 +9,8 @@ import type { SSEMessage } from '../sse/sseTypes.ts'
 import type { ApiRouteHandler, BuildApiRoutesReturnType } from './apiHandlerTypes.ts'
 import {
   _buildApiRouteWithRooms,
-  buildApiRoute,
   type ApiRouteInternalRoomContext,
+  buildApiRoute,
 } from './apiRouteBuilder.ts'
 
 export type ApiControllerSseConfig = {

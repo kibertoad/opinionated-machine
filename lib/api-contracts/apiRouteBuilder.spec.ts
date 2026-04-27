@@ -1,8 +1,8 @@
 import {
+  anyOfResponses,
   ContractNoBody,
   defineApiContract,
   sseResponse,
-  anyOfResponses,
 } from '@lokalise/api-contracts'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod/v4'
@@ -78,11 +78,9 @@ describe('buildApiHandler', () => {
 
   it('carries options when provided', () => {
     const preHandler = vi.fn()
-    const handler = buildApiHandler(
-      getUserContract,
-      async () => ({ id: '1', name: 'Alice' }),
-      { preHandler },
-    )
+    const handler = buildApiHandler(getUserContract, async () => ({ id: '1', name: 'Alice' }), {
+      preHandler,
+    })
     expect(handler.options?.preHandler).toBe(preHandler)
   })
 })
@@ -120,9 +118,7 @@ describe('buildApiRoute — non-SSE', () => {
   })
 
   it('excludes body schema for ContractNoBody', () => {
-    const routeOptions = buildApiRoute(
-      buildApiHandler(deleteUserContract, async () => undefined),
-    )
+    const routeOptions = buildApiRoute(buildApiHandler(deleteUserContract, async () => undefined))
     expect((routeOptions.schema as { body?: unknown })?.body).toBeUndefined()
   })
 
@@ -136,11 +132,7 @@ describe('buildApiRoute — non-SSE', () => {
   it('attaches preHandler when provided in options', () => {
     const preHandler = vi.fn()
     const routeOptions = buildApiRoute(
-      buildApiHandler(
-        getUserContract,
-        async () => ({ id: '1', name: 'Alice' }),
-        { preHandler },
-      ),
+      buildApiHandler(getUserContract, async () => ({ id: '1', name: 'Alice' }), { preHandler }),
     )
     expect(routeOptions.preHandler).toBe(preHandler)
   })
@@ -153,7 +145,7 @@ describe('buildApiRoute — non-SSE', () => {
 describe('buildApiRoute — SSE-only', () => {
   it('produces a route with sse: true', () => {
     const routeOptions = buildApiRoute(
-      buildApiHandler(sseOnlyContract, async (_request, sse) => {
+      buildApiHandler(sseOnlyContract, (_request, sse) => {
         sse.start('keepAlive')
       }),
     )
@@ -162,7 +154,7 @@ describe('buildApiRoute — SSE-only', () => {
 
   it('produces correct url', () => {
     const routeOptions = buildApiRoute(
-      buildApiHandler(sseOnlyContract, async (_request, sse) => {
+      buildApiHandler(sseOnlyContract, (_request, sse) => {
         sse.start('keepAlive')
       }),
     )
@@ -179,7 +171,7 @@ describe('buildApiRoute — dual-mode', () => {
     const routeOptions = buildApiRoute(
       buildApiHandler(dualModeContract, {
         nonSse: async () => ({ id: '1', name: 'Alice' }),
-        sse: async (_request, sse) => {
+        sse: (_request, sse) => {
           sse.start('autoClose')
         },
       }),
@@ -191,7 +183,7 @@ describe('buildApiRoute — dual-mode', () => {
     const routeOptions = buildApiRoute(
       buildApiHandler(dualModeContract, {
         nonSse: async () => ({ id: '1', name: 'Alice' }),
-        sse: async (_request, sse) => {
+        sse: (_request, sse) => {
           sse.start('autoClose')
         },
       }),
@@ -204,7 +196,7 @@ describe('buildApiRoute — dual-mode', () => {
     const routeOptions = buildApiRoute(
       buildApiHandler(dualModeContract, {
         nonSse: async () => ({ id: '1', name: 'Alice' }),
-        sse: async (_request, sse) => {
+        sse: (_request, sse) => {
           sse.start('autoClose')
         },
       }),
@@ -223,7 +215,13 @@ describe('buildApiRoute — SSE config via options', () => {
   it('passes custom serializer into sse config', () => {
     const serializer = (data: unknown) => JSON.stringify(data)
     const routeOptions = buildApiRoute(
-      buildApiHandler(sseOnlyContract, async (_r, sse) => { sse.start('keepAlive') }, { serializer }),
+      buildApiHandler(
+        sseOnlyContract,
+        (_r, sse) => {
+          sse.start('keepAlive')
+        },
+        { serializer },
+      ),
     )
     expect((routeOptions as { sse?: unknown }).sse).toEqual({ serializer })
   })
@@ -232,7 +230,9 @@ describe('buildApiRoute — SSE config via options', () => {
     const routeOptions = buildApiRoute(
       buildApiHandler(
         sseOnlyContract,
-        async (_r, sse) => { sse.start('keepAlive') },
+        (_r, sse) => {
+          sse.start('keepAlive')
+        },
         { heartbeatInterval: 10000 },
       ),
     )

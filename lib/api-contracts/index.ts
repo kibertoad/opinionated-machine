@@ -9,5 +9,5 @@ export type {
   InferApiRequest,
 } from './apiHandlerTypes.ts'
 export { buildApiHandler, buildApiRoute } from './apiRouteBuilder.ts'
-export { asApiControllerClass } from './asApiControllerClass.ts'
 export type { ApiControllerModuleOptions } from './asApiControllerClass.ts'
+export { asApiControllerClass } from './asApiControllerClass.ts'
