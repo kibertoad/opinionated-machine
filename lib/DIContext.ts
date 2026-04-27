@@ -9,6 +9,7 @@ import type { FastifyInstance, RouteOptions } from 'fastify'
 import { merge } from 'ts-deepmerge'
 import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
+import type { AbstractApiController } from './api-contracts/AbstractApiController.js'
 import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configUtils.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
 import type { AbstractDualModeController } from './dualmode/AbstractDualModeController.js'
@@ -54,6 +55,8 @@ export class DIContext<
   private readonly sseControllerNames: string[]
   // Dual-mode controller dependency names (resolved from container to preserve singletons)
   private readonly dualModeControllerNames: string[]
+  // ApiContract controller dependency names (resolved from container to preserve singletons)
+  private readonly apiControllerNames: string[]
   private readonly appConfig: Config
 
   constructor(
@@ -77,6 +80,31 @@ export class DIContext<
     this.controllerResolvers = []
     this.sseControllerNames = []
     this.dualModeControllerNames = []
+    this.apiControllerNames = []
+  }
+
+  private registerControllers(
+    // biome-ignore lint/suspicious/noExplicitAny: controller resolver properties are duck-typed
+    controllers: Record<string, any>,
+    targetDiConfig: NameAndRegistrationPair<Dependencies>,
+  ): void {
+    for (const [name, resolver] of Object.entries(controllers)) {
+      if (resolver.isDualModeController) {
+        this.dualModeControllerNames.push(name)
+        // @ts-expect-error we can't really ensure type-safety here
+        targetDiConfig[name] = resolver
+      } else if (resolver.isSSEController) {
+        this.sseControllerNames.push(name)
+        // @ts-expect-error we can't really ensure type-safety here
+        targetDiConfig[name] = resolver
+      } else if (resolver.isApiController) {
+        this.apiControllerNames.push(name)
+        // @ts-expect-error we can't really ensure type-safety here
+        targetDiConfig[name] = resolver
+      } else {
+        this.controllerResolvers.push(resolver as Resolver<unknown>)
+      }
+    }
   }
 
   private registerModule(
@@ -98,25 +126,7 @@ export class DIContext<
 
     if (isPrimaryModule && resolveControllers) {
       const controllers = module.resolveControllers(this.options)
-
-      for (const [name, resolver] of Object.entries(controllers)) {
-        // @ts-expect-error isDualModeController is a custom property on the resolver
-        if (resolver.isDualModeController) {
-          // Dual-mode controller: register in DI container and track name for route registration
-          this.dualModeControllerNames.push(name)
-          // @ts-expect-error we can't really ensure type-safety here
-          targetDiConfig[name] = resolver
-          // @ts-expect-error isSSEController is a custom property on the resolver
-        } else if (resolver.isSSEController) {
-          // SSE controller: register in DI container and track name for route registration
-          this.sseControllerNames.push(name)
-          // @ts-expect-error we can't really ensure type-safety here
-          targetDiConfig[name] = resolver
-        } else {
-          // REST controller: add resolver for route registration
-          this.controllerResolvers.push(resolver as Resolver<unknown>)
-        }
-      }
+      this.registerControllers(controllers, targetDiConfig)
     }
   }
 
@@ -183,6 +193,15 @@ export class DIContext<
       for (const route of Object.values(routes)) {
         // Cast needed: GET/DELETE routes have body:undefined, POST/PATCH have body:unknown
         // The union is incompatible with app.route() due to handler contravariance
+        app.route(route as RouteType)
+      }
+    }
+
+    for (const controllerName of this.apiControllerNames) {
+      // biome-ignore lint/suspicious/noExplicitAny: ApiContract types are controller-specific
+      const controller: AbstractApiController<any> = this.diContainer.resolve(controllerName)
+      const routes = controller.buildRoutes()
+      for (const route of routes) {
         app.route(route as RouteType)
       }
     }
