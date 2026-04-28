@@ -63,6 +63,8 @@ export function asApiControllerClass<T = object>(
     {
       public: false,
       isApiController: true,
+      asyncDispose: 'closeAllConnections',
+      asyncDisposePriority: 5,
       ...opts,
       lifetime: 'SINGLETON',
     },

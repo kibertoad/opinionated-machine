@@ -155,6 +155,28 @@ export abstract class AbstractApiController<APIContracts extends Record<string, 
     return this._roomBroadcaster
   }
 
+  public closeConnection(connectionId: string): boolean {
+    const session = this.connections.get(connectionId)
+    if (!session) {
+      return false
+    }
+
+    try {
+      session.reply.sse.close()
+    } catch {
+      // Connection may already be closed
+    }
+    this.unregisterConnection(connectionId)
+    return true
+  }
+
+  public closeAllConnections(): void {
+    const connectionIds = Array.from(this.connections.keys())
+    for (const id of connectionIds) {
+      this.closeConnection(id)
+    }
+  }
+
   private async _sendEvent(connectionId: string, message: SSEMessage): Promise<boolean> {
     const session = this.connections.get(connectionId)
     if (!session) return false

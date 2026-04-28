@@ -18,6 +18,19 @@ import {
   type RegisterDualModeRoutesOptions,
   type RegisterSSERoutesOptions,
 } from './routes/index.js'
+
+export type RegisterApiRoutesOptions = {
+  /**
+   * Global preHandler hooks applied to all API controller routes.
+   * Use for authentication or other middleware that should apply to all endpoints.
+   */
+  preHandler?: RouteOptions['preHandler']
+  /**
+   * Rate limit configuration (requires @fastify/rate-limit to be registered).
+   */
+  rateLimit?: NonNullable<RegisterSSERoutesOptions['rateLimit']>
+}
+
 import type { AbstractSSEController } from './sse/AbstractSSEController.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
@@ -185,7 +198,10 @@ export class DIContext<
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: we don't care about what instance we get here
-  registerRoutes(app: FastifyInstance<any, any, any, any>): void {
+  registerRoutes(
+    app: FastifyInstance<any, any, any, any>,
+    options?: RegisterApiRoutesOptions,
+  ): void {
     for (const controllerResolver of this.controllerResolvers) {
       // biome-ignore lint/suspicious/noExplicitAny: any controller works here
       const controller: AbstractController<any> = controllerResolver.resolve(this.diContainer)
@@ -202,6 +218,12 @@ export class DIContext<
       const controller: AbstractApiController<any> = this.diContainer.resolve(controllerName)
       const routes = controller.buildRoutes()
       for (const route of routes) {
+        if (options?.preHandler) {
+          this.applyPreHandlers(route, options.preHandler)
+        }
+        if (options?.rateLimit) {
+          this.applyRateLimit(route, options.rateLimit)
+        }
         app.route(route as RouteType)
       }
     }

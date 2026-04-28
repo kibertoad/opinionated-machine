@@ -27,19 +27,19 @@ export class TestApiController extends AbstractApiController<TestApiContracts> {
   public buildApiRoutes() {
     return {
       getUser: buildApiHandler(apiGetUserContract, async (request) => ({
-        id: request.params.userId,
-        name: 'Alice',
+        status: 200,
+        body: { id: request.params.userId, name: 'Alice' },
       })),
 
-      createUser: buildApiHandler(apiCreateUserContract, (request, reply) => {
-        reply.code(201)
-        return { id: '1', name: request.body.name }
-      }),
+      createUser: buildApiHandler(apiCreateUserContract, (request) => ({
+        status: 201,
+        body: { id: '1', name: request.body.name },
+      })),
 
       feed: buildApiHandler(apiFeedContract, {
         nonSse: async (request) => ({
-          id: 'summary',
-          name: `limit=${request.query.limit ?? 'none'}`,
+          status: 200,
+          body: { id: 'summary', name: `limit=${request.query.limit ?? 'none'}` },
         }),
         sse: async (_request, sse) => {
           const session = sse.start('autoClose')
@@ -136,15 +136,19 @@ export class TestApiErrorController extends AbstractApiController<TestApiErrorCo
       }),
 
       validationFail: buildApiHandler(apiValidationFailContract, () => ({
-        value: 123 as unknown as string,
+        status: 200,
+        body: { value: 123 as unknown as string },
       })),
 
       headerSuccess: buildApiHandler(apiHeaderSuccessContract, (_request, reply) => {
         reply.header('x-api-version', '1.0')
-        return { ok: true }
+        return { status: 200, body: { ok: true } }
       }),
 
-      headerFail: buildApiHandler(apiHeaderFailContract, () => ({ ok: true })),
+      headerFail: buildApiHandler(apiHeaderFailContract, () => ({
+        status: 200,
+        body: { ok: true },
+      })),
     }
   }
 }

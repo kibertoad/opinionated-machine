@@ -2,7 +2,6 @@ import type {
   ApiContract,
   ContractNoBody,
   ContractResponseMode,
-  InferNonSseSuccessResponses,
   InferSseSuccessResponses,
   PayloadApiContract,
 } from '@lokalise/api-contracts'
@@ -15,6 +14,46 @@ import type {
   SSEHandlerResult,
   SyncModeReply,
 } from '../routes/fastifyRouteTypes.ts'
+
+// ============================================================================
+// Status+Body Response
+// ============================================================================
+
+type NonSseBodyEntry<T> = T extends undefined
+  ? never
+  : T extends { _tag: 'SseResponse' }
+    ? never
+    : T extends { _tag: 'BlobResponse' }
+      ? Blob
+      : T extends { _tag: 'TextResponse' }
+        ? string
+        : T extends { _tag: 'AnyOfResponses'; responses: Array<infer R> }
+          ? NonSseBodyEntry<R>
+          : T extends z.ZodType
+            ? z.output<T>
+            : undefined
+
+/**
+ * Discriminated union of `{ status, body }` pairs for all non-SSE responses in a contract.
+ *
+ * Allows non-SSE handlers to return a specific status code and body together without
+ * calling `reply.code()` separately.
+ *
+ * @example
+ * ```typescript
+ * async (request) => {
+ *   if (!valid) return { status: 400, body: { error: 'Bad Request' } }
+ *   return { id: request.params.id }
+ * }
+ * ```
+ */
+export type InferApiStatusResponse<Contract extends ApiContract> = {
+  [K in keyof Contract['responsesByStatusCode']]: NonSseBodyEntry<
+    Contract['responsesByStatusCode'][K]
+  > extends never
+    ? never
+    : { status: K; body: NonSseBodyEntry<Contract['responsesByStatusCode'][K]> }
+}[keyof Contract['responsesByStatusCode']]
 
 // ============================================================================
 // Request Inference
@@ -58,16 +97,28 @@ export type InferApiRequest<Contract extends ApiContract> = FastifyRequest<{
 /**
  * Handler for non-SSE responses from an ApiContract.
  *
- * Return the response body directly — the framework validates it against the
- * contract's JSON success schemas and sends it. Use `reply.code()` to set
- * non-200 status codes, but do not call `reply.send()`.
+ * Always return `{ status, body }` — the framework validates the body against the
+ * contract's schema for that status code and sends it.
+ *
+ * Use `reply.header()` to set response headers when needed.
+ *
+ * @example
+ * ```typescript
+ * async (request) => ({ status: 200, body: { id: request.params.userId } })
+ * ```
+ *
+ * @example With multiple status codes
+ * ```typescript
+ * async (request) => {
+ *   if (!valid) return { status: 400, body: { error: 'Bad Request' } }
+ *   return { status: 200, body: { id: request.params.userId } }
+ * }
+ * ```
  */
 export type ApiNonSseHandler<Contract extends ApiContract> = (
   request: InferApiRequest<Contract>,
   reply: SyncModeReply,
-) =>
-  | InferNonSseSuccessResponses<Contract['responsesByStatusCode']>
-  | Promise<InferNonSseSuccessResponses<Contract['responsesByStatusCode']>>
+) => InferApiStatusResponse<Contract> | Promise<InferApiStatusResponse<Contract>>
 
 /**
  * Handler for SSE responses from an ApiContract.

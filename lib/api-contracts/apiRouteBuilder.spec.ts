@@ -61,26 +61,36 @@ const dualModeContract = defineApiContract({
 
 describe('buildApiHandler', () => {
   it('creates a branded container with the correct __type', () => {
-    const handler = buildApiHandler(getUserContract, async () => ({ id: '1', name: 'Alice' }))
+    const handler = buildApiHandler(getUserContract, async () => ({
+      status: 200,
+      body: { id: '1', name: 'Alice' },
+    }))
     expect(handler.__type).toBe('ApiRouteHandler')
   })
 
   it('carries the contract reference', () => {
-    const handler = buildApiHandler(getUserContract, async () => ({ id: '1', name: 'Alice' }))
+    const handler = buildApiHandler(getUserContract, async () => ({
+      status: 200,
+      body: { id: '1', name: 'Alice' },
+    }))
     expect(handler.contract).toBe(getUserContract)
   })
 
   it('carries the handler reference', () => {
-    const fn = async () => ({ id: '1', name: 'Alice' })
+    const fn = async () => ({ status: 200 as const, body: { id: '1', name: 'Alice' } })
     const container = buildApiHandler(getUserContract, fn)
     expect(container.handler).toBe(fn)
   })
 
   it('carries options when provided', () => {
     const preHandler = vi.fn()
-    const handler = buildApiHandler(getUserContract, async () => ({ id: '1', name: 'Alice' }), {
-      preHandler,
-    })
+    const handler = buildApiHandler(
+      getUserContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        preHandler,
+      },
+    )
     expect(handler.options?.preHandler).toBe(preHandler)
   })
 })
@@ -92,7 +102,10 @@ describe('buildApiHandler', () => {
 describe('buildApiRoute — non-SSE', () => {
   it('produces a GET route with correct method and url', () => {
     const routeOptions = buildApiRoute(
-      buildApiHandler(getUserContract, async () => ({ id: '1', name: 'Alice' })),
+      buildApiHandler(getUserContract, async () => ({
+        status: 200,
+        body: { id: '1', name: 'Alice' },
+      })),
     )
     expect(routeOptions.method).toBe('get')
     expect(routeOptions.url).toBe('/users/:userId')
@@ -100,7 +113,10 @@ describe('buildApiRoute — non-SSE', () => {
 
   it('includes path params schema', () => {
     const routeOptions = buildApiRoute(
-      buildApiHandler(getUserContract, async () => ({ id: '1', name: 'Alice' })),
+      buildApiHandler(getUserContract, async () => ({
+        status: 200,
+        body: { id: '1', name: 'Alice' },
+      })),
     )
     expect((routeOptions.schema as { params?: unknown })?.params).toBe(
       getUserContract.requestPathParamsSchema,
@@ -109,7 +125,10 @@ describe('buildApiRoute — non-SSE', () => {
 
   it('produces a POST route with body schema', () => {
     const routeOptions = buildApiRoute(
-      buildApiHandler(createUserContract, async () => ({ id: '1', name: 'Alice' })),
+      buildApiHandler(createUserContract, async () => ({
+        status: 201,
+        body: { id: '1', name: 'Alice' },
+      })),
     )
     expect(routeOptions.method).toBe('post')
     expect((routeOptions.schema as { body?: unknown })?.body).toBe(
@@ -118,13 +137,18 @@ describe('buildApiRoute — non-SSE', () => {
   })
 
   it('excludes body schema for ContractNoBody', () => {
-    const routeOptions = buildApiRoute(buildApiHandler(deleteUserContract, async () => undefined))
+    const routeOptions = buildApiRoute(
+      buildApiHandler(deleteUserContract, async () => ({ status: 204, body: undefined })),
+    )
     expect((routeOptions.schema as { body?: unknown })?.body).toBeUndefined()
   })
 
   it('does not set sse property on non-SSE routes', () => {
     const routeOptions = buildApiRoute(
-      buildApiHandler(getUserContract, async () => ({ id: '1', name: 'Alice' })),
+      buildApiHandler(getUserContract, async () => ({
+        status: 200,
+        body: { id: '1', name: 'Alice' },
+      })),
     )
     expect((routeOptions as { sse?: unknown }).sse).toBeUndefined()
   })
@@ -132,7 +156,11 @@ describe('buildApiRoute — non-SSE', () => {
   it('attaches preHandler when provided in options', () => {
     const preHandler = vi.fn()
     const routeOptions = buildApiRoute(
-      buildApiHandler(getUserContract, async () => ({ id: '1', name: 'Alice' }), { preHandler }),
+      buildApiHandler(
+        getUserContract,
+        async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+        { preHandler },
+      ),
     )
     expect(routeOptions.preHandler).toBe(preHandler)
   })
@@ -170,7 +198,7 @@ describe('buildApiRoute — dual-mode', () => {
   it('produces a route with sse: true', () => {
     const routeOptions = buildApiRoute(
       buildApiHandler(dualModeContract, {
-        nonSse: async () => ({ id: '1', name: 'Alice' }),
+        nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
         sse: (_request, sse) => {
           sse.start('autoClose')
         },
@@ -182,7 +210,7 @@ describe('buildApiRoute — dual-mode', () => {
   it('produces correct url and method', () => {
     const routeOptions = buildApiRoute(
       buildApiHandler(dualModeContract, {
-        nonSse: async () => ({ id: '1', name: 'Alice' }),
+        nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
         sse: (_request, sse) => {
           sse.start('autoClose')
         },
@@ -195,7 +223,7 @@ describe('buildApiRoute — dual-mode', () => {
   it('includes body schema', () => {
     const routeOptions = buildApiRoute(
       buildApiHandler(dualModeContract, {
-        nonSse: async () => ({ id: '1', name: 'Alice' }),
+        nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
         sse: (_request, sse) => {
           sse.start('autoClose')
         },
@@ -247,7 +275,10 @@ describe('buildApiRoute — SSE config via options', () => {
 describe('buildApiRoute — no path params', () => {
   it('produces correct url for contract without path params', () => {
     const routeOptions = buildApiRoute(
-      buildApiHandler(createUserContract, async () => ({ id: '1', name: 'Alice' })),
+      buildApiHandler(createUserContract, async () => ({
+        status: 201,
+        body: { id: '1', name: 'Alice' },
+      })),
     )
     expect(routeOptions.url).toBe('/users')
     expect((routeOptions.schema as { params?: unknown })?.params).toBeUndefined()

@@ -4,7 +4,7 @@ import {
   type ApiContractResponse,
   ContractNoBody,
   getSseSchemaByEventName,
-  getSuccessResponseSchema,
+  type HttpStatusCode,
   hasAnySuccessSseResponse,
   isAnyOfResponses,
   isBlobResponse,
@@ -16,6 +16,7 @@ import {
 } from '@lokalise/api-contracts'
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
+import type { z } from 'zod/v4'
 import type {
   SSEContext,
   SSESession,
@@ -78,16 +79,34 @@ function buildSSERouteConfig(
 // Internal Helpers — Sync Route
 // ============================================================================
 
-function validateApiSyncResponse(contract: ApiContract, response: unknown): void {
-  const schema = getSuccessResponseSchema(contract)
-  if (!schema) return
-  const result = schema.safeParse(response)
-  if (!result.success) {
-    throw new InternalError({
-      message: 'Internal Server Error',
-      errorCode: 'RESPONSE_VALIDATION_FAILED',
-      details: { validationError: result.error.message },
-    })
+function getSchemaForStatusCode(contract: ApiContract, status: number): z.ZodType | null {
+  const entry = contract.responsesByStatusCode[status as HttpStatusCode]
+
+  if (
+    !entry ||
+    entry === ContractNoBody ||
+    isSseResponse(entry) ||
+    isTextResponse(entry) ||
+    isBlobResponse(entry)
+  ) {
+    return null
+  }
+
+  if (isAnyOfResponses(entry)) {
+    for (const anyResponse of entry.responses) {
+      if (
+        isSseResponse(anyResponse) ||
+        isTextResponse(anyResponse) ||
+        isBlobResponse(anyResponse)
+      ) {
+        return null
+      }
+      return anyResponse
+    }
+
+    return null
+  } else {
+    return entry
   }
 }
 
@@ -107,15 +126,17 @@ function validateApiResponseHeaders(contract: ApiContract, reply: FastifyReply):
   }
 }
 
+type MaybePromise<T> = T | Promise<T>
+
 async function handleApiSyncRoute(
   contract: ApiContract,
   // biome-ignore lint/suspicious/noExplicitAny: Handler types are validated by InferApiHandler at the call site
-  handler: (request: any, reply: SyncModeReply) => unknown,
+  handler: (request: any, reply: SyncModeReply) => MaybePromise<{ status: number; body: unknown }>,
   // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
   request: any,
   reply: FastifyReply,
 ): Promise<void> {
-  const response = await handler(request, reply as SyncModeReply)
+  const { status, body } = await handler(request, reply as SyncModeReply)
 
   if (reply.sent) {
     request.log.warn({
@@ -127,10 +148,17 @@ async function handleApiSyncRoute(
     return
   }
 
-  const statusCode = reply.statusCode ?? 200
   try {
-    if (statusCode >= 200 && statusCode < 300) {
-      validateApiSyncResponse(contract, response)
+    const schema = getSchemaForStatusCode(contract, status)
+    if (schema) {
+      const result = schema.safeParse(body)
+      if (!result.success) {
+        throw new InternalError({
+          message: 'Internal Server Error',
+          errorCode: 'RESPONSE_VALIDATION_FAILED',
+          details: { validationError: result.error.message },
+        })
+      }
     }
   } catch (err) {
     reply.code(500)
@@ -143,7 +171,7 @@ async function handleApiSyncRoute(
     reply.type('application/json')
   }
 
-  return reply.send(response) as unknown as undefined
+  return reply.code(status).send(body) as unknown as undefined
 }
 
 // ============================================================================
@@ -270,6 +298,11 @@ function buildApiSSEContext(
     },
 
     respond: ((code: number, body: unknown) => {
+      if (started) {
+        throw new Error(
+          'Cannot call sse.respond() after sse.start() — the SSE stream is already open.',
+        )
+      }
       responseData = { code, body }
       return { _type: 'respond' as const, code, body }
       // biome-ignore lint/suspicious/noExplicitAny: respond typing is enforced by contract at call site
