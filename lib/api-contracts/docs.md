@@ -87,8 +87,8 @@ const deleteUserContract = defineApiContract({
 
 | Mode | Contract shape | Handler type |
 |------|---------------|--------------|
-| **non-sse** | All success responses are plain schemas / `ContractNoBody` | Bare async function `(request, reply) => body` |
-| **sse** | All success responses are `sseResponse(...)` | Bare async function `(request, sse) => void` |
+| **non-sse** | All success responses are plain schemas / `ContractNoBody` | `(request, reply) => { status, body }` |
+| **sse** | All success responses are `sseResponse(...)` | `(request, sse) => void` |
 | **dual** | Mix of SSE and non-SSE success responses | Object `{ nonSse, sse }` |
 
 TypeScript enforces the correct shape — passing `{ nonSse, sse }` to a non-dual contract is a compile error.
@@ -135,20 +135,23 @@ export class UserController extends AbstractApiController<Contracts> {
 
   public buildApiRoutes(): BuildApiRoutesReturnType<Contracts> {
     return {
-      // Non-SSE: bare function
+      // Non-SSE: always return { status, body }
       getUser: buildApiHandler(getUserContract,
-        async (request) => this.userService.findById(request.params.userId),
+        async (request) => ({
+          status: 200,
+          body: await this.userService.findById(request.params.userId),
+        }),
       ),
 
-      // Non-SSE with reply: use reply.code() to set status codes
+      // Non-SSE no-body response
       deleteUser: buildApiHandler(deleteUserContract,
-        async (request, reply) => {
+        async (request) => {
           await this.userService.delete(request.params.userId)
-          reply.code(204)
+          return { status: 204, body: null }
         },
       ),
 
-      // SSE-only: bare function, second param is the SSE context
+      // SSE-only: second param is the SSE context
       streamUpdates: buildApiHandler(streamUpdatesContract,
         async (_request, sse) => {
           const session = sse.start('keepAlive')
@@ -160,7 +163,7 @@ export class UserController extends AbstractApiController<Contracts> {
       chat: buildApiHandler(chatContract, {
         nonSse: async (request) => {
           const result = await this.aiService.complete(request.body.message)
-          return { reply: result.text }
+          return { status: 200, body: { reply: result.text } }
         },
         sse: async (request, sse) => {
           const session = sse.start('autoClose')
@@ -179,12 +182,12 @@ export class UserController extends AbstractApiController<Contracts> {
 
 | Mode | Parameters | Return value |
 |------|-----------|--------------|
-| `non-sse` | `(request, reply: SyncModeReply)` | Response body (validated against contract) |
+| `non-sse` | `(request, reply: SyncModeReply)` | `{ status, body }` — status code + body, both validated against the contract |
 | `sse` | `(request, sse: SSEContext)` | `void` |
-| `dual.nonSse` | `(request, reply: SyncModeReply)` | Response body |
+| `dual.nonSse` | `(request, reply: SyncModeReply)` | `{ status, body }` |
 | `dual.sse` | `(request, sse: SSEContext)` | `void` |
 
-> **Note:** `SyncModeReply` omits `send()` to prevent accidental double-sends. Return the response body directly; the framework validates it against the contract schema and sends it. Use `reply.code()` to set non-200 status codes and `reply.header()` to set response headers.
+> **Note:** Non-SSE handlers must always return `{ status, body }`. The `status` is the HTTP status code to send; `body` is validated against the schema for that specific status code in the contract. TypeScript enforces the correct body shape per status code. Use `reply.header()` to set response headers when needed.
 
 ### SSE context methods
 
@@ -374,7 +377,7 @@ expect(spy.getDisconnections().length).toBe(0)
 
 ### Testing non-SSE routes
 
-Use Fastify's `app.inject()` as normal:
+Use Fastify's `app.inject()` as normal. The status code comes from the `status` field of the returned `{ status, body }` object:
 
 ```ts
 const response = await app.inject({
@@ -383,6 +386,15 @@ const response = await app.inject({
 })
 expect(response.statusCode).toBe(200)
 expect(JSON.parse(response.body)).toEqual({ id: '123', name: 'Alice' })
+```
+
+With multiple status codes:
+
+```ts
+// Handler returns { status: 404, body: { error: 'Not found' } } when user is missing
+const response = await app.inject({ method: 'GET', url: '/users/missing' })
+expect(response.statusCode).toBe(404)
+expect(JSON.parse(response.body)).toEqual({ error: 'Not found' })
 ```
 
 ### Testing SSE-only routes (autoClose)
