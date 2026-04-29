@@ -3,7 +3,6 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DIContext, SSEInjectClient } from '../../index.js'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
-import type { TestApiController } from './fixtures/testControllers.ts'
 import {
   TestApiErrorModule,
   type TestApiErrorModuleControllers,
@@ -48,17 +47,6 @@ describe('AbstractApiController — error handling E2E', () => {
   afterEach(async () => {
     await server.resources.context.destroy()
     await server.close()
-  })
-
-  // ============================================================================
-  // connectionSpy getter
-  // ============================================================================
-
-  describe('connectionSpy getter', () => {
-    it('throws when connection spy is not enabled', () => {
-      const controller = context.diContainer.resolve<TestApiController>('testApiController')
-      expect(() => controller.connectionSpy).toThrow('Connection spy is not enabled')
-    })
   })
 
   // ============================================================================

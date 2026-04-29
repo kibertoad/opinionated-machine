@@ -1,4 +1,6 @@
-import { AbstractApiController, buildApiHandler } from '../../../lib/api-contracts/index.ts'
+import { AbstractApiController, buildApiRoute } from '../../../lib/api-contracts/index.ts'
+import type { SSERoomBroadcaster } from '../../../lib/sse/rooms/SSERoomBroadcaster.ts'
+import type { SSERoomManager } from '../../../lib/sse/rooms/SSERoomManager.ts'
 import {
   apiCreateUserContract,
   apiFeedContract,
@@ -17,74 +19,67 @@ import {
 // Non-SSE + dual-mode controller
 // ============================================================================
 
-type TestApiContracts = {
-  getUser: typeof apiGetUserContract
-  createUser: typeof apiCreateUserContract
-  feed: typeof apiFeedContract
-}
+export class TestApiController extends AbstractApiController {
+  readonly routes = [
+    buildApiRoute(apiGetUserContract, async (request) => ({
+      status: 200,
+      body: { id: request.params.userId, name: 'Alice' },
+    })),
 
-export class TestApiController extends AbstractApiController<TestApiContracts> {
-  public buildApiRoutes() {
-    return {
-      getUser: buildApiHandler(apiGetUserContract, async (request) => ({
+    buildApiRoute(apiCreateUserContract, (request) => ({
+      status: 201,
+      body: { id: '1', name: request.body.name },
+    })),
+
+    buildApiRoute(apiFeedContract, {
+      nonSse: async (request) => ({
         status: 200,
-        body: { id: request.params.userId, name: 'Alice' },
-      })),
-
-      createUser: buildApiHandler(apiCreateUserContract, (request) => ({
-        status: 201,
-        body: { id: '1', name: request.body.name },
-      })),
-
-      feed: buildApiHandler(apiFeedContract, {
-        nonSse: async (request) => ({
-          status: 200,
-          body: { id: 'summary', name: `limit=${request.query.limit ?? 'none'}` },
-        }),
-        sse: async (_request, sse) => {
-          const session = sse.start('autoClose')
-          await session.send('update', { value: 42 })
-        },
+        body: { id: 'summary', name: `limit=${request.query.limit ?? 'none'}` },
       }),
-    }
-  }
+      sse: async (_request, sse) => {
+        const session = sse.start('autoClose')
+        await session.send('update', { value: 42 })
+      },
+    }),
+  ]
 }
 
 // ============================================================================
 // Rooms controller
 // ============================================================================
 
-type TestApiRoomContracts = {
-  roomStream: typeof apiRoomStreamContract
-}
+export class TestApiRoomController extends AbstractApiController {
+  private readonly roomManager: SSERoomManager
+  private readonly roomBroadcaster: SSERoomBroadcaster
 
-export class TestApiRoomController extends AbstractApiController<TestApiRoomContracts> {
-  public buildApiRoutes() {
-    return {
-      roomStream: buildApiHandler(apiRoomStreamContract, (request, sse) => {
-        const { roomId } = request.params
-        const session = sse.start('keepAlive')
-        session.rooms.join(roomId)
-      }),
-    }
+  constructor(deps: { sseRoomManager: SSERoomManager; sseRoomBroadcaster: SSERoomBroadcaster }) {
+    super()
+    this.roomManager = deps.sseRoomManager
+    this.roomBroadcaster = deps.sseRoomBroadcaster
   }
+
+  readonly routes = [
+    buildApiRoute(apiRoomStreamContract, (_request, sse) => {
+      sse.start('keepAlive')
+    }),
+  ]
 
   // Test helpers
 
   public testGetConnectionsInRoom(room: string): string[] {
-    return this._internalRoomBroadcaster?.getConnectionsInRoom(room) ?? []
+    return this.roomBroadcaster.getConnectionsInRoom(room)
   }
 
   public testGetConnectionCountInRoom(room: string): number {
-    return this._internalRoomBroadcaster?.getConnectionCountInRoom(room) ?? 0
+    return this.roomBroadcaster.getConnectionCountInRoom(room)
   }
 
   public testJoinRoom(connectionId: string, room: string | string[]): void {
-    this._internalRoomManager?.join(connectionId, room)
+    this.roomManager.join(connectionId, room)
   }
 
   public testLeaveRoom(connectionId: string, room: string | string[]): void {
-    this._internalRoomManager?.leave(connectionId, room)
+    this.roomManager.leave(connectionId, room)
   }
 
   public async testBroadcastToRoom(
@@ -92,12 +87,11 @@ export class TestApiRoomController extends AbstractApiController<TestApiRoomCont
     eventName: 'message',
     data: { from: string; text: string },
   ): Promise<number> {
-    if (!this._internalRoomBroadcaster) return 0
-    return await this._internalRoomBroadcaster.broadcastMessage(room, { event: eventName, data })
+    return this.roomBroadcaster.broadcastMessage(room, { event: eventName, data })
   }
 
   public get testRoomsEnabled(): boolean {
-    return this._internalRoomManager !== undefined
+    return true
   }
 }
 
@@ -105,50 +99,38 @@ export class TestApiRoomController extends AbstractApiController<TestApiRoomCont
 // Error-path controller
 // ============================================================================
 
-type TestApiErrorContracts = {
-  sseRespond: typeof apiSseRespondContract
-  sseNoStart: typeof apiSseNoStartContract
-  ssePreError: typeof apiSsePreErrorContract
-  ssePostError: typeof apiSsePostErrorContract
-  validationFail: typeof apiValidationFailContract
-  headerSuccess: typeof apiHeaderSuccessContract
-  headerFail: typeof apiHeaderFailContract
-}
+export class TestApiErrorController extends AbstractApiController {
+  readonly routes = [
+    buildApiRoute(apiSseRespondContract, (_request, sse) => {
+      sse.respond(404, { error: 'not found' })
+    }),
 
-export class TestApiErrorController extends AbstractApiController<TestApiErrorContracts> {
-  public buildApiRoutes() {
-    return {
-      sseRespond: buildApiHandler(apiSseRespondContract, (_request, sse) => {
-        sse.respond(404, { error: 'not found' })
-      }),
+    buildApiRoute(apiSseNoStartContract, () => {
+      // intentionally does nothing — exercises the no-start/no-respond error path
+    }),
 
-      sseNoStart: buildApiHandler(apiSseNoStartContract, () => {
-        // intentionally does nothing — exercises the no-start/no-respond error path
-      }),
+    buildApiRoute(apiSsePreErrorContract, () => {
+      throw Object.assign(new Error('pre-start error'), { httpStatusCode: 422 })
+    }),
 
-      ssePreError: buildApiHandler(apiSsePreErrorContract, () => {
-        throw Object.assign(new Error('pre-start error'), { httpStatusCode: 422 })
-      }),
+    buildApiRoute(apiSsePostErrorContract, (_request, sse) => {
+      sse.start('autoClose')
+      throw new Error('post-start error')
+    }),
 
-      ssePostError: buildApiHandler(apiSsePostErrorContract, (_request, sse) => {
-        sse.start('autoClose')
-        throw new Error('post-start error')
-      }),
+    buildApiRoute(apiValidationFailContract, () => ({
+      status: 200,
+      body: { value: 123 as unknown as string },
+    })),
 
-      validationFail: buildApiHandler(apiValidationFailContract, () => ({
-        status: 200,
-        body: { value: 123 as unknown as string },
-      })),
+    buildApiRoute(apiHeaderSuccessContract, (_request, reply) => {
+      reply.header('x-api-version', '1.0')
+      return { status: 200, body: { ok: true } }
+    }),
 
-      headerSuccess: buildApiHandler(apiHeaderSuccessContract, (_request, reply) => {
-        reply.header('x-api-version', '1.0')
-        return { status: 200, body: { ok: true } }
-      }),
-
-      headerFail: buildApiHandler(apiHeaderFailContract, () => ({
-        status: 200,
-        body: { ok: true },
-      })),
-    }
-  }
+    buildApiRoute(apiHeaderFailContract, () => ({
+      status: 200,
+      body: { ok: true },
+    })),
+  ]
 }

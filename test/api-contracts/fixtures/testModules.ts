@@ -2,7 +2,6 @@ import {
   AbstractModule,
   asSingletonClass,
   asSingletonFunction,
-  type DependencyInjectionOptions,
   type MandatoryNameAndRegistrationPair,
   SSERoomBroadcaster,
   SSERoomManager,
@@ -27,11 +26,9 @@ export class TestApiModule extends AbstractModule<object> {
     return {}
   }
 
-  override resolveControllers(
-    diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      testApiController: asApiControllerClass(TestApiController, { diOptions }),
+      testApiController: asApiControllerClass(TestApiController),
     }
   }
 }
@@ -58,11 +55,9 @@ export class TestApiErrorModule extends AbstractModule<object> {
     return {}
   }
 
-  override resolveControllers(
-    diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      testApiErrorController: asApiControllerClass(TestApiErrorController, { diOptions }),
+      testApiErrorController: asApiControllerClass(TestApiErrorController),
     }
   }
 }
@@ -75,14 +70,9 @@ export class TestApiRoomModule extends AbstractModule<TestApiRoomModuleDependenc
     }
   }
 
-  override resolveControllers(
-    diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      testApiRoomController: asApiControllerClass(TestApiRoomController, {
-        diOptions,
-        rooms: true,
-      }),
+      testApiRoomController: asApiControllerClass(TestApiRoomController),
     }
   }
 }

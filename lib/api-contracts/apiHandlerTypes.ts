@@ -5,7 +5,10 @@ import type {
   InferSseSuccessResponses,
   PayloadApiContract,
 } from '@lokalise/api-contracts'
-import type { FastifyRequest } from 'fastify'
+import type {
+  FastifyRequest,
+  RouteOptions,
+} from 'fastify'
 import type { z } from 'zod/v4'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type {
@@ -152,40 +155,22 @@ export type InferApiHandler<Contract extends ApiContract> = [
 /**
  * Options for configuring an ApiContract route.
  *
+ * Extends Fastify's `RouteOptions` minus the fields the contract provides
+ * (`method`, `url`, `schema`, `handler`, `sse`), so any Fastify hook or config
+ * (`preHandler`, `onRequest`, `config`, `bodyLimit`, etc.) can be passed directly.
+ *
  * SSE lifecycle options (`onConnect`, `onClose`, `onReconnect`) are only
  * relevant for SSE and dual-mode contracts and are ignored for non-SSE routes.
  */
-export type ApiRouteOptions = FastifySSERouteOptions & {
-  /**
-   * Default response mode for dual-mode routes when the `Accept` header
-   * does not express a preference.
-   * @default 'json'
-   */
-  defaultMode?: DualModeType
-}
-
-// ============================================================================
-// Route Handler Container
-// ============================================================================
-
-/**
- * Branded container returned by `buildApiHandler()`.
- *
- * Carries the contract, handler functions, and optional route options in a
- * single value so they can be passed as a unit to `buildApiRoute()`.
- */
-export type ApiRouteHandler<Contract extends ApiContract> = {
-  readonly __type: 'ApiRouteHandler'
-  readonly contract: Contract
-  readonly handler: InferApiHandler<Contract>
-  readonly options?: ApiRouteOptions
-}
-
-/**
- * Return type for `AbstractApiController.buildApiRoutes()`.
- *
- * Maps route keys to their `ApiRouteHandler` containers.
- */
-export type BuildApiRoutesReturnType<Contracts extends Record<string, ApiContract>> = {
-  [K in keyof Contracts]: ApiRouteHandler<Contracts[K]>
-}
+export type ApiRouteOptions = Omit<
+  RouteOptions,
+  'method' | 'url' | 'schema' | 'handler' | 'sse'
+> &
+  Omit<FastifySSERouteOptions, 'preHandler'> & {
+    /**
+     * Default response mode for dual-mode routes when the `Accept` header
+     * does not express a preference.
+     * @default 'json'
+     */
+    defaultMode?: DualModeType
+  }

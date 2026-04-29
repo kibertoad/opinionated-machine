@@ -27,18 +27,7 @@ import type {
 } from '../routes/fastifyRouteTypes.ts'
 import type { SSEReply } from '../routes/fastifyRouteUtils.ts'
 import { determineMode, hasHttpStatusCode, isErrorLike } from '../routes/fastifyRouteUtils.ts'
-import type { SSERoomManager } from '../sse/rooms/SSERoomManager.ts'
-import type { ApiRouteHandler, ApiRouteOptions, InferApiHandler } from './apiHandlerTypes.ts'
-
-/**
- * Room infrastructure injected by AbstractApiController when rooms are enabled.
- * @internal
- */
-export type ApiRouteInternalRoomContext = {
-  roomManager: SSERoomManager
-  registerSession: (session: SSESession) => void
-  unregisterSession: (id: string) => void
-}
+import type { ApiRouteOptions, InferApiHandler } from './apiHandlerTypes.ts'
 
 // ============================================================================
 // Internal Helpers — Response Mode
@@ -184,7 +173,6 @@ function buildApiSSEContext(
   reply: FastifyReply,
   eventSchemas: SseSchemaByEventName,
   options: ApiRouteOptions | undefined,
-  roomContext?: ApiRouteInternalRoomContext,
 ): {
   // biome-ignore lint/suspicious/noExplicitAny: SSE event schemas are contract-specific, cast at call site
   sseContext: SSEContext<any>
@@ -254,20 +242,8 @@ function buildApiSSEContext(
             await send(message.event, message.data, { id: message.id, retry: message.retry })
           }
         },
-        rooms: roomContext
-          ? {
-              join: (room: string | string[]) => roomContext.roomManager.join(connectionId, room),
-              leave: (room: string | string[]) => roomContext.roomManager.leave(connectionId, room),
-            }
-          : { join: () => {}, leave: () => {} },
+        rooms: { join: () => {}, leave: () => {} },
         eventSchemas,
-      }
-
-      if (roomContext) {
-        roomContext.registerSession(session)
-        sseReply.sse.onClose(() => {
-          roomContext.unregisterSession(connectionId)
-        })
       }
 
       if (options?.onConnect) {
@@ -332,14 +308,12 @@ async function handleApiSseRoute(
   // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
   request: any,
   reply: FastifyReply,
-  roomContext?: ApiRouteInternalRoomContext,
 ): Promise<void> {
   const { sseContext, isStarted, hasResponse, getResponseData } = buildApiSSEContext(
     request,
     reply,
     eventSchemas,
     options,
-    roomContext,
   )
 
   try {
@@ -411,126 +385,80 @@ function buildBaseSchema(contract: ApiContract): Record<string, unknown> {
 // ============================================================================
 
 /**
- * Create a typed handler container for an `ApiContract` route.
+ * Build a Fastify `RouteOptions` object from an `ApiContract` + handler.
  *
- * The handler shape is inferred from the contract's response mode:
- * - `'non-sse'` → bare `async (request, reply) => body`
- * - `'sse'`     → bare `async (request, sse) => void`
- * - `'dual'`    → `{ nonSse, sse }` object, branched by `Accept` header
- *
- * @example Non-SSE route — bare function
- * ```typescript
- * const getUser = buildApiHandler(getUserContract,
- *   async (request) => ({ id: request.params.userId, name: 'Alice' }),
- * )
- * ```
- *
- * @example SSE-only route — bare function
- * ```typescript
- * const streamUpdates = buildApiHandler(updatesContract,
- *   async (request, sse) => {
- *     const session = sse.start('keepAlive')
- *     // session.send() writes directly to reply.sse — no controller involved
- *   },
- * )
- * ```
- *
- * @example Dual-mode route — `{ nonSse, sse }` object
- * ```typescript
- * const chatCompletion = buildApiHandler(chatContract, {
- *   nonSse: async (request) => ({ content: 'Hello' }),
- *   sse: async (request, sse) => {
- *     const session = sse.start('autoClose')
- *     await session.send('chunk', { delta: 'Hello' })
- *     await session.send('done', {})
- *   },
- * })
- * ```
- */
-export function buildApiHandler<Contract extends ApiContract>(
-  contract: Contract,
-  handler: InferApiHandler<Contract>,
-  options?: ApiRouteOptions,
-): ApiRouteHandler<Contract> {
-  return { __type: 'ApiRouteHandler' as const, contract, handler, options }
-}
-
-/**
- * Build a Fastify `RouteOptions` object from an `ApiRouteHandler` container.
- *
- * SSE event sending goes directly through `reply.sse` — no controller required.
- *
- * @param routeHandler - Container returned by `buildApiHandler()`
- * @param roomContext - Internal room infrastructure injected by `AbstractApiController`. Do not pass manually.
  * @returns Fastify `RouteOptions` ready to pass to `app.route()`
  */
 export function buildApiRoute<Contract extends ApiContract>(
-  routeHandler: ApiRouteHandler<Contract>,
-  roomContext?: ApiRouteInternalRoomContext,
+  contract: Contract,
+  handler: InferApiHandler<Contract>,
+  options?: ApiRouteOptions,
 ): RouteOptions {
-  const { contract, handler, options } = routeHandler
+  // Separate SSE-specific options (not in Fastify RouteOptions) from passthrough options
+  const {
+    defaultMode,
+    contractMetadataToRouteMapper,
+    serializer: _serializer,
+    heartbeatInterval: _heartbeatInterval,
+    onConnect: _onConnect,
+    onClose: _onClose,
+    onReconnect: _onReconnect,
+    logger: _logger,
+    ...fastifyOptions
+  } = options ?? {}
+
   const url = mapApiContractToPath(contract)
   const mode = getContractResponseMode(contract)
   const eventSchemas = getSseSchemaByEventName(contract) ?? {}
   const baseSchema = buildBaseSchema(contract)
-  const contractMetadata = options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}
+  const contractMetadata = contractMetadataToRouteMapper?.(contract.metadata) ?? {}
 
   if (mode === 'non-sse') {
     // biome-ignore lint/suspicious/noExplicitAny: handler shape validated by InferApiHandler at call site
     const syncHandler = handler as any
-    const routeOptions: RouteOptions = {
+    return {
+      ...fastifyOptions,
       ...contractMetadata,
       method: contract.method,
       url,
       schema: baseSchema,
       handler: async (request, reply) => handleApiSyncRoute(contract, syncHandler, request, reply),
     }
-    if (options?.preHandler) routeOptions.preHandler = options.preHandler
-    return routeOptions
   }
 
   if (mode === 'dual') {
-    const defaultMode = options?.defaultMode ?? 'json'
+    const resolvedDefaultMode = defaultMode ?? 'json'
     // biome-ignore lint/suspicious/noExplicitAny: handler shape validated by InferApiHandler at call site
     const dualHandlers = handler as any
-    const routeOptions: RouteOptions = {
+    return {
+      ...fastifyOptions,
       ...contractMetadata,
       method: contract.method,
       url,
       sse: buildSSERouteConfig(options),
       schema: baseSchema,
       handler: (request, reply) => {
-        const responseMode = determineMode(request.headers.accept, defaultMode)
+        const responseMode = determineMode(request.headers.accept, resolvedDefaultMode)
         if (responseMode === 'json') {
           return handleApiSyncRoute(contract, dualHandlers.nonSse, request, reply)
         }
-        return handleApiSseRoute(
-          dualHandlers.sse,
-          eventSchemas,
-          options,
-          request,
-          reply,
-          roomContext,
-        )
+        return handleApiSseRoute(dualHandlers.sse, eventSchemas, options, request, reply)
       },
     }
-    if (options?.preHandler) routeOptions.preHandler = options.preHandler
-    return routeOptions
   }
 
   // SSE-only
   // biome-ignore lint/suspicious/noExplicitAny: handler shape validated by InferApiHandler at call site
   const sseHandler = handler as any
-  const routeOptions: RouteOptions = {
+  return {
+    ...fastifyOptions,
     ...contractMetadata,
     method: contract.method,
     url,
     sse: buildSSERouteConfig(options),
     schema: baseSchema,
     handler: async (request, reply) =>
-      handleApiSseRoute(sseHandler, eventSchemas, options, request, reply, roomContext),
+      handleApiSseRoute(sseHandler, eventSchemas, options, request, reply),
   }
-  if (options?.preHandler) routeOptions.preHandler = options.preHandler
-  return routeOptions
 }
 

@@ -215,16 +215,10 @@ export class DIContext<
 
     for (const controllerName of this.apiControllerNames) {
       // biome-ignore lint/suspicious/noExplicitAny: ApiContract types are controller-specific
-      const controller: AbstractApiController<any> = this.diContainer.resolve(controllerName)
-      const routes = controller.buildRoutes()
+      const controller: AbstractApiController = this.diContainer.resolve(controllerName)
+      const routes = controller.routes
       for (const route of routes) {
-        if (options?.preHandler) {
-          this.applyPreHandlers(route, options.preHandler)
-        }
-        if (options?.rateLimit) {
-          this.applyRateLimit(route, options.rateLimit)
-        }
-        app.route(route as RouteType)
+        app.route(route)
       }
     }
   }
