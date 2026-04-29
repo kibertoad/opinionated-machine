@@ -461,4 +461,3 @@ export function buildApiRoute<Contract extends ApiContract>(
       handleApiSseRoute(sseHandler, eventSchemas, options, request, reply),
   }
 }
-

@@ -1,23 +1,21 @@
 import { AbstractApiController, buildApiRoute } from '../../../lib/api-contracts/index.ts'
-import type { SSERoomBroadcaster } from '../../../lib/sse/rooms/SSERoomBroadcaster.ts'
-import type { SSERoomManager } from '../../../lib/sse/rooms/SSERoomManager.ts'
 import {
   apiCreateUserContract,
   apiFeedContract,
   apiGetUserContract,
   apiHeaderFailContract,
   apiHeaderSuccessContract,
-  apiRoomStreamContract,
+  apiSseInvalidEventContract,
+  apiSseKeepAliveContract,
   apiSseNoStartContract,
   apiSsePostErrorContract,
   apiSsePreErrorContract,
+  apiSseRespondAfterStartContract,
   apiSseRespondContract,
+  apiSseSendHeadersContract,
+  apiSseSendStreamContract,
   apiValidationFailContract,
 } from './testContracts.ts'
-
-// ============================================================================
-// Non-SSE + dual-mode controller
-// ============================================================================
 
 export class TestApiController extends AbstractApiController {
   readonly routes = [
@@ -41,63 +39,23 @@ export class TestApiController extends AbstractApiController {
         await session.send('update', { value: 42 })
       },
     }),
-  ]
-}
 
-// ============================================================================
-// Rooms controller
-// ============================================================================
+    buildApiRoute(apiSseKeepAliveContract, async (_request, sse) => {
+      const session = sse.start('keepAlive')
+      await session.send('tick', { n: 1 })
+    }),
 
-export class TestApiRoomController extends AbstractApiController {
-  private readonly roomManager: SSERoomManager
-  private readonly roomBroadcaster: SSERoomBroadcaster
-
-  constructor(deps: { sseRoomManager: SSERoomManager; sseRoomBroadcaster: SSERoomBroadcaster }) {
-    super()
-    this.roomManager = deps.sseRoomManager
-    this.roomBroadcaster = deps.sseRoomBroadcaster
-  }
-
-  readonly routes = [
-    buildApiRoute(apiRoomStreamContract, (_request, sse) => {
-      sse.start('keepAlive')
+    buildApiRoute(apiSseSendStreamContract, async (_request, sse) => {
+      const session = sse.start('autoClose')
+      // biome-ignore lint/suspicious/useAwait: async generator required for AsyncIterable
+      async function* items() {
+        yield { event: 'item' as const, data: { i: 1 } }
+        yield { event: 'item' as const, data: { i: 2 } }
+      }
+      await session.sendStream(items())
     }),
   ]
-
-  // Test helpers
-
-  public testGetConnectionsInRoom(room: string): string[] {
-    return this.roomBroadcaster.getConnectionsInRoom(room)
-  }
-
-  public testGetConnectionCountInRoom(room: string): number {
-    return this.roomBroadcaster.getConnectionCountInRoom(room)
-  }
-
-  public testJoinRoom(connectionId: string, room: string | string[]): void {
-    this.roomManager.join(connectionId, room)
-  }
-
-  public testLeaveRoom(connectionId: string, room: string | string[]): void {
-    this.roomManager.leave(connectionId, room)
-  }
-
-  public async testBroadcastToRoom(
-    room: string | string[],
-    eventName: 'message',
-    data: { from: string; text: string },
-  ): Promise<number> {
-    return this.roomBroadcaster.broadcastMessage(room, { event: eventName, data })
-  }
-
-  public get testRoomsEnabled(): boolean {
-    return true
-  }
 }
-
-// ============================================================================
-// Error-path controller
-// ============================================================================
 
 export class TestApiErrorController extends AbstractApiController {
   readonly routes = [
@@ -132,5 +90,21 @@ export class TestApiErrorController extends AbstractApiController {
       status: 200,
       body: { ok: true },
     })),
+
+    buildApiRoute(apiSseRespondAfterStartContract, (_request, sse) => {
+      sse.start('autoClose')
+      sse.respond(200, { text: 'too late' })
+    }),
+
+    buildApiRoute(apiSseSendHeadersContract, async (_request, sse) => {
+      sse.sendHeaders()
+      const session = sse.start('autoClose')
+      await session.send('done', { ok: true })
+    }),
+
+    buildApiRoute(apiSseInvalidEventContract, async (_request, sse) => {
+      const session = sse.start('autoClose')
+      await session.send('typed', { value: 'not-a-number' as unknown as number })
+    }),
   ]
 }

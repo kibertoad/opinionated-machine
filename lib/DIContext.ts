@@ -197,11 +197,7 @@ export class DIContext<
     }
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: we don't care about what instance we get here
-  registerRoutes(
-    app: FastifyInstance<any, any, any, any>,
-    options?: RegisterApiRoutesOptions,
-  ): void {
+  registerRoutes(app: FastifyInstance, _options?: RegisterApiRoutesOptions): void {
     for (const controllerResolver of this.controllerResolvers) {
       // biome-ignore lint/suspicious/noExplicitAny: any controller works here
       const controller: AbstractController<any> = controllerResolver.resolve(this.diContainer)
@@ -214,7 +210,6 @@ export class DIContext<
     }
 
     for (const controllerName of this.apiControllerNames) {
-      // biome-ignore lint/suspicious/noExplicitAny: ApiContract types are controller-specific
       const controller: AbstractApiController = this.diContainer.resolve(controllerName)
       const routes = controller.routes
       for (const route of routes) {

@@ -5,10 +5,7 @@ import type {
   InferSseSuccessResponses,
   PayloadApiContract,
 } from '@lokalise/api-contracts'
-import type {
-  FastifyRequest,
-  RouteOptions,
-} from 'fastify'
+import type { FastifyRequest, RouteOptions } from 'fastify'
 import type { z } from 'zod/v4'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
 import type {
@@ -162,10 +159,7 @@ export type InferApiHandler<Contract extends ApiContract> = [
  * SSE lifecycle options (`onConnect`, `onClose`, `onReconnect`) are only
  * relevant for SSE and dual-mode contracts and are ignored for non-SSE routes.
  */
-export type ApiRouteOptions = Omit<
-  RouteOptions,
-  'method' | 'url' | 'schema' | 'handler' | 'sse'
-> &
+export type ApiRouteOptions = Omit<RouteOptions, 'method' | 'url' | 'schema' | 'handler' | 'sse'> &
   Omit<FastifySSERouteOptions, 'preHandler'> & {
     /**
      * Default response mode for dual-mode routes when the `Accept` header

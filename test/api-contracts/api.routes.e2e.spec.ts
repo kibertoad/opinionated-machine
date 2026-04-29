@@ -1,8 +1,10 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DIContext, SSEHttpClient } from '../../index.js'
+import { DIContext, SSEHttpClient, SSEInjectClient } from '../../index.js'
+import { buildApiRoute } from '../../lib/api-contracts/index.ts'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
+import { apiSseOnConnectContract } from './fixtures/testContracts.ts'
 import { TestApiModule, type TestApiModuleControllers } from './fixtures/testModules.ts'
 
 type TestContext = DIContext<TestApiModuleControllers, object>
@@ -104,5 +106,68 @@ describe('AbstractApiController — non-SSE and dual-mode E2E', () => {
 
       client.close()
     })
+  })
+
+  describe('keepAlive SSE route', () => {
+    it('streams events and keeps connection open', { timeout: 10000 }, async () => {
+      const client = await SSEHttpClient.connect(server.baseUrl, '/api/test/sse-keep-alive')
+
+      const events = await client.collectEvents(1, 5000)
+      client.close()
+
+      expect(events).toHaveLength(1)
+      expect(JSON.parse(events[0]!.data)).toEqual({ n: 1 })
+    })
+  })
+
+  describe('sendStream SSE route', () => {
+    it('sends multiple events via session.sendStream()', async () => {
+      const client = new SSEInjectClient(server.app)
+      const conn = await client.connect('/api/test/sse-stream')
+
+      const events = conn.getReceivedEvents().filter((e) => e.event === 'item')
+      expect(events).toHaveLength(2)
+      expect(JSON.parse(events[0]!.data)).toEqual({ i: 1 })
+      expect(JSON.parse(events[1]!.data)).toEqual({ i: 2 })
+    })
+  })
+})
+
+describe('AbstractApiController — SSE lifecycle hooks', () => {
+  let lifecycleServer: SSETestServerWithResources<undefined>
+  const onConnectCalls: number[] = []
+
+  beforeEach(async () => {
+    onConnectCalls.length = 0
+
+    lifecycleServer = await createSSETestServer((app) => {
+      app.route(
+        buildApiRoute(
+          apiSseOnConnectContract,
+          async (_req, sse) => {
+            const session = sse.start('autoClose')
+            await session.send('ping', { seq: 1 })
+          },
+          {
+            onConnect: () => {
+              onConnectCalls.push(1)
+            },
+            onClose: () => {},
+          },
+        ),
+      )
+    })
+  })
+
+  afterEach(async () => {
+    await lifecycleServer.close()
+  })
+
+  it('fires onConnect callback when SSE session starts', async () => {
+    const client = new SSEInjectClient(lifecycleServer.app)
+    const conn = await client.connect('/api/test/sse-on-connect')
+
+    expect(conn.getReceivedEvents().some((e) => e.event === 'ping')).toBe(true)
+    expect(onConnectCalls).toHaveLength(1)
   })
 })

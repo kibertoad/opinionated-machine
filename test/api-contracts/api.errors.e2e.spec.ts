@@ -149,4 +149,43 @@ describe('AbstractApiController — error handling E2E', () => {
       expect(response.statusCode).toBe(500)
     })
   })
+
+  // ============================================================================
+  // sse.respond() called after sse.start()
+  // ============================================================================
+
+  describe('sse.respond() after sse.start()', () => {
+    it('sends an SSE error event when respond is called after start', async () => {
+      const client = new SSEInjectClient(server.app)
+      const conn = await client.connect('/api/test/sse-respond-after-start')
+
+      expect(conn.getReceivedEvents().some((e) => e.event === 'error')).toBe(true)
+    })
+  })
+
+  // ============================================================================
+  // sse.sendHeaders() before sse.start()
+  // ============================================================================
+
+  describe('sse.sendHeaders()', () => {
+    it('can call sse.sendHeaders() before starting the stream', async () => {
+      const client = new SSEInjectClient(server.app)
+      const conn = await client.connect('/api/test/sse-send-headers')
+
+      expect(conn.getReceivedEvents().some((e) => e.event === 'done')).toBe(true)
+    })
+  })
+
+  // ============================================================================
+  // SSE event schema validation failure
+  // ============================================================================
+
+  describe('SSE event schema validation', () => {
+    it('sends an SSE error event when handler sends data that fails event schema', async () => {
+      const client = new SSEInjectClient(server.app)
+      const conn = await client.connect('/api/test/sse-invalid-event')
+
+      expect(conn.getReceivedEvents().some((e) => e.event === 'error')).toBe(true)
+    })
+  })
 })
