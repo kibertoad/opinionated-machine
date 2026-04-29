@@ -9,7 +9,7 @@ import type { FastifyInstance, RouteOptions } from 'fastify'
 import { merge } from 'ts-deepmerge'
 import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
-import type { AbstractApiController } from './api-contracts/AbstractApiController.js'
+import type { AbstractApiController } from './api-contracts/index.ts'
 import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configUtils.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
 import type { AbstractDualModeController } from './dualmode/AbstractDualModeController.js'
@@ -18,19 +18,6 @@ import {
   type RegisterDualModeRoutesOptions,
   type RegisterSSERoutesOptions,
 } from './routes/index.js'
-
-export type RegisterApiRoutesOptions = {
-  /**
-   * Global preHandler hooks applied to all API controller routes.
-   * Use for authentication or other middleware that should apply to all endpoints.
-   */
-  preHandler?: RouteOptions['preHandler']
-  /**
-   * Rate limit configuration (requires @fastify/rate-limit to be registered).
-   */
-  rateLimit?: NonNullable<RegisterSSERoutesOptions['rateLimit']>
-}
-
 import type { AbstractSSEController } from './sse/AbstractSSEController.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
@@ -139,6 +126,7 @@ export class DIContext<
 
     if (isPrimaryModule && resolveControllers) {
       const controllers = module.resolveControllers(this.options)
+
       this.registerControllers(controllers, targetDiConfig)
     }
   }
@@ -197,7 +185,8 @@ export class DIContext<
     }
   }
 
-  registerRoutes(app: FastifyInstance, _options?: RegisterApiRoutesOptions): void {
+  // biome-ignore lint/suspicious/noExplicitAny: we don't care about what instance we get here
+  registerRoutes(app: FastifyInstance<any, any, any, any>): void {
     for (const controllerResolver of this.controllerResolvers) {
       // biome-ignore lint/suspicious/noExplicitAny: any controller works here
       const controller: AbstractController<any> = controllerResolver.resolve(this.diContainer)
@@ -211,8 +200,8 @@ export class DIContext<
 
     for (const controllerName of this.apiControllerNames) {
       const controller: AbstractApiController = this.diContainer.resolve(controllerName)
-      const routes = controller.routes
-      for (const route of routes) {
+
+      for (const route of controller.routes) {
         app.route(route)
       }
     }
