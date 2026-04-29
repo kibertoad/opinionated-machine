@@ -1,6 +1,6 @@
-# ApiContract Controllers (Unified API)
+# ApiContract Controllers
 
-The `lib/new/` API provides a single controller base class — `AbstractApiController` — that handles all three response modes (sync JSON, SSE-only, and dual-mode) from one unified definition. It replaces the need to choose between `AbstractSSEController`, `AbstractDualModeController`, and plain controllers.
+The `lib/api-contracts/` module provides `AbstractApiController` and `buildApiRoute` — a lightweight way to register typed API routes (sync JSON, SSE-only, and dual-mode) using contracts from `@lokalise/api-contracts`.
 
 ## Table of Contents
 
@@ -10,7 +10,6 @@ The `lib/new/` API provides a single controller base class — `AbstractApiContr
 - [Creating a Controller](#creating-a-controller)
 - [Registering with DI](#registering-with-di)
 - [Route Options](#route-options)
-- [Connection Management](#connection-management)
 - [Testing](#testing)
 
 ## Overview
@@ -66,7 +65,7 @@ const chatContract = defineApiContract({
   requestBodySchema: z.object({ message: z.string() }),
   responsesByStatusCode: {
     200: anyOfResponses([
-      z.object({ reply: z.string() }),           // sync response
+      z.object({ reply: z.string() }),
       sseResponse({ chunk: z.object({ delta: z.string() }), done: z.object({}) }),
     ]),
   },
@@ -83,7 +82,7 @@ const deleteUserContract = defineApiContract({
 
 ## Response Modes
 
-`buildApiHandler` infers the correct handler shape from the contract at compile time:
+`buildApiRoute` infers the correct handler shape from the contract at compile time:
 
 | Mode | Contract shape | Handler type |
 |------|---------------|--------------|
@@ -95,86 +94,56 @@ TypeScript enforces the correct shape — passing `{ nonSse, sse }` to a non-dua
 
 ## Creating a Controller
 
-Extend `AbstractApiController` and implement `buildApiRoutes()`. Use `buildApiHandler` to define each route:
+Extend `AbstractApiController` and declare a `routes` array. Use `buildApiRoute` to define each route:
 
 ```ts
 import {
   AbstractApiController,
-  buildApiHandler,
-  type BuildApiRoutesReturnType,
+  buildApiRoute,
 } from 'opinionated-machine'
 
-type Contracts = {
-  getUser: typeof getUserContract
-  streamUpdates: typeof streamUpdatesContract
-  chat: typeof chatContract
-  deleteUser: typeof deleteUserContract
-}
-
-type Dependencies = {
-  userService: UserService
-  aiService: AIService
-}
-
-export class UserController extends AbstractApiController<Contracts> {
-  public static readonly contracts = {
-    getUser: getUserContract,
-    streamUpdates: streamUpdatesContract,
-    chat: chatContract,
-    deleteUser: deleteUserContract,
-  } as const
-
+class UserController extends AbstractApiController {
   private readonly userService: UserService
   private readonly aiService: AIService
 
-  constructor(deps: Dependencies, sseConfig?: SSEControllerConfig) {
-    super(deps, sseConfig)
+  constructor(deps: { userService: UserService; aiService: AIService }) {
     this.userService = deps.userService
     this.aiService = deps.aiService
   }
 
-  public buildApiRoutes(): BuildApiRoutesReturnType<Contracts> {
-    return {
-      // Non-SSE: always return { status, body }
-      getUser: buildApiHandler(getUserContract,
-        async (request) => ({
-          status: 200,
-          body: await this.userService.findById(request.params.userId),
-        }),
-      ),
+  readonly routes = [
+    // Non-SSE: return { status, body }
+    buildApiRoute(getUserContract, async (request) => ({
+      status: 200,
+      body: await this.userService.findById(request.params.userId),
+    })),
 
-      // Non-SSE no-body response
-      deleteUser: buildApiHandler(deleteUserContract,
-        async (request) => {
-          await this.userService.delete(request.params.userId)
-          return { status: 204, body: null }
-        },
-      ),
+    // Non-SSE no-body response
+    buildApiRoute(deleteUserContract, async (request) => {
+      await this.userService.delete(request.params.userId)
+      return { status: 204, body: null }
+    }),
 
-      // SSE-only: second param is the SSE context
-      streamUpdates: buildApiHandler(streamUpdatesContract,
-        async (_request, sse) => {
-          const session = sse.start('keepAlive')
-          this.registerSession(session)
-        },
-      ),
+    // SSE-only: second param is the SSE context
+    buildApiRoute(streamUpdatesContract, async (_request, sse) => {
+      sse.start('keepAlive')
+    }),
 
-      // Dual-mode: { nonSse, sse } object
-      chat: buildApiHandler(chatContract, {
-        nonSse: async (request) => {
-          const result = await this.aiService.complete(request.body.message)
-          return { status: 200, body: { reply: result.text } }
-        },
-        sse: async (request, sse) => {
-          const session = sse.start('autoClose')
-          for await (const chunk of this.aiService.stream(request.body.message)) {
-            await session.send('chunk', { delta: chunk.text })
-          }
-          await session.send('done', {})
-        },
-      }),
-    }
-  }
+    // Dual-mode: { nonSse, sse } object
+    buildApiRoute(chatContract, {
+      nonSse: async (request) => {
+        const result = await this.aiService.complete(request.body.message)
+        return { status: 200, body: { reply: result.text } }
+      },
+      sse: async (request, sse) => {
+        const session = sse.start('autoClose')
+        for await (const chunk of this.aiService.stream(request.body.message)) {
+          await session.send('chunk', { delta: chunk.text })
+        }
+        await session.send('done', {})
+      },
+    }),
+  ]
 }
 ```
 
@@ -198,7 +167,7 @@ The `sse` parameter in SSE and dual-mode handlers:
 | `sse.start(mode)` | Begin streaming. Returns an `SSESession`. `mode` is `'keepAlive'` or `'autoClose'` |
 | `sse.respond(code, body)` | Send an HTTP response without streaming (early return, e.g., 404) |
 
-`autoClose` closes the connection when the handler returns. `keepAlive` keeps it open until the server calls `closeConnection()`.
+`autoClose` closes the connection when the handler returns. `keepAlive` keeps it open until explicitly closed.
 
 ### SSE session methods
 
@@ -210,8 +179,6 @@ The `session` returned by `sse.start(mode)`:
 | `session.isConnected()` | Whether the client is still connected |
 | `session.sendStream(iterable)` | Stream messages from an `AsyncIterable` |
 | `session.getStream()` | Raw `WritableStream` for advanced use |
-| `session.rooms.join(room)` | Join one or more rooms |
-| `session.rooms.leave(room)` | Leave one or more rooms |
 
 ## Registering with DI
 
@@ -221,30 +188,22 @@ Use `asApiControllerClass` inside `resolveControllers()`:
 import { asApiControllerClass } from 'opinionated-machine'
 
 export class UserModule extends AbstractModule {
-  resolveControllers(diOptions: DependencyInjectionOptions) {
+  resolveControllers() {
     return {
-      // Basic — sync and/or SSE routes, no rooms
-      userController: asApiControllerClass(UserController, { diOptions }),
-
-      // With rooms — injects sseRoomBroadcaster from DI cradle
-      chatController: asApiControllerClass(ChatController, { diOptions, rooms: true }),
+      userController: asApiControllerClass(UserController),
     }
   }
 }
 ```
 
-`asApiControllerClass` handles:
-- Connection spy activation in test mode (`diOptions.isTestMode: true` → enables `controller.connectionSpy`)
-- Room broadcaster injection when `rooms: true`
-- Graceful shutdown via `closeAllConnections()` (registered as async dispose, priority 5)
-- Routing through the standard REST path in `DIContext` so `buildRoutes()` is called automatically
+`asApiControllerClass` wraps the class in an awilix `asFunction` singleton resolver tagged with `isApiController: true`, so `DIContext` picks up its `routes` array automatically during `registerRoutes()`.
 
 ## Route Options
 
-Pass options as the third argument to `buildApiHandler`:
+Pass options as the third argument to `buildApiRoute`:
 
 ```ts
-buildApiHandler(contract, handler, {
+buildApiRoute(contract, handler, {
   // Run before the handler — for auth/authorization
   preHandler: async (request, reply) => {
     if (!request.headers.authorization) {
@@ -287,93 +246,9 @@ buildApiHandler(contract, handler, {
 | `defaultMode` | Default response mode for dual-mode routes (`'json'` or `'sse'`). Default: `'json'` |
 | `contractMetadataToRouteMapper` | Map contract metadata to Fastify `RouteOptions` fields |
 
-## Connection Management
-
-`AbstractApiController` inherits full connection management from `AbstractConnectionManager`.
-
-### Sending events from outside a handler
-
-Use `sendEventInternal()` to push events from timers, queues, or other services. Event names and payload types are inferred from all contracts defined in the controller:
-
-```ts
-// Type-safe: 'update' and its payload are inferred from the contracts
-await this.sendEventInternal(connectionId, {
-  event: 'update',
-  data: { value: 42 },
-})
-```
-
-### Broadcasting
-
-```ts
-// Broadcast to all connected clients
-await this.broadcast({ event: 'update', data: { value: 42 } })
-
-// Broadcast to clients matching a predicate
-await this.broadcastIf(
-  { event: 'update', data: { value: 42 } },
-  (session) => session.params.userId === targetUserId,
-)
-```
-
-### Rooms
-
-Enable rooms by passing `rooms: true` to `asApiControllerClass`. Join/leave rooms in handlers via the session:
-
-```ts
-sse: async (request, sse) => {
-  const session = sse.start('keepAlive')
-  session.rooms.join(`org:${request.params.orgId}`)
-},
-```
-
-Broadcast to a room from anywhere in the controller:
-
-```ts
-await this.broadcastToRoom(`org:${orgId}`, 'update', { value: 42 })
-```
-
-### Lifecycle hooks
-
-Override in subclasses to react to connection events:
-
-```ts
-protected onConnectionEstablished(connection: SSESession): void {
-  this.metrics.increment('sse.connections.active')
-}
-
-protected onConnectionClosed(connection: SSESession): void {
-  this.metrics.decrement('sse.connections.active')
-}
-```
-
-### Connection queries
-
-```ts
-// Available in subclasses
-this.getConnections()          // SSESession[]
-this.getConnectionCount()      // number
-this.closeConnection(id)       // boolean
-this.closeAllConnections()     // void (called on shutdown)
-```
-
-### Graceful shutdown
-
-`closeAllConnections()` is called automatically during application shutdown (registered as async dispose). No manual wiring needed.
+Any other [Fastify `RouteOptions`](https://fastify.dev/docs/latest/Reference/Routes/) fields (`bodyLimit`, `onRequest`, `config`, etc.) can also be passed and are forwarded directly to Fastify.
 
 ## Testing
-
-### Connection spy
-
-In test mode (`isTestMode: true`), `controller.connectionSpy` tracks connects and disconnects:
-
-```ts
-const controller = app.diContainer.resolve<UserController>('userController')
-const spy = controller.connectionSpy
-
-expect(spy.getConnections().length).toBe(1)
-expect(spy.getDisconnections().length).toBe(0)
-```
 
 ### Testing non-SSE routes
 
@@ -420,22 +295,11 @@ Use `SSEHttpClient` with `awaitServerConnection` to reliably send events after t
 import { SSEHttpClient, SSETestServer } from 'opinionated-machine'
 
 const server = await SSETestServer.start(app)
-const controller = app.diContainer.resolve<UserController>('userController')
 
 const client = await SSEHttpClient.connect(
   server.baseUrl,
   '/updates/stream',
-  { awaitServerConnection: { controller } },
 )
-
-// Connection is now registered — safe to push events
-await controller.sendEventInternal(firstConnectionId, {
-  event: 'update',
-  data: { value: 99 },
-})
-
-const events = await client.collectEvents((e) => e.event === 'update', 5000)
-expect(JSON.parse(events[0].data)).toEqual({ value: 99 })
 
 client.close()
 await server.stop()
