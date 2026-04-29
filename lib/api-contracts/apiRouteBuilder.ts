@@ -455,7 +455,16 @@ export function buildApiHandler<Contract extends ApiContract>(
   return { __type: 'ApiRouteHandler' as const, contract, handler, options }
 }
 
-function buildApiRouteCore<Contract extends ApiContract>(
+/**
+ * Build a Fastify `RouteOptions` object from an `ApiRouteHandler` container.
+ *
+ * SSE event sending goes directly through `reply.sse` — no controller required.
+ *
+ * @param routeHandler - Container returned by `buildApiHandler()`
+ * @param roomContext - Internal room infrastructure injected by `AbstractApiController`. Do not pass manually.
+ * @returns Fastify `RouteOptions` ready to pass to `app.route()`
+ */
+export function buildApiRoute<Contract extends ApiContract>(
   routeHandler: ApiRouteHandler<Contract>,
   roomContext?: ApiRouteInternalRoomContext,
 ): RouteOptions {
@@ -525,28 +534,3 @@ function buildApiRouteCore<Contract extends ApiContract>(
   return routeOptions
 }
 
-/**
- * Build a Fastify `RouteOptions` object from an `ApiRouteHandler` container.
- *
- * SSE event sending goes directly through `reply.sse` — no controller required.
- *
- * @param routeHandler - Container returned by `buildApiHandler()`
- * @returns Fastify `RouteOptions` ready to pass to `app.route()`
- */
-export function buildApiRoute<Contract extends ApiContract>(
-  routeHandler: ApiRouteHandler<Contract>,
-): RouteOptions {
-  return buildApiRouteCore(routeHandler)
-}
-
-/**
- * Variant of `buildApiRoute` that wires real room operations into SSE sessions.
- * Called internally by `AbstractApiController.buildRoutes()` when rooms are enabled.
- * @internal
- */
-export function _buildApiRouteWithRooms<Contract extends ApiContract>(
-  routeHandler: ApiRouteHandler<Contract>,
-  roomContext: ApiRouteInternalRoomContext,
-): RouteOptions {
-  return buildApiRouteCore(routeHandler, roomContext)
-}

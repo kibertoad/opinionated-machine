@@ -7,11 +7,7 @@ import type { SSERoomManager } from '../sse/rooms/SSERoomManager.ts'
 import { SSESessionSpy } from '../sse/SSESessionSpy.ts'
 import type { SSEMessage } from '../sse/sseTypes.ts'
 import type { ApiRouteHandler, BuildApiRoutesReturnType } from './apiHandlerTypes.ts'
-import {
-  _buildApiRouteWithRooms,
-  type ApiRouteInternalRoomContext,
-  buildApiRoute,
-} from './apiRouteBuilder.ts'
+import { buildApiRoute, type ApiRouteInternalRoomContext } from './apiRouteBuilder.ts'
 
 export type ApiControllerSseConfig = {
   roomBroadcaster?: SSERoomBroadcaster
@@ -107,14 +103,11 @@ export abstract class AbstractApiController<APIContracts extends Record<string, 
       }
       return Object.values(routeHandlers).map((handler) =>
         // biome-ignore lint/suspicious/noExplicitAny: Internal dispatch — each handler carries its own contract type
-        _buildApiRouteWithRooms(handler as ApiRouteHandler<any>, roomContext),
+        buildApiRoute(handler as ApiRouteHandler<any>, roomContext),
       )
     }
 
-    return Object.values(routeHandlers).map((handler) =>
-      // biome-ignore lint/suspicious/noExplicitAny: Internal dispatch — each handler carries its own contract type
-      buildApiRoute(handler as ApiRouteHandler<any>),
-    )
+    return Object.values(routeHandlers).map((handler) => buildApiRoute(handler))
   }
 
   /**
