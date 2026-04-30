@@ -10,6 +10,7 @@ export {
   AbstractTestContextFactory,
   type CreateTestContextParams,
 } from './lib/AbstractTestContextFactory.js'
+export * from './lib/api-contracts/index.js'
 export type { NestedPartial } from './lib/configUtils.js'
 export {
   type DependencyInjectionOptions,
