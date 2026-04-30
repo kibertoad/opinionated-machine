@@ -65,5 +65,6 @@ export {
   SSESubscriptionManager,
   type SSESubscriptionManagerConfig,
   type SubscriptionContext,
+  type SubscriptionPolicy,
   type SubscriptionResolver,
 } from './subscriptions/index.js'

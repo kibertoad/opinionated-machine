@@ -9,6 +9,7 @@ import type {
   PublishResult,
   SSESubscriptionManagerConfig,
   SubscriptionContext,
+  SubscriptionPolicy,
 } from './types.js'
 
 type ConnectionState<TUserContext> = {
@@ -26,7 +27,7 @@ export class SSESubscriptionManager<
   TMetadata extends Record<string, unknown> = Record<string, unknown>,
 > {
   private readonly config: SSESubscriptionManagerConfig<TUserContext, TMetadata> & {
-    defaultPolicy: 'allow' | 'deny'
+    defaultPolicy: SubscriptionPolicy
   }
   private readonly connectionStates: Map<string, ConnectionState<TUserContext>> = new Map()
   private readonly userConnections: Map<string, Set<string>> = new Map()
@@ -137,14 +138,16 @@ export class SSESubscriptionManager<
   publish(event: IncomingEvent<TMetadata>): Promise<PublishResult> {
     const rooms = event.targetRooms
 
-    // Explicit empty array means "no target rooms" → no connections to evaluate
-    if (rooms && rooms.length === 0) {
-      return Promise.resolve({ delivered: 0, filtered: 0 })
+    // Order: cheapest/most specific check first, then broadest fallback.
+
+    // Caller omitted targetRooms → fan out to all managed connections.
+    if (rooms === undefined) {
+      return this.publishToAllConnections(event)
     }
 
-    // undefined targetRooms → fall back to evaluating all managed connections
-    if (!rooms) {
-      return this.publishToAllConnections(event)
+    // Caller passed an empty array → explicit "no rooms", no work to do.
+    if (rooms.length === 0) {
+      return Promise.resolve({ delivered: 0, filtered: 0 })
     }
 
     const message: SSEMessage = {
@@ -195,7 +198,11 @@ export class SSESubscriptionManager<
   async refreshConnection(connectionId: string): Promise<void> {
     const state = this.connectionStates.get(connectionId)
     if (!state) {
-      throw new Error(`Unknown connection: ${connectionId}`)
+      // No-op for unknown ids. Connections can vanish between scheduling a
+      // refresh and running it (client disconnects mid-flight, or the caller
+      // races refreshConnection with handleDisconnect), and handleDisconnect
+      // is already idempotent for the same case — keep the API symmetric.
+      return
     }
 
     const previousUserId = this.config.resolveUserId?.(state.context.userContext)

@@ -383,8 +383,10 @@ describe('SSESubscriptionManager', () => {
       await manager.handleConnect(createMockSession('conn-1'))
       manager.handleDisconnect(createMockSession('conn-1'))
 
-      // refreshUser should no-op (no connections for user-1)
-      // If the index still had conn-1, refreshConnection would throw for unknown connection
+      // refreshUser should no-op (no connections for user-1).
+      // Even if the index still had conn-1, refreshConnection silently no-ops
+      // for unknown ids — the assertion below verifies refreshUser itself
+      // didn't throw and didn't drive any resolver work.
       await expect(manager.refreshUser('user-1')).resolves.not.toThrow()
     })
 
@@ -941,12 +943,12 @@ describe('SSESubscriptionManager', () => {
       expect(ctxAfter!.userContext.projectIds).toEqual(new Set(['new']))
     })
 
-    it('should throw for unknown connectionId', async () => {
+    it('should be a no-op for unknown connectionId', async () => {
       const { manager } = createTestManager()
 
-      await expect(manager.refreshConnection('unknown')).rejects.toThrow(
-        'Unknown connection: unknown',
-      )
+      // Symmetric with handleDisconnect's idempotency — refreshes that race a
+      // disconnect should not throw.
+      await expect(manager.refreshConnection('unknown')).resolves.toBeUndefined()
     })
 
     it('should pass accumulated context through refresh chain', async () => {

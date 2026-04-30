@@ -257,7 +257,10 @@ export class SSERoomManager {
    *
    * @param room - The room to publish to
    * @param message - The SSE message to broadcast
-   * @param options - Broadcast options
+   * @param options - Broadcast options (e.g. `local: true` to skip adapter)
+   * @param metadata - Optional opaque metadata propagated to other nodes
+   *   alongside the message. Used by `SSESubscriptionManager` for cross-node
+   *   resolver evaluation; not delivered to clients.
    */
   async publish(
     room: string,

@@ -70,6 +70,9 @@ export type SSERoomAdapter = {
    *
    * @param room - The room to publish to
    * @param message - The SSE message to broadcast
+   * @param metadata - Optional opaque metadata for cross-node subscription
+   *   filtering (e.g. event scope, project id). Adapters serialize this
+   *   alongside the message; it is not delivered to SSE clients.
    */
   publish(room: string, message: SSEMessage, metadata?: Record<string, unknown>): Promise<void>
 
@@ -84,6 +87,13 @@ export type SSERoomAdapter = {
 
 /**
  * Handler for messages received from the adapter (other nodes).
+ *
+ * @param room - The room the message was published to
+ * @param message - The SSE message
+ * @param sourceNodeId - Id of the node that originated the publish; used to
+ *   suppress echoing the publisher's own messages back to it
+ * @param metadata - Optional opaque metadata attached at publish time;
+ *   `undefined` for v1 (pre-metadata) messages from older nodes
  */
 export type SSERoomMessageHandler = (
   room: string,

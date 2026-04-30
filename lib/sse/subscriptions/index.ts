@@ -12,5 +12,6 @@ export type {
   ResolverResult,
   SSESubscriptionManagerConfig,
   SubscriptionContext,
+  SubscriptionPolicy,
   SubscriptionResolver,
 } from './types.js'

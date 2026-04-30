@@ -45,6 +45,13 @@ export type FilterVerdict =
   | { action: 'defer' }
 
 /**
+ * Terminal subscription policy — what the manager does when no resolver
+ * issues a definitive verdict. Used by `defaultPolicy` and any code path
+ * that needs to fall back to allow-or-deny without a `defer` option.
+ */
+export type SubscriptionPolicy = 'allow' | 'deny'
+
+/**
  * Returned by onConnect() and refresh() — declares updated user context
  * and room requirements. The manager diffs rooms and joins/leaves as needed.
  */
@@ -133,7 +140,7 @@ export type SSESubscriptionManagerConfig<
    * What happens when all resolvers return `defer`.
    * @default 'deny'
    */
-  defaultPolicy?: 'allow' | 'deny'
+  defaultPolicy?: SubscriptionPolicy
 
   /**
    * Extract userId from user context. Required for `refreshUser()`.
