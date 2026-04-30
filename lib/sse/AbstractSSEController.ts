@@ -511,7 +511,7 @@ export abstract class AbstractSSEController<
    * })
    * ```
    */
-  protected broadcastToRoom<EventName extends AllContractEventNames<APIContracts>>(
+  protected async broadcastToRoom<EventName extends AllContractEventNames<APIContracts>>(
     room: string | string[],
     eventName: EventName,
     data: ExtractEventSchema<APIContracts, EventName> extends z.ZodTypeAny
@@ -520,7 +520,7 @@ export abstract class AbstractSSEController<
     options?: RoomBroadcastOptions & { id?: string; retry?: number },
   ): Promise<number> {
     if (!this._roomBroadcaster) {
-      return Promise.resolve(0)
+      return 0
     }
     const message: SSEMessage = {
       event: eventName,
@@ -528,7 +528,8 @@ export abstract class AbstractSSEController<
       id: options?.id ?? randomUUID(),
       retry: options?.retry,
     }
-    return this._roomBroadcaster.broadcastMessage(room, message, options)
+    const { delivered } = await this._roomBroadcaster.broadcastMessage(room, message, options)
+    return delivered
   }
 
   /**

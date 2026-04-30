@@ -263,8 +263,8 @@ describe('RedisAdapter', () => {
     })
   })
 
-  describe('v2 wire format with metadata', () => {
-    it('should publish as v2 format when metadata is present', async () => {
+  describe('wire format with metadata', () => {
+    it('should include meta when metadata is present', async () => {
       const message = { event: 'test', data: { foo: 'bar' } }
       const metadata = { scope: 'project', projectId: '123' }
 
@@ -273,14 +273,14 @@ describe('RedisAdapter', () => {
       const publishedJson = (pubClient.publish as ReturnType<typeof vi.fn>).mock.calls[0]![1]
       const parsed = JSON.parse(publishedJson)
       expect(parsed).toMatchObject({
-        v: 2,
+        v: 1,
         m: message,
         n: 'test-node-1',
         meta: metadata,
       })
     })
 
-    it('should publish as v1 format when metadata is absent', async () => {
+    it('should omit meta when metadata is absent', async () => {
       const message = { event: 'test', data: { foo: 'bar' } }
 
       await adapter.publish('my-room', message)
@@ -292,17 +292,17 @@ describe('RedisAdapter', () => {
         m: message,
         n: 'test-node-1',
       })
-      expect(parsed.meta).toBeUndefined()
+      expect(parsed).not.toHaveProperty('meta')
     })
 
-    it('should decode v2 messages and pass metadata to handler', async () => {
+    it('should decode messages with metadata and pass to handler', async () => {
       const handler = vi.fn()
       adapter.onMessage(handler)
       await adapter.connect()
 
       const metadata = { scope: 'team', teamId: 'eng' }
       const payload = {
-        v: 2,
+        v: 1,
         m: { event: 'test', data: { foo: 'bar' } },
         n: 'other-node',
         meta: metadata,
@@ -317,7 +317,7 @@ describe('RedisAdapter', () => {
       )
     })
 
-    it('should decode v1 messages with metadata as undefined', async () => {
+    it('should decode messages without metadata as undefined', async () => {
       const handler = vi.fn()
       adapter.onMessage(handler)
       await adapter.connect()
@@ -339,15 +339,18 @@ describe('RedisAdapter', () => {
       expect(handler).not.toHaveBeenCalled()
     })
 
-    it('should handle v2 messages with meta: undefined', async () => {
-      const handler = vi.fn()
+    it('should swallow async handler rejections', async () => {
+      const handler = vi.fn().mockRejectedValue(new Error('boom'))
       adapter.onMessage(handler)
       await adapter.connect()
 
-      const payload = { v: 2, m: { event: 'test', data: {} }, n: 'other-node', meta: undefined }
+      const payload = { v: 1, m: { event: 'test', data: {} }, n: 'other-node' }
+      // Should not throw or trigger an unhandled rejection.
       subClient.simulateMessage('sse:room:my-room', JSON.stringify(payload))
+      // Yield so the rejection is captured by the .catch.
+      await new Promise((r) => setTimeout(r, 0))
 
-      expect(handler).toHaveBeenCalledWith('my-room', expect.any(Object), 'other-node', undefined)
+      expect(handler).toHaveBeenCalled()
     })
   })
 })

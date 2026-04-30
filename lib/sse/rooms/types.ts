@@ -108,6 +108,19 @@ export type PreDeliveryFilter = (
 ) => Promise<boolean> | boolean
 
 /**
+ * Result of a single broadcast call.
+ *
+ * Returned per-call (rather than tracked on the broadcaster) so that concurrent
+ * broadcasts cannot interleave their counters.
+ */
+export type BroadcastResult = {
+  /** Local connections the message was successfully sent to. */
+  delivered: number
+  /** Local connections skipped by the pre-delivery filter. */
+  filtered: number
+}
+
+/**
  * Configuration for the SSE Room Manager.
  */
 export type SSERoomManagerConfig = {

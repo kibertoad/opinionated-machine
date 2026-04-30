@@ -39,13 +39,13 @@ describe('SSERoomBroadcaster', () => {
       roomManager.join('conn-2', 'room-a')
       roomManager.join('conn-3', 'room-a')
 
-      const sent = await broadcaster.broadcastMessage('room-a', {
+      const result = await broadcaster.broadcastMessage('room-a', {
         event: 'testEvent',
         data: { foo: 'bar' },
         id: 'msg-1',
       })
 
-      expect(sent).toBe(3)
+      expect(result).toEqual({ delivered: 3, filtered: 0 })
       expect(sendEvent).toHaveBeenCalledTimes(3)
       expect(sendEvent).toHaveBeenCalledWith(
         'conn-1',
@@ -75,14 +75,14 @@ describe('SSERoomBroadcaster', () => {
       roomManager.join('conn-2', 'room-a')
       roomManager.join('conn-3', 'room-b')
 
-      const sent = await broadcaster.broadcastMessage(['room-a', 'room-b'], {
+      const result = await broadcaster.broadcastMessage(['room-a', 'room-b'], {
         event: 'testEvent',
         data: { foo: 'bar' },
         id: 'msg-1',
       })
 
       // conn-1 is in both rooms but should only receive once
-      expect(sent).toBe(3)
+      expect(result).toEqual({ delivered: 3, filtered: 0 })
       expect(sendEvent).toHaveBeenCalledTimes(3)
     })
 
@@ -142,13 +142,13 @@ describe('SSERoomBroadcaster', () => {
     })
 
     it('should return 0 when room has no connections', async () => {
-      const sent = await broadcaster.broadcastMessage('empty-room', {
+      const result = await broadcaster.broadcastMessage('empty-room', {
         event: 'testEvent',
         data: { foo: 'bar' },
         id: 'msg-1',
       })
 
-      expect(sent).toBe(0)
+      expect(result).toEqual({ delivered: 0, filtered: 0 })
       expect(sendEvent).not.toHaveBeenCalled()
     })
 
@@ -162,13 +162,13 @@ describe('SSERoomBroadcaster', () => {
         .mockResolvedValueOnce(false) // conn-2 failed (e.g., disconnected)
         .mockResolvedValueOnce(true)
 
-      const sent = await broadcaster.broadcastMessage('room-a', {
+      const result = await broadcaster.broadcastMessage('room-a', {
         event: 'testEvent',
         data: { foo: 'bar' },
         id: 'msg-1',
       })
 
-      expect(sent).toBe(2)
+      expect(result).toEqual({ delivered: 2, filtered: 0 })
     })
   })
 
@@ -322,13 +322,13 @@ describe('SSERoomBroadcaster', () => {
       roomManager.join('conn-2', 'room-a')
       roomManager.join('conn-3', 'room-a')
 
-      const sent = await broadcaster.broadcastMessage('room-a', {
+      const result = await broadcaster.broadcastMessage('room-a', {
         event: 'testEvent',
         data: { foo: 'bar' },
         id: 'msg-1',
       })
 
-      expect(sent).toBe(2)
+      expect(result).toEqual({ delivered: 2, filtered: 1 })
       expect(sendEvent).toHaveBeenCalledTimes(2)
       expect(sendEvent).not.toHaveBeenCalledWith('conn-2', expect.anything())
     })
@@ -339,13 +339,13 @@ describe('SSERoomBroadcaster', () => {
 
       roomManager.join('conn-1', 'room-a')
 
-      const sent = await broadcaster.broadcastMessage('room-a', {
+      const result = await broadcaster.broadcastMessage('room-a', {
         event: 'testEvent',
         data: { foo: 'bar' },
         id: 'msg-1',
       })
 
-      expect(sent).toBe(1)
+      expect(result).toEqual({ delivered: 1, filtered: 0 })
       expect(sendEvent).toHaveBeenCalledTimes(1)
     })
 
@@ -378,13 +378,13 @@ describe('SSERoomBroadcaster', () => {
       roomManager.join('conn-1', 'room-a')
       roomManager.join('conn-2', 'room-a')
 
-      const sent = await broadcaster.broadcastMessage('room-a', {
+      const result = await broadcaster.broadcastMessage('room-a', {
         event: 'testEvent',
         data: { foo: 'bar' },
         id: 'msg-1',
       })
 
-      expect(sent).toBe(2)
+      expect(result).toEqual({ delivered: 2, filtered: 0 })
     })
 
     it('should apply filter during remote broadcast handling', async () => {
@@ -408,6 +408,13 @@ describe('SSERoomBroadcaster', () => {
       // conn-1 should be filtered out, conn-2 should receive
       expect(sendEvent).toHaveBeenCalledTimes(1)
       expect(sendEvent).toHaveBeenCalledWith('conn-2', expect.objectContaining({ event: 'test' }))
+    })
+
+    it('should throw when a pre-delivery filter is already set', () => {
+      broadcaster.setPreDeliveryFilter(() => true)
+      expect(() => broadcaster.setPreDeliveryFilter(() => true)).toThrow(
+        /pre-delivery filter is already set/i,
+      )
     })
 
     it('should pass metadata from remote broadcast to filter', async () => {

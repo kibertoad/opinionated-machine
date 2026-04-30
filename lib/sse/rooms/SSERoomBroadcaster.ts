@@ -3,7 +3,7 @@ import type { z } from 'zod'
 import type { SSEEventDefinition } from '../defineEvent.js'
 import type { SSEMessage } from '../sseTypes.js'
 import type { SSERoomManager } from './SSERoomManager.js'
-import type { PreDeliveryFilter, RoomBroadcastOptions } from './types.js'
+import type { BroadcastResult, PreDeliveryFilter, RoomBroadcastOptions } from './types.js'
 
 /** Maximum number of message IDs to cache per connection for deduplication */
 const MAX_DEDUP_CACHE_SIZE = 1000
@@ -50,9 +50,16 @@ export class SSERoomBroadcaster {
   /**
    * Set a pre-delivery filter that runs before sending to each connection.
    * Used by SSESubscriptionManager for resolver pipeline evaluation.
-   * Only one filter can be active at a time.
+   * Only one filter can be active at a time — calling this method twice throws,
+   * to prevent silently replacing an already-installed filter (which is almost
+   * always a wiring bug, e.g. registering two SSESubscriptionManagers).
    */
   setPreDeliveryFilter(filter: PreDeliveryFilter): void {
+    if (this.preDeliveryFilter) {
+      throw new Error(
+        'SSERoomBroadcaster pre-delivery filter is already set; only one filter can be active at a time',
+      )
+    }
     this.preDeliveryFilter = filter
   }
 
@@ -82,9 +89,10 @@ export class SSERoomBroadcaster {
    * @param event - Event definition created by `defineEvent()`
    * @param data - Event data (must match the schema from the event definition)
    * @param options - Broadcast options (local, id, retry)
-   * @returns Number of local connections the message was sent to
+   * @returns Number of local connections the message was successfully delivered to.
+   *          For separate `delivered`/`filtered` counts, call {@link broadcastMessage}.
    */
-  broadcastToRoom<T extends z.ZodType>(
+  async broadcastToRoom<T extends z.ZodType>(
     room: string | string[],
     event: SSEEventDefinition<string, T>,
     data: z.input<T>,
@@ -100,7 +108,8 @@ export class SSERoomBroadcaster {
       id: options?.id ?? randomUUID(),
       retry: options?.retry,
     }
-    return this.broadcastMessage(room, message, options)
+    const { delivered } = await this.broadcastMessage(room, message, options)
+    return delivered
   }
 
   /**
@@ -111,26 +120,32 @@ export class SSERoomBroadcaster {
    * @param room - Room name or array of room names
    * @param message - The SSE message to broadcast
    * @param options - Broadcast options (local)
-   * @returns Number of local connections the message was sent to
+   * @returns `delivered` is the number of local connections the message was sent to;
+   *          `filtered` is the number of local connections skipped by the pre-delivery
+   *          filter. Returning both per-call (rather than tracking on the broadcaster)
+   *          avoids races between concurrent broadcasts.
    */
   async broadcastMessage(
     room: string | string[],
     message: SSEMessage,
     options?: RoomBroadcastOptions & { metadata?: Record<string, unknown> },
-  ): Promise<number> {
+  ): Promise<BroadcastResult> {
     const rooms = Array.isArray(room) ? room : [room]
     const connectionIds = this.collectRoomConnections(rooms)
 
-    // Send to all local connections
-    let sent = 0
+    let delivered = 0
+    let filtered = 0
     for (const connId of connectionIds) {
       // Check pre-delivery filter if set
       if (this.preDeliveryFilter) {
         const allowed = await this.preDeliveryFilter(connId, message, options?.metadata)
-        if (!allowed) continue
+        if (!allowed) {
+          filtered++
+          continue
+        }
       }
       if (await this.sendToConnection(connId, message)) {
-        sent++
+        delivered++
       }
     }
 
@@ -141,7 +156,7 @@ export class SSERoomBroadcaster {
       }
     }
 
-    return sent
+    return { delivered, filtered }
   }
 
   /**

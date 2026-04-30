@@ -308,13 +308,13 @@ describe('SSERoomBroadcaster integration', () => {
       )
 
       // Broadcast to both rooms via broadcaster — conn1 should receive only once
-      const sent = await controller.roomBroadcaster.broadcastMessage(
+      const result = await controller.roomBroadcaster.broadcastMessage(
         [chatRoom({ roomId: 'room-a' }), chatRoom({ roomId: 'room-b' })],
         { event: 'message', data: { from: 'system', text: 'Multi-room announcement' } },
         { local: true },
       )
       // conn1 is in both rooms but counted once, conn2 is in room-b
-      expect(sent).toBe(2)
+      expect(result.delivered).toBe(2)
 
       client1.close()
       client2.close()

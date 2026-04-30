@@ -16,9 +16,10 @@ import type { RedisAdapterConfig, RedisRoomMessage } from './types.ts'
  * **Message Format:**
  * ```json
  * {
- *   "v": 1,              // Protocol version
- *   "m": { SSEMessage }, // The event to broadcast
- *   "n": "node-id"       // Source node ID
+ *   "v": 1,                  // Protocol version
+ *   "m": { SSEMessage },     // The event to broadcast
+ *   "n": "node-id",          // Source node ID
+ *   "meta": { ... }          // Optional metadata for subscription filtering
  * }
  * ```
  *
@@ -105,12 +106,10 @@ export class RedisAdapter implements SSERoomAdapter {
     metadata?: Record<string, unknown>,
   ): Promise<void> {
     const channel = this.getChannelName(room)
-
-    // Use v2 only when metadata is present, v1 otherwise (smaller payload)
-    const payload: RedisRoomMessage = metadata
-      ? { v: 2, m: message, n: this.nodeId, meta: metadata }
-      : { v: 1, m: message, n: this.nodeId }
-
+    const payload: RedisRoomMessage = { v: 1, m: message, n: this.nodeId }
+    if (metadata !== undefined) {
+      payload.meta = metadata
+    }
     await this.pubClient.publish(channel, JSON.stringify(payload))
   }
 
@@ -134,6 +133,12 @@ export class RedisAdapter implements SSERoomAdapter {
 
   /**
    * Handle incoming messages from Redis.
+   *
+   * The handler may be async, but we deliberately do not await it here:
+   * `node-redis` / `ioredis` invoke this synchronously per channel message,
+   * and awaiting would serialize delivery across all rooms on this node.
+   * We attach a `.catch` to surface async handler errors without crashing
+   * the subscriber via an unhandled rejection.
    */
   private handleMessage(channel: string, rawMessage: string): void {
     if (!this.messageHandler) {
@@ -143,14 +148,17 @@ export class RedisAdapter implements SSERoomAdapter {
     try {
       const payload = JSON.parse(rawMessage) as RedisRoomMessage
 
-      // Accept both v1 and v2
-      if (payload.v !== 1 && payload.v !== 2) {
+      if (payload.v !== 1) {
         return // Unknown protocol version, skip
       }
 
       const room = this.getRoomFromChannel(channel)
-      const metadata = payload.v === 2 ? payload.meta : undefined
-      this.messageHandler(room, payload.m, payload.n, metadata)
+      const result = this.messageHandler(room, payload.m, payload.n, payload.meta)
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        ;(result as Promise<void>).catch(() => {
+          // Swallow to prevent unhandled rejection; downstream is expected to log.
+        })
+      }
     } catch {
       // Invalid JSON or message format, skip
     }

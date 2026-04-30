@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { FastifyRequest } from 'fastify'
 import type { SSERoomBroadcaster } from '../rooms/SSERoomBroadcaster.js'
 import type { SSERoomManager } from '../rooms/SSERoomManager.js'
 import type { SSEMessage } from '../sseTypes.js'
@@ -17,15 +18,8 @@ type ConnectionState<TUserContext> = {
 
 type SSESession = {
   id: string
-  request: import('fastify').FastifyRequest
+  request: FastifyRequest
 }
-
-/**
- * Per-publish counters tracked via the pre-delivery filter.
- * A new object is created for each publish() call to avoid race conditions
- * when multiple publishes execute concurrently.
- */
-type PublishCounters = { delivered: number; filtered: number }
 
 export class SSESubscriptionManager<
   TUserContext,
@@ -41,11 +35,6 @@ export class SSESubscriptionManager<
     sseRoomBroadcaster: SSERoomBroadcaster
   }
 
-  // Active counters for the current publish call. Replaced per-publish to avoid
-  // races when multiple publishes overlap. The pre-delivery filter references
-  // whichever object is current at invocation time.
-  private activeCounters: PublishCounters = { delivered: 0, filtered: 0 }
-
   constructor(
     config: SSESubscriptionManagerConfig<TUserContext, TMetadata>,
     deps: {
@@ -56,7 +45,9 @@ export class SSESubscriptionManager<
     this.config = { ...config, defaultPolicy: config.defaultPolicy ?? 'deny' }
     this.deps = deps
 
-    // Register as the broadcaster's pre-delivery filter
+    // Register as the broadcaster's pre-delivery filter. The broadcaster
+    // tracks delivered/filtered counts per call, so this filter only needs
+    // to return the verdict — no shared mutable counters.
     deps.sseRoomBroadcaster.setPreDeliveryFilter((connectionId, message, metadata) => {
       return this.shouldDeliver(connectionId, message, metadata)
     })
@@ -143,12 +134,12 @@ export class SSESubscriptionManager<
     this.connectionStates.delete(session.id)
   }
 
-  async publish(event: IncomingEvent<TMetadata>): Promise<PublishResult> {
+  publish(event: IncomingEvent<TMetadata>): Promise<PublishResult> {
     const rooms = event.targetRooms
 
     // Explicit empty array means "no target rooms" → no connections to evaluate
     if (rooms && rooms.length === 0) {
-      return { delivered: 0, filtered: 0 }
+      return Promise.resolve({ delivered: 0, filtered: 0 })
     }
 
     // undefined targetRooms → fall back to evaluating all managed connections
@@ -156,21 +147,15 @@ export class SSESubscriptionManager<
       return this.publishToAllConnections(event)
     }
 
-    // Create per-publish counters to avoid races with concurrent publishes
-    const counters: PublishCounters = { delivered: 0, filtered: 0 }
-    this.activeCounters = counters
-
     const message: SSEMessage = {
       event: event.eventName,
       data: event.data,
       id: randomUUID(),
     }
 
-    await this.deps.sseRoomBroadcaster.broadcastMessage(rooms, message, {
+    return this.deps.sseRoomBroadcaster.broadcastMessage(rooms, message, {
       metadata: event.metadata as Record<string, unknown>,
     })
-
-    return { ...counters }
   }
 
   /**
@@ -204,7 +189,7 @@ export class SSESubscriptionManager<
       metadata: (metadata ?? {}) as TMetadata,
     }
 
-    return this.evaluateAndTrack(state.context, event)
+    return this.evaluate(state.context, event)
   }
 
   async refreshConnection(connectionId: string): Promise<void> {
@@ -334,27 +319,17 @@ export class SSESubscriptionManager<
     return { action: this.config.defaultPolicy }
   }
 
-  private async evaluateAndTrack(
+  private async evaluate(
     ctx: SubscriptionContext<TUserContext>,
     event: IncomingEvent<TMetadata>,
   ): Promise<boolean> {
-    // Capture the active counters reference at evaluation time.
-    // This ensures we increment the correct counters even if a new publish()
-    // starts before this evaluation completes.
-    const counters = this.activeCounters
     const verdict = await this.evaluatePipeline(ctx, event)
-    if (verdict.action === 'deny') {
-      counters.filtered++
-      return false
-    }
-    // 'allow' (or 'defer' with allow default — evaluatePipeline resolves this)
-    counters.delivered++
-    return true
+    return verdict.action !== 'deny'
   }
 
-  private async publishToAllConnections(event: IncomingEvent<TMetadata>): Promise<PublishResult> {
+  private publishToAllConnections(event: IncomingEvent<TMetadata>): Promise<PublishResult> {
     if (this.connectionStates.size === 0) {
-      return { delivered: 0, filtered: 0 }
+      return Promise.resolve({ delivered: 0, filtered: 0 })
     }
 
     // Collect all rooms across all managed connections
@@ -365,9 +340,11 @@ export class SSESubscriptionManager<
       }
     }
 
-    // Create per-publish counters
-    const counters: PublishCounters = { delivered: 0, filtered: 0 }
-    this.activeCounters = counters
+    if (allRooms.size === 0) {
+      // Connections with no rooms cannot be reached via room-based broadcast.
+      // Resolvers should declare rooms in onConnect() to ensure reachability.
+      return Promise.resolve({ delivered: 0, filtered: 0 })
+    }
 
     const message: SSEMessage = {
       event: event.eventName,
@@ -375,18 +352,10 @@ export class SSESubscriptionManager<
       id: randomUUID(),
     }
 
-    if (allRooms.size > 0) {
-      // Broadcast to all rooms — the pre-delivery filter will evaluate each connection
-      await this.deps.sseRoomBroadcaster.broadcastMessage([...allRooms], message, {
-        metadata: event.metadata as Record<string, unknown>,
-      })
-    }
-
-    // Note: Connections with no rooms cannot be reached via room-based broadcast.
-    // They are counted as filtered since the broadcaster has no public API to send
-    // to a specific connection. Resolvers should declare rooms in onConnect() to
-    // ensure connections are reachable.
-
-    return { ...counters }
+    // Broadcast to all rooms — the pre-delivery filter evaluates each
+    // connection, and the broadcaster returns per-call delivered/filtered counts.
+    return this.deps.sseRoomBroadcaster.broadcastMessage([...allRooms], message, {
+      metadata: event.metadata as Record<string, unknown>,
+    })
   }
 }
