@@ -70,8 +70,11 @@ export type SSERoomAdapter = {
    *
    * @param room - The room to publish to
    * @param message - The SSE message to broadcast
+   * @param metadata - Optional opaque metadata for cross-node subscription
+   *   filtering (e.g. event scope, project id). Adapters serialize this
+   *   alongside the message; it is not delivered to SSE clients.
    */
-  publish(room: string, message: SSEMessage): Promise<void>
+  publish(room: string, message: SSEMessage, metadata?: Record<string, unknown>): Promise<void>
 
   /**
    * Register a handler for messages received from other nodes.
@@ -84,12 +87,48 @@ export type SSERoomAdapter = {
 
 /**
  * Handler for messages received from the adapter (other nodes).
+ *
+ * @param room - The room the message was published to
+ * @param message - The SSE message
+ * @param sourceNodeId - Id of the node that originated the publish; used to
+ *   suppress echoing the publisher's own messages back to it
+ * @param metadata - Optional opaque metadata attached at publish time;
+ *   `undefined` for v1 (pre-metadata) messages from older nodes
  */
 export type SSERoomMessageHandler = (
   room: string,
   message: SSEMessage,
   sourceNodeId: string,
+  metadata?: Record<string, unknown>,
 ) => void | Promise<void>
+
+/**
+ * Pre-delivery filter called before sending to each connection.
+ * Returns true to deliver, false to skip.
+ *
+ * Used by SSESubscriptionManager to inject resolver pipeline evaluation
+ * into the broadcaster's delivery path.
+ *
+ * When no filter is set, all connections receive all messages (existing behavior).
+ */
+export type PreDeliveryFilter = (
+  connectionId: string,
+  message: SSEMessage,
+  metadata?: Record<string, unknown>,
+) => Promise<boolean> | boolean
+
+/**
+ * Result of a single broadcast call.
+ *
+ * Returned per-call (rather than tracked on the broadcaster) so that concurrent
+ * broadcasts cannot interleave their counters.
+ */
+export type BroadcastResult = {
+  /** Local connections the message was successfully sent to. */
+  delivered: number
+  /** Local connections skipped by the pre-delivery filter. */
+  filtered: number
+}
 
 /**
  * Configuration for the SSE Room Manager.

@@ -65,12 +65,14 @@ export type RedisAdapterConfig = {
 
 /**
  * Message format for Redis pub/sub.
+ *
+ * `meta` is optional — present only when a publisher attaches metadata for
+ * subscription filtering. Older readers (no metadata support) ignore the
+ * extra field; newer readers receive `undefined` when it is absent.
  */
 export type RedisRoomMessage = {
-  /** Protocol version for future compatibility */
   v: 1
-  /** The SSE message to broadcast */
   m: SSEMessage
-  /** Source node ID */
   n: string
+  meta?: Record<string, unknown>
 }
