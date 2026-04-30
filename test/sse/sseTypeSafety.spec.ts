@@ -1,7 +1,7 @@
 import { buildSseContract as buildContract } from '@lokalise/api-contracts'
-import type { FastifyReply } from 'fastify'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { z } from 'zod/v4'
+import type { SyncModeReply } from '../../index.js'
 import {
   AbstractDualModeController,
   AbstractSSEController,
@@ -1235,11 +1235,11 @@ describe('Unified buildHandler Type Safety', () => {
       expect(true).toBe(true)
     })
 
-    it('provides FastifyReply as second argument in json handler', () => {
+    it('provides SyncModeReply (FastifyReply without send) as second argument in sync handler', () => {
       buildHandler(chatCompletionContract, {
         sync: (_request, reply) => {
-          // Assert reply is FastifyReply
-          expectTypeOf(reply).toEqualTypeOf<FastifyReply>()
+          // Assert reply is SyncModeReply (FastifyReply with send() omitted)
+          expectTypeOf(reply).toEqualTypeOf<SyncModeReply>()
           return { reply: 'Hello', usage: { tokens: 10 } }
         },
         sse: (_request, sse) => {

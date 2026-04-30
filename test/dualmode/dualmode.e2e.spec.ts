@@ -1,3 +1,4 @@
+import { Writable } from 'node:stream'
 import {
   type AnyDualModeContractDefinition,
   type AnySSEContractDefinition,
@@ -697,6 +698,106 @@ describe('Dual-Mode JSON Response Validation', () => {
     expect(body.requiredField).toBe('valid')
     expect(body.count).toBe(42)
   })
+})
+
+describe('Dual-Mode sync handler that calls reply.send() directly', () => {
+  it(
+    'handles reply.sent gracefully when handler calls reply.send() directly',
+    { timeout: 10000 },
+    async () => {
+      const container = createContainer({ injectionMode: 'PROXY' })
+      const context = new DIContext<object, object>(container, { isTestMode: true }, {})
+      context.registerDependencies({ modules: [new GenericDualModeModule()] }, undefined)
+
+      const controller: GenericDualModeController = context.diContainer.resolve(
+        'genericDualModeController',
+      )
+
+      const replyDotSendContract = buildContract({
+        method: 'post',
+        pathResolver: () => '/api/reply-send-test',
+        requestPathParamsSchema: z.object({}),
+        requestQuerySchema: z.object({}),
+        requestHeaderSchema: z.object({}),
+        requestBodySchema: z.object({ data: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { result: z.object({ success: z.boolean() }) },
+      })
+
+      const route = buildFastifyRoute(
+        controller,
+        buildHandler(replyDotSendContract, {
+          // Simulates the common Fastify pattern where handler calls reply.send() directly
+          // instead of returning the response body. This would be a type error with SyncModeReply
+          // (which omits send()), so we cast to any to test the runtime safety net.
+          sync: ((request: any, reply: any) => {
+            reply.send({ result: request.body.data })
+          }) as any,
+          sse: (_request, sse) => {
+            sse.start('autoClose')
+          },
+        }),
+      )
+
+      // Capture log output to detect Fastify's "reply.sent = true" error.
+      // Without the reply.sent guard, the handler returns undefined which fails
+      // response validation. The error is thrown after reply.send() was already called,
+      // so Fastify can't send a 500 — instead it logs an error-level message:
+      // "Promise errored, but reply.sent = true was set"
+      const logs: Record<string, unknown>[] = []
+      const logStream = new Writable({
+        write(chunk, _encoding, callback) {
+          try {
+            logs.push(JSON.parse(chunk.toString()))
+          } catch {
+            // ignore non-JSON lines
+          }
+          callback()
+        },
+      })
+
+      const server = await createSSETestServer(
+        (app) => {
+          app.route(route)
+        },
+        {
+          configureApp: (app) => {
+            app.setValidatorCompiler(validatorCompiler)
+            app.setSerializerCompiler(serializerCompiler)
+          },
+          setup: () => ({ context }),
+          serverOptions: { logger: { stream: logStream, level: 'error' } },
+        },
+      )
+
+      const response = await server.app.inject({
+        method: 'post',
+        url: '/api/reply-send-test',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        payload: { data: 'hello' },
+      })
+
+      // Allow async error logging to flush
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      expect(response.statusCode).toBe(200)
+      const body = JSON.parse(response.body)
+      expect(body.result).toBe('hello')
+
+      // Without the reply.sent guard, Fastify logs an error because the validation
+      // error is thrown after reply.send() was already called
+      const doubleSendErrors = logs.filter(
+        (l) => typeof l.msg === 'string' && l.msg.includes('reply.sent'),
+      )
+      expect(doubleSendErrors).toHaveLength(0)
+
+      await context.destroy()
+      await server.close()
+    },
+  )
 })
 
 describe('Dual-Mode Controller Methods', () => {
