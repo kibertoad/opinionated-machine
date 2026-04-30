@@ -10,6 +10,7 @@ export {
   AbstractTestContextFactory,
   type CreateTestContextParams,
 } from './lib/AbstractTestContextFactory.js'
+export * from './lib/api-contracts/index.js'
 export type { NestedPartial } from './lib/configUtils.js'
 export {
   type DependencyInjectionOptions,
@@ -34,5 +35,3 @@ export * from './lib/routes/index.js'
 export * from './lib/sse/index.js'
 // SSE testing utilities
 export * from './lib/testing/index.js'
-
-export * from './lib/api-contracts/index.js'
