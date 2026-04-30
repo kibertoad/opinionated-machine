@@ -198,6 +198,8 @@ export class SSESubscriptionManager<
       throw new Error(`Unknown connection: ${connectionId}`)
     }
 
+    const previousUserId = this.config.resolveUserId?.(state.context.userContext)
+
     const { userContext, resolverRooms } = await this.runRefreshChain(connectionId, state)
     const newUnion = this.computeRoomUnion(resolverRooms)
     this.applyRoomDiff(connectionId, state.context.rooms, newUnion)
@@ -206,6 +208,37 @@ export class SSESubscriptionManager<
       context: { connectionId, request: state.context.request, userContext, rooms: newUnion },
       resolverRooms,
     })
+
+    // Refresh may rotate the resolved userId (impersonation, user merge, etc.).
+    // Re-bucket the connection so refreshUser/handleDisconnect target the right Set.
+    if (this.config.resolveUserId) {
+      const nextUserId = this.config.resolveUserId(userContext)
+      if (previousUserId !== nextUserId) {
+        this.rekeyUserConnection(connectionId, previousUserId, nextUserId)
+      }
+    }
+  }
+
+  private rekeyUserConnection(
+    connectionId: string,
+    previousUserId: string | undefined,
+    nextUserId: string,
+  ): void {
+    if (previousUserId !== undefined) {
+      const previousSet = this.userConnections.get(previousUserId)
+      if (previousSet) {
+        previousSet.delete(connectionId)
+        if (previousSet.size === 0) {
+          this.userConnections.delete(previousUserId)
+        }
+      }
+    }
+    let nextSet = this.userConnections.get(nextUserId)
+    if (!nextSet) {
+      nextSet = new Set()
+      this.userConnections.set(nextUserId, nextSet)
+    }
+    nextSet.add(connectionId)
   }
 
   async refreshUser(userId: string): Promise<void> {
@@ -216,7 +249,10 @@ export class SSESubscriptionManager<
     const connSet = this.userConnections.get(userId)
     if (!connSet || connSet.size === 0) return
 
-    for (const connId of connSet) {
+    // Snapshot the connection IDs — refreshConnection may mutate `connSet`
+    // (re-keying when the resolved userId changes), and iterating a Set while
+    // it is being modified produces undefined behaviour.
+    for (const connId of [...connSet]) {
       await this.refreshConnection(connId)
     }
   }

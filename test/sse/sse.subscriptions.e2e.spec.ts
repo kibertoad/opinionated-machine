@@ -83,8 +83,10 @@ describe('SSE Subscriptions E2E', () => {
         },
       )
 
-      // Wait for subscription manager to process handleConnect
-      await new Promise((r) => setTimeout(r, 50))
+      // awaitServerConnection only waits for sse.start() to register the SSE
+      // connection; the SSESubscriptionManager.handleConnect() that fires
+      // afterward is async, so we wait for it explicitly here.
+      await controller.awaitSubscriptionConnect(serverConnection.id)
 
       // Verify rooms were joined
       const ctx = controller.subscriptionManager.getConnectionContext(serverConnection.id)
@@ -110,12 +112,16 @@ describe('SSE Subscriptions E2E', () => {
       projectService.setMemberships('user-2', ['project-A'])
       preferencesService.setMutedTypes('user-2', ['announcement'])
 
-      const { client } = await SSEHttpClient.connect(server.baseUrl, '/api/subscriptions/stream', {
-        query: { userId: 'user-2' },
-        awaitServerConnection: { controller },
-      })
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/subscriptions/stream',
+        {
+          query: { userId: 'user-2' },
+          awaitServerConnection: { controller },
+        },
+      )
 
-      await new Promise((r) => setTimeout(r, 50))
+      await controller.awaitSubscriptionConnect(serverConnection.id)
 
       const result = await controller.subscriptionManager.publish({
         eventName: 'announcement',
@@ -137,7 +143,7 @@ describe('SSE Subscriptions E2E', () => {
         // user-3 is NOT a member of project-A
         projectService.setMemberships('user-3', ['project-B'])
 
-        const { client } = await SSEHttpClient.connect(
+        const { client, serverConnection } = await SSEHttpClient.connect(
           server.baseUrl,
           '/api/subscriptions/stream',
           {
@@ -146,7 +152,7 @@ describe('SSE Subscriptions E2E', () => {
           },
         )
 
-        await new Promise((r) => setTimeout(r, 50))
+        await controller.awaitSubscriptionConnect(serverConnection.id)
 
         // user-3 is in project:project-B room, not project:project-A
         // Publishing to project:project-A should not reach user-3
@@ -174,7 +180,7 @@ describe('SSE Subscriptions E2E', () => {
         // Not muted initially
         preferencesService.setMutedTypes('user-4', [])
 
-        const { client } = await SSEHttpClient.connect(
+        const { client, serverConnection } = await SSEHttpClient.connect(
           server.baseUrl,
           '/api/subscriptions/stream',
           {
@@ -183,7 +189,7 @@ describe('SSE Subscriptions E2E', () => {
           },
         )
 
-        await new Promise((r) => setTimeout(r, 50))
+        await controller.awaitSubscriptionConnect(serverConnection.id)
 
         // First publish — should be delivered
         const result1 = await controller.subscriptionManager.publish({
@@ -228,7 +234,7 @@ describe('SSE Subscriptions E2E', () => {
           },
         )
 
-        await new Promise((r) => setTimeout(r, 50))
+        await controller.awaitSubscriptionConnect(serverConnection.id)
 
         // Not in any project room — publish shouldn't reach
         const result1 = await controller.subscriptionManager.publish({
@@ -282,7 +288,10 @@ describe('SSE Subscriptions E2E', () => {
           awaitServerConnection: { controller },
         })
 
-        await new Promise((r) => setTimeout(r, 50))
+        await Promise.all([
+          controller.awaitSubscriptionConnect(conn1.serverConnection.id),
+          controller.awaitSubscriptionConnect(conn2.serverConnection.id),
+        ])
 
         const result = await controller.subscriptionManager.publish({
           eventName: 'announcement',
@@ -308,7 +317,7 @@ describe('SSE Subscriptions E2E', () => {
       async () => {
         projectService.setMemberships('user-6', ['project-A'])
 
-        const { client } = await SSEHttpClient.connect(
+        const { client, serverConnection } = await SSEHttpClient.connect(
           server.baseUrl,
           '/api/subscriptions/stream',
           {
@@ -317,10 +326,12 @@ describe('SSE Subscriptions E2E', () => {
           },
         )
 
-        await new Promise((r) => setTimeout(r, 50))
+        await controller.awaitSubscriptionConnect(serverConnection.id)
 
-        // Global event — project membership resolver should defer (no opinion)
-        // With default policy deny, this should be filtered since no resolver allows
+        // Global event — ProjectMembershipResolver narrows via testMeta.global()
+        // and explicitly allows; MutePreferencesResolver defers since the user
+        // hasn't muted 'alert'. The connection is in 'project:project-A' so the
+        // broadcast reaches it.
         const globalResult = await controller.subscriptionManager.publish({
           eventName: 'alert',
           data: { level: 'info', message: 'System update' },
@@ -328,9 +339,8 @@ describe('SSE Subscriptions E2E', () => {
           metadata: { scope: 'global' } as TestEventMetadata,
         })
 
-        // With deny default policy and both resolvers returning defer for global events,
-        // the event should be denied
-        expect(globalResult.filtered).toBe(1)
+        expect(globalResult.delivered).toBe(1)
+        expect(globalResult.filtered).toBe(0)
 
         client.close()
       },
@@ -350,14 +360,16 @@ describe('SSE Subscriptions E2E', () => {
         },
       )
 
-      await new Promise((r) => setTimeout(r, 50))
+      await controller.awaitSubscriptionConnect(serverConnection.id)
 
       expect(controller.subscriptionManager.getConnectionContext(serverConnection.id)).toBeDefined()
 
       client.close()
 
-      // Wait for disconnect to propagate
-      await new Promise((r) => setTimeout(r, 100))
+      // The route's onClose runs (and is awaited) before the spy fires the
+      // disconnection event, so by the time this resolves, our handleDisconnect
+      // has already cleared the manager's state — no sleep needed.
+      await controller.connectionSpy.waitForDisconnection(serverConnection.id)
 
       expect(
         controller.subscriptionManager.getConnectionContext(serverConnection.id),

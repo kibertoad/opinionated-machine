@@ -16,12 +16,17 @@ export type MetadataGuard<TMetadata, TVariant extends TMetadata> = (
 
 /**
  * Map of discriminant values to their corresponding type guard functions.
+ *
+ * Keyed by `TValues` — the actual list of values passed to `defineEventMetadata` —
+ * not by the full `TMetadata[TField]` union. That way, accessing a guard for
+ * an omitted variant is a type error instead of an `undefined` at runtime.
  */
-export type MetadataGuards<TMetadata, TField extends keyof TMetadata> = {
-  [V in TMetadata[TField] & (string | number)]: MetadataGuard<
-    TMetadata,
-    ExtractMetadata<TMetadata, TField, V>
-  >
+export type MetadataGuards<
+  TMetadata,
+  TField extends keyof TMetadata,
+  TValues extends TMetadata[TField] & (string | number),
+> = {
+  [V in TValues]: MetadataGuard<TMetadata, ExtractMetadata<TMetadata, TField, V>>
 }
 
 /**
@@ -56,20 +61,22 @@ export type MetadataGuards<TMetadata, TField extends keyof TMetadata> = {
  * ```
  */
 export function defineEventMetadata<TMetadata extends Record<string, unknown>>() {
-  return <TField extends keyof TMetadata & string>(
+  return <
+    TField extends keyof TMetadata & string,
+    const TValues extends ReadonlyArray<TMetadata[TField] & (string | number)>,
+  >(
     field: TField,
-    values: ReadonlyArray<TMetadata[TField] & (string | number)>,
-  ): MetadataGuards<TMetadata, TField> => {
-    const guards = {} as MetadataGuards<TMetadata, TField>
+    values: TValues,
+  ): MetadataGuards<TMetadata, TField, TValues[number]> => {
+    const guards = {} as Record<string | number, MetadataGuard<TMetadata, TMetadata>>
 
     for (const value of values) {
-      ;(guards as Record<string, unknown>)[String(value)] = (
-        metadata: TMetadata,
-      ): metadata is ExtractMetadata<TMetadata, TField, typeof value> => {
-        return metadata[field] === value
-      }
+      // Index by the raw value so numeric and string discriminants stay distinct
+      // (e.g. `1` and `'1'` produce separate keys). Still safe under JS coercion
+      // because the `metadata[field] === value` check inside the guard uses ===.
+      guards[value] = (metadata: TMetadata): metadata is TMetadata => metadata[field] === value
     }
 
-    return guards
+    return guards as MetadataGuards<TMetadata, TField, TValues[number]>
   }
 }

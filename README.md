@@ -1966,7 +1966,7 @@ The manager diffs rooms and joins/leaves as needed — no reconnection required.
 
 - Metadata flows through the adapter chain (Redis pub/sub) alongside the SSE message
 - Resolver pipeline runs locally on each node for its own connections
-- Wire format v2 is backward-compatible with v1 (older nodes simply have no metadata)
+- Wire format is a single v1 schema with optional `meta` — older nodes simply have no metadata
 - Use `layered-loader` for distributed cache invalidation across nodes
 
 #### Data Loading with layered-loader

@@ -113,6 +113,11 @@ export class ProjectMembershipResolver {
         ? { action: 'allow' }
         : { action: 'deny', reason: 'not a project member' }
     }
+    // Global-scoped events have no project gate — allow them through.
+    // Without this, `defaultPolicy: 'deny'` would drop every global event.
+    if (testMeta.global(event.metadata)) {
+      return { action: 'allow' }
+    }
     return { action: 'defer' }
   }
 
@@ -177,6 +182,23 @@ export class SubscriptionStreamController extends AbstractSSEController<Subscrip
 
   public readonly subscriptionManager: SSESubscriptionManager<TestUserContext, TestEventMetadata>
 
+  // Tracks in-flight handleConnect() promises keyed by connection id, so that
+  // onClose can wait for connect to settle before dispatching the matching
+  // disconnect. Without this, a client closing during the resolver chain would
+  // produce an out-of-order disconnect→connect and leak a managed entry.
+  // Tests can also await this via {@link awaitSubscriptionConnect} to avoid
+  // racy fixed sleeps after `awaitServerConnection`.
+  private readonly pendingConnects = new Map<string, Promise<void>>()
+
+  /**
+   * Test helper: resolve once the SSESubscriptionManager has finished
+   * processing handleConnect() for `connectionId`. Use after
+   * `awaitServerConnection` (which only waits for SSE-level registration).
+   */
+  awaitSubscriptionConnect(connectionId: string): Promise<void> {
+    return this.pendingConnects.get(connectionId) ?? Promise.resolve()
+  }
+
   constructor(
     deps: {
       sseRoomManager: SSERoomManager
@@ -223,14 +245,32 @@ export class SubscriptionStreamController extends AbstractSSEController<Subscrip
           context: { userId: (request.query as { userId?: string }).userId },
         })
 
-        // Wire up subscription manager lifecycle
-        this.subscriptionManager.handleConnect(session).catch(() => {
-          // Connection setup failed
-        })
+        // Track the connect promise so onClose can wait for it. We surface
+        // setup failures via console.error rather than swallowing them, but
+        // we still resolve so disconnect can proceed without dangling on a
+        // rejected promise.
+        const connectPromise = this.subscriptionManager
+          .handleConnect(session)
+          .catch((err) => {
+            // Surface setup failures so a flaky resolver doesn't get hidden.
+            // biome-ignore lint/suspicious/noConsole: test fixture diagnostics
+            console.error('SubscriptionStream: handleConnect failed', err)
+          })
+          .finally(() => {
+            this.pendingConnects.delete(session.id)
+          })
+        this.pendingConnects.set(session.id, connectPromise)
       },
     },
     {
-      onClose: (session) => {
+      onClose: async (session) => {
+        // Wait for any in-flight handleConnect to finish so we don't dispatch
+        // disconnect before connect has registered the connection. If connect
+        // already settled, this is a no-op.
+        const pending = this.pendingConnects.get(session.id)
+        if (pending) {
+          await pending
+        }
         this.subscriptionManager.handleDisconnect(session)
       },
     },

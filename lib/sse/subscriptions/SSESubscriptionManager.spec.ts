@@ -1101,6 +1101,39 @@ describe('SSESubscriptionManager', () => {
       await manager.refreshUser('non-existent-user')
       expect(resolver.refresh).not.toHaveBeenCalled()
     })
+
+    it('should re-key the userConnections index when refresh changes the userId', async () => {
+      const resolver = createMockResolver({
+        name: 'rotate-user',
+        onConnect: vi.fn().mockResolvedValue({
+          userContext: { userId: 'user-1', projectIds: new Set(), mutedEventTypes: new Set() },
+          rooms: ['room-a'],
+        }),
+        refresh: vi.fn().mockResolvedValue({
+          userContext: { userId: 'user-2', projectIds: new Set(), mutedEventTypes: new Set() },
+          rooms: ['room-a'],
+        }),
+      })
+      const { manager } = createTestManager({
+        resolvers: [resolver],
+        resolveUserId: (ctx) => ctx.userId,
+      })
+      await manager.handleConnect(createMockSession('conn-1'))
+
+      await manager.refreshConnection('conn-1')
+
+      // Old bucket should be empty (deleted), new bucket should contain conn-1.
+      // refreshUser on the old id should be a no-op; on the new id it should
+      // refresh the connection again.
+      const refreshSpy = resolver.refresh as ReturnType<typeof vi.fn>
+      refreshSpy.mockClear()
+
+      await manager.refreshUser('user-1')
+      expect(refreshSpy).not.toHaveBeenCalled()
+
+      await manager.refreshUser('user-2')
+      expect(refreshSpy).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('getConnectionContext', () => {
