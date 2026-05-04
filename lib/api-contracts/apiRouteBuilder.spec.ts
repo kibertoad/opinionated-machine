@@ -263,10 +263,14 @@ describe('buildApiRoute — response schemas', () => {
     })
     const routeOptions = buildApiRoute(sseFirstContract, {
       nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
-      sse: (_request, sse) => { sse.start('keepAlive') },
+      sse: (_request, sse) => {
+        sse.start('keepAlive')
+      },
     })
     expect(routeOptions).toEqual(
-      expect.objectContaining({ schema: expect.objectContaining({ response: { 200: userSchema } }) }),
+      expect.objectContaining({
+        schema: expect.objectContaining({ response: { 200: userSchema } }),
+      }),
     )
   })
 })
