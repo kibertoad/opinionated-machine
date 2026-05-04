@@ -363,6 +363,19 @@ async function handleApiSseRoute(
 // Internal Helpers — Schema
 // ============================================================================
 
+function buildResponseSchemas(contract: ApiContract): Record<number, unknown> {
+  return Object.keys(contract.responsesByStatusCode).reduce<Record<number, unknown>>(
+    (acc, statusCode) => {
+      const schema = getSchemaForStatusCode(contract, Number(statusCode))
+      if (schema) {
+        acc[Number(statusCode)] = schema
+      }
+      return acc
+    },
+    {},
+  )
+}
+
 function buildBaseSchema(contract: ApiContract): Record<string, unknown> {
   const schema: Record<string, unknown> = {}
   if (contract.requestPathParamsSchema) schema.params = contract.requestPathParamsSchema
@@ -370,12 +383,13 @@ function buildBaseSchema(contract: ApiContract): Record<string, unknown> {
   if (contract.requestHeaderSchema) schema.headers = contract.requestHeaderSchema
 
   if (
-    'requestBodySchema' in contract &&
     contract.requestBodySchema !== undefined &&
     contract.requestBodySchema !== ContractNoBody
   ) {
     schema.body = contract.requestBodySchema
   }
+
+  schema.response = buildResponseSchemas(contract)
 
   return schema
 }

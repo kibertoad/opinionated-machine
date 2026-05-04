@@ -206,6 +206,51 @@ describe('buildApiRoute — SSE config via options', () => {
 })
 
 // ============================================================================
+// buildApiRoute — response schemas
+// ============================================================================
+
+describe('buildApiRoute — response schemas', () => {
+  it('includes JSON response schema for a GET route', () => {
+    const routeOptions = buildApiRoute(getUserContract, async () => ({
+      status: 200,
+      body: { id: '1', name: 'Alice' },
+    }))
+    expect(routeOptions).toEqual(
+      expect.objectContaining({ schema: expect.objectContaining({ response: { 200: userSchema } }) }),
+    )
+  })
+
+  it('includes JSON response schema for a POST route', () => {
+    const routeOptions = buildApiRoute(createUserContract, async () => ({
+      status: 201,
+      body: { id: '1', name: 'Alice' },
+    }))
+    expect(routeOptions).toEqual(
+      expect.objectContaining({ schema: expect.objectContaining({ response: { 201: userSchema } }) }),
+    )
+  })
+
+  it('omits ContractNoBody status codes from response schemas', () => {
+    const routeOptions = buildApiRoute(deleteUserContract, async () => ({
+      status: 204,
+      body: undefined,
+    }))
+    expect(routeOptions).toEqual(
+      expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
+    )
+  })
+
+  it('omits SSE-only status codes from response schemas', () => {
+    const routeOptions = buildApiRoute(sseOnlyContract, (_request, sse) => {
+      sse.start('keepAlive')
+    })
+    expect(routeOptions).toEqual(
+      expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
+    )
+  })
+})
+
+// ============================================================================
 // buildApiRoute — no-path-params contract
 // ============================================================================
 
