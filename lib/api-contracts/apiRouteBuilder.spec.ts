@@ -252,6 +252,23 @@ describe('buildApiRoute — response schemas', () => {
       expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
     )
   })
+
+  it('picks the JSON schema from anyOfResponses even when SSE variant comes first', () => {
+    const sseFirstContract = defineApiContract({
+      method: 'get',
+      pathResolver: () => '/mixed',
+      responsesByStatusCode: {
+        200: anyOfResponses([sseResponse(sseEventsSchema), userSchema]),
+      },
+    })
+    const routeOptions = buildApiRoute(sseFirstContract, {
+      nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      sse: (_request, sse) => { sse.start('keepAlive') },
+    })
+    expect(routeOptions).toEqual(
+      expect.objectContaining({ schema: expect.objectContaining({ response: { 200: userSchema } }) }),
+    )
+  })
 })
 
 // ============================================================================

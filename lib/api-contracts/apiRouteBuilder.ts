@@ -88,7 +88,7 @@ function getSchemaForStatusCode(contract: ApiContract, status: number): z.ZodTyp
         isTextResponse(anyResponse) ||
         isBlobResponse(anyResponse)
       ) {
-        return null
+        continue
       }
       return anyResponse
     }
