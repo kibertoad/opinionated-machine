@@ -216,7 +216,9 @@ describe('buildApiRoute — response schemas', () => {
       body: { id: '1', name: 'Alice' },
     }))
     expect(routeOptions).toEqual(
-      expect.objectContaining({ schema: expect.objectContaining({ response: { 200: userSchema } }) }),
+      expect.objectContaining({
+        schema: expect.objectContaining({ response: { 200: userSchema } }),
+      }),
     )
   })
 
@@ -226,7 +228,9 @@ describe('buildApiRoute — response schemas', () => {
       body: { id: '1', name: 'Alice' },
     }))
     expect(routeOptions).toEqual(
-      expect.objectContaining({ schema: expect.objectContaining({ response: { 201: userSchema } }) }),
+      expect.objectContaining({
+        schema: expect.objectContaining({ response: { 201: userSchema } }),
+      }),
     )
   })
 

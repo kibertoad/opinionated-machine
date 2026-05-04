@@ -382,10 +382,7 @@ function buildBaseSchema(contract: ApiContract): Record<string, unknown> {
   if (contract.requestQuerySchema) schema.querystring = contract.requestQuerySchema
   if (contract.requestHeaderSchema) schema.headers = contract.requestHeaderSchema
 
-  if (
-    contract.requestBodySchema !== undefined &&
-    contract.requestBodySchema !== ContractNoBody
-  ) {
+  if (contract.requestBodySchema !== undefined && contract.requestBodySchema !== ContractNoBody) {
     schema.body = contract.requestBodySchema
   }
 
