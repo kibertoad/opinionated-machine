@@ -10,7 +10,9 @@ export const acceptanceManifest = {
       path: '/echo',
       controller: 'echo',
       routeKey: 'get',
-      metadata: { upstream: 'upstream', timeouts: { request: '2s' } },
+      // No request timeout — Kong CE has no per-route timeout override, so
+      // we let /slow's tighter timeout drive the service-level read_timeout.
+      metadata: { upstream: 'upstream' },
     },
     {
       id: 'echo.slow',

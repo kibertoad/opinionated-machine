@@ -7,11 +7,6 @@ exports[`renderKrakendConfig > matches the JSON snapshot for the fixture manifes
       "backend": [
         {
           "encoding": "no-op",
-          "extra_config": {
-            "backend/http/client": {
-              "timeout": "5s",
-            },
-          },
           "host": [
             "http://users:8081",
           ],
@@ -28,6 +23,7 @@ exports[`renderKrakendConfig > matches the JSON snapshot for the fixture manifes
       },
       "method": "POST",
       "output_encoding": "no-op",
+      "timeout": "5s",
     },
     {
       "backend": [

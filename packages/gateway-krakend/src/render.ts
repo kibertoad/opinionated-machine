@@ -45,20 +45,17 @@ export function renderKrakendConfig(
       endpoint: route.path,
       method: route.method,
       output_encoding: 'no-op',
+      // KrakenD's request timeout is an endpoint-level field, NOT a
+      // `backend/http/client` extra_config — that plugin doesn't have a
+      // `timeout` setting and silently ignores it.
+      ...(route.metadata.timeouts?.request
+        ? { timeout: toKrakendDuration(route.metadata.timeouts.request) }
+        : {}),
       backend: [
         {
           host: [upstreamHost],
           url_pattern: applyRewrite(route.path, route.metadata.rewrite),
           encoding: 'no-op',
-          ...(route.metadata.timeouts?.request
-            ? {
-                extra_config: {
-                  'backend/http/client': {
-                    timeout: toKrakendDuration(route.metadata.timeouts.request),
-                  },
-                },
-              }
-            : {}),
         },
       ],
     }
@@ -257,6 +254,8 @@ type KrakendEndpoint = {
   endpoint: string
   method: string
   output_encoding: string
+  /** Endpoint-level request timeout (e.g. "200ms", "5s"). */
+  timeout?: string
   backend: KrakendBackend[]
   extra_config?: Record<string, unknown>
 }
