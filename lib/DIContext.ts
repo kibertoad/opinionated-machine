@@ -247,7 +247,8 @@ export class DIContext<
     }
 
     for (const name of this.apiControllerNames) {
-      const controller: AbstractApiController = this.diContainer.resolve(name)
+      // biome-ignore lint/suspicious/noExplicitAny: any api controller works here
+      const controller: AbstractApiController<any> = this.diContainer.resolve(name)
       collected.push({ name, kind: 'api', controller })
     }
 

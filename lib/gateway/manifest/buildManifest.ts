@@ -35,7 +35,8 @@ type CollectedController =
       // biome-ignore lint/suspicious/noExplicitAny: contract generic erased at the manifest boundary
       controller: AbstractController<any>
     }
-  | { name: string; kind: 'api'; controller: AbstractApiController }
+  // biome-ignore lint/suspicious/noExplicitAny: contract generic erased at the manifest boundary
+  | { name: string; kind: 'api'; controller: AbstractApiController<any> }
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const
 type CanonicalMethod = (typeof HTTP_METHODS)[number]
@@ -69,9 +70,9 @@ function collectRouteEntries(
     const built = collected.controller.buildRoutes() as Record<string, RouteOptions>
     return Object.entries(built).map(([routeKey, route]) => ({ routeKey, route }))
   }
-  // AbstractApiController: routes is an array — index becomes the routeKey.
-  return collected.controller.routes.map((route, index) => ({
-    routeKey: String(index),
+  // AbstractApiController: routes is a Record — key becomes the routeKey.
+  return Object.entries(collected.controller.routes).map(([routeKey, route]) => ({
+    routeKey,
     route,
   }))
 }
