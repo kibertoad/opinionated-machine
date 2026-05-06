@@ -1,25 +1,28 @@
 # @opinionated-machine/gateway-envoy
 
-Envoy v3 static-config generator for [opinionated-machine](https://github.com/kibertoad/opinionated-machine)
-gateway manifests.
-
-## Install
+Generate an Envoy v3 static config from your
+[opinionated-machine](https://github.com/kibertoad/opinionated-machine) routes.
+Annotate routes once with timeouts / retries / header rules / etc., then run
+this generator at build time and deploy the resulting `envoy.yaml`.
 
 ```sh
-npm install @opinionated-machine/gateway-envoy
+npm install --save-dev @opinionated-machine/gateway-envoy
 ```
 
 `opinionated-machine` is a peer dependency.
 
-## Usage
+## Use it
 
 ```ts
+// bin/render-envoy.ts
 import { writeFileSync } from 'node:fs'
 import { renderEnvoyConfig } from '@opinionated-machine/gateway-envoy'
+import { buildContext } from '../src/diContext.ts'   // your DIContext factory
 
-const manifest = context.buildGatewayManifest({ service: 'users-api' })
+const ctx = await buildContext()
+const manifest = ctx.buildGatewayManifest({ service: 'users-api' })
 
-const { yaml, json, warnings } = renderEnvoyConfig(manifest, {
+const { yaml, warnings } = renderEnvoyConfig(manifest, {
   listenPort: 8080,
   clusters: {
     'users-service': { hosts: ['users:8081'], connectTimeout: '1s' },
@@ -27,53 +30,57 @@ const { yaml, json, warnings } = renderEnvoyConfig(manifest, {
 })
 
 writeFileSync('envoy.yaml', yaml)
-console.warn(warnings)            // metadata fields Envoy v1 doesn't natively support
+if (warnings.length) console.warn('[envoy]', warnings)
 ```
 
-The generator is a pure function — same manifest in, same config out — with
-zero coupling to Fastify, your DI container, or contract definitions.
+```sh
+$ tsx bin/render-envoy.ts && envoy --mode validate -c envoy.yaml
+configuration 'envoy.yaml' OK
+```
 
-## Field mappings
+`renderEnvoyConfig(...)` also returns `json` (the same config as a JS object,
+handy for tests and inspection).
 
-| `GatewayMetadata` field | Envoy mapping |
-| ----------------------- | ------------- |
-| `upstream`              | `cluster` reference; deduped clusters in `static_resources.clusters` |
-| `match.headers` / `customHeaders` | `match.headers[]` with `string_match` (exact/prefix/regex) |
-| `match.query` / `customQuery`     | `match.query_parameters[]` |
-| `timeouts.request`      | `route.timeout` |
-| `timeouts.connect`      | `cluster.connect_timeout` (via `EnvoyClusterOptions.connectTimeout`) |
-| `retry.attempts`        | `route.retry_policy.num_retries` |
-| `retry.on`              | `route.retry_policy.retry_on` (CSV) |
-| `retry.perTryTimeout`   | `route.retry_policy.per_try_timeout` |
-| `rewrite.stripPrefix`   | `route.prefix_rewrite: '/'` |
-| `headers.request.add`   | `route.request_headers_to_add` |
-| `headers.request.remove`| `route.request_headers_to_remove` |
-| `headers.response.add`  | `route.response_headers_to_add` |
-| `headers.response.remove` | `route.response_headers_to_remove` |
-| `extensions.envoy`      | shallow-merged onto the route last (escape hatch) |
+## How metadata maps to Envoy
 
-## Limitations (v1)
+| Route metadata | Envoy output |
+| -------------- | ------------ |
+| `upstream` | route's `cluster`; deduped clusters under `static_resources.clusters` |
+| `match.headers` / `customHeaders` | `route.match.headers[]` (`exact` / `prefix` / `safe_regex`) |
+| `match.query` / `customQuery`     | `route.match.query_parameters[]` |
+| `timeouts.request`     | `route.timeout` |
+| `timeouts.connect`     | `cluster.connect_timeout` (set via `EnvoyClusterOptions.connectTimeout`) |
+| `retry.attempts`       | `route.retry_policy.num_retries` |
+| `retry.on`             | `route.retry_policy.retry_on` (CSV) |
+| `retry.perTryTimeout`  | `route.retry_policy.per_try_timeout` |
+| `rewrite.stripPrefix`  | `route.prefix_rewrite: '/'` |
+| `headers.request.{add,remove}`   | `route.request_headers_to_{add,remove}` |
+| `headers.response.{add,remove}`  | `route.response_headers_to_{add,remove}` |
+| `extensions.envoy`     | shallow-merged onto the route last (escape hatch) |
 
-The following universal fields are **not** mapped to Envoy in v1 — they appear
-as `warnings[]` entries on the result so they aren't silently dropped:
+## What it doesn't do
 
-- `cache.ttl` — needs `envoy.filters.http.cache` wired separately
-- `circuitBreaker` — applies at the cluster level; v1 emits routes only
-- `auth.jwt` — needs `envoy.filters.http.jwt_authn` filter + provider on the listener
-- `cors` — needs `envoy.filters.http.cors` filter
-- `rateLimit` — needs `envoy.filters.http.local_ratelimit` typed_per_filter_config
+These metadata fields produce a `warnings[]` entry instead of being silently
+dropped — they need an Envoy filter that this generator doesn't wire for you:
 
-Use `extensions.envoy` on a route for any of these.
+- `cache.ttl` — needs `envoy.filters.http.cache`
+- `auth.jwt` — needs `envoy.filters.http.jwt_authn`
+- `cors` — needs `envoy.filters.http.cors`
+- `rateLimit` — needs `envoy.filters.http.local_ratelimit`
+- `circuitBreaker` — applies at the cluster level
 
-## Acceptance tests
+For any of these, configure the filter once in your Envoy listener and use
+`extensions.envoy` on the route to attach the per-route typed-config block.
 
-This package includes a Docker-based acceptance suite that boots a real Envoy
-container plus a stub upstream and drives traffic through the generated config:
+## Verifying generated configs
+
+This package's CI runs an acceptance suite that boots a real Envoy container
+plus a stub upstream and drives traffic through the generated config:
 
 ```sh
 npm run test:acceptance
 ```
 
-Triggered automatically in CI by the
+Requires Docker. Triggered automatically by the
 [`gateway-acceptance`](../../.github/workflows/gateway-acceptance.yml) workflow
-when this package or `lib/gateway/` changes. Requires Docker locally.
+when this package or `lib/gateway/` changes.
