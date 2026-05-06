@@ -59,12 +59,32 @@ with `{param}` segments become regex paths with named captures —
 Kong's plugin system is the natural fit for most of the universal metadata —
 this generator covers more of it natively than the Envoy or KrakenD ones do.
 
+## OSS vs Enterprise
+
+`KongOptions.profile` selects the target distribution. Default `'oss'`.
+
+```ts
+const { yaml } = renderKongConfig(manifest, {
+  upstreams: { 'users-service': { url: 'http://users:8081' } },
+  profile: 'enterprise',         // emit Enterprise-only plugins
+})
+```
+
+| Metadata | OSS profile | Enterprise profile |
+| -------- | ----------- | ------------------ |
+| `auth.mTLS: true` | warning — terminate at the listener | emits the `mtls-auth` plugin on the route |
+
+Other Enterprise plugins (e.g. `rate-limiting-advanced`, governance plugins)
+remain reachable via `extensions.kong_plugins` regardless of profile, so you
+can opt in piecewise.
+
 ## What it doesn't do
 
 Reported as `warnings[]` on the result:
 
-- `circuitBreaker` — no native equivalent in Kong CE; consider Kong Enterprise
-  or a service-mesh layer.
+- `circuitBreaker` — Kong CE has no first-class circuit breaker, and even
+  Kong Enterprise has no first-class plugin for connectivity governance;
+  reach for `extensions.kong_plugins` or a service-mesh layer.
 - `traffic.weights` / `traffic.shadow` — not modelled here; configure Kong
   upstreams + targets manually if needed.
 - **`auth.jwt` is a marker only.** Kong's JWT plugin reads keys from consumer

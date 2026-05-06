@@ -77,9 +77,57 @@ describe('renderKongConfig', () => {
     )
   })
 
-  it('reads service-level read_timeout from the tightest route timeout in that upstream', () => {
+  it('reads service-level read_timeout from the LOOSEST route timeout in that upstream', () => {
+    // Kong CE has no per-route timeout override; using the loosest avoids
+    // silently shortening timeouts on routes that asked for more.
     const { json } = renderKongConfig(fixtureManifest, options)
-    // Tightest among 5s / 2s / (no timeout) is 2s = 2000ms.
-    expect(json.services[0]?.read_timeout).toBe(2000)
+    // Loosest among 5s / 2s / (no timeout) is 5s = 5000ms.
+    expect(json.services[0]?.read_timeout).toBe(5000)
+  })
+
+  it('warns when a route asked for a tighter timeout than the service-level one allows', () => {
+    const { warnings } = renderKongConfig(fixtureManifest, options)
+    // The 2s route is tighter than the service-level 5s read_timeout.
+    expect(
+      warnings.some(
+        (w) =>
+          w.includes('usersController.getItem') &&
+          w.includes('tighter') &&
+          w.includes('per-route timeout override'),
+      ),
+    ).toBe(true)
+  })
+
+  describe('profile: enterprise', () => {
+    const mtlsManifest: typeof fixtureManifest = {
+      ...fixtureManifest,
+      routes: [
+        {
+          id: 'secure.get',
+          method: 'GET',
+          path: '/secure',
+          controller: 'secure',
+          routeKey: 'get',
+          metadata: { upstream: 'users-service', auth: { mTLS: true, required: true } },
+        },
+      ],
+    }
+
+    it('emits the mtls-auth plugin for auth.mTLS routes (no warning)', () => {
+      const { json, warnings } = renderKongConfig(mtlsManifest, {
+        ...options,
+        profile: 'enterprise',
+      })
+      const route = json.services[0]?.routes[0]
+      expect(route?.plugins?.some((p) => p.name === 'mtls-auth')).toBe(true)
+      expect(warnings.some((w) => w.includes('auth.mTLS'))).toBe(false)
+    })
+
+    it('warns instead of emitting mtls-auth under the OSS profile', () => {
+      const { json, warnings } = renderKongConfig(mtlsManifest, options) // profile defaults to 'oss'
+      const route = json.services[0]?.routes[0]
+      expect(route?.plugins?.some((p) => p.name === 'mtls-auth') ?? false).toBe(false)
+      expect(warnings.some((w) => w.includes('auth.mTLS') && w.includes('Enterprise'))).toBe(true)
+    })
   })
 })

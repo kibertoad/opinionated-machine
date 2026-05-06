@@ -22,7 +22,7 @@ exports[`renderKongConfig > matches the JSON snapshot for the fixture manifest 1
       "path": undefined,
       "port": 8081,
       "protocol": "http",
-      "read_timeout": 2000,
+      "read_timeout": 5000,
       "routes": [
         {
           "methods": [
@@ -118,7 +118,7 @@ services:
     protocol: http
     host: users
     port: 8081
-    read_timeout: 2000
+    read_timeout: 5000
     routes:
       - name: usersController.createItem
         methods:

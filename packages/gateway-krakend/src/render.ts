@@ -68,16 +68,7 @@ export function renderKrakendConfig(
       endpoint.extra_config = extraConfig
     }
 
-    if (route.metadata.headers?.request?.add) {
-      warnings.push(
-        `Route "${route.id}": metadata.headers.request.add is not natively expressed in KrakenD; use extensions.krakend or a Lua plugin if needed.`,
-      )
-    }
-    if (route.metadata.match?.host) {
-      warnings.push(
-        `Route "${route.id}": metadata.match.host has no direct KrakenD equivalent — host routing is typically handled at the listener level.`,
-      )
-    }
+    collectUnsupportedWarnings(route.id, route.metadata, warnings)
 
     return endpoint
   })
@@ -91,6 +82,43 @@ export function renderKrakendConfig(
   }
 
   return { json: config, warnings }
+}
+
+function collectUnsupportedWarnings(
+  routeId: string,
+  meta: GatewayMetadataValue,
+  warnings: string[],
+): void {
+  if (meta.headers?.request?.add || meta.headers?.request?.remove) {
+    warnings.push(
+      `Route "${routeId}": metadata.headers.request is not natively expressed in KrakenD; use extensions.krakend or a Lua plugin.`,
+    )
+  }
+  if (meta.headers?.response?.add || meta.headers?.response?.remove) {
+    warnings.push(
+      `Route "${routeId}": metadata.headers.response is not natively expressed in KrakenD; use extensions.krakend or a Lua plugin.`,
+    )
+  }
+  if (meta.match?.host) {
+    warnings.push(
+      `Route "${routeId}": metadata.match.host has no direct KrakenD equivalent — host routing is typically handled at the listener level.`,
+    )
+  }
+  if (meta.traffic?.weights || meta.traffic?.shadow) {
+    warnings.push(
+      `Route "${routeId}": metadata.traffic (weighted / shadow) is not modelled in KrakenD — set up a separate KrakenD instance or use extensions.krakend.`,
+    )
+  }
+  if (meta.auth?.required && !meta.auth.jwt) {
+    warnings.push(
+      `Route "${routeId}": metadata.auth.required without auth.jwt has no automatic mapping — wire authentication via extensions.krakend.`,
+    )
+  }
+  if (meta.auth?.mTLS) {
+    warnings.push(
+      `Route "${routeId}": metadata.auth.mTLS is not modelled — terminate mTLS at the listener / reverse proxy in front of KrakenD.`,
+    )
+  }
 }
 
 function applyRewrite(path: string, rewrite: GatewayMetadataValue['rewrite']): string {
@@ -119,35 +147,31 @@ function buildCacheExtra(
 function buildRateLimitExtra(
   rateLimit: NonNullable<GatewayMetadataValue['rateLimit']>,
 ): Record<string, unknown> {
-  const base = {
-    max_rate: rateLimit.requests,
-    every: toKrakendDuration(rateLimit.per),
-  }
+  // KrakenD distinguishes global (max_rate) from per-client (client_max_rate).
+  // Setting both to the same value would let the global cap dominate and
+  // make the per-client part dead, so we emit one or the other based on key.
+  const every = toKrakendDuration(rateLimit.per)
   const key = rateLimit.key
   if (key === 'ip') {
-    return { ...base, client_max_rate: rateLimit.requests, strategy: 'ip' }
+    return { client_max_rate: rateLimit.requests, every, strategy: 'ip' }
   }
   if (key && typeof key === 'object' && 'header' in key) {
-    return { ...base, client_max_rate: rateLimit.requests, strategy: 'header', key: key.header }
+    return {
+      client_max_rate: rateLimit.requests,
+      every,
+      strategy: 'header',
+      key: key.header,
+    }
   }
   if (key && typeof key === 'object' && 'customHeader' in key) {
     return {
-      ...base,
       client_max_rate: rateLimit.requests,
+      every,
       strategy: 'header',
       key: key.customHeader,
     }
   }
-  return base
-}
-
-function buildCircuitBreakerExtra(
-  cb: NonNullable<GatewayMetadataValue['circuitBreaker']>,
-): Record<string, unknown> {
-  return {
-    ...(cb.maxRequests !== undefined ? { max_requests: cb.maxRequests } : {}),
-    ...(cb.maxRetries !== undefined ? { max_retries: cb.maxRetries } : {}),
-  }
+  return { max_rate: rateLimit.requests, every }
 }
 
 function buildJwtExtra(
@@ -170,13 +194,20 @@ function buildEndpointExtraConfig(
 
   if (meta.cache?.ttl) extra['qos/http-cache'] = buildCacheExtra(meta.cache)
   if (meta.rateLimit) extra['qos/ratelimit/router'] = buildRateLimitExtra(meta.rateLimit)
-  if (meta.circuitBreaker)
-    extra['qos/circuit-breaker'] = buildCircuitBreakerExtra(meta.circuitBreaker)
   if (meta.auth?.jwt) extra['auth/validator'] = buildJwtExtra(meta.auth.jwt)
+
+  if (meta.circuitBreaker) {
+    // The universal model is Envoy-style (concurrency limits). KrakenD's
+    // qos/circuit-breaker is error-rate-based (max_errors / interval), a
+    // different abstraction — wire it via extensions.krakend if you need it.
+    warnings.push(
+      `Route "${routeId}": metadata.circuitBreaker (concurrency limits) doesn't translate to KrakenD's error-rate-based qos/circuit-breaker — set extensions.krakend["qos/circuit-breaker"] explicitly if you want it.`,
+    )
+  }
 
   if (meta.retry?.attempts !== undefined) {
     warnings.push(
-      `Route "${routeId}": metadata.retry is best modelled in KrakenD via the backend "backend/http/client" config; v1 emits attempts only on a best-effort basis.`,
+      `Route "${routeId}": metadata.retry is best modelled in KrakenD under backend/http/client; this generator does not emit it — set extensions.krakend["backend/http/client"] explicitly.`,
     )
   }
 

@@ -29,8 +29,8 @@
             }
         },
         {
-            // Stand-alone CLI build scripts — console output is intentional.
-            "includes": ["**/acceptance/render-config.mjs", "**/acceptance/upstream.mjs"],
+            // Stand-alone acceptance CLI scripts — console output is intentional.
+            "includes": ["**/acceptance/*.mjs"],
             "linter": {
                 "rules": {
                     "suspicious": {

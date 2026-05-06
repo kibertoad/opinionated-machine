@@ -10,9 +10,21 @@ export type KongUpstreamOptions = {
   retries?: number
 }
 
+/**
+ * Which Kong distribution the rendered config targets.
+ *
+ * - `'oss'` (default): Kong Gateway OSS / Community Edition. Enterprise-only
+ *   plugins are not emitted; metadata that needs them produces a warning.
+ * - `'enterprise'`: Kong Gateway Enterprise. Enables plugins that are not
+ *   available in OSS (e.g. `mtls-auth`).
+ */
+export type KongProfile = 'oss' | 'enterprise'
+
 export type KongOptions = {
   /** Map from `metadata.upstream` to the upstream URL Kong should proxy to. */
   upstreams: Record<string, KongUpstreamOptions>
+  /** Distribution to target. Default: `'oss'`. */
+  profile?: KongProfile
 }
 
 export type RenderKongResult = {
@@ -27,14 +39,15 @@ export type RenderKongResult = {
  * Kong's plugin model is the natural fit for most gateway-metadata fields:
  * timeouts and retries map onto service attributes, while rate-limiting,
  * CORS, JWT, caching, and header transformations map onto first-class
- * plugins. Anything that doesn't have a clean Kong CE equivalent (traffic
- * splitting, circuit breaker) is reported as a warning.
+ * plugins. Set `options.profile = 'enterprise'` to additionally emit plugins
+ * that only exist in Kong Gateway Enterprise (e.g. `mtls-auth`).
  */
 export function renderKongConfig(
   manifest: GatewayManifest,
   options: KongOptions,
 ): RenderKongResult {
   const warnings: string[] = []
+  const profile: KongProfile = options.profile ?? 'oss'
 
   // Group routes by upstream so we emit one Kong service per upstream.
   const byUpstream = new Map<string, GatewayManifest['routes']>()
@@ -60,7 +73,7 @@ export function renderKongConfig(
   const services: KongService[] = []
   for (const [upstreamName, routes] of byUpstream) {
     const upstreamOpts = options.upstreams[upstreamName] as KongUpstreamOptions
-    services.push(buildService(upstreamName, upstreamOpts, routes, warnings))
+    services.push(buildService(upstreamName, upstreamOpts, routes, profile, warnings))
   }
   services.sort((a, b) => a.name.localeCompare(b.name))
 
@@ -82,13 +95,25 @@ function buildService(
   name: string,
   upstreamOpts: KongUpstreamOptions,
   routes: GatewayManifest['routes'],
+  profile: KongProfile,
   warnings: string[],
 ): KongService {
   const url = new URL(upstreamOpts.url)
-  // Use the maximum of all route timeouts as the service-level read_timeout
-  // (Kong's read_timeout applies to upstream reads). Per-route overrides ride
-  // on the route via the `request-termination`-style plugin below if needed.
-  const readTimeout = pickTightestTimeout(routes)
+  // Kong CE's read_timeout is service-level — every route under this service
+  // inherits the same value, so we use the LOOSEST timeout among the routes.
+  // Routes that asked for a tighter timeout get a warning so the operator
+  // knows to enforce it elsewhere (a Lua plugin, a sidecar, the upstream).
+  const readTimeout = pickLoosestTimeout(routes)
+  for (const route of routes) {
+    const declared = route.metadata.timeouts?.request
+    if (!declared) continue
+    const declaredMs = toMilliseconds(declared)
+    if (readTimeout !== undefined && declaredMs < readTimeout) {
+      warnings.push(
+        `Route "${route.id}": metadata.timeouts.request (${declared}) is tighter than the service-level read_timeout (${readTimeout}ms) — Kong CE has no per-route timeout override; enforce this at the upstream or via a Lua plugin.`,
+      )
+    }
+  }
 
   return {
     name,
@@ -99,34 +124,54 @@ function buildService(
     ...(upstreamOpts.retries !== undefined ? { retries: upstreamOpts.retries } : {}),
     ...(readTimeout !== undefined ? { read_timeout: readTimeout } : {}),
     routes: routes
-      .map((route) => buildRoute(route, warnings))
+      .map((route) => buildRoute(route, profile, warnings))
       .sort((a, b) => a.name.localeCompare(b.name)),
   }
 }
 
-function pickTightestTimeout(routes: GatewayManifest['routes']): number | undefined {
-  let tightest: number | undefined
+function pickLoosestTimeout(routes: GatewayManifest['routes']): number | undefined {
+  let loosest: number | undefined
   for (const route of routes) {
     const timeout = route.metadata.timeouts?.request
     if (!timeout) continue
     const ms = toMilliseconds(timeout)
-    if (tightest === undefined || ms < tightest) tightest = ms
+    if (loosest === undefined || ms > loosest) loosest = ms
   }
-  return tightest
+  return loosest
 }
 
-function buildRoute(route: GatewayManifest['routes'][number], warnings: string[]): KongRoute {
+function buildRoute(
+  route: GatewayManifest['routes'][number],
+  profile: KongProfile,
+  warnings: string[],
+): KongRoute {
   const meta = route.metadata
   const headers = collectHeaderMatchers(meta)
+  const kongPath = openApiPathToKong(route.path)
+  const stripPath = meta.rewrite?.stripPrefix !== undefined
+
+  // Kong's strip_path strips the entire matched route path. For regex paths
+  // (anything we authored with {param}), that strips the captured params too —
+  // almost never what the user wrote rewrite.stripPrefix to do. Warn loudly.
+  if (stripPath && kongPath.startsWith('~')) {
+    warnings.push(
+      `Route "${route.id}": metadata.rewrite.stripPrefix on a parameterised path doesn't translate cleanly to Kong's strip_path — Kong will strip the entire matched path, including captured params. Consider request-transformer with a custom rewrite, or restructure the upstream URL.`,
+    )
+  }
+  if (meta.rewrite?.replacePrefix) {
+    warnings.push(
+      `Route "${route.id}": metadata.rewrite.replacePrefix is not modelled — use a request-transformer plugin via extensions.kong_plugins, or restructure the upstream URL.`,
+    )
+  }
 
   const r: KongRoute = {
     name: route.id,
     methods: [route.method],
-    paths: [openApiPathToKong(route.path)],
-    strip_path: meta.rewrite?.stripPrefix !== undefined,
+    paths: [kongPath],
+    strip_path: stripPath,
     preserve_host: false,
     ...(headers ? { headers } : {}),
-    plugins: collectRoutePlugins(route.id, meta, warnings),
+    plugins: collectRoutePlugins(route.id, meta, profile, warnings),
   }
   if (r.plugins?.length === 0) delete r.plugins
 
@@ -159,6 +204,7 @@ function escapeRegex(literal: string): string {
 function collectRoutePlugins(
   routeId: string,
   meta: GatewayMetadataValue,
+  profile: KongProfile,
   warnings: string[],
 ): KongPlugin[] {
   const plugins: KongPlugin[] = []
@@ -166,19 +212,14 @@ function collectRoutePlugins(
   if (meta.rateLimit) plugins.push(buildRateLimitPlugin(meta.rateLimit))
   if (meta.cache?.ttl) plugins.push(buildCachePlugin(meta.cache))
   if (meta.auth?.jwt) plugins.push(buildJwtPlugin())
-  const transformer = buildTransformerPlugins(meta.headers)
-  plugins.push(...transformer)
+  plugins.push(...buildTransformerPlugins(meta.headers))
 
-  if (meta.circuitBreaker) {
-    warnings.push(
-      `Route "${routeId}": metadata.circuitBreaker has no native equivalent in Kong CE — consider Kong Enterprise or a service-mesh layer.`,
-    )
+  // mTLS — first-class only in Enterprise via the mtls-auth plugin.
+  if (meta.auth?.mTLS && profile === 'enterprise') {
+    plugins.push({ name: 'mtls-auth', config: {} })
   }
-  if (meta.traffic?.weights || meta.traffic?.shadow) {
-    warnings.push(
-      `Route "${routeId}": metadata.traffic (weighted / shadow) is not modelled in v1; configure Kong upstreams + targets manually if needed.`,
-    )
-  }
+
+  collectRouteWarnings(routeId, meta, profile, warnings)
 
   // Vendor escape hatch: meta.extensions.kong_plugins (array) is appended.
   const extPlugins = (meta.extensions?.kong_plugins as KongPlugin[] | undefined) ?? []
@@ -187,11 +228,52 @@ function collectRoutePlugins(
   return plugins
 }
 
+function collectRouteWarnings(
+  routeId: string,
+  meta: GatewayMetadataValue,
+  profile: KongProfile,
+  warnings: string[],
+): void {
+  if (meta.auth?.mTLS && profile !== 'enterprise') {
+    warnings.push(
+      `Route "${routeId}": metadata.auth.mTLS requires Kong Enterprise's mtls-auth plugin — pass options.profile = 'enterprise', or terminate mTLS at the listener in front of Kong.`,
+    )
+  }
+  if (meta.circuitBreaker) {
+    warnings.push(
+      profile === 'enterprise'
+        ? `Route "${routeId}": metadata.circuitBreaker has no first-class Kong plugin even in Enterprise — wire connectivity governance via a service-mesh layer or extensions.kong_plugins.`
+        : `Route "${routeId}": metadata.circuitBreaker has no native equivalent in Kong OSS — consider Kong Enterprise or a service-mesh layer.`,
+    )
+  }
+  if (meta.traffic?.weights || meta.traffic?.shadow) {
+    warnings.push(
+      `Route "${routeId}": metadata.traffic (weighted / shadow) is not modelled — configure Kong upstreams + targets manually if needed.`,
+    )
+  }
+  if (meta.match?.host) {
+    warnings.push(
+      `Route "${routeId}": metadata.match.host is not modelled — use the Kong route's hosts attribute via extensions.kong.`,
+    )
+  }
+  if (meta.match?.query || meta.match?.customQuery) {
+    warnings.push(
+      `Route "${routeId}": metadata.match.query / customQuery has no native Kong route matcher — wire it via a request-validator plugin.`,
+    )
+  }
+  if (meta.auth?.required && !meta.auth.jwt && !meta.auth.mTLS) {
+    warnings.push(
+      `Route "${routeId}": metadata.auth.required without auth.jwt / auth.mTLS has no automatic mapping — attach a Kong auth plugin (key-auth, basic-auth, oauth2) via extensions.kong_plugins.`,
+    )
+  }
+}
+
 function buildRateLimitPlugin(
   rateLimit: NonNullable<GatewayMetadataValue['rateLimit']>,
 ): KongPlugin {
   const seconds = toSeconds(rateLimit.per)
-  // Map per-second / per-minute / per-hour buckets to Kong's discrete fields.
+  // Bucket selection — Kong's rate-limiting plugin takes per-second / minute
+  // / hour / day counts; pick the smallest bucket the window fits in.
   const config: Record<string, unknown> = {}
   if (seconds <= 1) config.second = rateLimit.requests
   else if (seconds <= 60) config.minute = rateLimit.requests

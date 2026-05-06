@@ -2,6 +2,7 @@ import type {
   GatewayManifest,
   GatewayManifestRoute,
   GatewayMetadataValue,
+  MatchRule,
 } from 'opinionated-machine'
 import { stringify as stringifyYaml } from 'yaml'
 import { toEnvoyDuration } from './durations.ts'
@@ -109,31 +110,78 @@ const ROUTER_CONFIG = {
   '@type': 'type.googleapis.com/envoy.extensions.filters.http.router.v3.Router',
 }
 
-const UNSUPPORTED_FIELDS: Array<{
-  field: keyof GatewayMetadataValue
+type UnsupportedFieldWarning = {
   detail: string
-  predicate?: (meta: GatewayMetadataValue) => boolean
-}> = [
+  /** Returns true if the metadata triggers this warning. */
+  triggers: (meta: GatewayMetadataValue) => boolean
+}
+
+const UNSUPPORTED_FIELDS: Array<{ name: string } & UnsupportedFieldWarning> = [
   {
-    field: 'cache',
-    detail: 'Envoy needs the http_cache filter (out of scope for v1)',
+    name: 'cache',
+    triggers: (m) => m.cache !== undefined,
+    detail:
+      'Envoy needs the http_cache filter wired into the listener — set extensions.envoy on the route to attach typed_per_filter_config.',
   },
   {
-    field: 'circuitBreaker',
-    detail: 'applied at the cluster level; v1 emits the route only',
+    name: 'circuitBreaker',
+    triggers: (m) => m.circuitBreaker !== undefined,
+    detail:
+      'applies at the cluster level (cluster.circuit_breakers.thresholds[]) — set it via extensions.envoy on a representative route or configure the cluster manually.',
   },
   {
-    field: 'auth',
-    detail: 'wire envoy.filters.http.jwt_authn manually if needed',
-    predicate: (meta) => meta.auth?.jwt !== undefined,
+    name: 'auth.jwt',
+    triggers: (m) => m.auth?.jwt !== undefined,
+    detail:
+      'wire envoy.filters.http.jwt_authn into the listener and reference the provider via extensions.envoy.typed_per_filter_config.',
   },
   {
-    field: 'cors',
-    detail: 'wire envoy.filters.http.cors manually if needed',
+    name: 'auth.required (without auth.jwt)',
+    triggers: (m) => Boolean(m.auth?.required) && !m.auth?.jwt,
+    detail:
+      'has no automatic Envoy mapping — wire an authn filter (jwt_authn, ext_authz) on the listener.',
   },
   {
-    field: 'rateLimit',
-    detail: 'wire envoy.filters.http.local_ratelimit if needed',
+    name: 'auth.mTLS',
+    triggers: (m) => Boolean(m.auth?.mTLS),
+    detail:
+      'mTLS is configured at the listener / transport socket — set it on the listener, not per route.',
+  },
+  {
+    name: 'cors',
+    triggers: (m) => m.cors !== undefined,
+    detail:
+      'wire envoy.filters.http.cors into the listener and attach typed_per_filter_config via extensions.envoy.',
+  },
+  {
+    name: 'rateLimit',
+    triggers: (m) => m.rateLimit !== undefined,
+    detail:
+      'wire envoy.filters.http.local_ratelimit and attach the per-route policy via extensions.envoy.typed_per_filter_config.',
+  },
+  {
+    name: 'traffic.weights',
+    triggers: (m) => Array.isArray(m.traffic?.weights) && m.traffic.weights.length > 0,
+    detail:
+      'use envoy weighted_clusters — set it explicitly via extensions.envoy.route.weighted_clusters.',
+  },
+  {
+    name: 'traffic.shadow',
+    triggers: (m) => m.traffic?.shadow !== undefined,
+    detail:
+      'use envoy request_mirror_policies — set it via extensions.envoy.route.request_mirror_policies.',
+  },
+  {
+    name: 'match.host',
+    triggers: (m) => m.match?.host !== undefined,
+    detail:
+      'host routing belongs at the virtual_host level (domains) rather than per route — configure it on the listener.',
+  },
+  {
+    name: 'rewrite',
+    triggers: (m) => m.rewrite?.stripPrefix !== undefined || m.rewrite?.replacePrefix !== undefined,
+    detail:
+      'envoy needs regex_rewrite for our parameterised paths (prefix_rewrite only works with prefix matchers) — set it explicitly via extensions.envoy.route.regex_rewrite.',
   },
 ]
 
@@ -142,10 +190,9 @@ function collectUnsupportedWarnings(
   meta: GatewayMetadataValue,
   warnings: string[],
 ): void {
-  for (const { field, detail, predicate } of UNSUPPORTED_FIELDS) {
-    const present = predicate ? predicate(meta) : meta[field] !== undefined
-    if (present) {
-      warnings.push(`Route "${routeId}": metadata.${field} is not mapped in v1 — ${detail}.`)
+  for (const { name, triggers, detail } of UNSUPPORTED_FIELDS) {
+    if (triggers(meta)) {
+      warnings.push(`Route "${routeId}": metadata.${name} is not mapped — ${detail}`)
     }
   }
 }
@@ -156,7 +203,6 @@ function buildRouteAction(meta: GatewayMetadataValue, upstream: string): EnvoyRo
     ...(meta.timeouts?.request !== undefined
       ? { timeout: toEnvoyDuration(meta.timeouts.request) }
       : {}),
-    ...(meta.rewrite?.stripPrefix !== undefined ? { prefix_rewrite: '/' } : {}),
     ...(meta.retry ? { retry_policy: buildRetryPolicy(meta.retry) } : {}),
   }
 }
@@ -248,16 +294,12 @@ function buildCluster(name: string, opts: EnvoyClusterOptions): EnvoyCluster {
 }
 
 function buildRetryPolicy(retry: NonNullable<GatewayMetadataValue['retry']>): EnvoyRetryPolicy {
-  const onMap: Record<string, string> = {
-    '5xx': '5xx',
-    'gateway-error': 'gateway-error',
-    'connect-failure': 'connect-failure',
-    reset: 'reset',
-    'retriable-4xx': 'retriable-4xx',
-  }
+  // The retry-condition vocabulary already matches Envoy's retry_on values
+  // (5xx, gateway-error, connect-failure, reset, retriable-4xx) so they
+  // pass through as a CSV.
   return {
     ...(retry.attempts !== undefined ? { num_retries: retry.attempts } : {}),
-    ...(retry.on?.length ? { retry_on: retry.on.map((c) => onMap[c] ?? c).join(',') } : {}),
+    ...(retry.on?.length ? { retry_on: retry.on.join(',') } : {}),
     ...(retry.perTryTimeout ? { per_try_timeout: toEnvoyDuration(retry.perTryTimeout) } : {}),
   }
 }
@@ -279,13 +321,7 @@ function collectQueryMatchers(meta: GatewayMetadataValue): EnvoyQueryMatcher[] {
   }))
 }
 
-function matchRuleToEnvoy(
-  rule: NonNullable<GatewayMetadataValue['match']>['headers'] extends infer T
-    ? T extends Record<string, infer V>
-      ? V
-      : never
-    : never,
-): EnvoyStringMatch {
+function matchRuleToEnvoy(rule: MatchRule): EnvoyStringMatch {
   if (typeof rule === 'string') return { exact: rule }
   if ('exact' in rule) return { exact: rule.exact }
   if ('prefix' in rule) return { prefix: rule.prefix }

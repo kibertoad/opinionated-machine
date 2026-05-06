@@ -1,5 +1,5 @@
 import type { CommonRouteDefinition } from '@lokalise/api-contracts'
-import type { GatewayMetadataValue } from './gatewayMetadata.ts'
+import { type GatewayMetadataValue, gatewayMetadataSchema } from './gatewayMetadata.ts'
 import { GATEWAY_METADATA_SYMBOL } from './gatewaySymbol.ts'
 import type { GatewayMetadata } from './gatewayTypes.ts'
 
@@ -43,8 +43,12 @@ export function withGatewayMetadata<Contract extends AnyContract, Route extends 
   route: Route,
   metadata: GatewayMetadata<Contract>,
 ): Route {
+  // Validate eagerly so a bad shape fails at the call site (with a clean
+  // Zod issue path) rather than later when DIContext.buildGatewayManifest
+  // walks every route at once.
+  const validated = gatewayMetadataSchema.parse(metadata) as GatewayMetadataValue
   Object.defineProperty(route, GATEWAY_METADATA_SYMBOL, {
-    value: metadata as GatewayMetadataValue,
+    value: validated,
     enumerable: false,
     configurable: true,
     writable: true,

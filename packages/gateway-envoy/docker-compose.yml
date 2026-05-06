@@ -24,8 +24,12 @@ services:
       - '10000:10000'
       - '9901:9901'
     healthcheck:
-      test:
-        ['CMD-SHELL', 'wget -qO- http://localhost:10000/echo > /dev/null 2>&1 || exit 1']
+      # Hit Envoy's admin /ready endpoint via bash-only TCP — works without
+      # wget/curl. Admin port comes up after Envoy loads the listener config,
+      # which is the right "ready" signal (the route's /echo path depends on
+      # upstream DNS propagation, which would race the healthcheck).
+      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/9901']
       interval: 2s
       timeout: 5s
       retries: 30
+      start_period: 5s

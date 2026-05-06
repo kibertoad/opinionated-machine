@@ -32,7 +32,10 @@ services:
       - '8000:8000'
       - '8001:8001'
     healthcheck:
+      # Kong ships the `kong health` command in its own image — the canonical
+      # readiness probe.
       test: ['CMD', 'kong', 'health']
       interval: 2s
       timeout: 5s
       retries: 30
+      start_period: 10s

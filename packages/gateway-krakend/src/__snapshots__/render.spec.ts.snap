@@ -20,14 +20,9 @@ exports[`renderKrakendConfig > matches the JSON snapshot for the fixture manifes
       ],
       "endpoint": "/users",
       "extra_config": {
-        "qos/circuit-breaker": {
-          "max_requests": 100,
-          "max_retries": 3,
-        },
         "qos/ratelimit/router": {
           "client_max_rate": 10,
           "every": "1m",
-          "max_rate": 10,
           "strategy": "ip",
         },
       },

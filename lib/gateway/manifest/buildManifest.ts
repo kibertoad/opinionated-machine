@@ -88,6 +88,9 @@ export function buildGatewayManifestFrom(
   options: BuildGatewayManifestOptions,
 ): GatewayManifest {
   const routes: GatewayManifestRoute[] = []
+  // Track route ids back to their origin so we can produce a useful error
+  // message if two declarations end up with the same explicit metadata.id.
+  const idOrigin = new Map<string, string>()
 
   for (const collected of controllers) {
     const controllerDefaults = collected.controller.gatewayDefaults
@@ -102,7 +105,16 @@ export function buildGatewayManifestFrom(
       }
       const path = normalizePath(route.url)
       const method = normalizeMethod(route.method)
-      const id = merged.id ?? `${collected.name}.${routeKey}`
+      const origin = `${collected.name}.${routeKey}`
+      const id = merged.id ?? origin
+
+      const previousOrigin = idOrigin.get(id)
+      if (previousOrigin) {
+        throw new Error(
+          `Duplicate gateway route id "${id}": declared by both ${previousOrigin} and ${origin}. Set a distinct metadata.id on one of them.`,
+        )
+      }
+      idOrigin.set(id, origin)
 
       routes.push({
         id,

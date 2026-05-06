@@ -162,7 +162,6 @@ exports[`renderEnvoyConfig > matches the JSON snapshot for the fixture manifest 
                             "name": "usersController.deleteItem",
                             "route": {
                               "cluster": "users-service",
-                              "prefix_rewrite": "/",
                               "timeout": "3s",
                             },
                           },
@@ -260,7 +259,6 @@ exports[`renderEnvoyConfig > matches the YAML snapshot for the fixture manifest 
                           route:
                             cluster: users-service
                             timeout: 3s
-                            prefix_rewrite: /
                           decorator:
                             operation: usersController.deleteItem
                 http_filters:
