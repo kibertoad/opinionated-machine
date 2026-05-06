@@ -1,20 +1,34 @@
+import type { ApiContract } from '@lokalise/api-contracts'
 import type { RouteOptions } from 'fastify'
 
 /**
  * Abstract base class for controllers that use the `ApiContract` API.
  *
- * Concrete controllers declare a `routes` property built with `buildApiRoute()`.
+ * Concrete controllers declare a static `contracts` field and a `routes` object
+ * built with `buildApiRoute()`. The generic ensures every contract has a matching route.
  *
  * @example
  * ```typescript
- * class UserController extends AbstractApiController {
- *   readonly routes = [
- *     buildApiRoute(getUser, async (req) => ({ status: 200, body: { id: req.params.id } })),
- *     buildApiRoute(streamUpdates, async (_req, sse) => { sse.start('keepAlive') }),
- *   ]
+ * class UserController extends AbstractApiController<typeof UserController.contracts> {
+ *   static contracts = {
+ *     getUser: getUserContract,
+ *     streamUpdates: streamUpdatesContract,
+ *   } as const
+ *
+ *   readonly routes = {
+ *     getUser: buildApiRoute(UserController.contracts.getUser, async (req) => ({
+ *       status: 200,
+ *       body: { id: req.params.id },
+ *     })),
+ *     streamUpdates: buildApiRoute(UserController.contracts.streamUpdates, async (_req, sse) => {
+ *       sse.start('keepAlive')
+ *     }),
+ *   }
  * }
  * ```
  */
-export abstract class AbstractApiController {
-  abstract readonly routes: RouteOptions[]
+export abstract class AbstractApiController<
+  APIContracts extends Record<string, ApiContract>,
+> {
+  abstract readonly routes: Record<keyof APIContracts, RouteOptions>
 }

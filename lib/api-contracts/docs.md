@@ -94,7 +94,7 @@ TypeScript enforces the correct shape — passing `{ nonSse, sse }` to a non-dua
 
 ## Creating a Controller
 
-Extend `AbstractApiController` and declare a `routes` array. Use `buildApiRoute` to define each route:
+Extend `AbstractApiController` with a `static contracts` object and a `routes` object built with `buildApiRoute`. The generic ensures every contract has a matching named route:
 
 ```ts
 import {
@@ -102,7 +102,14 @@ import {
   buildApiRoute,
 } from 'opinionated-machine'
 
-class UserController extends AbstractApiController {
+class UserController extends AbstractApiController<typeof UserController.contracts> {
+  static contracts = {
+    getUser: getUserContract,
+    deleteUser: deleteUserContract,
+    streamUpdates: streamUpdatesContract,
+    chat: chatContract,
+  } as const
+
   private readonly userService: UserService
   private readonly aiService: AIService
 
@@ -111,26 +118,26 @@ class UserController extends AbstractApiController {
     this.aiService = deps.aiService
   }
 
-  readonly routes = [
+  readonly routes = {
     // Non-SSE: return { status, body }
-    buildApiRoute(getUserContract, async (request) => ({
+    getUser: buildApiRoute(UserController.contracts.getUser, async (request) => ({
       status: 200,
       body: await this.userService.findById(request.params.userId),
     })),
 
     // Non-SSE no-body response
-    buildApiRoute(deleteUserContract, async (request) => {
+    deleteUser: buildApiRoute(UserController.contracts.deleteUser, async (request) => {
       await this.userService.delete(request.params.userId)
       return { status: 204, body: null }
     }),
 
     // SSE-only: second param is the SSE context
-    buildApiRoute(streamUpdatesContract, async (_request, sse) => {
+    streamUpdates: buildApiRoute(UserController.contracts.streamUpdates, async (_request, sse) => {
       sse.start('keepAlive')
     }),
 
     // Dual-mode: { nonSse, sse } object
-    buildApiRoute(chatContract, {
+    chat: buildApiRoute(UserController.contracts.chat, {
       nonSse: async (request) => {
         const result = await this.aiService.complete(request.body.message)
         return { status: 200, body: { reply: result.text } }
@@ -143,7 +150,7 @@ class UserController extends AbstractApiController {
         await session.send('done', {})
       },
     }),
-  ]
+  }
 }
 ```
 
@@ -196,7 +203,7 @@ export class UserModule extends AbstractModule {
 }
 ```
 
-`asApiControllerClass` wraps the class in an awilix `asFunction` singleton resolver tagged with `isApiController: true`, so `DIContext` picks up its `routes` array automatically during `registerRoutes()`.
+`asApiControllerClass` wraps the class in an awilix `asFunction` singleton resolver tagged with `isApiController: true`, so `DIContext` picks up its `routes` object automatically during `registerRoutes()`.
 
 ## Route Options
 

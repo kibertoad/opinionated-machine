@@ -17,19 +17,27 @@ import {
   apiValidationFailContract,
 } from './testContracts.ts'
 
-export class TestApiController extends AbstractApiController {
-  readonly routes = [
-    buildApiRoute(apiGetUserContract, async (request) => ({
+export class TestApiController extends AbstractApiController<typeof TestApiController.contracts> {
+  static contracts = {
+    getUser: apiGetUserContract,
+    createUser: apiCreateUserContract,
+    feed: apiFeedContract,
+    sseKeepAlive: apiSseKeepAliveContract,
+    sseSendStream: apiSseSendStreamContract,
+  } as const
+
+  readonly routes = {
+    getUser: buildApiRoute(TestApiController.contracts.getUser, async (request) => ({
       status: 200,
       body: { id: request.params.userId, name: 'Alice' },
     })),
 
-    buildApiRoute(apiCreateUserContract, (request) => ({
+    createUser: buildApiRoute(TestApiController.contracts.createUser, (request) => ({
       status: 201,
       body: { id: '1', name: request.body.name },
     })),
 
-    buildApiRoute(apiFeedContract, {
+    feed: buildApiRoute(TestApiController.contracts.feed, {
       nonSse: async (request) => ({
         status: 200,
         body: { id: 'summary', name: `limit=${request.query.limit ?? 'none'}` },
@@ -40,71 +48,101 @@ export class TestApiController extends AbstractApiController {
       },
     }),
 
-    buildApiRoute(apiSseKeepAliveContract, async (_request, sse) => {
+    sseKeepAlive: buildApiRoute(TestApiController.contracts.sseKeepAlive, async (_request, sse) => {
       const session = sse.start('keepAlive')
       await session.send('tick', { n: 1 })
     }),
 
-    buildApiRoute(apiSseSendStreamContract, async (_request, sse) => {
-      const session = sse.start('autoClose')
-      // biome-ignore lint/suspicious/useAwait: async generator required for AsyncIterable
-      async function* items() {
-        yield { event: 'item' as const, data: { i: 1 } }
-        yield { event: 'item' as const, data: { i: 2 } }
-      }
-      await session.sendStream(items())
-    }),
-  ]
+    sseSendStream: buildApiRoute(
+      TestApiController.contracts.sseSendStream,
+      async (_request, sse) => {
+        const session = sse.start('autoClose')
+        // biome-ignore lint/suspicious/useAwait: async generator required for AsyncIterable
+        async function* items() {
+          yield { event: 'item' as const, data: { i: 1 } }
+          yield { event: 'item' as const, data: { i: 2 } }
+        }
+        await session.sendStream(items())
+      },
+    ),
+  }
 }
 
-export class TestApiErrorController extends AbstractApiController {
-  readonly routes = [
-    buildApiRoute(apiSseRespondContract, (_request, sse) => {
+export class TestApiErrorController extends AbstractApiController<
+  typeof TestApiErrorController.contracts
+> {
+  static contracts = {
+    sseRespond: apiSseRespondContract,
+    sseNoStart: apiSseNoStartContract,
+    ssePreError: apiSsePreErrorContract,
+    ssePostError: apiSsePostErrorContract,
+    validationFail: apiValidationFailContract,
+    headerSuccess: apiHeaderSuccessContract,
+    headerFail: apiHeaderFailContract,
+    sseRespondAfterStart: apiSseRespondAfterStartContract,
+    sseSendHeaders: apiSseSendHeadersContract,
+    sseInvalidEvent: apiSseInvalidEventContract,
+  } as const
+
+  readonly routes = {
+    sseRespond: buildApiRoute(TestApiErrorController.contracts.sseRespond, (_request, sse) => {
       sse.respond(404, { error: 'not found' })
     }),
 
-    buildApiRoute(apiSseNoStartContract, () => {
+    sseNoStart: buildApiRoute(TestApiErrorController.contracts.sseNoStart, () => {
       // intentionally does nothing — exercises the no-start/no-respond error path
     }),
 
-    buildApiRoute(apiSsePreErrorContract, () => {
+    ssePreError: buildApiRoute(TestApiErrorController.contracts.ssePreError, () => {
       throw Object.assign(new Error('pre-start error'), { httpStatusCode: 422 })
     }),
 
-    buildApiRoute(apiSsePostErrorContract, (_request, sse) => {
+    ssePostError: buildApiRoute(TestApiErrorController.contracts.ssePostError, (_request, sse) => {
       sse.start('autoClose')
       throw new Error('post-start error')
     }),
 
-    buildApiRoute(apiValidationFailContract, () => ({
+    validationFail: buildApiRoute(TestApiErrorController.contracts.validationFail, () => ({
       status: 200,
       body: { value: 123 as unknown as string },
     })),
 
-    buildApiRoute(apiHeaderSuccessContract, (_request, reply) => {
-      reply.header('x-api-version', '1.0')
-      return { status: 200, body: { ok: true } }
-    }),
+    headerSuccess: buildApiRoute(
+      TestApiErrorController.contracts.headerSuccess,
+      (_request, reply) => {
+        reply.header('x-api-version', '1.0')
+        return { status: 200, body: { ok: true } }
+      },
+    ),
 
-    buildApiRoute(apiHeaderFailContract, () => ({
+    headerFail: buildApiRoute(TestApiErrorController.contracts.headerFail, () => ({
       status: 200,
       body: { ok: true },
     })),
 
-    buildApiRoute(apiSseRespondAfterStartContract, (_request, sse) => {
-      sse.start('autoClose')
-      sse.respond(200, { text: 'too late' })
-    }),
+    sseRespondAfterStart: buildApiRoute(
+      TestApiErrorController.contracts.sseRespondAfterStart,
+      (_request, sse) => {
+        sse.start('autoClose')
+        sse.respond(200, { text: 'too late' })
+      },
+    ),
 
-    buildApiRoute(apiSseSendHeadersContract, async (_request, sse) => {
-      sse.sendHeaders()
-      const session = sse.start('autoClose')
-      await session.send('done', { ok: true })
-    }),
+    sseSendHeaders: buildApiRoute(
+      TestApiErrorController.contracts.sseSendHeaders,
+      async (_request, sse) => {
+        sse.sendHeaders()
+        const session = sse.start('autoClose')
+        await session.send('done', { ok: true })
+      },
+    ),
 
-    buildApiRoute(apiSseInvalidEventContract, async (_request, sse) => {
-      const session = sse.start('autoClose')
-      await session.send('typed', { value: 'not-a-number' as unknown as number })
-    }),
-  ]
+    sseInvalidEvent: buildApiRoute(
+      TestApiErrorController.contracts.sseInvalidEvent,
+      async (_request, sse) => {
+        const session = sse.start('autoClose')
+        await session.send('typed', { value: 'not-a-number' as unknown as number })
+      },
+    ),
+  }
 }
