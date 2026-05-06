@@ -136,3 +136,6 @@ dist
 .pnp.*
 /.idea/
 /package-lock.json
+
+# Generated gateway configs from acceptance tests
+packages/gateway-*/acceptance/generated/

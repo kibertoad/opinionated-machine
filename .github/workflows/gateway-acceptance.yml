@@ -1,0 +1,97 @@
+---
+name: gateway-acceptance
+
+# Acceptance tests boot real Envoy and KrakenD containers via docker compose,
+# render configs from each package's renderer, and drive traffic through the
+# gateway against a Node stub upstream. We only run them when gateway code
+# changes — they're slower than the unit suite and would be wasteful on
+# unrelated PRs.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'lib/gateway/**'
+      - 'packages/gateway-envoy/**'
+      - 'packages/gateway-krakend/**'
+      - 'packages/gateway-kong/**'
+      - '.github/workflows/gateway-acceptance.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'lib/gateway/**'
+      - 'packages/gateway-envoy/**'
+      - 'packages/gateway-krakend/**'
+      - 'packages/gateway-kong/**'
+      - '.github/workflows/gateway-acceptance.yml'
+
+jobs:
+  envoy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/gateway-envoy
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+      - name: Install root dependencies
+        run: npm install
+        working-directory: .
+      - name: Build root package
+        run: npm run build
+        working-directory: .
+      - name: Run unit tests
+        run: npm test
+      - name: Run acceptance tests (docker compose)
+        run: npm run test:acceptance
+
+  krakend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/gateway-krakend
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+      - name: Install root dependencies
+        run: npm install
+        working-directory: .
+      - name: Build root package
+        run: npm run build
+        working-directory: .
+      - name: Run unit tests
+        run: npm test
+      - name: Run acceptance tests (docker compose)
+        run: npm run test:acceptance
+
+  kong:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/gateway-kong
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+      - name: Install root dependencies
+        run: npm install
+        working-directory: .
+      - name: Build root package
+        run: npm run build
+        working-directory: .
+      - name: Run unit tests
+        run: npm test
+      - name: Run acceptance tests (docker compose)
+        run: npm run test:acceptance

@@ -14,6 +14,12 @@ import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configU
 import type { ENABLE_ALL } from './diConfigUtils.js'
 import type { AbstractDualModeController } from './dualmode/AbstractDualModeController.js'
 import {
+  type BuildGatewayManifestOptions,
+  buildGatewayManifestFrom,
+  type CollectedController,
+  type GatewayManifest,
+} from './gateway/index.js'
+import {
   buildFastifyRoute,
   type RegisterDualModeRoutesOptions,
   type RegisterSSERoutesOptions,
@@ -50,7 +56,7 @@ export class DIContext<
   public readonly awilixManager: AwilixManager
   public readonly diContainer: AwilixContainer<Dependencies>
   // biome-ignore lint/suspicious/noExplicitAny: all controllers are controllers
-  private readonly controllerResolvers: Resolver<any>[]
+  private readonly controllerResolvers: Array<{ name: string; resolver: Resolver<any> }>
   // SSE controller dependency names (resolved from container to preserve singletons)
   private readonly sseControllerNames: string[]
   // Dual-mode controller dependency names (resolved from container to preserve singletons)
@@ -102,7 +108,7 @@ export class DIContext<
         // @ts-expect-error we can't really ensure type-safety here
         targetDiConfig[name] = resolver
       } else {
-        this.controllerResolvers.push(resolver as Resolver<unknown>)
+        this.controllerResolvers.push({ name, resolver: resolver as Resolver<unknown> })
       }
     }
   }
@@ -187,9 +193,9 @@ export class DIContext<
 
   // biome-ignore lint/suspicious/noExplicitAny: we don't care about what instance we get here
   registerRoutes(app: FastifyInstance<any, any, any, any>): void {
-    for (const controllerResolver of this.controllerResolvers) {
+    for (const { resolver } of this.controllerResolvers) {
       // biome-ignore lint/suspicious/noExplicitAny: any controller works here
-      const controller: AbstractController<any> = controllerResolver.resolve(this.diContainer)
+      const controller: AbstractController<any> = resolver.resolve(this.diContainer)
       const routes = controller.buildRoutes()
       for (const route of Object.values(routes)) {
         // Cast needed: GET/DELETE routes have body:undefined, POST/PATCH have body:unknown
@@ -206,6 +212,46 @@ export class DIContext<
         app.route(route)
       }
     }
+  }
+
+  /**
+   * Build a vendor-neutral gateway manifest from all registered REST and
+   * api-contract controllers. Routes carrying gateway metadata (attached via
+   * `withGatewayMetadata()`) get that metadata merged with controller-level
+   * `gatewayDefaults` and the `defaults` passed here. Routes without any
+   * metadata still appear in the manifest with empty metadata.
+   *
+   * The returned object is JSON-serializable; pass it to a generator package
+   * like `@opinionated-machine/gateway-envoy` or
+   * `@opinionated-machine/gateway-krakend` to produce a config.
+   *
+   * SSE and dual-mode controllers are not included in v1.
+   *
+   * @example
+   * ```ts
+   * const manifest = context.buildGatewayManifest({
+   *   service: 'users-api',
+   *   defaults: { cors: { origins: ['https://app.example.com'] } },
+   * })
+   * const envoy = renderEnvoyConfig(manifest, { listenPort: 8080, clusters: { 'users-service': { hosts: ['users:8081'] } } })
+   * writeFileSync('envoy.yaml', envoy.yaml)
+   * ```
+   */
+  buildGatewayManifest(options: BuildGatewayManifestOptions): GatewayManifest {
+    const collected: CollectedController[] = []
+
+    for (const { name, resolver } of this.controllerResolvers) {
+      // biome-ignore lint/suspicious/noExplicitAny: any controller works here
+      const controller: AbstractController<any> = resolver.resolve(this.diContainer)
+      collected.push({ name, kind: 'rest', controller })
+    }
+
+    for (const name of this.apiControllerNames) {
+      const controller: AbstractApiController = this.diContainer.resolve(name)
+      collected.push({ name, kind: 'api', controller })
+    }
+
+    return buildGatewayManifestFrom(collected, options)
   }
 
   /**
