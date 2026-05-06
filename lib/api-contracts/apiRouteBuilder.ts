@@ -17,6 +17,8 @@ import {
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
 import type { z } from 'zod/v4'
+import type { GatewayMetadata } from '../gateway/gatewayTypes.ts'
+import { attachGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
 import type {
   SSEContext,
   SSESession,
@@ -53,8 +55,8 @@ function getContractResponseMode(contract: ApiContract): ResponseMode {
   return 'sse'
 }
 
-function buildSSERouteConfig(
-  options: ApiRouteOptions | undefined,
+function buildSSERouteConfig<C>(
+  options: ApiRouteOptions<C> | undefined,
 ): true | { serializer?: (data: unknown) => string; heartbeatInterval?: number } {
   if (!options?.serializer && options?.heartbeatInterval === undefined) return true
   const sseConfig: { serializer?: (data: unknown) => string; heartbeatInterval?: number } = {}
@@ -167,12 +169,12 @@ async function handleApiSyncRoute(
 // Internal Helpers — SSE Route (no controller, uses reply.sse directly)
 // ============================================================================
 
-function buildApiSSEContext(
+function buildApiSSEContext<C>(
   // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
   request: any,
   reply: FastifyReply,
   eventSchemas: SseSchemaByEventName,
-  options: ApiRouteOptions | undefined,
+  options: ApiRouteOptions<C> | undefined,
 ): {
   // biome-ignore lint/suspicious/noExplicitAny: SSE event schemas are contract-specific, cast at call site
   sseContext: SSEContext<any>
@@ -300,11 +302,11 @@ function buildApiSSEContext(
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Core SSE handler coordinates context, error handling, and lifecycle
-async function handleApiSseRoute(
+async function handleApiSseRoute<C>(
   // biome-ignore lint/suspicious/noExplicitAny: SSE handler types are validated by InferApiHandler at call site
   sseHandler: (request: any, sse: any) => unknown,
   eventSchemas: SseSchemaByEventName,
-  options: ApiRouteOptions | undefined,
+  options: ApiRouteOptions<C> | undefined,
   // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
   request: any,
   reply: FastifyReply,
@@ -403,12 +405,14 @@ function buildBaseSchema(contract: ApiContract): Record<string, unknown> {
 export function buildApiRoute<Contract extends ApiContract>(
   contract: Contract,
   handler: InferApiHandler<Contract>,
-  options?: ApiRouteOptions,
+  options?: ApiRouteOptions<Contract>,
 ): RouteOptions {
-  // Separate SSE-specific options (not in Fastify RouteOptions) from passthrough options
+  // Separate SSE-specific options (not in Fastify RouteOptions) and gateway
+  // metadata (stamped via Symbol, not spread) from passthrough options.
   const {
     defaultMode,
     contractMetadataToRouteMapper,
+    gatewayMetadata,
     serializer: _serializer,
     heartbeatInterval: _heartbeatInterval,
     onConnect: _onConnect,
@@ -424,24 +428,29 @@ export function buildApiRoute<Contract extends ApiContract>(
   const baseSchema = buildBaseSchema(contract)
   const contractMetadata = contractMetadataToRouteMapper?.(contract.metadata) ?? {}
 
+  const finalize = (route: RouteOptions): RouteOptions =>
+    gatewayMetadata !== undefined
+      ? attachGatewayMetadata(route, gatewayMetadata as GatewayMetadata<unknown>)
+      : route
+
   if (mode === 'non-sse') {
     // biome-ignore lint/suspicious/noExplicitAny: handler shape validated by InferApiHandler at call site
     const syncHandler = handler as any
-    return {
+    return finalize({
       ...fastifyOptions,
       ...contractMetadata,
       method: contract.method,
       url,
       schema: baseSchema,
       handler: async (request, reply) => handleApiSyncRoute(contract, syncHandler, request, reply),
-    }
+    })
   }
 
   if (mode === 'dual') {
     const resolvedDefaultMode = defaultMode ?? 'json'
     // biome-ignore lint/suspicious/noExplicitAny: handler shape validated by InferApiHandler at call site
     const dualHandlers = handler as any
-    return {
+    return finalize({
       ...fastifyOptions,
       ...contractMetadata,
       method: contract.method,
@@ -455,13 +464,13 @@ export function buildApiRoute<Contract extends ApiContract>(
         }
         return handleApiSseRoute(dualHandlers.sse, eventSchemas, options, request, reply)
       },
-    }
+    })
   }
 
   // SSE-only
   // biome-ignore lint/suspicious/noExplicitAny: handler shape validated by InferApiHandler at call site
   const sseHandler = handler as any
-  return {
+  return finalize({
     ...fastifyOptions,
     ...contractMetadata,
     method: contract.method,
@@ -470,5 +479,5 @@ export function buildApiRoute<Contract extends ApiContract>(
     schema: baseSchema,
     handler: async (request, reply) =>
       handleApiSseRoute(sseHandler, eventSchemas, options, request, reply),
-  }
+  })
 }

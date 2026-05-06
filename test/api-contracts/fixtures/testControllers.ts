@@ -27,10 +27,14 @@ export class TestApiController extends AbstractApiController<typeof TestApiContr
   } as const
 
   readonly routes = {
-    getUser: buildApiRoute(TestApiController.contracts.getUser, async (request) => ({
-      status: 200,
-      body: { id: request.params.userId, name: 'Alice' },
-    })),
+    getUser: buildApiRoute(
+      TestApiController.contracts.getUser,
+      async (request) => ({
+        status: 200,
+        body: { id: request.params.userId, name: 'Alice' },
+      }),
+      { gatewayMetadata: { cache: { ttl: '60s' }, tags: ['users'] } },
+    ),
 
     createUser: buildApiRoute(TestApiController.contracts.createUser, (request) => ({
       status: 201,

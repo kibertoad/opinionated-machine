@@ -8,6 +8,7 @@ import type {
 import type { FastifyRequest, RouteOptions } from 'fastify'
 import type { z } from 'zod/v4'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
+import type { GatewayMetadata } from '../gateway/gatewayTypes.ts'
 import type {
   FastifySSERouteOptions,
   SSEContext,
@@ -158,8 +159,15 @@ export type InferApiHandler<Contract extends ApiContract> = [
  *
  * SSE lifecycle options (`onConnect`, `onClose`, `onReconnect`) are only
  * relevant for SSE and dual-mode contracts and are ignored for non-SSE routes.
+ *
+ * Generic in `Contract` so `gatewayMetadata.match.headers` / `match.query`
+ * keys are narrowed to the contract's request schemas. Defaults to `unknown`,
+ * widening those keys to `string` for callers that don't pass the generic.
  */
-export type ApiRouteOptions = Omit<RouteOptions, 'method' | 'url' | 'schema' | 'handler' | 'sse'> &
+export type ApiRouteOptions<Contract = unknown> = Omit<
+  RouteOptions,
+  'method' | 'url' | 'schema' | 'handler' | 'sse'
+> &
   Omit<FastifySSERouteOptions, 'preHandler'> & {
     /**
      * Default response mode for dual-mode routes when the `Accept` header
@@ -167,4 +175,13 @@ export type ApiRouteOptions = Omit<RouteOptions, 'method' | 'url' | 'schema' | '
      * @default 'json'
      */
     defaultMode?: DualModeType
+    /**
+     * Per-route gateway metadata. `match.headers` / `match.query` keys are
+     * narrowed to the contract's request schemas; `customHeaders` /
+     * `customQuery` remain the escape hatch for headers and params not
+     * declared on the contract. Validated at runtime against the same Zod
+     * schema used by `withGatewayMetadata` and stamped on the route via the
+     * shared `GATEWAY_METADATA_SYMBOL`.
+     */
+    gatewayMetadata?: GatewayMetadata<Contract>
   }

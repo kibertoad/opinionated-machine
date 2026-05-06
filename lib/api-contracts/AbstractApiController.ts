@@ -34,9 +34,10 @@ export abstract class AbstractApiController<APIContracts extends Record<string, 
   /**
    * Optional controller-level defaults for gateway metadata.
    *
-   * Merged underneath per-route metadata (attached via `withGatewayMetadata`)
-   * when `DIContext.buildGatewayManifest()` assembles a manifest. See
-   * `AbstractController.gatewayDefaults` for full semantics.
+   * Merged underneath per-route metadata (passed inline via
+   * `buildApiRoute(..., { gatewayMetadata })` or attached post-hoc via
+   * `withGatewayMetadata`) when `DIContext.buildGatewayManifest()` assembles a
+   * manifest. See `AbstractController.gatewayDefaults` for full semantics.
    */
   public readonly gatewayDefaults?: GatewayMetadataValue
 }
