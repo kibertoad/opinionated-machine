@@ -27,8 +27,6 @@ import type { RouteOptions } from 'fastify'
  * }
  * ```
  */
-export abstract class AbstractApiController<
-  APIContracts extends Record<string, ApiContract>,
-> {
+export abstract class AbstractApiController<APIContracts extends Record<string, ApiContract>> {
   abstract readonly routes: Record<keyof APIContracts, RouteOptions>
 }
