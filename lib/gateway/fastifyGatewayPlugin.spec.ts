@@ -16,13 +16,13 @@ function createContext() {
 }
 
 describe('fastifyGatewayPlugin', () => {
-  it('decorates app.gateway with getManifest()', async () => {
+  it('decorates app.buildGatewayManifest()', async () => {
     const app = fastify()
     await app.register(fastifyGatewayPlugin, {
       context: createContext(),
       defaults: { service: 'users-api' },
     })
-    const manifest = app.gateway.getManifest()
+    const manifest = app.buildGatewayManifest()
     expect(manifest.service).toBe('users-api')
     expect(manifest.routes.length).toBeGreaterThan(0)
     await app.close()
@@ -72,7 +72,7 @@ describe('fastifyGatewayPlugin', () => {
       context: createContext(),
       defaults: { service: 'default-name' },
     })
-    const manifest = app.gateway.getManifest({ service: 'override' })
+    const manifest = app.buildGatewayManifest({ service: 'override' })
     expect(manifest.service).toBe('override')
     await app.close()
   })

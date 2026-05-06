@@ -5,20 +5,19 @@ import type { BuildGatewayManifestOptions } from './manifest/buildManifest.ts'
 import type { GatewayManifest } from './manifest/manifestSchema.ts'
 
 /**
- * Decoration shape installed on the Fastify instance by `fastifyGatewayPlugin`.
+ * Function decoration installed on the Fastify instance by
+ * `fastifyGatewayPlugin`. Returns the gateway manifest, recomputed on every
+ * call so it always reflects the current set of registered controllers.
  *
- * Mirrors the spirit of `@fastify/swagger`'s `app.swagger()` — call `getManifest()`
- * to build the manifest on demand, or hit `GET <route>` (default `/_gateway/manifest`)
- * to expose it over HTTP, handy for CLIs and config-generation pipelines.
+ * Mirrors the spirit of `@fastify/swagger`'s `app.swagger()`.
  */
-export interface GatewayDecorator {
-  /** Build the manifest. Recomputed on every call so it always reflects the current registered routes. */
-  getManifest: (overrides?: Partial<BuildGatewayManifestOptions>) => GatewayManifest
-}
+export type BuildGatewayManifestFn = (
+  overrides?: Partial<BuildGatewayManifestOptions>,
+) => GatewayManifest
 
 declare module 'fastify' {
   interface FastifyInstance {
-    gateway: GatewayDecorator
+    buildGatewayManifest: BuildGatewayManifestFn
   }
 }
 
@@ -30,7 +29,7 @@ export type FastifyGatewayPluginOptions = {
    */
   // biome-ignore lint/suspicious/noExplicitAny: DIContext generics are erased at the plugin boundary
   context: DIContext<any, any, any>
-  /** Default options applied to every `getManifest()` call. */
+  /** Default options applied to every `app.buildGatewayManifest()` call. */
   defaults: BuildGatewayManifestOptions
   /**
    * If set, also exposes `GET <route>` returning the manifest as JSON.
@@ -42,8 +41,8 @@ export type FastifyGatewayPluginOptions = {
 }
 
 /**
- * Optional Fastify plugin that decorates `app.gateway` with a `getManifest()`
- * accessor and (optionally) exposes the manifest over HTTP.
+ * Optional Fastify plugin that decorates `app.buildGatewayManifest()` and
+ * (optionally) exposes the manifest over HTTP.
  *
  * @example
  * ```ts
@@ -53,7 +52,7 @@ export type FastifyGatewayPluginOptions = {
  * })
  *
  * // From anywhere in the app:
- * const manifest = app.gateway.getManifest()
+ * const manifest = app.buildGatewayManifest()
  *
  * // Or fetched over HTTP (default route):
  * //   GET /_gateway/manifest
@@ -64,18 +63,16 @@ const fastifyGatewayPluginInner: FastifyPluginCallback<FastifyGatewayPluginOptio
   opts,
   done,
 ) => {
-  const decorator: GatewayDecorator = {
-    getManifest: (overrides) =>
-      opts.context.buildGatewayManifest({ ...opts.defaults, ...(overrides ?? {}) }),
-  }
-  app.decorate('gateway', decorator)
+  const buildManifest: BuildGatewayManifestFn = (overrides) =>
+    opts.context.buildGatewayManifest({ ...opts.defaults, ...(overrides ?? {}) })
+  app.decorate('buildGatewayManifest', buildManifest)
 
   const route = opts.exposeRoute === undefined ? '/_gateway/manifest' : opts.exposeRoute
   if (route !== false) {
     app.route({
       method: 'GET',
       url: route,
-      handler: async () => decorator.getManifest(),
+      handler: async () => buildManifest(),
     })
   }
   done()

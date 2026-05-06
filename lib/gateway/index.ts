@@ -1,7 +1,7 @@
 export {
+  type BuildGatewayManifestFn,
   type FastifyGatewayPluginOptions,
   fastifyGatewayPlugin,
-  type GatewayDecorator,
 } from './fastifyGatewayPlugin.ts'
 export {
   type Duration,

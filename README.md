@@ -92,7 +92,7 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Universal Metadata Reference](#universal-metadata-reference)
   - [Building a Manifest](#building-a-manifest)
   - [Generating Gateway Configs](#generating-gateway-configs)
-  - [Optional Fastify Plugin (`app.gateway`)](#optional-fastify-plugin-appgateway)
+  - [Optional Fastify Plugin (`app.buildGatewayManifest`)](#optional-fastify-plugin-appbuildgatewaymanifest)
 
 ## Basic usage
 
@@ -3106,11 +3106,12 @@ For per-gateway field mappings and limitations, see the package READMEs:
 - [`@opinionated-machine/gateway-krakend`](./packages/gateway-krakend/README.md)
 - [`@opinionated-machine/gateway-kong`](./packages/gateway-kong/README.md)
 
-### Optional Fastify Plugin (`app.gateway`)
+### Optional Fastify Plugin (`app.buildGatewayManifest`)
 
 For convenient access to the manifest — typically from a CLI or a sibling
 process — register `fastifyGatewayPlugin`. It mirrors the spirit of
-`@fastify/swagger`'s `app.swagger()`:
+`@fastify/swagger`'s `app.swagger()` and decorates the Fastify instance with
+a single explicit function: `app.buildGatewayManifest()`.
 
 ```ts
 import { fastifyGatewayPlugin } from 'opinionated-machine'
@@ -3122,7 +3123,8 @@ await app.register(fastifyGatewayPlugin, {
 })
 
 // From anywhere in the app:
-const manifest = app.gateway.getManifest()
+const manifest = app.buildGatewayManifest()
+const overridden = app.buildGatewayManifest({ service: 'users-api-canary' })
 
 // Or fetch over HTTP from a CLI / sibling process:
 //   GET /_gateway/manifest
