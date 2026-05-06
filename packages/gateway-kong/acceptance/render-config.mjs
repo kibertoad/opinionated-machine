@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { renderKongConfig } from '../dist/render.js'
-import { acceptanceManifest } from './manifest.acceptance.js'
+import { acceptanceManifest } from './manifest.acceptance.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const outDir = join(__dirname, 'generated')

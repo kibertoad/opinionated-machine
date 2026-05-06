@@ -1,11 +1,11 @@
-import type { GatewayManifest } from 'opinionated-machine'
-
 /**
- * Acceptance-test manifest. Hand-written rather than generated through
- * `DIContext.buildGatewayManifest` to keep this self-contained — we want to
- * verify the generator under conditions we control, not the full pipeline.
+ * Acceptance manifest. Hand-written rather than collected from a real
+ * DIContext to keep this self-contained — we want to verify the generator
+ * under conditions we control, not the full pipeline.
+ *
+ * @type {import('opinionated-machine').GatewayManifest}
  */
-export const acceptanceManifest: GatewayManifest = {
+export const acceptanceManifest = {
   manifestVersion: '1',
   service: 'gateway-envoy-acceptance',
   generatedAt: '2026-05-06T00:00:00.000Z',

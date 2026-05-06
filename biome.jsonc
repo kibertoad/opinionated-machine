@@ -5,6 +5,9 @@
         "./node_modules/@lokalise/biome-config/configs/biome-esm.jsonc",
         "./node_modules/@lokalise/biome-config/configs/biome-package.jsonc"
     ],
+    "files": {
+        "includes": ["**", "!**/dist", "!**/acceptance/generated"]
+    },
     "linter": {
         "rules": {
             "correctness": {
@@ -21,6 +24,17 @@
                 "rules": {
                     "correctness": {
                         "noUnusedPrivateClassMembers": "off"
+                    }
+                }
+            }
+        },
+        {
+            // Stand-alone CLI build scripts — console output is intentional.
+            "includes": ["**/acceptance/render-config.mjs", "**/acceptance/upstream.mjs"],
+            "linter": {
+                "rules": {
+                    "suspicious": {
+                        "noConsole": "off"
                     }
                 }
             }
