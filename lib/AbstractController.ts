@@ -6,6 +6,7 @@ import type {
 } from '@lokalise/api-contracts'
 import type { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
 import type { z } from 'zod/v4'
+import type { GatewayMetadataValue } from './gateway/gatewayMetadata.ts'
 
 // biome-ignore lint/suspicious/noExplicitAny: we don't care about specific generics here
 type AnyCommonRouteDefinition = CommonRouteDefinition<any, any, any, any, any, any, any, any>
@@ -120,4 +121,25 @@ export abstract class AbstractController<
   APIContracts extends Record<string, AnyCommonRouteDefinition>,
 > {
   public abstract buildRoutes(): BuildRoutesReturnType<APIContracts>
+
+  /**
+   * Optional controller-level defaults for gateway metadata.
+   *
+   * Merged underneath per-route metadata when `DIContext.buildGatewayManifest()`
+   * assembles a manifest. Use this for fields that apply to every route in the
+   * controller (e.g. `upstream`, `auth`, baseline `timeouts`).
+   *
+   * Service-wide defaults (passed to `buildGatewayManifest({ defaults })`) sit
+   * underneath these.
+   *
+   * @example
+   * ```ts
+   * public readonly gatewayDefaults: GatewayMetadataValue = {
+   *   upstream: 'users-service',
+   *   timeouts: { request: '5s' },
+   *   auth: { required: true },
+   * }
+   * ```
+   */
+  public readonly gatewayDefaults?: GatewayMetadataValue
 }

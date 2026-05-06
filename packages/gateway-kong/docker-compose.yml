@@ -1,0 +1,41 @@
+services:
+  upstream:
+    image: node:20-alpine
+    volumes:
+      - ./acceptance/upstream.mjs:/app/upstream.mjs:ro
+    command: node /app/upstream.mjs
+    environment:
+      PORT: '8081'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:8081/']
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  kong:
+    image: kong:3.7
+    depends_on:
+      upstream:
+        condition: service_healthy
+    volumes:
+      - ./acceptance/generated/kong.yaml:/etc/kong/kong.yml:ro
+    environment:
+      KONG_DATABASE: 'off'
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: '0.0.0.0:8001'
+      KONG_PROXY_LISTEN: '0.0.0.0:8000'
+    ports:
+      - '8000:8000'
+      - '8001:8001'
+    healthcheck:
+      # Kong ships the `kong health` command in its own image — the canonical
+      # readiness probe.
+      test: ['CMD', 'kong', 'health']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s

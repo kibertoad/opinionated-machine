@@ -1,4 +1,5 @@
 import type { RouteOptions } from 'fastify'
+import type { GatewayMetadataValue } from '../gateway/gatewayMetadata.ts'
 
 /**
  * Abstract base class for controllers that use the `ApiContract` API.
@@ -17,4 +18,13 @@ import type { RouteOptions } from 'fastify'
  */
 export abstract class AbstractApiController {
   abstract readonly routes: RouteOptions[]
+
+  /**
+   * Optional controller-level defaults for gateway metadata.
+   *
+   * Merged underneath per-route metadata (attached via `withGatewayMetadata`)
+   * when `DIContext.buildGatewayManifest()` assembles a manifest. See
+   * `AbstractController.gatewayDefaults` for full semantics.
+   */
+  public readonly gatewayDefaults?: GatewayMetadataValue
 }

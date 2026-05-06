@@ -1,0 +1,176 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderKongConfig > matches the JSON snapshot for the fixture manifest 1`] = `
+{
+  "_format_version": "3.0",
+  "_transform": true,
+  "plugins": [],
+  "services": [
+    {
+      "host": "users",
+      "name": "users-service",
+      "path": undefined,
+      "port": 8081,
+      "protocol": "http",
+      "read_timeout": 5000,
+      "routes": [
+        {
+          "methods": [
+            "POST",
+          ],
+          "name": "usersController.createItem",
+          "paths": [
+            "/users",
+          ],
+          "plugins": [
+            {
+              "config": {
+                "limit_by": "ip",
+                "minute": 10,
+              },
+              "name": "rate-limiting",
+            },
+            {
+              "config": {
+                "add": {
+                  "headers": [
+                    "x-internal:true",
+                  ],
+                },
+                "remove": {
+                  "headers": [
+                    "cookie",
+                  ],
+                },
+              },
+              "name": "request-transformer",
+            },
+          ],
+          "preserve_host": false,
+          "strip_path": false,
+        },
+        {
+          "methods": [
+            "DELETE",
+          ],
+          "name": "usersController.deleteItem",
+          "paths": [
+            "~/users/(?<userId>[^/]+)$",
+          ],
+          "plugins": [
+            {
+              "config": {},
+              "name": "jwt",
+            },
+          ],
+          "preserve_host": false,
+          "strip_path": true,
+        },
+        {
+          "headers": {
+            "x-tenant-id": [
+              "~^t_",
+            ],
+          },
+          "methods": [
+            "GET",
+          ],
+          "name": "usersController.getItem",
+          "paths": [
+            "~/users/(?<userId>[^/]+)$",
+          ],
+          "plugins": [
+            {
+              "config": {
+                "cache_ttl": 60,
+                "request_method": [
+                  "GET",
+                ],
+                "strategy": "memory",
+              },
+              "name": "proxy-cache",
+            },
+            {
+              "config": {
+                "credentials": true,
+                "origins": [
+                  "https://app.example.com",
+                ],
+              },
+              "name": "cors",
+            },
+          ],
+          "preserve_host": false,
+          "strip_path": false,
+        },
+      ],
+    },
+  ],
+}
+`;
+
+exports[`renderKongConfig > matches the YAML snapshot for the fixture manifest 1`] = `
+"_format_version: "3.0"
+_transform: true
+services:
+  - name: users-service
+    protocol: http
+    host: users
+    port: 8081
+    read_timeout: 5000
+    routes:
+      - name: usersController.createItem
+        methods:
+          - POST
+        paths:
+          - /users
+        strip_path: false
+        preserve_host: false
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 10
+              limit_by: ip
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - x-internal:true
+              remove:
+                headers:
+                  - cookie
+      - name: usersController.deleteItem
+        methods:
+          - DELETE
+        paths:
+          - ~/users/(?<userId>[^/]+)$
+        strip_path: true
+        preserve_host: false
+        plugins:
+          - name: jwt
+            config: {}
+      - name: usersController.getItem
+        methods:
+          - GET
+        paths:
+          - ~/users/(?<userId>[^/]+)$
+        strip_path: false
+        preserve_host: false
+        headers:
+          x-tenant-id:
+            - ~^t_
+        plugins:
+          - name: proxy-cache
+            config:
+              strategy: memory
+              cache_ttl: 60
+              request_method:
+                - GET
+          - name: cors
+            config:
+              origins:
+                - https://app.example.com
+              credentials: true
+plugins: []
+"
+`;

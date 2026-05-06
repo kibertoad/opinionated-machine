@@ -1,0 +1,35 @@
+services:
+  upstream:
+    image: node:20-alpine
+    volumes:
+      - ./acceptance/upstream.mjs:/app/upstream.mjs:ro
+    command: node /app/upstream.mjs
+    environment:
+      PORT: '8081'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:8081/']
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    depends_on:
+      upstream:
+        condition: service_healthy
+    volumes:
+      - ./acceptance/generated/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    command: ['envoy', '-c', '/etc/envoy/envoy.yaml', '--log-level', 'warn']
+    ports:
+      - '10000:10000'
+      - '9901:9901'
+    healthcheck:
+      # Probe the data-plane port — bash (in the ubuntu base image) opens a
+      # TCP connection via /dev/tcp, no wget/curl required. The HCM listener
+      # binds 10000 only after Envoy successfully loads its config, which is
+      # the right "ready" signal for the acceptance suite.
+      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/10000']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s

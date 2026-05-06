@@ -2,6 +2,7 @@ import { buildRestContract } from '@lokalise/api-contracts'
 import { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
 import { boolean, z } from 'zod/v4'
 import { AbstractController, type BuildRoutesReturnType } from '../lib/AbstractController.js'
+import { withGatewayMetadata } from '../lib/gateway/index.js'
 import type { TestModuleDependencies, TestService } from './TestModule.js'
 
 const REQUEST_BODY_SCHEMA = z.object({
@@ -87,7 +88,11 @@ export class TestController extends AbstractController<typeof TestController.con
 
   public buildRoutes(): BuildRoutesReturnType<typeof TestController.contracts> {
     return {
-      getItem: this.getItem,
+      // Annotated with gateway metadata so DIContext.buildGatewayManifest()
+      // exercises the symbol-read path in our integration tests.
+      getItem: withGatewayMetadata(TestController.contracts.getItem, this.getItem, {
+        cache: { ttl: '60s' },
+      }),
       deleteItem: this.deleteItem,
       updateItem: this.updateItem,
       createItem: this.createItem,
