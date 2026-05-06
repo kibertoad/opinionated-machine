@@ -34,4 +34,13 @@ describe('normalizePath', () => {
   it('rejects invalid parameter names', () => {
     expect(() => normalizePath('/users/:1bad')).toThrow(/Invalid path parameter/)
   })
+
+  it('strips Fastify inline-constraint suffix (`:id(regex)`)', () => {
+    expect(normalizePath('/users/:id(\\d+)')).toBe('/users/{id}')
+    expect(normalizePath('/items/:slug(\\w+)')).toBe('/items/{slug}')
+  })
+
+  it('handles optional + inline constraint together', () => {
+    expect(normalizePath('/maybe/:id(\\d+)?')).toBe('/maybe/{id}')
+  })
 })

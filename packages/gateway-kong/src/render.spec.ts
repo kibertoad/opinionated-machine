@@ -48,12 +48,16 @@ describe('renderKongConfig', () => {
     expect(cache?.config).toMatchObject({ cache_ttl: 60, request_method: ['GET'] })
   })
 
-  it('promotes the first route-level CORS block to a global Kong plugin', () => {
+  it('emits cors as a per-route plugin (not promoted to global)', () => {
     const { json } = renderKongConfig(fixtureManifest, options)
-    expect(json.plugins.find((p) => p.name === 'cors')?.config).toMatchObject({
+    const getItem = json.services[0]?.routes.find((r) => r.name === 'usersController.getItem')
+    const cors = getItem?.plugins?.find((p) => p.name === 'cors')
+    expect(cors?.config).toMatchObject({
       origins: ['https://app.example.com'],
       credentials: true,
     })
+    // No global plugins emitted — each route's CORS intent is preserved.
+    expect(json.plugins).toEqual([])
   })
 
   it('propagates header transformations as request-/response-transformer plugins', () => {

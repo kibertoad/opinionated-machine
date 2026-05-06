@@ -75,7 +75,7 @@ export function renderKrakendConfig(
     name: options.name ?? manifest.service,
     port: options.port,
     endpoints,
-    extra_config: buildGlobalExtraConfig(manifest),
+    extra_config: buildGlobalExtraConfig(manifest, warnings),
   }
 
   return { json: config, warnings }
@@ -142,11 +142,17 @@ function buildCacheExtra(
 }
 
 function buildRateLimitExtra(
+  routeId: string,
   rateLimit: NonNullable<GatewayMetadataValue['rateLimit']>,
+  warnings: string[],
 ): Record<string, unknown> {
-  // KrakenD distinguishes global (max_rate) from per-client (client_max_rate).
-  // Setting both to the same value would let the global cap dominate and
-  // make the per-client part dead, so we emit one or the other based on key.
+  // KrakenD's qos/ratelimit/router distinguishes:
+  //   - max_rate          shared cap across all clients
+  //   - client_max_rate   per-client cap, partitioned by `strategy` + `key`
+  //     - strategy: 'ip' | 'header'   are the OSS-supported shapes
+  // `query` / `customQuery` keys from the universal model have no OSS
+  // equivalent — surface a warning and fall back to a shared cap rather
+  // than silently demoting the policy to a different identity.
   const every = toKrakendDuration(rateLimit.per)
   const key = rateLimit.key
   if (key === 'ip') {
@@ -167,6 +173,13 @@ function buildRateLimitExtra(
       strategy: 'header',
       key: key.customHeader,
     }
+  }
+  if (key && typeof key === 'object' && ('query' in key || 'customQuery' in key)) {
+    const queryKey = 'query' in key ? key.query : key.customQuery
+    warnings.push(
+      `Route "${routeId}": KrakenD's qos/ratelimit/router has no querystring strategy — metadata.rateLimit.key='${queryKey}' is being demoted to a shared max_rate. Wire a custom plugin via extensions.krakend if true per-query-value limiting is needed.`,
+    )
+    return { max_rate: rateLimit.requests, every }
   }
   return { max_rate: rateLimit.requests, every }
 }
@@ -190,7 +203,9 @@ function buildEndpointExtraConfig(
   const extra: Record<string, unknown> = {}
 
   if (meta.cache?.ttl) extra['qos/http-cache'] = buildCacheExtra(meta.cache)
-  if (meta.rateLimit) extra['qos/ratelimit/router'] = buildRateLimitExtra(meta.rateLimit)
+  if (meta.rateLimit) {
+    extra['qos/ratelimit/router'] = buildRateLimitExtra(routeId, meta.rateLimit, warnings)
+  }
   if (meta.auth?.jwt) extra['auth/validator'] = buildJwtExtra(meta.auth.jwt)
 
   if (meta.circuitBreaker) {
@@ -208,10 +223,30 @@ function buildEndpointExtraConfig(
     )
   }
 
-  // Vendor escape hatch: deep-merge extensions.krakend last.
+  // Vendor escape hatch: deep-merge extensions.krakend per extra-config
+  // block. Shallow assignment would let a partial extension like
+  // `extensions.krakend['qos/http-cache'] = { vary: ['x-region'] }` clobber
+  // the `ttl` / `methods` we already emitted into the same key.
   const krakendExt = meta.extensions?.krakend as Record<string, unknown> | undefined
   if (krakendExt) {
-    Object.assign(extra, krakendExt)
+    for (const [key, value] of Object.entries(krakendExt)) {
+      const existing = extra[key]
+      if (
+        value &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        existing &&
+        typeof existing === 'object' &&
+        !Array.isArray(existing)
+      ) {
+        extra[key] = {
+          ...(existing as Record<string, unknown>),
+          ...(value as Record<string, unknown>),
+        }
+      } else {
+        extra[key] = value
+      }
+    }
   }
 
   return extra
@@ -232,11 +267,30 @@ function buildCorsGlobalConfig(
   }
 }
 
-function buildGlobalExtraConfig(manifest: GatewayManifest): Record<string, unknown> {
-  // Promote the first route-level CORS block to the listener — KrakenD applies
-  // CORS globally rather than per-endpoint.
-  const firstCors = manifest.routes.find((r) => r.metadata.cors)?.metadata.cors
-  return firstCors ? buildCorsGlobalConfig(firstCors) : {}
+function buildGlobalExtraConfig(
+  manifest: GatewayManifest,
+  warnings: string[],
+): Record<string, unknown> {
+  // KrakenD's CORS plugin only attaches at the service (root) level — there
+  // is no per-endpoint CORS plugin in OSS KrakenD. We promote the first
+  // declared CORS block to global; if there are multiple distinct ones,
+  // we warn so the operator knows the others are being dropped.
+  const corsRoutes = manifest.routes.filter((r) => r.metadata.cors)
+  if (corsRoutes.length === 0) return {}
+
+  const distinct = new Set(corsRoutes.map((r) => JSON.stringify(r.metadata.cors)))
+  if (distinct.size > 1) {
+    warnings.push(
+      `Multiple distinct metadata.cors blocks found across routes; KrakenD only supports a single global CORS policy, so the first one is being applied to all routes. The others (from routes ${corsRoutes
+        .slice(1)
+        .map((r) => `"${r.id}"`)
+        .join(', ')}) are being dropped.`,
+    )
+  }
+  // corsRoutes was filtered to entries with metadata.cors set, so the cast
+  // is just stripping the index-signature undefined.
+  const first = corsRoutes[0] as (typeof corsRoutes)[number]
+  return buildCorsGlobalConfig(first.metadata.cors as NonNullable<typeof first.metadata.cors>)
 }
 
 // ============================================================================

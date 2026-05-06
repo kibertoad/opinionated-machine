@@ -28,41 +28,29 @@ describe('fastifyGatewayPlugin', () => {
     await app.close()
   })
 
-  it('exposes the manifest over HTTP on the default route', async () => {
+  it('does NOT register an HTTP route by default (manifest exposure is opt-in)', async () => {
     const app = fastify()
     await app.register(fastifyGatewayPlugin, {
       context: createContext(),
       defaults: { service: 'users-api' },
     })
     const res = await app.inject({ method: 'GET', url: '/_gateway/manifest' })
+    expect(res.statusCode).toBe(404)
+    await app.close()
+  })
+
+  it('exposes the manifest over HTTP when exposeRoute is set', async () => {
+    const app = fastify()
+    await app.register(fastifyGatewayPlugin, {
+      context: createContext(),
+      defaults: { service: 'users-api' },
+      exposeRoute: '/__gateway/manifest',
+    })
+    const res = await app.inject({ method: 'GET', url: '/__gateway/manifest' })
     expect(res.statusCode).toBe(200)
     const body = res.json() as { service: string; manifestVersion: string }
     expect(body.service).toBe('users-api')
     expect(body.manifestVersion).toBe('1')
-    await app.close()
-  })
-
-  it('honours a custom route path', async () => {
-    const app = fastify()
-    await app.register(fastifyGatewayPlugin, {
-      context: createContext(),
-      defaults: { service: 'users-api' },
-      exposeRoute: '/__gateway',
-    })
-    const res = await app.inject({ method: 'GET', url: '/__gateway' })
-    expect(res.statusCode).toBe(200)
-    await app.close()
-  })
-
-  it('skips the HTTP route when exposeRoute is false', async () => {
-    const app = fastify()
-    await app.register(fastifyGatewayPlugin, {
-      context: createContext(),
-      defaults: { service: 'users-api' },
-      exposeRoute: false,
-    })
-    const res = await app.inject({ method: 'GET', url: '/_gateway/manifest' })
-    expect(res.statusCode).toBe(404)
     await app.close()
   })
 

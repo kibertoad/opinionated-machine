@@ -3090,14 +3090,17 @@ import { fastifyGatewayPlugin } from 'opinionated-machine'
 await app.register(fastifyGatewayPlugin, {
   context,                                    // your DIContext
   defaults: { service: 'users-api' },         // service name + any service-wide defaults
-  // exposeRoute: '/_gateway/manifest',       // (default) HTTP route; set false to disable
+  // exposeRoute: '/__gateway/manifest',      // opt-in HTTP route; omit to keep the manifest in-process only
 })
 
 // In code, e.g. in another plugin or a graceful-shutdown drain hook:
 const manifest = app.buildGatewayManifest()
 
-// From the outside:
-//   curl http://localhost:8080/_gateway/manifest | jq '.routes'
+// Optionally fetch over HTTP from a CLI / sibling process — only when you
+// set `exposeRoute` above. The plugin never registers an HTTP route by
+// default to avoid leaking internal routing topology to unauthenticated
+// callers; pair it with auth middleware appropriate for your service.
+//   curl http://localhost:8080/__gateway/manifest | jq '.routes'
 ```
 
 The manifest is rebuilt on every call, so it always reflects the current set

@@ -4,17 +4,7 @@ exports[`renderKongConfig > matches the JSON snapshot for the fixture manifest 1
 {
   "_format_version": "3.0",
   "_transform": true,
-  "plugins": [
-    {
-      "config": {
-        "credentials": true,
-        "origins": [
-          "https://app.example.com",
-        ],
-      },
-      "name": "cors",
-    },
-  ],
+  "plugins": [],
   "services": [
     {
       "host": "users",
@@ -100,6 +90,15 @@ exports[`renderKongConfig > matches the JSON snapshot for the fixture manifest 1
               },
               "name": "proxy-cache",
             },
+            {
+              "config": {
+                "credentials": true,
+                "origins": [
+                  "https://app.example.com",
+                ],
+              },
+              "name": "cors",
+            },
           ],
           "preserve_host": false,
           "strip_path": false,
@@ -167,11 +166,11 @@ services:
               cache_ttl: 60
               request_method:
                 - GET
-plugins:
-  - name: cors
-    config:
-      origins:
-        - https://app.example.com
-      credentials: true
+          - name: cors
+            config:
+              origins:
+                - https://app.example.com
+              credentials: true
+plugins: []
 "
 `;

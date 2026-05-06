@@ -32,12 +32,15 @@ export type FastifyGatewayPluginOptions = {
   /** Default options applied to every `app.buildGatewayManifest()` call. */
   defaults: BuildGatewayManifestOptions
   /**
-   * If set, also exposes `GET <route>` returning the manifest as JSON.
-   * Use case: CLIs that don't want to load TypeScript code can `curl` the
-   * running app to fetch its manifest. Set to `false` to skip.
-   * @default '/_gateway/manifest'
+   * If set to a path string, exposes `GET <route>` returning the manifest as
+   * JSON. Useful when a CLI / sibling process wants to fetch the manifest
+   * over HTTP instead of loading the service code.
+   *
+   * **Opt-in.** No HTTP route is registered when this is omitted, so adding
+   * the plugin can never accidentally expose internal routing topology to
+   * unauthenticated callers.
    */
-  exposeRoute?: string | false
+  exposeRoute?: string
 }
 
 /**
@@ -67,11 +70,10 @@ const fastifyGatewayPluginInner: FastifyPluginCallback<FastifyGatewayPluginOptio
     opts.context.buildGatewayManifest({ ...opts.defaults, ...(overrides ?? {}) })
   app.decorate('buildGatewayManifest', buildManifest)
 
-  const route = opts.exposeRoute === undefined ? '/_gateway/manifest' : opts.exposeRoute
-  if (route !== false) {
+  if (typeof opts.exposeRoute === 'string' && opts.exposeRoute.length > 0) {
     app.route({
       method: 'GET',
-      url: route,
+      url: opts.exposeRoute,
       handler: async () => buildManifest(),
     })
   }

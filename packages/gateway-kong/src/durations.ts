@@ -26,7 +26,18 @@ export function toMilliseconds(input: string): number {
   }
 }
 
-/** Kong's `proxy-cache` plugin and rate-limiting expect seconds. */
+/**
+ * Kong's `proxy-cache` plugin and rate-limiting take integer seconds — the
+ * universal `Duration` model allows millisecond precision (e.g. `300ms`),
+ * so we throw if the value isn't representable in whole seconds rather than
+ * silently rounding (which can zero out small values or inflate large ones).
+ */
 export function toSeconds(input: string): number {
-  return Math.round(toMilliseconds(input) / 1000)
+  const ms = toMilliseconds(input)
+  if (ms % 1000 !== 0) {
+    throw new Error(
+      `Duration "${input}" cannot be represented in whole seconds, which Kong's plugin config requires.`,
+    )
+  }
+  return ms / 1000
 }

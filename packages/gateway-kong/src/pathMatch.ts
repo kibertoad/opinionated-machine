@@ -25,6 +25,16 @@ export function openApiPathToKong(path: string): string {
       hasParam = true
       return `(?<${param[1]}>[^/]+)`
     }
+    // Anything that LOOKS like a brace param (e.g. `{user-id}`) but isn't a
+    // valid PCRE2 named-capture identifier must fail loudly. Returning the
+    // segment unchanged would produce a literal Kong prefix path that can
+    // never match the actual requests (`/users/{user-id}` ≠ `/users/123`).
+    if (/^\{[^}]+\}$/.test(segment)) {
+      throw new Error(
+        `Path parameter "${segment}" in "${path}" is not a valid PCRE2 named-capture identifier. ` +
+          `Use only ASCII letters, digits, and underscores in the parameter name (e.g. "{userId}").`,
+      )
+    }
     return escapeRegex(segment)
   })
 

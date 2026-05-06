@@ -81,7 +81,9 @@ export function renderKongConfig(
     _format_version: '3.0',
     _transform: true,
     services,
-    plugins: collectGlobalPlugins(manifest, warnings),
+    // No global plugins emitted — per-route concerns (CORS, etc.) live on
+    // their routes so distinct policies are preserved.
+    plugins: [],
   }
 
   return {
@@ -209,8 +211,9 @@ function collectRoutePlugins(
 ): KongPlugin[] {
   const plugins: KongPlugin[] = []
 
-  if (meta.rateLimit) plugins.push(buildRateLimitPlugin(meta.rateLimit))
+  if (meta.rateLimit) plugins.push(buildRateLimitPlugin(routeId, meta.rateLimit, warnings))
   if (meta.cache?.ttl) plugins.push(buildCachePlugin(meta.cache))
+  if (meta.cors) plugins.push(buildCorsPlugin(meta.cors))
   if (meta.auth?.jwt) plugins.push(buildJwtPlugin())
   plugins.push(...buildTransformerPlugins(meta.headers))
 
@@ -269,7 +272,9 @@ function collectRouteWarnings(
 }
 
 function buildRateLimitPlugin(
+  routeId: string,
   rateLimit: NonNullable<GatewayMetadataValue['rateLimit']>,
+  warnings: string[],
 ): KongPlugin {
   const seconds = toSeconds(rateLimit.per)
   // Bucket selection — Kong's rate-limiting plugin takes per-second / minute
@@ -280,17 +285,28 @@ function buildRateLimitPlugin(
   else if (seconds <= 3600) config.hour = rateLimit.requests
   else config.day = rateLimit.requests
 
+  // Kong's `rate-limiting` plugin supports limit_by: ip / header / consumer
+  // / consumer-group / credential / service / path. The universal model also
+  // allows query / customQuery as keys, which Kong cannot natively translate
+  // — surface a warning so the user can wire a Lua plugin or restructure
+  // the limiter rather than silently degrading to consumer-based limiting.
   const key = rateLimit.key
-  config.limit_by =
-    key === 'ip'
-      ? 'ip'
-      : key && typeof key === 'object' && ('header' in key || 'customHeader' in key)
-        ? 'header'
-        : 'consumer'
-  if (key && typeof key === 'object' && 'header' in key) {
+  if (key === undefined) {
+    config.limit_by = 'consumer'
+  } else if (key === 'ip') {
+    config.limit_by = 'ip'
+  } else if (typeof key === 'object' && 'header' in key) {
+    config.limit_by = 'header'
     config.header_name = key.header
-  } else if (key && typeof key === 'object' && 'customHeader' in key) {
+  } else if (typeof key === 'object' && 'customHeader' in key) {
+    config.limit_by = 'header'
     config.header_name = key.customHeader
+  } else {
+    // 'query' or 'customQuery' — unsupported by Kong's rate-limiting plugin.
+    warnings.push(
+      `Route "${routeId}": Kong's rate-limiting plugin doesn't support query-based identity (metadata.rateLimit.key) — falling back to limit_by: 'ip'. Wire a Lua / custom plugin via extensions.kong_plugins for true query-based limiting.`,
+    )
+    config.limit_by = 'ip'
   }
 
   return { name: 'rate-limiting', config }
@@ -340,25 +356,22 @@ function buildTransformerPlugins(headers: GatewayMetadataValue['headers']): Kong
   return out
 }
 
-function collectGlobalPlugins(manifest: GatewayManifest, _warnings: string[]): KongPlugin[] {
-  // Promote the first route-level CORS block to a global Kong plugin —
-  // Kong applies CORS at the global / service / route level, and aggregating
-  // it once keeps the config tidy.
-  const firstCors = manifest.routes.find((r) => r.metadata.cors)?.metadata.cors
-  if (!firstCors) return []
-  return [
-    {
-      name: 'cors',
-      config: {
-        origins: firstCors.origins,
-        ...(firstCors.methods ? { methods: firstCors.methods } : {}),
-        ...(firstCors.headers ? { headers: firstCors.headers } : {}),
-        ...(firstCors.exposeHeaders ? { exposed_headers: firstCors.exposeHeaders } : {}),
-        ...(firstCors.credentials !== undefined ? { credentials: firstCors.credentials } : {}),
-        ...(firstCors.maxAge ? { max_age: toSeconds(firstCors.maxAge) } : {}),
-      },
+function buildCorsPlugin(cors: NonNullable<GatewayMetadataValue['cors']>): KongPlugin {
+  // Kong's CORS plugin attaches at any of: global, service, or route level.
+  // We emit it per route so each route's CORS intent is preserved verbatim
+  // — the previous "promote first to global" approach silently dropped any
+  // policy after the first.
+  return {
+    name: 'cors',
+    config: {
+      origins: cors.origins,
+      ...(cors.methods ? { methods: cors.methods } : {}),
+      ...(cors.headers ? { headers: cors.headers } : {}),
+      ...(cors.exposeHeaders ? { exposed_headers: cors.exposeHeaders } : {}),
+      ...(cors.credentials !== undefined ? { credentials: cors.credentials } : {}),
+      ...(cors.maxAge ? { max_age: toSeconds(cors.maxAge) } : {}),
     },
-  ]
+  }
 }
 
 // ============================================================================

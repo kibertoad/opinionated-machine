@@ -62,11 +62,19 @@ export function renderEnvoyConfig(
   const usedClusters = new Set<string>()
   const envoyRoutes = manifest.routes.map((route) => buildRoute(route, warnings, usedClusters))
 
-  // Validate that every referenced cluster has hosts configured.
+  // Validate that every referenced cluster has hosts configured. An empty
+  // hosts array would render a cluster with no endpoints, making every
+  // matching route unroutable at runtime; treat that as a hard error.
   for (const cluster of usedClusters) {
-    if (!options.clusters[cluster]) {
+    const clusterOptions = options.clusters[cluster]
+    if (!clusterOptions) {
       throw new Error(
         `Manifest references upstream "${cluster}" but no hosts were configured in EnvoyOptions.clusters.`,
+      )
+    }
+    if (clusterOptions.hosts.length === 0) {
+      throw new Error(
+        `Cluster "${cluster}" was configured with an empty hosts array — every route mapped to this upstream would have no endpoints.`,
       )
     }
   }
@@ -281,13 +289,35 @@ function buildRoute(
     ...buildRouteHeaderRules(meta),
   }
 
-  // Vendor-specific extension: deep-merge envoy escape hatch into the route at the end.
+  // Vendor-specific extension: deep-merge the envoy escape hatch onto the
+  // generated route. Shallow assignment would let common patterns like
+  // `extensions.envoy.route = { regex_rewrite: {...} }` clobber the entire
+  // generated `route` object (including cluster, timeout, retry_policy);
+  // we merge nested objects recursively instead.
   const envoyExt = meta.extensions?.envoy as Record<string, unknown> | undefined
   if (envoyExt) {
-    Object.assign(r, envoyExt)
+    deepMergeInto(r as Record<string, unknown>, envoyExt)
   }
 
   return r
+}
+
+function deepMergeInto(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(source)) {
+    const existing = target[key]
+    if (
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      existing &&
+      typeof existing === 'object' &&
+      !Array.isArray(existing)
+    ) {
+      deepMergeInto(existing as Record<string, unknown>, value as Record<string, unknown>)
+    } else {
+      target[key] = value
+    }
+  }
 }
 
 function buildCluster(name: string, opts: EnvoyClusterOptions): EnvoyCluster {

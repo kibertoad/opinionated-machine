@@ -10,10 +10,17 @@ import { describe, expect, it } from 'vitest'
  * or `lib/gateway` changes.
  */
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'http://localhost:8000'
+// Fail fast if Kong/upstream is unreachable so a hung request can't burn a CI
+// job. The actual HTTP round-trips through the gateway should complete in
+// well under a second.
+const FETCH_TIMEOUT_MS = 10_000
+
+const fetchGateway = (path: string) =>
+  fetch(`${GATEWAY_URL}${path}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
 
 describe('kong acceptance', () => {
   it('routes GET /echo to the upstream', async () => {
-    const res = await fetch(`${GATEWAY_URL}/echo`)
+    const res = await fetchGateway('/echo')
     expect(res.status).toBe(200)
     const body = (await res.json()) as { method: string; path: string }
     expect(body.method).toBe('GET')
@@ -21,13 +28,13 @@ describe('kong acceptance', () => {
   })
 
   it('enforces the per-route request timeout', async () => {
-    const res = await fetch(`${GATEWAY_URL}/slow?ms=2000`)
+    const res = await fetchGateway('/slow?ms=2000')
     // Kong returns 504 (Gateway Timeout) when read_timeout fires.
     expect(res.status).toBe(504)
   })
 
   it('rejects unknown paths with 404', async () => {
-    const res = await fetch(`${GATEWAY_URL}/nope`)
+    const res = await fetchGateway('/nope')
     expect(res.status).toBe(404)
   })
 })

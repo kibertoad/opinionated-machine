@@ -10,10 +10,14 @@ import { describe, expect, it } from 'vitest'
  * or `lib/gateway` changes.
  */
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'http://localhost:8080'
+const FETCH_TIMEOUT_MS = 10_000
+
+const fetchGateway = (path: string) =>
+  fetch(`${GATEWAY_URL}${path}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
 
 describe('krakend acceptance', () => {
   it('routes GET /echo to the upstream', async () => {
-    const res = await fetch(`${GATEWAY_URL}/echo`)
+    const res = await fetchGateway('/echo')
     expect(res.status).toBe(200)
     const body = (await res.json()) as { method: string; path: string }
     expect(body.method).toBe('GET')
@@ -21,13 +25,13 @@ describe('krakend acceptance', () => {
   })
 
   it('enforces the per-route request timeout', async () => {
-    const res = await fetch(`${GATEWAY_URL}/slow?ms=2000`)
+    const res = await fetchGateway('/slow?ms=2000')
     // KrakenD returns 500 on backend timeout; some versions use 504.
     expect([500, 504]).toContain(res.status)
   })
 
   it('rejects unknown paths with 404', async () => {
-    const res = await fetch(`${GATEWAY_URL}/nope`)
+    const res = await fetchGateway('/nope')
     expect(res.status).toBe(404)
   })
 })
