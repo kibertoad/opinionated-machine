@@ -47,4 +47,20 @@ describe('renderEnvoyConfig', () => {
     const { json } = renderEnvoyConfig(fixtureManifest, options)
     expect(json.static_resources.clusters.map((c) => c.name)).toEqual(['users-service'])
   })
+
+  it('emits no admin block by default (opt-in)', () => {
+    const { json } = renderEnvoyConfig(fixtureManifest, options)
+    expect(json.admin).toBeUndefined()
+  })
+
+  it('emits an admin block when options.admin is provided', () => {
+    const { json } = renderEnvoyConfig(fixtureManifest, {
+      ...options,
+      admin: { port: 9901, accessLogPath: '/tmp/envoy-admin.log' },
+    })
+    expect(json.admin).toEqual({
+      access_log_path: '/tmp/envoy-admin.log',
+      address: { socket_address: { address: '0.0.0.0', port_value: 9901 } },
+    })
+  })
 })

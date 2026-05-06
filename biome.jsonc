@@ -6,7 +6,7 @@
         "./node_modules/@lokalise/biome-config/configs/biome-package.jsonc"
     ],
     "files": {
-        "includes": ["**", "!**/dist", "!**/acceptance/generated"]
+        "includes": ["**", "!**/dist", "!**/coverage", "!**/acceptance/generated"]
     },
     "linter": {
         "rules": {

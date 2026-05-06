@@ -14,6 +14,10 @@ const { yaml, warnings } = renderEnvoyConfig(acceptanceManifest, {
   listenPort: 10000,
   // The "upstream" name maps to the docker-compose service name.
   clusters: { upstream: { hosts: ['upstream:8081'], connectTimeout: '1s' } },
+  // Expose the admin interface so /ready, /stats, /clusters etc. are
+  // available — useful for debugging acceptance failures and for ops in
+  // general. The docker-compose file forwards 9901.
+  admin: { port: 9901 },
 })
 writeFileSync(join(outDir, 'envoy.yaml'), yaml)
 if (warnings.length) {

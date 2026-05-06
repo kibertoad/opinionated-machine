@@ -15,6 +15,15 @@ export type EnvoyClusterOptions = {
   connectTimeout?: string
 }
 
+export type EnvoyAdminOptions = {
+  /** Bind address; defaults to '0.0.0.0'. */
+  address?: string
+  /** Bind port (e.g. 9901). */
+  port: number
+  /** Optional access-log path; omit to skip. */
+  accessLogPath?: string
+}
+
 export type EnvoyOptions = {
   /** Listener port (Envoy's HCM listens on 0.0.0.0:<listenPort>). */
   listenPort: number
@@ -24,6 +33,12 @@ export type EnvoyOptions = {
   listenerName?: string
   /** Optional name for the route_config; defaults to "<service>_routes". */
   routeConfigName?: string
+  /**
+   * Optional admin listener config. Off by default. When set, Envoy exposes
+   * its admin interface (/ready, /stats, /clusters, /config_dump) on the
+   * given port — usually 9901 in production deployments.
+   */
+  admin?: EnvoyAdminOptions
 }
 
 export type RenderEnvoyResult = {
@@ -57,6 +72,7 @@ export function renderEnvoyConfig(
   }
 
   const config: EnvoyConfigShape = {
+    ...(options.admin ? { admin: buildAdmin(options.admin) } : {}),
     static_resources: {
       listeners: [
         {
@@ -108,6 +124,15 @@ export function renderEnvoyConfig(
 
 const ROUTER_CONFIG = {
   '@type': 'type.googleapis.com/envoy.extensions.filters.http.router.v3.Router',
+}
+
+function buildAdmin(opts: EnvoyAdminOptions): EnvoyAdminConfig {
+  return {
+    ...(opts.accessLogPath ? { access_log_path: opts.accessLogPath } : {}),
+    address: {
+      socket_address: { address: opts.address ?? '0.0.0.0', port_value: opts.port },
+    },
+  }
 }
 
 type UnsupportedFieldWarning = {
@@ -390,7 +415,13 @@ type EnvoyCluster = {
   }
 }
 
+type EnvoyAdminConfig = {
+  access_log_path?: string
+  address: { socket_address: { address: string; port_value: number } }
+}
+
 export type EnvoyConfigShape = {
+  admin?: EnvoyAdminConfig
   static_resources: {
     listeners: Array<{
       name: string

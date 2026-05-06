@@ -1,4 +1,5 @@
 export {
+  type EnvoyAdminOptions,
   type EnvoyClusterOptions,
   type EnvoyConfigShape,
   type EnvoyOptions,

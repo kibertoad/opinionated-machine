@@ -24,11 +24,11 @@ services:
       - '10000:10000'
       - '9901:9901'
     healthcheck:
-      # Hit Envoy's admin /ready endpoint via bash-only TCP — works without
-      # wget/curl. Admin port comes up after Envoy loads the listener config,
-      # which is the right "ready" signal (the route's /echo path depends on
-      # upstream DNS propagation, which would race the healthcheck).
-      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/9901']
+      # Probe the data-plane port — bash (in the ubuntu base image) opens a
+      # TCP connection via /dev/tcp, no wget/curl required. The HCM listener
+      # binds 10000 only after Envoy successfully loads its config, which is
+      # the right "ready" signal for the acceptance suite.
+      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/10000']
       interval: 2s
       timeout: 5s
       retries: 30
