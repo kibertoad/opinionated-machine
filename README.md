@@ -84,6 +84,15 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Registering Dual-Mode Controllers](#registering-dual-mode-controllers)
   - [Accept Header Routing](#accept-header-routing)
   - [Testing Dual-Mode Controllers](#testing-dual-mode-controllers)
+- [Gateway Configuration](#gateway-configuration)
+  - [Concepts](#concepts)
+  - [Attaching Gateway Metadata to a Route](#attaching-gateway-metadata-to-a-route)
+  - [Controller- and Service-Level Defaults](#controller--and-service-level-defaults)
+  - [Type-Safe Matching from the Contract](#type-safe-matching-from-the-contract)
+  - [Universal Metadata Reference](#universal-metadata-reference)
+  - [Building a Manifest](#building-a-manifest)
+  - [Generating Gateway Configs](#generating-gateway-configs)
+  - [Optional Fastify Plugin (`app.gateway`)](#optional-fastify-plugin-appgateway)
 
 ## Basic usage
 
@@ -2798,4 +2807,327 @@ describe('DashboardDualModeController', () => {
     sseClient.close()
   })
 })
+
+## Gateway Configuration
+
+`opinionated-machine` lets you describe gateway-level routing concerns
+(timeouts, retries, rate limits, CORS, traffic matching, header transforms,
+caching, JWT auth) **next to your controller routes** instead of in
+hand-maintained Envoy / KrakenD / Kong configs that drift from the service
+code. You attach a small piece of metadata to a route, then run a generator
+package to emit the gateway-specific YAML/JSON.
+
+Generators ship as separate npm packages under `packages/`:
+
+| Gateway | Package | Format |
+| ------- | ------- | ------ |
+| Envoy   | [`@opinionated-machine/gateway-envoy`](./packages/gateway-envoy)     | static v3 YAML/JSON |
+| KrakenD | [`@opinionated-machine/gateway-krakend`](./packages/gateway-krakend) | declarative v3 JSON |
+| Kong    | [`@opinionated-machine/gateway-kong`](./packages/gateway-kong)       | DB-less declarative YAML/JSON |
+
+### Concepts
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ Authoring  — withGatewayMetadata(contract, route, metadata)      │
+│              + AbstractController.gatewayDefaults                │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ Collection — DIContext.buildGatewayManifest({ service, defaults})│
+│              walks every controller, merges defaults, validates  │
+│              and returns a versioned, JSON-serializable manifest │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ Generation — render(manifest, options) → config string           │
+│              one pure function per gateway, zero coupling to     │
+│              fastify, DI, or contracts                           │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Two design rules make the rest of the docs short:
+
+- **`buildRoutes()` is still the only place a route is declared.**
+  `buildFastifyRoute(...)` calls in private fields stay untouched. Gateway
+  metadata is applied at the `buildRoutes()` return — concentrated in one
+  scannable block per controller, mixable with un-annotated routes.
+- **The contract is the source of truth for matching.** `match.headers` and
+  `match.query` keys are typed against the contract's request schemas, so
+  typos and stale keys become compile errors. Explicit `customHeaders` /
+  `customQuery` are the escape hatches for headers / queries not in the
+  contract.
+
+Only REST controllers (`AbstractController`) and api-contract controllers
+(`AbstractApiController`) are covered in v1. SSE and dual-mode controllers
+appear in the manifest in a future release.
+
+### Attaching Gateway Metadata to a Route
+
+```ts
+import { buildRestContract } from '@lokalise/api-contracts'
+import { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
+import {
+  AbstractController,
+  type BuildRoutesReturnType,
+  type GatewayMetadataValue,
+  withGatewayMetadata,
+} from 'opinionated-machine'
+
+class UsersController extends AbstractController<typeof UsersController.contracts> {
+  public static contracts = { getItem, deleteItem, updateItem, createItem } as const
+
+  // Route-handler fields are completely untouched — same buildFastifyRoute(...)
+  // calls you already write today.
+  private getItem    = buildFastifyRoute(UsersController.contracts.getItem,    async (req, reply) => { /* ... */ })
+  private deleteItem = buildFastifyRoute(UsersController.contracts.deleteItem, async (req, reply) => { /* ... */ })
+  private updateItem = buildFastifyRoute(UsersController.contracts.updateItem, async (req, reply) => { /* ... */ })
+  private createItem = buildFastifyRoute(UsersController.contracts.createItem, async (req, reply) => { /* ... */ })
+
+  // Gateway annotations live in one block, alongside contract references for
+  // type-safety. Annotated and un-annotated routes mix freely.
+  public buildRoutes(): BuildRoutesReturnType<typeof UsersController.contracts> {
+    return {
+      getItem: withGatewayMetadata(UsersController.contracts.getItem, this.getItem, {
+        cache: { ttl: '60s' },
+        match: { customHeaders: { 'x-tenant-id': { regex: '^t_' } } },
+      }),
+      deleteItem: withGatewayMetadata(UsersController.contracts.deleteItem, this.deleteItem, {
+        retry: { attempts: 0 },
+        rateLimit: { requests: 5, per: '1m', key: 'ip' },
+      }),
+      updateItem: this.updateItem,  // un-annotated — inherits defaults only
+      createItem: this.createItem,
+    }
+  }
+}
+```
+
+`withGatewayMetadata` returns the **same route reference** with metadata stamped
+via a non-enumerable `Symbol`. Fastify never sees it — `app.route()` walks own
+enumerable keys — so adding annotations cannot affect runtime behaviour.
+
+The same helper works on `AbstractApiController.routes`:
+
+```ts
+class UsersApiController extends AbstractApiController {
+  readonly routes = [
+    withGatewayMetadata(getUser, buildApiRoute(getUser, async (req) => ({ status: 200, body: { id: req.params.id } })), {
+      cache: { ttl: '60s' },
+    }),
+    buildApiRoute(deleteUser, async (req) => ({ status: 204, body: undefined })),
+  ]
+}
+```
+
+### Controller- and Service-Level Defaults
+
+`gatewayDefaults` is an optional instance property on the abstract base class.
+Use it for fields that apply to every route in the controller:
+
+```ts
+class UsersController extends AbstractController<typeof UsersController.contracts> {
+  public override readonly gatewayDefaults: GatewayMetadataValue = {
+    upstream: 'users-service',
+    timeouts: { request: '5s' },
+    auth: { required: true },
+    tags: ['users'],
+  }
+  // ...
+}
+```
+
+Service-wide defaults are passed at manifest collection time:
+
+```ts
+const manifest = context.buildGatewayManifest({
+  service: 'users-api',
+  defaults: {
+    timeouts: { idle: '60s', connect: '1s' },
+    cors: { origins: ['https://app.example.com'], credentials: true },
+  },
+})
+```
+
+**Merge order**: `service defaults → controller.gatewayDefaults → per-route metadata`.
+Deep-merged via `ts-deepmerge`. **Arrays in later layers replace** (don't
+append) — predictable for `weights`, `tags`, `match.headers`.
+
+### Type-Safe Matching from the Contract
+
+`match.headers` and `match.query` keys are inferred from the contract's
+`requestHeaderSchema` / `requestQuerySchema`:
+
+```ts
+const contract = buildRestContract({
+  method: 'get',
+  successResponseBodySchema: z.object({ ok: z.boolean() }),
+  requestPathParamsSchema: z.object({ userId: z.string() }),
+  requestHeaderSchema: z.object({ 'x-trace-id': z.string() }),
+  pathResolver: (p) => `/users/${p.userId}`,
+})
+
+withGatewayMetadata(contract, route, {
+  match: {
+    headers: {
+      'x-trace-id': { regex: '^[a-f0-9]+$' }, // ✅ valid, type-checked
+      'x-typo': 'foo',                         // ❌ compile error
+    },
+    customHeaders: {
+      'x-cf-tenant': 'enterprise',             // ✅ explicit escape hatch for headers not in the contract
+    },
+  },
+})
+```
+
+`rateLimit.key` is narrowed the same way — you can write `{ header: 'x-trace-id' }`
+when the header is in the contract, or fall back to `{ customHeader: 'x-cf-tenant' }`.
+
+### Universal Metadata Reference
+
+```ts
+type GatewayMetadata<Contract = unknown> = {
+  // Identity
+  id?: string                               // defaults to "<controller>.<routeKey>"
+  upstream?: string                         // logical cluster/backend name
+  visibility?: 'public' | 'internal' | 'admin'
+  tags?: string[]
+
+  // Matching (path + method come from the contract)
+  match?: {
+    headers?:       Partial<Record<ContractHeaderKey<Contract>, MatchRule>>
+    customHeaders?: Record<string, MatchRule>
+    query?:         Partial<Record<ContractQueryKey<Contract>, MatchRule>>
+    customQuery?:   Record<string, MatchRule>
+    host?:          string | string[]
+  }
+
+  // Path manipulation toward upstream
+  rewrite?: { stripPrefix?: string; replacePrefix?: { from: string; to: string } }
+
+  // Reliability
+  timeouts?:       { request?: Duration; idle?: Duration; connect?: Duration }
+  retry?:          { attempts?: number; on?: RetryCondition[]; perTryTimeout?: Duration; backoff?: { base?: Duration; max?: Duration } }
+  circuitBreaker?: { maxConnections?: number; maxPendingRequests?: number; maxRequests?: number; maxRetries?: number }
+
+  // Traffic policy
+  rateLimit?: { requests: number; per: Duration; key?: 'ip' | { header } | { customHeader } | { query } | { customQuery } }
+  traffic?:   { weights?: { upstream: string; weight: number }[]; shadow?: { upstream: string; percent: number } }
+
+  // Cross-cutting
+  cors?:  { origins; methods?; headers?; exposeHeaders?; credentials?; maxAge? }
+  auth?:  { required?: boolean; jwt?: { issuer; audiences?; jwksUri? }; mTLS?: boolean }
+  cache?: { ttl: Duration; methods?: ('GET' | 'HEAD')[]; vary?: string[] }
+
+  // Header transformations (typically inject infra headers not in the contract)
+  headers?: { request?: { add?; remove? }; response?: { add?; remove? } }
+
+  // Vendor-specific escape hatch
+  extensions?: { envoy?: object; krakend?: object; kong?: object; [vendor]: object }
+}
+
+type Duration = string  // "5s" | "300ms" | "1m" | "2h"
+type MatchRule = string | { exact: string } | { prefix: string } | { regex: string }
+```
+
+Every field is optional; the runtime is validated by a Zod schema at the
+manifest boundary, so a typo in any nested field surfaces as a clean error
+during generation rather than at deploy time.
+
+### Building a Manifest
+
+```ts
+const manifest = context.buildGatewayManifest({
+  service: 'users-api',
+  version: '2026.05.01',                   // optional — embedded for traceability
+  defaults: { /* service-wide GatewayMetadataValue */ },
+})
+// {
+//   manifestVersion: '1',
+//   service: 'users-api',
+//   version: '2026.05.01',
+//   generatedAt: '2026-05-06T12:34:56.789Z',
+//   routes: [
+//     { id, method, path: '/users/{userId}', controller, routeKey, metadata },
+//     ...
+//   ]
+// }
+```
+
+Paths are emitted in OpenAPI format (`{userId}`); each generator translates
+them to its own dialect. Routes are sorted by `(path, method)` for stable
+output.
+
+The manifest is JSON-serializable — write it to disk for inspection, ship it
+to a separate repo, or feed it directly to a generator.
+
+### Generating Gateway Configs
+
+```ts
+import { writeFileSync } from 'node:fs'
+import { renderEnvoyConfig }   from '@opinionated-machine/gateway-envoy'
+import { renderKrakendConfig } from '@opinionated-machine/gateway-krakend'
+import { renderKongConfig }    from '@opinionated-machine/gateway-kong'
+
+const manifest = context.buildGatewayManifest({ service: 'users-api' })
+
+const envoy = renderEnvoyConfig(manifest, {
+  listenPort: 8080,
+  clusters: { 'users-service': { hosts: ['users:8081'] } },
+})
+writeFileSync('envoy.yaml', envoy.yaml)
+
+const krakend = renderKrakendConfig(manifest, {
+  port: 8080,
+  upstreams: { 'users-service': 'http://users:8081' },
+})
+writeFileSync('krakend.json', JSON.stringify(krakend.json, null, 2))
+
+const kong = renderKongConfig(manifest, {
+  upstreams: { 'users-service': { url: 'http://users:8081' } },
+})
+writeFileSync('kong.yaml', kong.yaml)
+
+// Each result includes `warnings` for metadata fields the gateway can't
+// natively express — log them so you don't deploy with silently-dropped policy.
+console.warn(envoy.warnings, krakend.warnings, kong.warnings)
+```
+
+Each generator is a **pure function**: same manifest in, same config out. They
+have zero coupling to Fastify, the DI container, or your application code —
+ideal for CI pipelines where the gateway config and the service binary are
+built independently.
+
+For per-gateway field mappings and limitations, see the package READMEs:
+
+- [`@opinionated-machine/gateway-envoy`](./packages/gateway-envoy/README.md)
+- [`@opinionated-machine/gateway-krakend`](./packages/gateway-krakend/README.md)
+- [`@opinionated-machine/gateway-kong`](./packages/gateway-kong/README.md)
+
+### Optional Fastify Plugin (`app.gateway`)
+
+For convenient access to the manifest — typically from a CLI or a sibling
+process — register `fastifyGatewayPlugin`. It mirrors the spirit of
+`@fastify/swagger`'s `app.swagger()`:
+
+```ts
+import { fastifyGatewayPlugin } from 'opinionated-machine'
+
+await app.register(fastifyGatewayPlugin, {
+  context,                                  // your DIContext
+  defaults: { service: 'users-api' },       // BuildGatewayManifestOptions
+  // exposeRoute: '/_gateway/manifest',     // (default) HTTP route returning JSON; pass false to disable
+})
+
+// From anywhere in the app:
+const manifest = app.gateway.getManifest()
+
+// Or fetch over HTTP from a CLI / sibling process:
+//   GET /_gateway/manifest
+```
+
+The manifest is rebuilt on every call, so it always reflects the current set
+of registered controllers.
 

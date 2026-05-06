@@ -1,0 +1,284 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderEnvoyConfig > matches the JSON snapshot for the fixture manifest 1`] = `
+{
+  "static_resources": {
+    "clusters": [
+      {
+        "connect_timeout": "1s",
+        "load_assignment": {
+          "cluster_name": "users-service",
+          "endpoints": [
+            {
+              "lb_endpoints": [
+                {
+                  "endpoint": {
+                    "address": {
+                      "socket_address": {
+                        "address": "users",
+                        "port_value": 8081,
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        "name": "users-service",
+        "type": "STRICT_DNS",
+      },
+    ],
+    "listeners": [
+      {
+        "address": {
+          "socket_address": {
+            "address": "0.0.0.0",
+            "port_value": 8080,
+          },
+        },
+        "filter_chains": [
+          {
+            "filters": [
+              {
+                "name": "envoy.filters.network.http_connection_manager",
+                "typed_config": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                  "http_filters": [
+                    {
+                      "name": "envoy.filters.http.router",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                      },
+                    },
+                  ],
+                  "route_config": {
+                    "name": "users-api_routes",
+                    "virtual_hosts": [
+                      {
+                        "domains": [
+                          "*",
+                        ],
+                        "name": "users-api",
+                        "routes": [
+                          {
+                            "match": {
+                              "headers": [
+                                {
+                                  "name": ":method",
+                                  "string_match": {
+                                    "exact": "POST",
+                                  },
+                                },
+                              ],
+                              "safe_regex": {
+                                "regex": "/users",
+                              },
+                            },
+                            "name": "usersController.createItem",
+                            "request_headers_to_add": [
+                              {
+                                "header": {
+                                  "key": "x-internal",
+                                  "value": "true",
+                                },
+                              },
+                            ],
+                            "request_headers_to_remove": [
+                              "cookie",
+                            ],
+                            "response_headers_to_remove": [
+                              "server",
+                            ],
+                            "route": {
+                              "cluster": "users-service",
+                              "timeout": "5s",
+                            },
+                          },
+                          {
+                            "match": {
+                              "headers": [
+                                {
+                                  "name": ":method",
+                                  "string_match": {
+                                    "exact": "GET",
+                                  },
+                                },
+                                {
+                                  "name": "x-trace-id",
+                                  "string_match": {
+                                    "safe_regex": {
+                                      "regex": "^[a-f0-9]+$",
+                                    },
+                                  },
+                                },
+                                {
+                                  "name": "x-tenant-id",
+                                  "string_match": {
+                                    "prefix": "t_",
+                                  },
+                                },
+                              ],
+                              "query_parameters": [
+                                {
+                                  "name": "include",
+                                  "string_match": {
+                                    "exact": "profile",
+                                  },
+                                },
+                              ],
+                              "safe_regex": {
+                                "regex": "/users/[^/]+",
+                              },
+                            },
+                            "name": "usersController.getItem",
+                            "route": {
+                              "cluster": "users-service",
+                              "retry_policy": {
+                                "num_retries": 2,
+                                "per_try_timeout": "2s",
+                                "retry_on": "5xx,connect-failure",
+                              },
+                              "timeout": "5s",
+                            },
+                          },
+                          {
+                            "decorator": {
+                              "operation": "usersController.deleteItem",
+                            },
+                            "match": {
+                              "headers": [
+                                {
+                                  "name": ":method",
+                                  "string_match": {
+                                    "exact": "DELETE",
+                                  },
+                                },
+                              ],
+                              "safe_regex": {
+                                "regex": "/users/[^/]+",
+                              },
+                            },
+                            "name": "usersController.deleteItem",
+                            "route": {
+                              "cluster": "users-service",
+                              "prefix_rewrite": "/",
+                              "timeout": "3s",
+                            },
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                  "stat_prefix": "users-api",
+                },
+              },
+            ],
+          },
+        ],
+        "name": "listener_0",
+      },
+    ],
+  },
+}
+`;
+
+exports[`renderEnvoyConfig > matches the YAML snapshot for the fixture manifest 1`] = `
+"static_resources:
+  listeners:
+    - name: listener_0
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 8080
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: users-api
+                route_config:
+                  name: users-api_routes
+                  virtual_hosts:
+                    - name: users-api
+                      domains:
+                        - "*"
+                      routes:
+                        - name: usersController.createItem
+                          match:
+                            safe_regex:
+                              regex: /users
+                            headers:
+                              - name: :method
+                                string_match:
+                                  exact: POST
+                          route:
+                            cluster: users-service
+                            timeout: 5s
+                          request_headers_to_add:
+                            - header:
+                                key: x-internal
+                                value: "true"
+                          request_headers_to_remove:
+                            - cookie
+                          response_headers_to_remove:
+                            - server
+                        - name: usersController.getItem
+                          match:
+                            safe_regex:
+                              regex: /users/[^/]+
+                            headers:
+                              - name: :method
+                                string_match:
+                                  exact: GET
+                              - name: x-trace-id
+                                string_match:
+                                  safe_regex:
+                                    regex: ^[a-f0-9]+$
+                              - name: x-tenant-id
+                                string_match:
+                                  prefix: t_
+                            query_parameters:
+                              - name: include
+                                string_match:
+                                  exact: profile
+                          route:
+                            cluster: users-service
+                            timeout: 5s
+                            retry_policy:
+                              num_retries: 2
+                              retry_on: 5xx,connect-failure
+                              per_try_timeout: 2s
+                        - name: usersController.deleteItem
+                          match:
+                            safe_regex:
+                              regex: /users/[^/]+
+                            headers:
+                              - name: :method
+                                string_match:
+                                  exact: DELETE
+                          route:
+                            cluster: users-service
+                            timeout: 3s
+                            prefix_rewrite: /
+                          decorator:
+                            operation: usersController.deleteItem
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+    - name: users-service
+      type: STRICT_DNS
+      connect_timeout: 1s
+      load_assignment:
+        cluster_name: users-service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: users
+                      port_value: 8081
+"
+`;

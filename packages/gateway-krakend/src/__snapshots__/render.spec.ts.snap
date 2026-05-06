@@ -1,0 +1,98 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderKrakendConfig > matches the JSON snapshot for the fixture manifest 1`] = `
+{
+  "endpoints": [
+    {
+      "backend": [
+        {
+          "encoding": "no-op",
+          "extra_config": {
+            "backend/http/client": {
+              "timeout": "5s",
+            },
+          },
+          "host": [
+            "http://users:8081",
+          ],
+          "url_pattern": "/users",
+        },
+      ],
+      "endpoint": "/users",
+      "extra_config": {
+        "qos/circuit-breaker": {
+          "max_requests": 100,
+          "max_retries": 3,
+        },
+        "qos/ratelimit/router": {
+          "client_max_rate": 10,
+          "every": "1m",
+          "max_rate": 10,
+          "strategy": "ip",
+        },
+      },
+      "method": "POST",
+      "output_encoding": "no-op",
+    },
+    {
+      "backend": [
+        {
+          "encoding": "no-op",
+          "host": [
+            "http://users:8081",
+          ],
+          "url_pattern": "/users/{userId}",
+        },
+      ],
+      "endpoint": "/users/{userId}",
+      "extra_config": {
+        "qos/http-cache": {
+          "ttl": "60s",
+          "vary": [
+            "Accept-Language",
+          ],
+        },
+      },
+      "method": "GET",
+      "output_encoding": "no-op",
+    },
+    {
+      "backend": [
+        {
+          "encoding": "no-op",
+          "host": [
+            "http://users:8081",
+          ],
+          "url_pattern": "/users",
+        },
+      ],
+      "endpoint": "/v2/users",
+      "extra_config": {
+        "auth/validator": {
+          "alg": "RS256",
+          "audience": [
+            "users-api",
+          ],
+          "issuer": "https://auth.example.com",
+        },
+        "qos/http-cache": {
+          "ttl": "10s",
+        },
+      },
+      "method": "GET",
+      "output_encoding": "no-op",
+    },
+  ],
+  "extra_config": {
+    "security/cors": {
+      "allow_credentials": true,
+      "allow_origins": [
+        "https://app.example.com",
+      ],
+    },
+  },
+  "name": "users-api",
+  "port": 8080,
+  "version": 3,
+}
+`;

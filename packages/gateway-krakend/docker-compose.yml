@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  upstream:
+    image: node:20-alpine
+    volumes:
+      - ./acceptance/upstream.mjs:/app/upstream.mjs:ro
+    command: node /app/upstream.mjs
+    environment:
+      PORT: '8081'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:8081/']
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  krakend:
+    image: devopsfaith/krakend:2.7
+    depends_on:
+      upstream:
+        condition: service_healthy
+    volumes:
+      - ./acceptance/generated/krakend.json:/etc/krakend/krakend.json:ro
+    command: ['run', '-c', '/etc/krakend/krakend.json', '--port', '8080']
+    ports:
+      - '8080:8080'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:8080/__health']
+      interval: 2s
+      timeout: 5s
+      retries: 30

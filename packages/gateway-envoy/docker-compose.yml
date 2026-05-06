@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  upstream:
+    image: node:20-alpine
+    volumes:
+      - ./acceptance/upstream.mjs:/app/upstream.mjs:ro
+    command: node /app/upstream.mjs
+    environment:
+      PORT: '8081'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:8081/']
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    depends_on:
+      upstream:
+        condition: service_healthy
+    volumes:
+      - ./acceptance/generated/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    command: ['envoy', '-c', '/etc/envoy/envoy.yaml', '--log-level', 'warn']
+    ports:
+      - '10000:10000'
+      - '9901:9901'
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'wget -qO- http://localhost:10000/echo > /dev/null 2>&1 || exit 1']
+      interval: 2s
+      timeout: 5s
+      retries: 30
