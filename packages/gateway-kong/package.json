@@ -46,7 +46,7 @@
         "@types/node": "^22.19.7",
         "opinionated-machine": "^6.17.0",
         "rimraf": "^6.1.2",
-        "typescript": "^5.9.3",
+        "typescript": "^6.0.3",
         "vitest": "^4.0.18"
     },
     "private": false,
