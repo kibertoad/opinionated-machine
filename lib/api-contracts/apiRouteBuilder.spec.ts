@@ -6,6 +6,8 @@ import {
 } from '@lokalise/api-contracts'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod/v4'
+import { GATEWAY_METADATA_SYMBOL } from '../gateway/gatewaySymbol.ts'
+import { readGatewayMetadata, withGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
 import { buildApiRoute } from './apiRouteBuilder.ts'
 
 // ============================================================================
@@ -287,5 +289,225 @@ describe('buildApiRoute — no path params', () => {
     }))
     expect(routeOptions.url).toBe('/users')
     expect((routeOptions.schema as { params?: unknown })?.params).toBeUndefined()
+  })
+})
+
+// ============================================================================
+// buildApiRoute — inline gatewayMetadata
+// ============================================================================
+
+const headerAwareContract = defineApiContract({
+  method: 'get',
+  pathResolver: (p: { tenantId: string }) => `/tenants/${p.tenantId}`,
+  requestPathParamsSchema: z.object({ tenantId: z.string() }),
+  requestHeaderSchema: z.object({ 'x-trace-id': z.string() }),
+  responsesByStatusCode: { 200: userSchema },
+})
+
+const queryAwareContract = defineApiContract({
+  method: 'get',
+  pathResolver: () => '/search',
+  requestQuerySchema: z.object({ q: z.string(), limit: z.coerce.number().optional() }),
+  responsesByStatusCode: { 200: userSchema },
+})
+
+describe('buildApiRoute — inline gatewayMetadata', () => {
+  it('stamps validated metadata onto the route via the shared symbol', () => {
+    const routeOptions = buildApiRoute(
+      getUserContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      { gatewayMetadata: { upstream: 'users-service', cache: { ttl: '60s' } } },
+    )
+    expect(readGatewayMetadata(routeOptions)).toEqual({
+      upstream: 'users-service',
+      cache: { ttl: '60s' },
+    })
+  })
+
+  it('does not stamp the symbol when no gatewayMetadata is provided', () => {
+    const routeOptions = buildApiRoute(getUserContract, async () => ({
+      status: 200,
+      body: { id: '1', name: 'Alice' },
+    }))
+    expect(readGatewayMetadata(routeOptions)).toBeUndefined()
+  })
+
+  it('attaches metadata via a non-enumerable symbol (invisible to Fastify and JSON)', () => {
+    const routeOptions = buildApiRoute(
+      getUserContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      { gatewayMetadata: { upstream: 'users-service' } },
+    )
+    expect(Object.keys(routeOptions)).not.toContain(GATEWAY_METADATA_SYMBOL.toString())
+    expect(JSON.stringify(routeOptions)).not.toContain('users-service')
+    expect(Object.getOwnPropertyDescriptor(routeOptions, GATEWAY_METADATA_SYMBOL)?.enumerable).toBe(
+      false,
+    )
+  })
+
+  it('does not leak gatewayMetadata as an own property on the Fastify route', () => {
+    const routeOptions = buildApiRoute(
+      getUserContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      { gatewayMetadata: { upstream: 'users-service' } },
+    )
+    expect((routeOptions as { gatewayMetadata?: unknown }).gatewayMetadata).toBeUndefined()
+  })
+
+  it('throws at the call site when metadata is malformed (cache.ttl)', () => {
+    expect(() =>
+      buildApiRoute(
+        getUserContract,
+        async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+        { gatewayMetadata: { cache: { ttl: 'not-a-duration' } } as never },
+      ),
+    ).toThrow()
+  })
+
+  it('accepts contract-typed match.headers keys and reads them back', () => {
+    const routeOptions = buildApiRoute(
+      headerAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        gatewayMetadata: {
+          match: { headers: { 'x-trace-id': { regex: '^[a-f0-9]+$' } } },
+        },
+      },
+    )
+    expect(readGatewayMetadata(routeOptions)?.match?.headers?.['x-trace-id']).toEqual({
+      regex: '^[a-f0-9]+$',
+    })
+  })
+
+  it('customHeaders accepts free-form keys for headers not in the contract', () => {
+    const routeOptions = buildApiRoute(
+      headerAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        gatewayMetadata: {
+          match: { customHeaders: { 'x-cf-tenant': 'enterprise' } },
+        },
+      },
+    )
+    expect(readGatewayMetadata(routeOptions)?.match?.customHeaders).toEqual({
+      'x-cf-tenant': 'enterprise',
+    })
+  })
+
+  it('stamps metadata on SSE-only routes', () => {
+    const routeOptions = buildApiRoute(
+      sseOnlyContract,
+      (_req, sse) => {
+        sse.start('keepAlive')
+      },
+      { gatewayMetadata: { upstream: 'streams-service' } },
+    )
+    expect(readGatewayMetadata(routeOptions)).toEqual({ upstream: 'streams-service' })
+  })
+
+  it('stamps metadata on dual-mode routes', () => {
+    const routeOptions = buildApiRoute(
+      dualModeContract,
+      {
+        nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+        sse: (_req, sse) => {
+          sse.start('autoClose')
+        },
+      },
+      { gatewayMetadata: { tags: ['chat'] } },
+    )
+    expect(readGatewayMetadata(routeOptions)).toEqual({ tags: ['chat'] })
+  })
+
+  it('narrows match.query keys to the contract requestQuerySchema', () => {
+    const routeOptions = buildApiRoute(
+      queryAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        gatewayMetadata: {
+          match: { query: { q: { prefix: 'foo' }, limit: { exact: '10' } } },
+        },
+      },
+    )
+    expect(readGatewayMetadata(routeOptions)?.match?.query).toEqual({
+      q: { prefix: 'foo' },
+      limit: { exact: '10' },
+    })
+  })
+
+  it('coexists with passthrough Fastify options like preHandler', () => {
+    const preHandler = vi.fn()
+    const routeOptions = buildApiRoute(
+      headerAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        preHandler,
+        gatewayMetadata: { upstream: 'tenants-service' },
+      },
+    )
+    // preHandler reaches Fastify (own enumerable), gatewayMetadata reaches the symbol.
+    expect(routeOptions.preHandler).toBe(preHandler)
+    expect((routeOptions as { gatewayMetadata?: unknown }).gatewayMetadata).toBeUndefined()
+    expect(readGatewayMetadata(routeOptions)).toEqual({ upstream: 'tenants-service' })
+  })
+
+  it('rejects header keys not declared on the contract at compile time', () => {
+    buildApiRoute(
+      headerAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        gatewayMetadata: {
+          match: {
+            headers: {
+              'x-trace-id': { regex: '^[a-f0-9]+$' },
+              // @ts-expect-error 'x-not-on-contract' is not in requestHeaderSchema
+              'x-not-on-contract': 'foo',
+            },
+          },
+        },
+      },
+    )
+  })
+
+  it('rejects rateLimit.key.header values not declared on the contract at compile time', () => {
+    buildApiRoute(
+      headerAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        gatewayMetadata: {
+          // @ts-expect-error 'x-not-on-contract' is not in requestHeaderSchema
+          rateLimit: { requests: 10, per: '1s', key: { header: 'x-not-on-contract' } },
+        },
+      },
+    )
+  })
+
+  it('rejects query keys not declared on the contract at compile time', () => {
+    buildApiRoute(
+      queryAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        gatewayMetadata: {
+          match: {
+            query: {
+              q: { prefix: 'foo' },
+              // @ts-expect-error 'unknown' is not in requestQuerySchema
+              unknown: 'bar',
+            },
+          },
+        },
+      },
+    )
+  })
+
+  it('a later withGatewayMetadata call overwrites inline gatewayMetadata (no merge)', () => {
+    const route = buildApiRoute(
+      headerAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      { gatewayMetadata: { upstream: 'inline-svc', cache: { ttl: '60s' } } },
+    )
+    withGatewayMetadata(headerAwareContract, route, { upstream: 'override-svc' })
+    // Documented "later call wins" semantic — `cache` is gone, not merged.
+    expect(readGatewayMetadata(route)).toEqual({ upstream: 'override-svc' })
   })
 })

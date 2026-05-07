@@ -1,8 +1,11 @@
-import { buildRestContract } from '@lokalise/api-contracts'
+import { buildRestContract, defineApiContract } from '@lokalise/api-contracts'
 import { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
+import type { RouteOptions } from 'fastify'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
 import { AbstractController, type BuildRoutesReturnType } from '../../AbstractController.ts'
+import { AbstractApiController } from '../../api-contracts/AbstractApiController.ts'
+import { buildApiRoute } from '../../api-contracts/apiRouteBuilder.ts'
 import type { GatewayMetadataValue } from '../gatewayMetadata.ts'
 import { withGatewayMetadata } from '../withGatewayMetadata.ts'
 import { buildGatewayManifestFrom, type CollectedController } from './buildManifest.ts'
@@ -116,6 +119,70 @@ describe('buildGatewayManifestFrom', () => {
       timeouts: { request: '5s' },
     })
     expect(createItem?.metadata.cache).toBeUndefined()
+  })
+
+  it('reads inline gatewayMetadata passed via buildApiRoute options', () => {
+    const apiGetUserContract = defineApiContract({
+      method: 'get',
+      pathResolver: (p: { userId: string }) => `/api/users/${p.userId}`,
+      requestPathParamsSchema: z.object({ userId: z.string() }),
+      requestHeaderSchema: z.object({ 'x-trace-id': z.string() }),
+      responsesByStatusCode: { 200: z.object({ id: z.string() }) },
+    })
+    const apiCreateUserContract = defineApiContract({
+      method: 'post',
+      pathResolver: () => '/api/users',
+      requestBodySchema: z.object({ name: z.string() }),
+      responsesByStatusCode: { 201: z.object({ id: z.string() }) },
+    })
+
+    class InlineApiController extends AbstractApiController<typeof InlineApiController.contracts> {
+      static contracts = {
+        getItem: apiGetUserContract,
+        createItem: apiCreateUserContract,
+      } as const
+
+      public override readonly gatewayDefaults: GatewayMetadataValue = {
+        upstream: 'users-service',
+        timeouts: { request: '5s' },
+      }
+
+      readonly routes: Record<keyof typeof InlineApiController.contracts, RouteOptions> = {
+        getItem: buildApiRoute(
+          InlineApiController.contracts.getItem,
+          async () => ({ status: 200, body: { id: '1' } }),
+          {
+            gatewayMetadata: {
+              cache: { ttl: '60s' },
+              match: { headers: { 'x-trace-id': { regex: '^[a-f0-9]+$' } } },
+              tags: ['users', 'cacheable'],
+            },
+          },
+        ),
+        createItem: buildApiRoute(InlineApiController.contracts.createItem, async (req) => ({
+          status: 201,
+          body: { id: req.body.name },
+        })),
+      }
+    }
+
+    const manifest = buildGatewayManifestFrom(
+      [{ name: 'inlineApi', kind: 'api', controller: new InlineApiController() }],
+      { service: 'users-api' },
+    )
+    const getItem = manifest.routes.find((r) => r.routeKey === 'getItem')
+    expect(getItem?.metadata).toMatchObject({
+      // From controller defaults
+      upstream: 'users-service',
+      timeouts: { request: '5s' },
+      // From inline route metadata
+      cache: { ttl: '60s' },
+      match: { headers: { 'x-trace-id': { regex: '^[a-f0-9]+$' } } },
+      tags: ['users', 'cacheable'],
+    })
+    const createItem = manifest.routes.find((r) => r.routeKey === 'createItem')
+    expect(createItem?.metadata.cache).toBeUndefined()
+    expect(createItem?.metadata).toMatchObject({ upstream: 'users-service' })
   })
 
   it('rejects invalid metadata at the manifest boundary', () => {

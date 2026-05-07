@@ -2914,17 +2914,34 @@ The rest of this section unpacks each piece in detail.
 
 ### Annotating Routes
 
-`withGatewayMetadata(contract, route, metadata)` takes:
+There are two equivalent ways to attach metadata. Pick whichever fits your
+controller style — both validate the metadata at the call site, both stamp
+the same hidden symbol on the route, and both are read identically by the
+manifest builder.
 
-- the **contract** — used purely for type inference on `match.headers`,
-  `match.query` and `rateLimit.key`,
-- the **route** built by `buildFastifyRoute(...)` (or `buildApiRoute(...)`),
-- the **metadata** — see [Field Reference](#field-reference).
+**For `buildApiRoute`-built routes** (`AbstractApiController`), pass
+`gatewayMetadata` inline via the options argument:
 
-Apply it inside `buildRoutes()` (or in the `routes` array for
-`AbstractApiController`) so every route's gateway policy is in one scannable
-block. Annotated and un-annotated routes mix freely, and your existing
-`buildFastifyRoute(...)` calls don't change at all:
+```ts
+class UsersApiController extends AbstractApiController<typeof UsersApiController.contracts> {
+  static readonly contracts = { getUser, createUser, deleteUser } as const
+
+  readonly routes = {
+    getUser: buildApiRoute(UsersApiController.contracts.getUser, async (req) => /* … */, {
+      gatewayMetadata: { cache: { ttl: '60s' } },
+    }),
+    createUser: buildApiRoute(UsersApiController.contracts.createUser, async (req) => /* … */, {
+      gatewayMetadata: { rateLimit: { requests: 10, per: '1m', key: 'ip' } },
+    }),
+    deleteUser: buildApiRoute(UsersApiController.contracts.deleteUser, async (req) => /* … */),
+    // ^ no per-route policy; inherits controller + service defaults
+  }
+}
+```
+
+**For `buildFastifyRoute`-built routes** (`AbstractController`), or when you
+prefer to keep all gateway annotations in one scannable block separate from
+route construction, wrap with `withGatewayMetadata(contract, route, metadata)`:
 
 ```ts
 buildRoutes() {
@@ -2936,19 +2953,15 @@ buildRoutes() {
 }
 ```
 
-For api-contract controllers, drop it directly into `routes`:
+The contract drives type inference on `match.headers`, `match.query`, and
+`rateLimit.key` — see [Type-Safe Matching](#type-safe-matching). Metadata
+fields are documented in [Field Reference](#field-reference).
 
-```ts
-class UsersApiController extends AbstractApiController {
-  readonly routes = [
-    withGatewayMetadata(getUser, buildApiRoute(getUser, async (req) => /* … */), { cache: { ttl: '60s' } }),
-    buildApiRoute(deleteUser, async (req) => /* … */),
-  ]
-}
-```
-
-Annotations are invisible to Fastify — adding them never changes runtime
-behaviour, so you can introduce them gradually on an existing service.
+Annotations are invisible to Fastify (stamped via a non-enumerable `Symbol`),
+so adding them never changes runtime behaviour and you can introduce them
+gradually on an existing service. If both inline `gatewayMetadata` and
+`withGatewayMetadata` are applied to the same route, the later call
+overwrites — there is no merge; pick one form per route.
 
 ### Avoiding Repetition With Defaults
 
@@ -2960,7 +2973,7 @@ in a service. Declare them once:
 | ----- | ----- | ----------- |
 | Service-wide | `buildGatewayManifest({ defaults: … })` | Cross-cutting policy: CORS, idle timeouts, observability tags |
 | Controller   | `override readonly gatewayDefaults = { … }` | Per-controller upstream, auth posture, base timeouts |
-| Per-route    | `withGatewayMetadata(...)` | Anything specific to one endpoint |
+| Per-route    | `buildApiRoute(..., { gatewayMetadata })` *or* `withGatewayMetadata(...)` | Anything specific to one endpoint |
 
 Layers deep-merge in that order: service → controller → route. **Arrays in
 later layers replace** (not append), which keeps `weights`, `tags`, and
@@ -3008,6 +3021,18 @@ withGatewayMetadata(getUser, this.getUser, {
 `rateLimit.key` narrows the same way — `{ header: 'x-trace-id' }` only works
 if `'x-trace-id'` is in `requestHeaderSchema`; otherwise use
 `{ customHeader: '…' }`.
+
+The inline form on `buildApiRoute` provides the same narrowing — the contract
+is the first argument, so TS infers it for `gatewayMetadata` automatically:
+
+```ts
+buildApiRoute(getUser, async (req) => /* … */, {
+  gatewayMetadata: {
+    match: { headers: { 'x-trace-id': { regex: '^[a-f0-9]+$' } } }, // ✅
+    // 'x-typo' here would be a compile error against the contract's schema.
+  },
+})
+```
 
 ### Field Reference
 
