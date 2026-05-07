@@ -84,8 +84,10 @@ export function withGatewayMetadata<Contract extends AnyContract, Route extends 
 }
 
 /**
- * Read gateway metadata previously stamped on a route by `withGatewayMetadata`.
- * Returns `undefined` if no metadata was attached.
+ * Read gateway metadata previously stamped on a route — either by
+ * `withGatewayMetadata`, by `buildApiRoute(..., { gatewayMetadata })`, or by
+ * the shared `attachGatewayMetadata` helper. Returns `undefined` if no
+ * metadata was attached.
  */
 export function readGatewayMetadata(route: object): GatewayMetadataValue | undefined {
   return (route as Record<symbol, GatewayMetadataValue | undefined>)[GATEWAY_METADATA_SYMBOL]

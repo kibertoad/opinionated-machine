@@ -399,6 +399,21 @@ function buildBaseSchema(contract: ApiContract): Record<string, unknown> {
 /**
  * Build a Fastify `RouteOptions` object from an `ApiContract` + handler.
  *
+ * The handler shape is inferred from the contract's response mode:
+ * - `'non-sse'` — bare async function returning `{ status, body }`
+ * - `'sse'`     — bare async function calling `sse.start(...)` / `sse.respond(...)`
+ * - `'dual'`    — `{ nonSse, sse }` object branched by the `Accept` header
+ *
+ * The optional `options` argument carries:
+ * - any Fastify route field (`preHandler`, `onRequest`, `config`, `bodyLimit`, …)
+ *   minus the ones the contract provides (`method`, `url`, `schema`, `handler`, `sse`),
+ * - SSE lifecycle hooks (`onConnect`, `onClose`, `onReconnect`, `serializer`,
+ *   `heartbeatInterval`) — applied for `'sse'` and `'dual'` contracts only,
+ * - `defaultMode` for `'dual'` contracts when the `Accept` header is ambiguous,
+ * - `gatewayMetadata` — per-route gateway policy with header / query keys
+ *   narrowed to the contract; equivalent to wrapping the result with
+ *   `withGatewayMetadata`. See `ApiRouteOptions` for full details.
+ *
  * @returns Fastify `RouteOptions` ready to pass to `app.route()`
  */
 export function buildApiRoute<Contract extends ApiContract>(
