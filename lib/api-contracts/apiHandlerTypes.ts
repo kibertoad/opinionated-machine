@@ -161,10 +161,12 @@ export type InferApiHandler<Contract extends ApiContract> = [
  * relevant for SSE and dual-mode contracts and are ignored for non-SSE routes.
  *
  * Generic in `Contract` so `gatewayMetadata.match.headers` / `match.query`
- * keys are narrowed to the contract's request schemas. Defaults to `unknown`,
- * widening those keys to `string` for callers that don't pass the generic.
+ * keys are narrowed to the contract's request schemas. The generic is always
+ * inferred from the contract argument at the `buildApiRoute` call site, so
+ * direct references should write `ApiRouteOptions<typeof myContract>` when
+ * gateway metadata typing is needed.
  */
-export type ApiRouteOptions<Contract = unknown> = Omit<
+export type ApiRouteOptions<Contract extends ApiContract> = Omit<
   RouteOptions,
   'method' | 'url' | 'schema' | 'handler' | 'sse'
 > &

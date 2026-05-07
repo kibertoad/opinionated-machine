@@ -54,7 +54,7 @@ function getContractResponseMode(contract: ApiContract): ResponseMode {
   return 'sse'
 }
 
-function buildSSERouteConfig<C>(
+function buildSSERouteConfig<C extends ApiContract>(
   options: ApiRouteOptions<C> | undefined,
 ): true | { serializer?: (data: unknown) => string; heartbeatInterval?: number } {
   if (!options?.serializer && options?.heartbeatInterval === undefined) return true
@@ -168,7 +168,7 @@ async function handleApiSyncRoute(
 // Internal Helpers — SSE Route (no controller, uses reply.sse directly)
 // ============================================================================
 
-function buildApiSSEContext<C>(
+function buildApiSSEContext<C extends ApiContract>(
   // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
   request: any,
   reply: FastifyReply,
@@ -301,7 +301,7 @@ function buildApiSSEContext<C>(
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Core SSE handler coordinates context, error handling, and lifecycle
-async function handleApiSseRoute<C>(
+async function handleApiSseRoute<C extends ApiContract>(
   // biome-ignore lint/suspicious/noExplicitAny: SSE handler types are validated by InferApiHandler at call site
   sseHandler: (request: any, sse: any) => unknown,
   eventSchemas: SseSchemaByEventName,
