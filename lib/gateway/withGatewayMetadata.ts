@@ -1,10 +1,16 @@
-import type { CommonRouteDefinition } from '@lokalise/api-contracts'
+import type { ApiContract, CommonRouteDefinition } from '@lokalise/api-contracts'
 import { type GatewayMetadataValue, gatewayMetadataSchema } from './gatewayMetadata.ts'
 import { GATEWAY_METADATA_SYMBOL } from './gatewaySymbol.ts'
 import type { GatewayMetadata } from './gatewayTypes.ts'
 
-// biome-ignore lint/suspicious/noExplicitAny: shape-agnostic — we don't constrain contract generics here
-type AnyContract = CommonRouteDefinition<any, any, any, any, any, any, any, any>
+// Accepts both contract families: REST (`CommonRouteDefinition` from
+// `buildRestContract`) and API-contracts (`ApiContract` from `defineApiContract`).
+// The contract is used only for type inference on `match.headers`,
+// `match.query`, and `rateLimit.key` — both families share those request
+// schemas, so the narrowing works either way.
+type AnyContract =
+  // biome-ignore lint/suspicious/noExplicitAny: shape-agnostic — we don't constrain contract generics here
+  CommonRouteDefinition<any, any, any, any, any, any, any, any> | ApiContract
 
 /**
  * Validate gateway metadata and stamp it onto a route via the

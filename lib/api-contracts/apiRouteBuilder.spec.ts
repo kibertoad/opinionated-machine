@@ -7,7 +7,7 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod/v4'
 import { GATEWAY_METADATA_SYMBOL } from '../gateway/gatewaySymbol.ts'
-import { readGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
+import { readGatewayMetadata, withGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
 import { buildApiRoute } from './apiRouteBuilder.ts'
 
 // ============================================================================
@@ -498,5 +498,16 @@ describe('buildApiRoute — inline gatewayMetadata', () => {
         },
       },
     )
+  })
+
+  it('a later withGatewayMetadata call overwrites inline gatewayMetadata (no merge)', () => {
+    const route = buildApiRoute(
+      headerAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      { gatewayMetadata: { upstream: 'inline-svc', cache: { ttl: '60s' } } },
+    )
+    withGatewayMetadata(headerAwareContract, route, { upstream: 'override-svc' })
+    // Documented "later call wins" semantic — `cache` is gone, not merged.
+    expect(readGatewayMetadata(route)).toEqual({ upstream: 'override-svc' })
   })
 })
