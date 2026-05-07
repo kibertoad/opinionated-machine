@@ -304,6 +304,13 @@ const headerAwareContract = defineApiContract({
   responsesByStatusCode: { 200: userSchema },
 })
 
+const queryAwareContract = defineApiContract({
+  method: 'get',
+  pathResolver: () => '/search',
+  requestQuerySchema: z.object({ q: z.string(), limit: z.coerce.number().optional() }),
+  responsesByStatusCode: { 200: userSchema },
+})
+
 describe('buildApiRoute — inline gatewayMetadata', () => {
   it('stamps validated metadata onto the route via the shared symbol', () => {
     const routeOptions = buildApiRoute(
@@ -410,5 +417,86 @@ describe('buildApiRoute — inline gatewayMetadata', () => {
       { gatewayMetadata: { tags: ['chat'] } },
     )
     expect(readGatewayMetadata(routeOptions)).toEqual({ tags: ['chat'] })
+  })
+
+  it('narrows match.query keys to the contract requestQuerySchema', () => {
+    const routeOptions = buildApiRoute(
+      queryAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        gatewayMetadata: {
+          match: { query: { q: { prefix: 'foo' }, limit: { exact: '10' } } },
+        },
+      },
+    )
+    expect(readGatewayMetadata(routeOptions)?.match?.query).toEqual({
+      q: { prefix: 'foo' },
+      limit: { exact: '10' },
+    })
+  })
+
+  it('coexists with passthrough Fastify options like preHandler', () => {
+    const preHandler = vi.fn()
+    const routeOptions = buildApiRoute(
+      headerAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        preHandler,
+        gatewayMetadata: { upstream: 'tenants-service' },
+      },
+    )
+    // preHandler reaches Fastify (own enumerable), gatewayMetadata reaches the symbol.
+    expect(routeOptions.preHandler).toBe(preHandler)
+    expect((routeOptions as { gatewayMetadata?: unknown }).gatewayMetadata).toBeUndefined()
+    expect(readGatewayMetadata(routeOptions)).toEqual({ upstream: 'tenants-service' })
+  })
+
+  it('rejects header keys not declared on the contract at compile time', () => {
+    buildApiRoute(
+      headerAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        gatewayMetadata: {
+          match: {
+            headers: {
+              'x-trace-id': { regex: '^[a-f0-9]+$' },
+              // @ts-expect-error 'x-not-on-contract' is not in requestHeaderSchema
+              'x-not-on-contract': 'foo',
+            },
+          },
+        },
+      },
+    )
+  })
+
+  it('rejects rateLimit.key.header values not declared on the contract at compile time', () => {
+    buildApiRoute(
+      headerAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        gatewayMetadata: {
+          // @ts-expect-error 'x-not-on-contract' is not in requestHeaderSchema
+          rateLimit: { requests: 10, per: '1s', key: { header: 'x-not-on-contract' } },
+        },
+      },
+    )
+  })
+
+  it('rejects query keys not declared on the contract at compile time', () => {
+    buildApiRoute(
+      queryAwareContract,
+      async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
+      {
+        gatewayMetadata: {
+          match: {
+            query: {
+              q: { prefix: 'foo' },
+              // @ts-expect-error 'unknown' is not in requestQuerySchema
+              unknown: 'bar',
+            },
+          },
+        },
+      },
+    )
   })
 })

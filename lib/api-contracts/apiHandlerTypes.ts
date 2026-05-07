@@ -182,6 +182,26 @@ export type ApiRouteOptions<Contract = unknown> = Omit<
      * declared on the contract. Validated at runtime against the same Zod
      * schema used by `withGatewayMetadata` and stamped on the route via the
      * shared `GATEWAY_METADATA_SYMBOL`.
+     *
+     * Equivalent to wrapping the result with `withGatewayMetadata` — keep
+     * to one form per route. If both are used on the same route, the later
+     * call (typically `withGatewayMetadata`) overwrites the inline value;
+     * there is no merge.
+     *
+     * @example
+     * ```ts
+     * buildApiRoute(MyController.contracts.getItem, this.getItem, {
+     *   gatewayMetadata: {
+     *     cache: { ttl: '60s' },
+     *     match: {
+     *       // narrowed to keys of the contract's requestHeaderSchema:
+     *       headers: { 'x-trace-id': { regex: '^[a-f0-9]+$' } },
+     *       // escape hatch for headers not declared on the contract:
+     *       customHeaders: { 'x-tenant-id': { regex: '^t_' } },
+     *     },
+     *   },
+     * })
+     * ```
      */
     gatewayMetadata?: GatewayMetadata<Contract>
   }

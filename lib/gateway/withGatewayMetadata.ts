@@ -16,12 +16,20 @@ type AnyContract = CommonRouteDefinition<any, any, any, any, any, any, any, any>
  * behaviourally identical: same Zod errors at the call site, same hidden
  * symbol storage, same value visible to `readGatewayMetadata` and
  * `buildGatewayManifest`.
+ *
+ * Parameter is `unknown` because the contract-narrowed `GatewayMetadata<C>`
+ * shapes from the two call sites aren't structurally assignable to each
+ * other (variant `ContractRateLimitKey<C>`), and the runtime Zod schema is
+ * the actual source of truth either way.
  */
 export function attachGatewayMetadata<Route extends object>(
   route: Route,
-  metadata: GatewayMetadata<unknown>,
+  metadata: unknown,
 ): Route {
-  const validated = gatewayMetadataSchema.parse(metadata) as GatewayMetadataValue
+  // Validate eagerly so a bad shape fails at the call site (with a clean
+  // Zod issue path) rather than later when DIContext.buildGatewayManifest
+  // walks every route at once.
+  const validated = gatewayMetadataSchema.parse(metadata)
   Object.defineProperty(route, GATEWAY_METADATA_SYMBOL, {
     value: validated,
     enumerable: false,
@@ -72,7 +80,7 @@ export function withGatewayMetadata<Contract extends AnyContract, Route extends 
   route: Route,
   metadata: GatewayMetadata<Contract>,
 ): Route {
-  return attachGatewayMetadata(route, metadata as GatewayMetadata<unknown>)
+  return attachGatewayMetadata(route, metadata)
 }
 
 /**

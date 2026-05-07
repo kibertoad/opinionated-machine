@@ -17,7 +17,6 @@ import {
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
 import type { z } from 'zod/v4'
-import type { GatewayMetadata } from '../gateway/gatewayTypes.ts'
 import { attachGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
 import type {
   SSEContext,
@@ -429,9 +428,7 @@ export function buildApiRoute<Contract extends ApiContract>(
   const contractMetadata = contractMetadataToRouteMapper?.(contract.metadata) ?? {}
 
   const finalize = (route: RouteOptions): RouteOptions =>
-    gatewayMetadata !== undefined
-      ? attachGatewayMetadata(route, gatewayMetadata as GatewayMetadata<unknown>)
-      : route
+    gatewayMetadata !== undefined ? attachGatewayMetadata(route, gatewayMetadata) : route
 
   if (mode === 'non-sse') {
     // biome-ignore lint/suspicious/noExplicitAny: handler shape validated by InferApiHandler at call site
