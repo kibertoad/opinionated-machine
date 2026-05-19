@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { EventEmitter } from 'node:events'
+import type { FastifyReply, FastifyRequest } from 'fastify'
+import { describe, expect, it, vi } from 'vitest'
+import { isErrorLike } from '../errorUtils.ts'
 import {
+  createSSEContext,
   determineMode,
   determineSyncFormat,
   hasHttpStatusCode,
-  isErrorLike,
+  type SSEControllerLike,
 } from './fastifyRouteUtils.ts'
 
 describe('fastifyRouteUtils', () => {
@@ -34,6 +38,156 @@ describe('fastifyRouteUtils', () => {
 
     it('returns false for objects with non-string message property', () => {
       expect(isErrorLike({ message: 123 })).toBe(false)
+    })
+  })
+
+  describe('room join guard in createSSEContext', () => {
+    const createFixture = (overrides?: {
+      requestDestroyed?: boolean
+      requestAborted?: boolean
+      responseDestroyed?: boolean
+      responseWritableEnded?: boolean
+      isConnected?: boolean
+    }) => {
+      const socket = new EventEmitter()
+      const request = {
+        headers: {},
+        socket,
+        raw: {
+          destroyed: overrides?.requestDestroyed ?? false,
+          aborted: overrides?.requestAborted ?? false,
+        },
+      } as unknown as FastifyRequest
+
+      const onCloseCallbacks: Array<() => Promise<void> | void> = []
+      const sseClose = vi.fn()
+      const sseReply = {
+        isConnected: overrides?.isConnected ?? true,
+        keepAlive: vi.fn(),
+        sendHeaders: vi.fn(),
+        stream: vi.fn(() => ({}) as NodeJS.WritableStream),
+        onClose: vi.fn((handler: () => Promise<void> | void) => {
+          onCloseCallbacks.push(handler)
+        }),
+        close: sseClose,
+      }
+
+      const reply = {
+        sse: sseReply,
+        raw: {
+          flushHeaders: vi.fn(),
+          destroyed: overrides?.responseDestroyed ?? false,
+          writableEnded: overrides?.responseWritableEnded ?? false,
+        },
+      } as unknown as FastifyReply
+
+      const roomManager = {
+        join: vi.fn(),
+        leave: vi.fn(),
+      }
+
+      const controller: SSEControllerLike = {
+        _sendEventRaw: vi.fn(async () => true),
+        registerConnection: vi.fn(),
+        unregisterConnection: vi.fn(),
+        _internalRoomManager: roomManager as unknown as SSEControllerLike['_internalRoomManager'],
+      }
+
+      const logger = {
+        error: vi.fn(),
+        warn: vi.fn(),
+      }
+
+      return { request, reply, controller, roomManager, logger, onCloseCallbacks, sseClose }
+    }
+
+    it.each([
+      { title: 'request is destroyed', overrides: { requestDestroyed: true } },
+      { title: 'request is aborted', overrides: { requestAborted: true } },
+      { title: 'response is destroyed', overrides: { responseDestroyed: true } },
+      { title: 'response writable ended', overrides: { responseWritableEnded: true } },
+      { title: 'session is disconnected', overrides: { isConnected: false } },
+    ])('skips room join and closes dead session when $title', ({ overrides }) => {
+      const fixture = createFixture(overrides)
+      const context = createSSEContext(
+        fixture.controller,
+        fixture.request,
+        fixture.reply,
+        {},
+        { logger: fixture.logger },
+      )
+      const session = context.sseContext.start('keepAlive')
+
+      session.rooms.join('room-a')
+
+      expect(fixture.roomManager.join).not.toHaveBeenCalled()
+      expect(fixture.sseClose).toHaveBeenCalledTimes(1)
+      expect(fixture.controller.unregisterConnection).toHaveBeenCalledWith(session.id)
+      expect(fixture.logger.warn).toHaveBeenCalledTimes(1)
+    })
+
+    it('joins room when session is alive', () => {
+      const fixture = createFixture()
+      const context = createSSEContext(
+        fixture.controller,
+        fixture.request,
+        fixture.reply,
+        {},
+        { logger: fixture.logger },
+      )
+      const session = context.sseContext.start('keepAlive')
+
+      session.rooms.join('room-a')
+
+      expect(fixture.roomManager.join).toHaveBeenCalledWith(session.id, 'room-a', fixture.logger)
+      expect(fixture.sseClose).not.toHaveBeenCalled()
+      expect(fixture.controller.unregisterConnection).not.toHaveBeenCalled()
+      expect(fixture.logger.warn).not.toHaveBeenCalled()
+    })
+
+    it('silently unregisters when close throws but reply is already disconnected', () => {
+      const fixture = createFixture({ requestDestroyed: true, isConnected: false })
+      fixture.sseClose.mockImplementation(() => {
+        throw new Error('stream already closed')
+      })
+      const context = createSSEContext(
+        fixture.controller,
+        fixture.request,
+        fixture.reply,
+        {},
+        { logger: fixture.logger },
+      )
+      const session = context.sseContext.start('keepAlive')
+
+      session.rooms.join('room-a')
+
+      expect(fixture.sseClose).toHaveBeenCalledTimes(1)
+      expect(fixture.controller.unregisterConnection).toHaveBeenCalledWith(session.id)
+      expect(fixture.logger.error).not.toHaveBeenCalled()
+    })
+
+    it('logs error when close throws and reply is still connected', () => {
+      const fixture = createFixture({ requestDestroyed: true, isConnected: true })
+      fixture.sseClose.mockImplementation(() => {
+        throw new Error('boom')
+      })
+      const context = createSSEContext(
+        fixture.controller,
+        fixture.request,
+        fixture.reply,
+        {},
+        { logger: fixture.logger },
+      )
+      const session = context.sseContext.start('keepAlive')
+
+      session.rooms.join('room-a')
+
+      expect(fixture.sseClose).toHaveBeenCalledTimes(1)
+      expect(fixture.controller.unregisterConnection).toHaveBeenCalledWith(session.id)
+      expect(fixture.logger.error).toHaveBeenCalledWith(
+        { connectionId: session.id, error: 'boom' },
+        'Failed to close SSE connection',
+      )
     })
   })
 

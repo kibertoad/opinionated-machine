@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import type { SSEMessage } from '../sseTypes.js'
+import { isErrorLike } from '../../errorUtils.js'
+import type { SSELogger, SSEMessage } from '../sseTypes.js'
 import { InMemoryAdapter } from './adapters/InMemoryAdapter.js'
 import type {
   RoomBroadcastOptions,
@@ -105,8 +106,9 @@ export class SSERoomManager {
    *
    * @param connectionId - The connection to add to rooms
    * @param room - Room name or array of room names
+   * @param logger - Used to report adapter subscription failures (optional)
    */
-  join(connectionId: string, room: string | string[]): void {
+  join(connectionId: string, room: string | string[], logger?: SSELogger): void {
     const rooms = Array.isArray(room) ? room : [room]
 
     for (const r of rooms) {
@@ -138,8 +140,16 @@ export class SSERoomManager {
 
       // Subscribe via adapter if this is the first connection in the room on this node
       if (wasEmpty) {
-        this.adapter.subscribe(r).catch(() => {
+        this.adapter.subscribe(r).catch((err) => {
           // Log error but don't throw - subscription failure shouldn't break join
+          logger?.error(
+            {
+              connectionId,
+              room: r,
+              error: isErrorLike(err) ? err.message : 'Internal server error',
+            },
+            'Adapter subscription failed',
+          )
         })
       }
     }
@@ -150,8 +160,9 @@ export class SSERoomManager {
    *
    * @param connectionId - The connection to remove from rooms
    * @param room - Room name or array of room names
+   * @param logger - Used to report adapter unsubscription failures (optional)
    */
-  leave(connectionId: string, room: string | string[]): void {
+  leave(connectionId: string, room: string | string[], logger?: SSELogger): void {
     const rooms = Array.isArray(room) ? room : [room]
 
     for (const r of rooms) {
@@ -171,8 +182,16 @@ export class SSERoomManager {
         if (roomConns.size === 0) {
           this.roomConnections.delete(r)
           // Unsubscribe via adapter - no more local connections in this room
-          this.adapter.unsubscribe(r).catch(() => {
+          this.adapter.unsubscribe(r).catch((err) => {
             // Log error but don't throw
+            logger?.error(
+              {
+                connectionId,
+                room: r,
+                error: isErrorLike(err) ? err.message : 'Internal server error',
+              },
+              'Adapter unsubscription failed',
+            )
           })
         }
       }

@@ -187,7 +187,7 @@ describe('Dual-Mode KeepAlive SSE with Rooms', () => {
       server.baseUrl,
       '/api/dashboard/updates',
       {
-        query: { dashboardId: 'dash-1' },
+        query: { dashboardId: 'dash-1', simulateDeadBeforeJoin: 'false' },
         awaitServerConnection: { controller },
       },
     )
@@ -290,6 +290,21 @@ describe('Dual-Mode KeepAlive SSE with Rooms', () => {
 
     client1.close()
     client2.close()
+  })
+
+  it('does not add dead keepAlive session to room membership', { timeout: 10000 }, async () => {
+    const broadcaster = getBroadcaster()
+
+    const response = await server.app.inject({
+      method: 'get',
+      url: '/api/dashboard/updates?dashboardId=dead-room&simulateDeadBeforeJoin=true',
+      headers: {
+        accept: 'text/event-stream',
+      },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(broadcaster.getConnectionCountInRoom('dashboard:dead-room')).toBe(0)
   })
 
   it(

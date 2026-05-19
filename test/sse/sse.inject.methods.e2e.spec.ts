@@ -30,6 +30,7 @@ describe('SSE Inject E2E (onClose error handling)', () => {
   it('logs error when onClose callback throws', { timeout: 10000 }, async () => {
     const mockLogger: SSELogger = {
       error: vi.fn(),
+      warn: vi.fn(),
     }
 
     const container = createContainer<TestOnCloseErrorSSEModuleDependencies>({
@@ -83,7 +84,7 @@ describe('SSE Inject E2E (onClose error handling)', () => {
     { timeout: 10000 },
     async () => {
       const onCloseReason = vi.fn()
-      const mockLogger: SSELogger = { error: vi.fn() }
+      const mockLogger: SSELogger = { error: vi.fn(), warn: vi.fn() }
 
       const container = createContainer({ injectionMode: 'PROXY' })
       const context = new DIContext<object, object>(container, { isTestMode: true }, {})

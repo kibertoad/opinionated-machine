@@ -47,7 +47,6 @@ export {
   determineSyncFormat,
   handleReconnection,
   handleSSEError,
-  isErrorLike,
   type SSECloseReason,
   type SSEContextResult,
   type SSEControllerLike,
