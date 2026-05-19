@@ -170,6 +170,7 @@ export async function handleSSEError(
   controller: SSEControllerLike,
   connectionId: string,
   err: unknown,
+  logger?: SSELogger,
 ): Promise<void> {
   // Send error event to client (bypasses validation since this is framework-level)
   try {
@@ -181,7 +182,7 @@ export async function handleSSEError(
     // Connection might already be closed, ignore
   }
 
-  closeSSESession(sseReply, controller, connectionId)
+  closeSSESession(sseReply, controller, connectionId, logger)
 }
 
 /**

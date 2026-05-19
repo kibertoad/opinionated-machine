@@ -312,7 +312,7 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
     if (contextResult.isStarted()) {
       const connectionId = contextResult.getConnectionId()
       if (connectionId) {
-        await handleSSEError(contextResult.sseReply, controller, connectionId, err)
+        await handleSSEError(contextResult.sseReply, controller, connectionId, err, options?.logger)
       }
       // Re-throw for Fastify's onError hooks (status can't change after headers sent)
       throw err
@@ -473,7 +473,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         if (contextResult.isStarted()) {
           const connectionId = contextResult.getConnectionId()
           if (connectionId) {
-            await handleSSEError(contextResult.sseReply, controller, connectionId, err)
+            await handleSSEError(contextResult.sseReply, controller, connectionId, err, options?.logger)
           }
           // Re-throw for Fastify's onError hooks (status can't change after headers sent)
           throw err
