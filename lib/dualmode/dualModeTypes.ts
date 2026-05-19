@@ -9,7 +9,7 @@ export type DualModeType = 'json' | 'sse'
  */
 export type DualModeLogger = {
   error: (obj: Record<string, unknown>, msg: string) => void
-  warn: (obj: Record<string, unknown>, msg: string) => void
+  warn?: (obj: Record<string, unknown>, msg: string) => void
 }
 
 /**

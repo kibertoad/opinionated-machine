@@ -187,7 +187,7 @@ describe('Dual-Mode KeepAlive SSE with Rooms', () => {
       server.baseUrl,
       '/api/dashboard/updates',
       {
-        query: { dashboardId: 'dash-1' },
+        query: { dashboardId: 'dash-1', simulateDeadBeforeJoin: 'false' },
         awaitServerConnection: { controller },
       },
     )

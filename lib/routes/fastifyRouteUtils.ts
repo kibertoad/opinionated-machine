@@ -220,7 +220,7 @@ function createRoomOperations<Events extends SSEEventSchemas, Context = unknown>
       // Guard against startup races where the stream is already aborted/destroyed:
       // joining such session to a room can leave stale members and block room broadcast.
       if (isSSEConnectionDead(connection)) {
-        logger?.warn(
+        logger?.warn?.(
           {
             connectionId,
             room,
@@ -238,7 +238,7 @@ function createRoomOperations<Events extends SSEEventSchemas, Context = unknown>
   }
 }
 
-export function isSSEConnectionDead<Events extends SSEEventSchemas, Context = unknown>(
+function isSSEConnectionDead<Events extends SSEEventSchemas, Context = unknown>(
   connection: SSESession<Events, Context>,
 ): boolean {
   const rawRequest = connection.request.raw
@@ -263,8 +263,17 @@ function closeSSESession(
 ): void {
   try {
     sseReply.sse.close()
-  } catch {
-    logger?.warn({ connectionId }, 'Connection is already closed')
+  } catch (err) {
+    if (sseReply.sse.isConnected) {
+      // Log error if connection closure failed and connection is still live
+      logger?.error(
+        {
+          connectionId,
+          error: isErrorLike(err) ? err.message : 'Internal server error',
+        },
+        'Failed to close SSE connection',
+      )
+    }
   }
   controller.unregisterConnection(connectionId)
 }

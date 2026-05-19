@@ -193,7 +193,7 @@ export const keepaliveDashboardContract = buildContract({
   requestPathParamsSchema: z.object({}),
   requestQuerySchema: z.object({
     dashboardId: z.string().optional(),
-    simulateDeadBeforeJoin: z.coerce.boolean().optional(),
+    simulateDeadBeforeJoin: z.stringbool().optional(),
   }),
   requestHeaderSchema: z.object({}),
   successResponseBodySchema: z.object({
