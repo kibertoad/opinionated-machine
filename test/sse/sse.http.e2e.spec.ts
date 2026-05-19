@@ -1391,6 +1391,7 @@ describe('SSE HTTP E2E (logger error handling)', () => {
     // Create mock logger to capture error calls
     mockLogger = {
       error: vi.fn(),
+      warn: vi.fn(),
     }
 
     const container = createContainer<TestLoggerSSEModuleDependencies>({ injectionMode: 'PROXY' })
@@ -1467,6 +1468,7 @@ describe('SSE HTTP E2E (onConnect error handling)', () => {
     // Create mock logger to capture error calls
     mockLogger = {
       error: vi.fn(),
+      warn: vi.fn(),
     }
 
     const container = createContainer<TestOnConnectErrorSSEModuleDependencies>({
@@ -1544,6 +1546,7 @@ describe('SSE HTTP E2E (onReconnect error handling)', () => {
     // Create mock logger to capture error calls
     mockLogger = {
       error: vi.fn(),
+      warn: vi.fn(),
     }
 
     const container = createContainer<TestOnReconnectErrorSSEModuleDependencies>({

@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { EventEmitter } from 'node:events'
+import type { FastifyReply, FastifyRequest } from 'fastify'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  createSSEContext,
   determineMode,
   determineSyncFormat,
   hasHttpStatusCode,
   isErrorLike,
+  isSSEConnectionDead,
+  type SSEControllerLike,
 } from './fastifyRouteUtils.ts'
 
 describe('fastifyRouteUtils', () => {
@@ -34,6 +39,141 @@ describe('fastifyRouteUtils', () => {
 
     it('returns false for objects with non-string message property', () => {
       expect(isErrorLike({ message: 123 })).toBe(false)
+    })
+  })
+
+  describe('SSE session dead-state helpers', () => {
+    it('returns false for healthy connection', () => {
+      const session = {
+        id: 'conn-1',
+        request: { raw: { destroyed: false, aborted: false } },
+        reply: { raw: { destroyed: false, writableEnded: false } },
+        context: {},
+        connectedAt: new Date(),
+        send: vi.fn(),
+        isConnected: () => true,
+        getStream: vi.fn(),
+        sendStream: vi.fn(),
+        rooms: { join: vi.fn(), leave: vi.fn() },
+      } as unknown as Parameters<typeof isSSEConnectionDead>[0]
+
+      expect(isSSEConnectionDead(session)).toBe(false)
+    })
+
+    it('marks session as dead when connection is closed', () => {
+      const session = {
+        id: 'conn-1',
+        isConnected: () => false,
+        request: { raw: { destroyed: false, aborted: false } },
+        reply: { raw: { destroyed: false, writableEnded: false } },
+        context: {},
+        connectedAt: new Date(),
+        send: vi.fn(),
+        getStream: vi.fn(),
+        sendStream: vi.fn(),
+        rooms: { join: vi.fn(), leave: vi.fn() },
+      } as unknown as Parameters<typeof isSSEConnectionDead>[0]
+
+      expect(isSSEConnectionDead(session)).toBe(true)
+    })
+  })
+
+  describe('room join guard in createSSEContext', () => {
+    const createFixture = (overrides?: {
+      requestDestroyed?: boolean
+      requestAborted?: boolean
+      responseDestroyed?: boolean
+      responseWritableEnded?: boolean
+      isConnected?: boolean
+    }) => {
+      const socket = new EventEmitter()
+      const request = {
+        headers: {},
+        socket,
+        raw: {
+          destroyed: overrides?.requestDestroyed ?? false,
+          aborted: overrides?.requestAborted ?? false,
+        },
+      } as unknown as FastifyRequest
+
+      const onCloseCallbacks: Array<() => Promise<void> | void> = []
+      const sseClose = vi.fn()
+      const sseReply = {
+        isConnected: overrides?.isConnected ?? true,
+        keepAlive: vi.fn(),
+        sendHeaders: vi.fn(),
+        stream: vi.fn(() => ({}) as NodeJS.WritableStream),
+        onClose: vi.fn((handler: () => Promise<void> | void) => {
+          onCloseCallbacks.push(handler)
+        }),
+        close: sseClose,
+      }
+
+      const reply = {
+        sse: sseReply,
+        raw: {
+          flushHeaders: vi.fn(),
+          destroyed: overrides?.responseDestroyed ?? false,
+          writableEnded: overrides?.responseWritableEnded ?? false,
+        },
+      } as unknown as FastifyReply
+
+      const roomManager = {
+        join: vi.fn(),
+        leave: vi.fn(),
+      }
+
+      const controller: SSEControllerLike = {
+        _sendEventRaw: vi.fn(async () => true),
+        registerConnection: vi.fn(),
+        unregisterConnection: vi.fn(),
+        _internalRoomManager: roomManager as unknown as SSEControllerLike['_internalRoomManager'],
+      }
+
+      const logger = {
+        error: vi.fn(),
+        warn: vi.fn(),
+      }
+
+      return { request, reply, controller, roomManager, logger, onCloseCallbacks, sseClose }
+    }
+
+    it('skips room join and closes dead session', () => {
+      const fixture = createFixture({ requestDestroyed: true })
+      const context = createSSEContext(
+        fixture.controller,
+        fixture.request,
+        fixture.reply,
+        {},
+        { logger: fixture.logger },
+      )
+      const session = context.sseContext.start('keepAlive')
+
+      session.rooms.join('room-a')
+
+      expect(fixture.roomManager.join).not.toHaveBeenCalled()
+      expect(fixture.sseClose).toHaveBeenCalledTimes(1)
+      expect(fixture.controller.unregisterConnection).toHaveBeenCalledWith(session.id)
+      expect(fixture.logger.warn).toHaveBeenCalledTimes(1)
+    })
+
+    it('joins room when session is alive', () => {
+      const fixture = createFixture()
+      const context = createSSEContext(
+        fixture.controller,
+        fixture.request,
+        fixture.reply,
+        {},
+        { logger: fixture.logger },
+      )
+      const session = context.sseContext.start('keepAlive')
+
+      session.rooms.join('room-a')
+
+      expect(fixture.roomManager.join).toHaveBeenCalledWith(session.id, 'room-a', fixture.logger)
+      expect(fixture.sseClose).not.toHaveBeenCalled()
+      expect(fixture.controller.unregisterConnection).not.toHaveBeenCalled()
+      expect(fixture.logger.warn).not.toHaveBeenCalled()
     })
   })
 

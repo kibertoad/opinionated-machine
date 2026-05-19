@@ -24,6 +24,7 @@ export type AllContractEvents<Contracts extends Record<string, AnySSEContractDef
  */
 export type SSELogger = {
   error: (obj: Record<string, unknown>, msg: string) => void
+  warn: (obj: Record<string, unknown>, msg: string) => void
 }
 
 /**

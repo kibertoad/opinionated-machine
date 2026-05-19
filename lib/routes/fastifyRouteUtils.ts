@@ -181,13 +181,7 @@ export async function handleSSEError(
     // Connection might already be closed, ignore
   }
 
-  // Close the connection gracefully
-  try {
-    sseReply.sse.close()
-  } catch {
-    // Connection may already be closed
-  }
-  controller.unregisterConnection(connectionId)
+  closeSSESession(sseReply, controller, connectionId)
 }
 
 /**
@@ -204,10 +198,12 @@ export type SSESessionSetupResult<Events extends SSEEventSchemas = SSEEventSchem
  * Create room operations object for the session.
  * If room manager is not available, returns no-op functions.
  */
-function createRoomOperations(
-  connectionId: string,
-  roomManager: SSERoomManager | undefined,
+function createRoomOperations<Events extends SSEEventSchemas, Context = unknown>(
+  connection: SSESession<Events, Context>,
+  controller: SSEControllerLike,
+  logger?: SSELogger,
 ): SSERoomOperations {
+  const roomManager = controller._internalRoomManager
   if (!roomManager) {
     // Return no-op operations when rooms are not enabled
     return {
@@ -216,10 +212,61 @@ function createRoomOperations(
     }
   }
 
+  const connectionId = connection.id
+  const sseReply = connection.reply as SSEReply
+
   return {
-    join: (room) => roomManager.join(connectionId, room),
-    leave: (room) => roomManager.leave(connectionId, room),
+    join: (room) => {
+      // Guard against startup races where the stream is already aborted/destroyed:
+      // joining such session to a room can leave stale members and block room broadcast.
+      if (isSSEConnectionDead(connection)) {
+        logger?.warn(
+          {
+            connectionId,
+            room,
+          },
+          'Skipping room join for dead SSE session',
+        )
+
+        closeSSESession(sseReply, controller, connectionId, logger)
+        return
+      }
+
+      roomManager.join(connectionId, room, logger)
+    },
+    leave: (room) => roomManager.leave(connectionId, room, logger),
   }
+}
+
+export function isSSEConnectionDead<Events extends SSEEventSchemas, Context = unknown>(
+  connection: SSESession<Events, Context>,
+): boolean {
+  const rawRequest = connection.request.raw
+  const rawResponse = connection.reply.raw
+  return (
+    !connection.isConnected() ||
+    rawRequest.destroyed ||
+    rawRequest.aborted ||
+    rawResponse.destroyed ||
+    rawResponse.writableEnded
+  )
+}
+
+/**
+ * Close the underlying SSE stream and unregister the connection from the controller.
+ */
+function closeSSESession(
+  sseReply: SSEReply,
+  controller: SSEControllerLike,
+  connectionId: string,
+  logger?: SSELogger,
+): void {
+  try {
+    sseReply.sse.close()
+  } catch {
+    logger?.warn({ connectionId }, 'Connection is already closed')
+  }
+  controller.unregisterConnection(connectionId)
 }
 
 /**
@@ -237,6 +284,7 @@ function createSSESessionInternal<Events extends SSEEventSchemas, Context = unkn
   controller: SSEControllerLike,
   initialContext?: Context,
   reconnectionPromise?: Promise<void>,
+  logger?: SSELogger,
 ): SSESession<Events, Context> {
   // Create type-safe event sender for the handler
   // If reconnection is in progress, wait for it before sending to maintain event ordering
@@ -275,10 +323,7 @@ function createSSESessionInternal<Events extends SSEEventSchemas, Context = unkn
     }
   }
 
-  // Create room operations
-  const rooms = createRoomOperations(connectionId, controller._internalRoomManager)
-
-  return {
+  const connection: SSESession<Events, Context> = {
     id: connectionId,
     request,
     reply,
@@ -288,9 +333,16 @@ function createSSESessionInternal<Events extends SSEEventSchemas, Context = unkn
     isConnected: () => sseReply.sse.isConnected,
     getStream: () => sseReply.sse.stream(),
     sendStream,
-    rooms,
+    rooms: {
+      join: (_room) => {},
+      leave: (_room) => {},
+    },
     eventSchemas,
   }
+
+  connection.rooms = createRoomOperations(connection, controller, logger)
+
+  return connection
 }
 
 /**
@@ -447,6 +499,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
         controller,
         startOptions?.context,
         reconnectionPromise,
+        options?.logger,
       ) as SSESession<Events>
 
       // Register connection with controller

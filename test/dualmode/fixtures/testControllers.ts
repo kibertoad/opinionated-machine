@@ -458,6 +458,10 @@ export class TestKeepaliveDualModeController extends AbstractDualModeController<
       const session = sse.start('keepAlive')
       const dashboardId = request.query.dashboardId
       if (dashboardId) {
+        if (request.query.simulateDeadBeforeJoin) {
+          // Simulate a connection that is already unusable at join time.
+          session.reply.raw.destroy()
+        }
         session.rooms.join(`dashboard:${dashboardId}`)
       }
     },

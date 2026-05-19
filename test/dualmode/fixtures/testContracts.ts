@@ -191,7 +191,10 @@ export const keepaliveDashboardContract = buildContract({
   method: 'get',
   pathResolver: () => '/api/dashboard/updates',
   requestPathParamsSchema: z.object({}),
-  requestQuerySchema: z.object({ dashboardId: z.string().optional() }),
+  requestQuerySchema: z.object({
+    dashboardId: z.string().optional(),
+    simulateDeadBeforeJoin: z.coerce.boolean().optional(),
+  }),
   requestHeaderSchema: z.object({}),
   successResponseBodySchema: z.object({
     status: z.string(),
