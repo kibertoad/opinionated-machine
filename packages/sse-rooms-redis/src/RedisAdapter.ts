@@ -1,13 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import type { SSEMessage, SSERoomAdapter, SSERoomMessageHandler } from 'opinionated-machine'
-import type { RedisAdapterConfig, RedisRoomMessage } from './types.ts'
+import { decodePayload, encodePayload } from './internal/payload.ts'
+import type { PresenceTracker } from './presence/types.ts'
+import type { RedisAdapterConfig } from './types.ts'
 
 /**
  * Redis Pub/Sub adapter for cross-node SSE room communication.
  *
- * This adapter uses Redis pub/sub to propagate room broadcasts across
- * multiple server nodes. Each node subscribes to channels for rooms
- * that have local connections.
+ * This adapter uses classic (non-sharded) Redis pub/sub to propagate room
+ * broadcasts across multiple server nodes. Each node subscribes to channels
+ * for rooms that have local connections.
+ *
+ * For Redis Cluster (or ElastiCache Cluster Mode Enabled), use
+ * `RedisShardedAdapter` instead — it uses sharded pub/sub commands which
+ * scope each message to a single shard rather than the whole cluster bus.
  *
  * **Requirements:**
  * - Two separate Redis connections (pub and sub)
@@ -34,18 +40,22 @@ import type { RedisAdapterConfig, RedisRoomMessage } from './types.ts'
  * const adapter = new RedisAdapter({ pubClient, subClient })
  * ```
  *
- * @example With node-redis
+ * @example With presence-aware publishing
  * ```typescript
- * import { createClient } from 'redis'
- * import { RedisAdapter } from '@opinionated-machine/sse-rooms-redis'
+ * import Redis from 'ioredis'
+ * import {
+ *   RedisAdapter,
+ *   NumsubPresenceTracker,
+ * } from '@opinionated-machine/sse-rooms-redis'
  *
- * const pubClient = createClient()
+ * const pubClient = new Redis()
  * const subClient = pubClient.duplicate()
  *
- * await pubClient.connect()
- * await subClient.connect()
- *
- * const adapter = new RedisAdapter({ pubClient, subClient })
+ * const adapter = new RedisAdapter({
+ *   pubClient,
+ *   subClient,
+ *   presence: new NumsubPresenceTracker({ client: pubClient }),
+ * })
  * ```
  */
 export class RedisAdapter implements SSERoomAdapter {
@@ -53,6 +63,7 @@ export class RedisAdapter implements SSERoomAdapter {
   private readonly subClient: RedisAdapterConfig['subClient']
   private readonly channelPrefix: string
   private readonly nodeId: string
+  private readonly presence?: PresenceTracker
   private messageHandler?: SSERoomMessageHandler
   private readonly subscribedChannels: Set<string> = new Set()
 
@@ -61,6 +72,7 @@ export class RedisAdapter implements SSERoomAdapter {
     this.subClient = config.subClient
     this.channelPrefix = config.channelPrefix ?? 'sse:room:'
     this.nodeId = config.nodeId ?? randomUUID()
+    this.presence = config.presence
   }
 
   connect(): Promise<void> {
@@ -78,6 +90,7 @@ export class RedisAdapter implements SSERoomAdapter {
       await this.subClient.unsubscribe(...channels)
     }
     this.subscribedChannels.clear()
+    await this.presence?.dispose?.()
   }
 
   async subscribe(room: string): Promise<void> {
@@ -88,6 +101,10 @@ export class RedisAdapter implements SSERoomAdapter {
 
     await this.subClient.subscribe(channel)
     this.subscribedChannels.add(channel)
+    // Pre-warm the presence tracker AFTER the subscribe resolves, so a racing
+    // remote publisher would not see the tracker say "yes" before this node
+    // is actually ready to receive.
+    this.presence?.notifyLocalSubscribed?.(room)
   }
 
   async unsubscribe(room: string): Promise<void> {
@@ -98,6 +115,7 @@ export class RedisAdapter implements SSERoomAdapter {
 
     await this.subClient.unsubscribe(channel)
     this.subscribedChannels.delete(channel)
+    this.presence?.notifyLocalUnsubscribed?.(room)
   }
 
   async publish(
@@ -105,12 +123,19 @@ export class RedisAdapter implements SSERoomAdapter {
     message: SSEMessage,
     metadata?: Record<string, unknown>,
   ): Promise<void> {
-    const channel = this.getChannelName(room)
-    const payload: RedisRoomMessage = { v: 1, m: message, n: this.nodeId }
-    if (metadata !== undefined) {
-      payload.meta = metadata
+    if (this.presence) {
+      try {
+        const has = await this.presence.hasSubscribers(room)
+        if (!has) {
+          return // Fast-path skip: nobody anywhere is subscribed.
+        }
+      } catch {
+        // Fail-open: a tracker error must never suppress a real publish.
+      }
     }
-    await this.pubClient.publish(channel, JSON.stringify(payload))
+
+    const channel = this.getChannelName(room)
+    await this.pubClient.publish(channel, encodePayload(message, this.nodeId, metadata))
   }
 
   onMessage(handler: SSERoomMessageHandler): void {
@@ -145,22 +170,22 @@ export class RedisAdapter implements SSERoomAdapter {
       return
     }
 
-    try {
-      const payload = JSON.parse(rawMessage) as RedisRoomMessage
+    const decoded = decodePayload(rawMessage)
+    if (!decoded) {
+      return // Invalid JSON or unknown protocol version
+    }
 
-      if (payload.v !== 1) {
-        return // Unknown protocol version, skip
-      }
-
-      const room = this.getRoomFromChannel(channel)
-      const result = this.messageHandler(room, payload.m, payload.n, payload.meta)
-      if (result && typeof (result as Promise<void>).catch === 'function') {
-        ;(result as Promise<void>).catch(() => {
-          // Swallow to prevent unhandled rejection; downstream is expected to log.
-        })
-      }
-    } catch {
-      // Invalid JSON or message format, skip
+    const room = this.getRoomFromChannel(channel)
+    const result = this.messageHandler(
+      room,
+      decoded.message,
+      decoded.sourceNodeId,
+      decoded.metadata,
+    )
+    if (result && typeof (result as Promise<void>).catch === 'function') {
+      ;(result as Promise<void>).catch(() => {
+        // Swallow to prevent unhandled rejection; downstream is expected to log.
+      })
     }
   }
 }

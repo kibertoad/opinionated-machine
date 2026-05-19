@@ -1,6 +1,7 @@
 import { Redis } from 'ioredis'
 import type { SSEMessage } from 'opinionated-machine'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { NumsubPresenceTracker } from './presence/NumsubPresenceTracker.ts'
 import { RedisAdapter } from './RedisAdapter.ts'
 
 /**
@@ -213,6 +214,127 @@ describe('RedisAdapter Integration', () => {
 
       // Node 2 receives message from node 1
       expect(node2Received).toContain('bidirectional')
+    })
+  })
+
+  /**
+   * End-to-end checks against a real Redis instance using PUBSUB NUMSUB.
+   * Verifies that the publish is actually suppressed (not just decided
+   * against in code) by spying on the publisher's `publish` method.
+   */
+  describe('with NumsubPresenceTracker', () => {
+    let adapter1: RedisAdapter
+    let adapter2: RedisAdapter
+    let publishSpy: ReturnType<typeof vi.spyOn>
+
+    beforeEach(async () => {
+      adapter1 = new RedisAdapter({
+        pubClient: pubClient1,
+        subClient: subClient1,
+        nodeId: 'node-1',
+        channelPrefix: 'test:presence:',
+      })
+
+      adapter2 = new RedisAdapter({
+        pubClient: pubClient2,
+        subClient: subClient2,
+        nodeId: 'node-2',
+        channelPrefix: 'test:presence:',
+        presence: new NumsubPresenceTracker({
+          client: pubClient2,
+          channelPrefix: 'test:presence:',
+          // Tight TTLs so test cases don't bleed into one another.
+          hasSubscribersTtlMs: 200,
+          noSubscribersTtlMs: 100,
+        }),
+      })
+
+      publishSpy = vi.spyOn(pubClient2, 'publish')
+
+      await adapter1.connect()
+      await adapter2.connect()
+    })
+
+    afterEach(async () => {
+      publishSpy.mockRestore()
+      await adapter1.disconnect()
+      await adapter2.disconnect()
+    })
+
+    it('publishes when a remote node is subscribed', async () => {
+      const received: string[] = []
+      adapter1.onMessage((room: string) => {
+        received.push(room)
+      })
+
+      await adapter1.subscribe('room-active')
+      // Allow the SUBSCRIBE to register so NUMSUB sees it.
+      await new Promise((r) => setTimeout(r, 100))
+
+      await adapter2.publish('room-active', { event: 'e', data: {} })
+      await new Promise((r) => setTimeout(r, 100))
+
+      expect(publishSpy).toHaveBeenCalledTimes(1)
+      expect(received).toContain('room-active')
+    })
+
+    it('skips PUBLISH when no node is subscribed', async () => {
+      const received: string[] = []
+      adapter1.onMessage((room: string) => {
+        received.push(room)
+      })
+
+      await adapter2.publish('room-empty', { event: 'e', data: {} })
+      await new Promise((r) => setTimeout(r, 100))
+
+      expect(publishSpy).not.toHaveBeenCalled()
+      expect(received).toHaveLength(0)
+    })
+
+    it('caches the positive answer — subsequent publishes do not re-query NUMSUB', async () => {
+      const received: string[] = []
+      adapter1.onMessage((room: string) => {
+        received.push(room)
+      })
+
+      await adapter1.subscribe('room-cached')
+      await new Promise((r) => setTimeout(r, 100))
+
+      const callSpy = vi.spyOn(pubClient2, 'call')
+
+      await adapter2.publish('room-cached', { event: 'first', data: {} })
+      await adapter2.publish('room-cached', { event: 'second', data: {} })
+      await new Promise((r) => setTimeout(r, 100))
+
+      // PUBSUB NUMSUB issued exactly once, even though we published twice.
+      const numsubCalls = callSpy.mock.calls.filter(
+        (call) => call[0] === 'PUBSUB' && call[1] === 'NUMSUB',
+      )
+      expect(numsubCalls).toHaveLength(1)
+      expect(publishSpy).toHaveBeenCalledTimes(2)
+
+      callSpy.mockRestore()
+    })
+
+    it('re-queries NUMSUB after the positive TTL expires', async () => {
+      adapter1.onMessage((_room: string) => {})
+
+      await adapter1.subscribe('room-ttl')
+      await new Promise((r) => setTimeout(r, 100))
+
+      const callSpy = vi.spyOn(pubClient2, 'call')
+
+      await adapter2.publish('room-ttl', { event: 'e1', data: {} })
+      // Wait past hasSubscribersTtlMs.
+      await new Promise((r) => setTimeout(r, 300))
+      await adapter2.publish('room-ttl', { event: 'e2', data: {} })
+
+      const numsubCalls = callSpy.mock.calls.filter(
+        (call) => call[0] === 'PUBSUB' && call[1] === 'NUMSUB',
+      )
+      expect(numsubCalls.length).toBeGreaterThanOrEqual(2)
+
+      callSpy.mockRestore()
     })
   })
 })
