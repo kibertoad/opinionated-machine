@@ -331,6 +331,7 @@ function createSSESessionInternal<Events extends SSEEventSchemas, Context = unkn
     isConnected: () => sseReply.sse.isConnected,
     getStream: () => sseReply.sse.stream(),
     sendStream,
+    // Don't remove - rooms property is reassigned below as it needs connection object reference
     rooms: {
       join: (_room) => {},
       leave: (_room) => {},

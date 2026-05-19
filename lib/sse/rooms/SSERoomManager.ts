@@ -106,7 +106,7 @@ export class SSERoomManager {
    *
    * @param connectionId - The connection to add to rooms
    * @param room - Room name or array of room names
-   * @param logger
+   * @param logger - Used to report adapter subscription failures (optional)
    */
   join(connectionId: string, room: string | string[], logger?: SSELogger): void {
     const rooms = Array.isArray(room) ? room : [room]
@@ -160,7 +160,7 @@ export class SSERoomManager {
    *
    * @param connectionId - The connection to remove from rooms
    * @param room - Room name or array of room names
-   * @param logger
+   * @param logger - Used to report adapter unsubscription failures (optional)
    */
   leave(connectionId: string, room: string | string[], logger?: SSELogger): void {
     const rooms = Array.isArray(room) ? room : [room]
