@@ -28,6 +28,7 @@ export {
 } from './lib/diConfigUtils.js'
 // Dual-mode (SSE + JSON)
 export * from './lib/dualmode/index.js'
+export { isErrorLike } from './lib/errorUtils.js'
 // Gateway metadata & manifest
 export * from './lib/gateway/index.js'
 export * from './lib/resolverFunctions.js'

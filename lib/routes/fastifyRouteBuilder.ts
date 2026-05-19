@@ -8,6 +8,7 @@ import type { FastifyReply, RouteOptions } from 'fastify'
 import type { z } from 'zod'
 import { ZodObject } from 'zod'
 import type { AbstractDualModeController } from '../dualmode/AbstractDualModeController.ts'
+import { isErrorLike } from '../errorUtils.ts'
 import type { AbstractSSEController } from '../sse/AbstractSSEController.ts'
 import type {
   DualModeRouteHandler,
@@ -22,7 +23,6 @@ import {
   extractPathTemplate,
   handleSSEError,
   hasHttpStatusCode,
-  isErrorLike,
 } from './fastifyRouteUtils.ts'
 
 // Re-export for convenience
@@ -473,7 +473,13 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         if (contextResult.isStarted()) {
           const connectionId = contextResult.getConnectionId()
           if (connectionId) {
-            await handleSSEError(contextResult.sseReply, controller, connectionId, err, options?.logger)
+            await handleSSEError(
+              contextResult.sseReply,
+              controller,
+              connectionId,
+              err,
+              options?.logger,
+            )
           }
           // Re-throw for Fastify's onError hooks (status can't change after headers sent)
           throw err

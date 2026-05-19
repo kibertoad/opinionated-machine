@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { isErrorLike } from '../../routes/fastifyRouteUtils.js'
+import { isErrorLike } from '../../errorUtils.js'
 import type { SSELogger, SSEMessage } from '../sseTypes.js'
 import { InMemoryAdapter } from './adapters/InMemoryAdapter.js'
 import type {

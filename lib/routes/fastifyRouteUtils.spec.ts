@@ -1,12 +1,12 @@
 import { EventEmitter } from 'node:events'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { describe, expect, it, vi } from 'vitest'
+import { isErrorLike } from '../errorUtils.ts'
 import {
   createSSEContext,
   determineMode,
   determineSyncFormat,
   hasHttpStatusCode,
-  isErrorLike,
   type SSEControllerLike,
 } from './fastifyRouteUtils.ts'
 

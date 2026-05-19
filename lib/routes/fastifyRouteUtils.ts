@@ -3,6 +3,7 @@ import type { SSEReplyInterface } from '@fastify/sse'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { z } from 'zod'
 import type { DualModeType } from '../dualmode/dualModeTypes.ts'
+import { isErrorLike } from '../errorUtils.ts'
 import type { SSERoomManager } from '../sse/rooms/SSERoomManager.ts'
 import type { SSERoomOperations } from '../sse/rooms/types.ts'
 import type { SSEEventSchemas, SSEEventSender, SSELogger, SSEMessage } from '../sse/sseTypes.ts'
@@ -86,19 +87,6 @@ export function extractPathTemplate<Params>(
     placeholderParams[key] = `:${key}`
   }
   return pathResolver(placeholderParams as unknown as Params)
-}
-
-/**
- * Check if a value is an Error-like object (cross-realm safe).
- * Uses duck typing instead of instanceof for reliability across realms.
- */
-export function isErrorLike(err: unknown): err is { message: string } {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'message' in err &&
-    typeof (err as { message: unknown }).message === 'string'
-  )
 }
 
 /**

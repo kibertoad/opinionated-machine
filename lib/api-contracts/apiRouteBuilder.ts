@@ -17,6 +17,7 @@ import {
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
 import type { z } from 'zod/v4'
+import { isErrorLike } from '../errorUtils.ts'
 import { attachGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
 import type {
   SSEContext,
@@ -27,7 +28,7 @@ import type {
   SyncModeReply,
 } from '../routes/fastifyRouteTypes.ts'
 import type { SSEReply } from '../routes/fastifyRouteUtils.ts'
-import { determineMode, hasHttpStatusCode, isErrorLike } from '../routes/fastifyRouteUtils.ts'
+import { determineMode, hasHttpStatusCode } from '../routes/fastifyRouteUtils.ts'
 import type { ApiRouteOptions, InferApiHandler } from './apiHandlerTypes.ts'
 
 // ============================================================================
