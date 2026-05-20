@@ -1,3 +1,4 @@
+import { connect, type Socket } from 'node:net'
 import { Cluster } from 'ioredis'
 import type { SSEMessage } from 'opinionated-machine'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -38,6 +39,39 @@ function makeCluster(): Cluster {
   })
 }
 
+/**
+ * Probe the first cluster node with a short-timeout TCP connect. We use the
+ * result to skip the entire suite gracefully when no cluster is reachable —
+ * CI runs against standalone Redis only, so without this gate the suite
+ * fails at `beforeAll` instead of skipping. Locally, `npm run test:docker`
+ * brings the cluster up before tests run.
+ */
+function probeCluster(host: string, port: number, timeoutMs = 500): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let settled = false
+    let socket: Socket | undefined
+    const finish = (result: boolean) => {
+      if (settled) return
+      settled = true
+      socket?.removeAllListeners()
+      socket?.destroy()
+      resolve(result)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    socket = connect({ host, port })
+    socket.once('connect', () => {
+      clearTimeout(timer)
+      finish(true)
+    })
+    socket.once('error', () => {
+      clearTimeout(timer)
+      finish(false)
+    })
+  })
+}
+
+const CLUSTER_AVAILABLE = await probeCluster(CLUSTER_NODES[0]!.host, CLUSTER_NODES[0]!.port)
+
 async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
   const start = Date.now()
   while (!predicate()) {
@@ -48,7 +82,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<voi
   }
 }
 
-describe('RedisShardedAdapter Integration', () => {
+describe.skipIf(!CLUSTER_AVAILABLE)('RedisShardedAdapter Integration', () => {
   let pubClient1: Cluster
   let subClient1: Cluster
   let pubClient2: Cluster
