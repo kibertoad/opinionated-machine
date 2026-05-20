@@ -396,6 +396,85 @@ describe('RedisAdapter', () => {
       expect(pubClient.publish).toHaveBeenCalledTimes(1)
     })
 
+    it('fires onPresenceError when tracker rejects and still publishes', async () => {
+      const error = new Error('tracker down')
+      const tracker = makeTracker({
+        hasSubscribers: vi.fn().mockRejectedValue(error),
+      })
+      const onPresenceError = vi.fn()
+      const a = new RedisAdapter({
+        pubClient,
+        subClient,
+        nodeId: 'n1',
+        presence: tracker,
+        onPresenceError,
+      })
+
+      await a.publish('room-a', { event: 'test', data: {} })
+
+      expect(onPresenceError).toHaveBeenCalledWith(error, 'room-a')
+      expect(pubClient.publish).toHaveBeenCalledTimes(1)
+    })
+
+    it('fires onPresenceError when tracker throws synchronously', async () => {
+      const error = new Error('sync boom')
+      const tracker: PresenceTracker = {
+        hasSubscribers: vi.fn(() => {
+          throw error
+        }),
+      }
+      const onPresenceError = vi.fn()
+      const a = new RedisAdapter({
+        pubClient,
+        subClient,
+        nodeId: 'n1',
+        presence: tracker,
+        onPresenceError,
+      })
+
+      await a.publish('room-a', { event: 'test', data: {} })
+
+      expect(onPresenceError).toHaveBeenCalledWith(error, 'room-a')
+      expect(pubClient.publish).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not fire onPresenceError when tracker resolves normally', async () => {
+      const tracker = makeTracker({ hasSubscribers: vi.fn().mockResolvedValue(true) })
+      const onPresenceError = vi.fn()
+      const a = new RedisAdapter({
+        pubClient,
+        subClient,
+        nodeId: 'n1',
+        presence: tracker,
+        onPresenceError,
+      })
+
+      await a.publish('room-a', { event: 'test', data: {} })
+
+      expect(onPresenceError).not.toHaveBeenCalled()
+    })
+
+    it('still publishes when onPresenceError itself throws', async () => {
+      const tracker = makeTracker({
+        hasSubscribers: vi.fn().mockRejectedValue(new Error('tracker down')),
+      })
+      const onPresenceError = vi.fn(() => {
+        throw new Error('bad hook')
+      })
+      const a = new RedisAdapter({
+        pubClient,
+        subClient,
+        nodeId: 'n1',
+        presence: tracker,
+        onPresenceError,
+      })
+
+      await a.publish('room-a', { event: 'test', data: {} })
+
+      expect(onPresenceError).toHaveBeenCalledTimes(1)
+      expect(pubClient.publish).toHaveBeenCalledTimes(1)
+    })
+
     it('does not consult tracker when no presence is configured', async () => {
       // Sanity check that the previous-behaviour regression is intact.
       await adapter.publish('room-a', { event: 'test', data: {} })

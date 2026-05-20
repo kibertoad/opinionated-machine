@@ -106,6 +106,19 @@ export type RedisAdapterConfig = {
    * @default undefined (every publish goes out — original behaviour)
    */
   presence?: PresenceTracker
+
+  /**
+   * Optional observability hook fired when `presence.hasSubscribers` throws
+   * or rejects. The adapter still publishes (fail-open) — this hook only
+   * exists so operators can detect a silently-broken tracker (e.g. a stale
+   * connection that returns errors indefinitely).
+   *
+   * Errors thrown from this hook itself are swallowed; it must not break
+   * publishing.
+   *
+   * @default undefined (errors are silently swallowed, fail-open as before)
+   */
+  onPresenceError?: (error: unknown, room: string) => void
 }
 
 /**
@@ -140,6 +153,18 @@ export type RedisShardedAdapterConfig = {
    * @default undefined
    */
   presence?: PresenceTracker
+
+  /**
+   * Optional observability hook fired when `presence.hasSubscribers` throws
+   * or rejects. The adapter still publishes (fail-open) — this hook only
+   * exists so operators can detect a silently-broken tracker.
+   *
+   * Errors thrown from this hook itself are swallowed; it must not break
+   * publishing.
+   *
+   * @default undefined
+   */
+  onPresenceError?: (error: unknown, room: string) => void
 }
 
 /**

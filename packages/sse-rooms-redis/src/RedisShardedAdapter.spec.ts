@@ -219,6 +219,60 @@ describe('RedisShardedAdapter', () => {
       expect(pubClient.spublish).toHaveBeenCalledTimes(1)
     })
 
+    it('fires onPresenceError when the tracker rejects and still publishes', async () => {
+      const error = new Error('boom')
+      const tracker = makeTracker({
+        hasSubscribers: vi.fn().mockRejectedValue(error),
+      })
+      const onPresenceError = vi.fn()
+      const a = new RedisShardedAdapter({
+        pubClient,
+        subClient,
+        presence: tracker,
+        onPresenceError,
+      })
+
+      await a.publish('room-a', { event: 'test', data: {} })
+
+      expect(onPresenceError).toHaveBeenCalledWith(error, 'room-a')
+      expect(pubClient.spublish).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not fire onPresenceError when tracker resolves normally', async () => {
+      const tracker = makeTracker({ hasSubscribers: vi.fn().mockResolvedValue(true) })
+      const onPresenceError = vi.fn()
+      const a = new RedisShardedAdapter({
+        pubClient,
+        subClient,
+        presence: tracker,
+        onPresenceError,
+      })
+
+      await a.publish('room-a', { event: 'test', data: {} })
+
+      expect(onPresenceError).not.toHaveBeenCalled()
+    })
+
+    it('still SPUBLISHes when onPresenceError itself throws', async () => {
+      const tracker = makeTracker({
+        hasSubscribers: vi.fn().mockRejectedValue(new Error('tracker down')),
+      })
+      const onPresenceError = vi.fn(() => {
+        throw new Error('bad hook')
+      })
+      const a = new RedisShardedAdapter({
+        pubClient,
+        subClient,
+        presence: tracker,
+        onPresenceError,
+      })
+
+      await a.publish('room-a', { event: 'test', data: {} })
+
+      expect(onPresenceError).toHaveBeenCalledTimes(1)
+      expect(pubClient.spublish).toHaveBeenCalledTimes(1)
+    })
+
     it('fires notifyLocalSubscribed after SSUBSCRIBE resolves', async () => {
       const tracker = makeTracker()
       const a = new RedisShardedAdapter({ pubClient, subClient, presence: tracker })

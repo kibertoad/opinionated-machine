@@ -270,10 +270,32 @@ Local subscribes pre-warm the tracker's cache to `true` (so the adapter never as
 
 | Scenario | Behaviour |
 |---|---|
-| `hasSubscribers` throws | Adapter publishes anyway (fail-open). |
+| `hasSubscribers` throws | Adapter publishes anyway (fail-open) and fires the optional `onPresenceError` hook. |
 | Tracker says `false` but a remote subscriber appeared moments ago | Publish skipped; one message lost. Bounded by `noSubscribersTtlMs`. |
 | Tracker says `true` but everyone just left | Publish goes through to Redis, which drops it. Same as today's behaviour. |
 | Tracker says `false` for a room with a *local* subscriber | Cannot happen — local subscribes pre-warm the cache to `true`. |
+
+### Observability — `onPresenceError`
+
+Tracker errors are fail-open by design: the adapter never silently *drops* a publish because the tracker failed. But "silent fail-open" also means a tracker whose connection has died (e.g. the `pubClient` it shares with the adapter went into a long reconnect loop) can stay broken indefinitely without anything visible to operators.
+
+Both adapters accept an optional `onPresenceError(error, room)` callback for this case:
+
+```typescript
+const adapter = new RedisAdapter({
+  pubClient,
+  subClient,
+  presence: new NumsubPresenceTracker({ client: pubClient }),
+  onPresenceError: (err, room) => {
+    logger.warn({ err, room }, 'presence tracker failed; publishing anyway')
+    metrics.increment('sse.presence.error')
+  },
+})
+```
+
+- Fires on every `hasSubscribers` rejection or thrown error.
+- Does **not** fire when the tracker returns normally (`true` or `false`).
+- Errors thrown from the hook itself are swallowed — a buggy hook cannot break publishing.
 
 ### Custom Trackers
 

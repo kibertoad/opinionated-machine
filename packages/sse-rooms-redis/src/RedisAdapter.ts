@@ -64,6 +64,7 @@ export class RedisAdapter implements SSERoomAdapter {
   private readonly channelPrefix: string
   private readonly nodeId: string
   private readonly presence?: PresenceTracker
+  private readonly onPresenceError?: (error: unknown, room: string) => void
   private messageHandler?: SSERoomMessageHandler
   private readonly subscribedChannels: Set<string> = new Set()
 
@@ -73,6 +74,7 @@ export class RedisAdapter implements SSERoomAdapter {
     this.channelPrefix = config.channelPrefix ?? 'sse:room:'
     this.nodeId = config.nodeId ?? randomUUID()
     this.presence = config.presence
+    this.onPresenceError = config.onPresenceError
   }
 
   connect(): Promise<void> {
@@ -129,8 +131,18 @@ export class RedisAdapter implements SSERoomAdapter {
         if (!has) {
           return // Fast-path skip: nobody anywhere is subscribed.
         }
-      } catch {
+      } catch (err) {
         // Fail-open: a tracker error must never suppress a real publish.
+        // Surface the error via the optional observability hook so operators
+        // can detect a silently-broken tracker. The hook itself must not
+        // disrupt publishing.
+        if (this.onPresenceError) {
+          try {
+            this.onPresenceError(err, room)
+          } catch {
+            // Hook errors are intentionally swallowed.
+          }
+        }
       }
     }
 

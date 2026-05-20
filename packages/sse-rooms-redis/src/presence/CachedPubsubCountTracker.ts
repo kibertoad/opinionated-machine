@@ -138,10 +138,17 @@ export abstract class CachedPubsubCountTracker implements PresenceTracker {
       const [head, ...rest] = args
       return this.client.call(head as string, ...rest)
     }
-    // node-redis: client.sendCommand(['PUBSUB', 'NUMSUB', 'chan'])
-    // biome-ignore lint/style/noNonNullAssertion: constructor validated one of the two exists
-    // The signature is permissive (returns `any`) so coerce to Promise for the caller.
-    return Promise.resolve(this.client.sendCommand!(args))
+    // node-redis: client.sendCommand(['PUBSUB', 'NUMSUB', 'chan']). The
+    // constructor guarantees one of `call` / `sendCommand` is present, so
+    // reaching here with `sendCommand` undefined is unreachable in practice
+    // — we still guard at runtime to keep the type system happy without a
+    // non-null assertion.
+    const sendCommand = this.client.sendCommand
+    if (typeof sendCommand !== 'function') {
+      throw new Error('Presence tracker client has neither `call` nor `sendCommand`.')
+    }
+    // Signature is permissive (returns `any`) so coerce to Promise for the caller.
+    return Promise.resolve(sendCommand(args))
   }
 
   private setCached(channel: string, result: boolean, now: number): void {
