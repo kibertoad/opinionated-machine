@@ -12,6 +12,7 @@ import {
 import {
   asyncReconnectStreamContract,
   authenticatedStreamContract,
+  bodyForStatusGetContract,
   channelStreamContract,
   chatCompletionContract,
   deferredHeaders404Contract,
@@ -1263,4 +1264,46 @@ export class TestRoomSSEController extends AbstractSSEController<TestRoomContrac
   public get testRoomsEnabled() {
     return this.roomsEnabled
   }
+}
+
+// ============================================================================
+// bodyForStatus Test Controller
+// ============================================================================
+
+/**
+ * Drives the documented-error paths described by `bodyForStatusGetContract`.
+ * The `mode` query selects which response shape to emit, mirroring the
+ * contract's `responseBodySchemasByStatusCode` declarations so `injectSSE`
+ * tests can assert that `bodyForStatus(status)` returns the typed payload.
+ */
+export type TestBodyForStatusContracts = {
+  bodyForStatus: typeof bodyForStatusGetContract
+}
+
+export class TestBodyForStatusController extends AbstractSSEController<TestBodyForStatusContracts> {
+  public static contracts = {
+    bodyForStatus: bodyForStatusGetContract,
+  } as const
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestBodyForStatusContracts> {
+    return {
+      bodyForStatus: this.handleStream,
+    }
+  }
+
+  private handleStream = buildHandler(bodyForStatusGetContract, {
+    sse: async (request, sse) => {
+      const mode = request.query.mode ?? 'ok'
+
+      if (mode === 'unauthorized') {
+        return sse.respond(401, { message: 'Unauthorized' })
+      }
+      if (mode === 'missing') {
+        return sse.respond(404, { resourceId: 'item-42' })
+      }
+
+      const session = sse.start('autoClose')
+      await session.send('message', { text: 'ok' })
+    },
+  })
 }

@@ -1511,6 +1511,37 @@ it('streams chat completions', async () => {
 })
 ```
 
+#### Asserting documented error responses with `bodyForStatus`
+
+When a contract declares `responseBodySchemasByStatusCode` for non-2xx responses (the shape the handler emits via `sse.respond(status, body)` before streaming starts), `injectSSE` / `injectPayloadSSE` expose a typed `bodyForStatus(status)` accessor:
+
+```ts
+import { injectSSE } from 'opinionated-machine'
+
+const streamContract = buildSseContract({
+  method: 'get',
+  pathResolver: () => '/api/stream',
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  responseBodySchemasByStatusCode: {
+    401: z.object({ message: z.string() }),
+    404: z.object({ resourceId: z.string() }),
+  },
+  serverSentEventSchemas: { message: z.object({ text: z.string() }) },
+})
+
+it('returns the documented 401 body when unauthenticated', async () => {
+  const { bodyForStatus } = injectSSE(app, streamContract, {})
+
+  // `body` is typed as `{ message: string }` — the 401 schema.
+  // TS rejects status codes the contract doesn't declare, e.g. bodyForStatus(500).
+  const body = await bodyForStatus(401)
+  expect(body.message).toBe('Unauthorized')
+})
+```
+
+`bodyForStatus(status)` awaits the response, asserts the actual status matches, JSON-parses the body, and runs it through the Zod schema declared for that status. It throws if the status doesn't match, the body isn't valid JSON, or Zod parsing fails. The raw `closed` promise is still exposed for callers that want to read `body: string` directly.
+
 ### SSESessionSpy API
 
 The `connectionSpy` is available when `isTestMode: true` is passed to `asSSEControllerClass`:

@@ -1,7 +1,66 @@
-import type { RoutePathResolver, SSEContractDefinition } from '@lokalise/api-contracts'
+import type {
+  HttpStatusCode,
+  RoutePathResolver,
+  SSEContractDefinition,
+} from '@lokalise/api-contracts'
 import type { z } from 'zod'
 import type { AnyFastifyInstance } from './AnyFastifyInstance.ts'
-import type { InjectPayloadSSEOptions, InjectSSEOptions, InjectSSEResult } from './sseTestTypes.ts'
+import type {
+  DeclaredResponseBody,
+  DeclaredResponseStatus,
+  InjectPayloadSSEOptions,
+  InjectSSEOptions,
+  InjectSSEResult,
+  SSEResponse,
+} from './sseTestTypes.ts'
+
+/** Truncate a long body string for error messages. */
+const BODY_TRUNCATE_LIMIT = 500
+const truncateBody = (body: string): string =>
+  body.length <= BODY_TRUNCATE_LIMIT ? body : `${body.slice(0, BODY_TRUNCATE_LIMIT)}…`
+
+/**
+ * Build a `bodyForStatus` accessor bound to one inject call. The closure
+ * captures the contract's schemas map so the resulting helper knows which
+ * schemas to parse against; at the type level the caller is constrained to
+ * status codes the contract actually declares.
+ */
+function bindBodyForStatus<
+  Schemas extends Partial<Record<HttpStatusCode, z.ZodTypeAny>> | undefined,
+>(
+  contract: { responseBodySchemasByStatusCode?: Schemas },
+  closed: Promise<SSEResponse>,
+): InjectSSEResult<Schemas>['bodyForStatus'] {
+  return (async <Status extends DeclaredResponseStatus<Schemas>>(
+    statusCode: Status,
+  ): Promise<DeclaredResponseBody<Schemas, Status>> => {
+    const res = await closed
+    const expected = statusCode as unknown as number
+    if (res.statusCode !== expected) {
+      throw new Error(
+        `bodyForStatus(${expected}) — actual status ${res.statusCode}, body: ${truncateBody(res.body)}`,
+      )
+    }
+    const schemas = contract.responseBodySchemasByStatusCode as
+      | Partial<Record<HttpStatusCode, z.ZodTypeAny>>
+      | undefined
+    const schema = schemas?.[expected as HttpStatusCode]
+    if (!schema) {
+      throw new Error(
+        `bodyForStatus(${expected}) — no response body schema declared for status ${expected} in contract.responseBodySchemasByStatusCode`,
+      )
+    }
+    let parsedJson: unknown
+    try {
+      parsedJson = JSON.parse(res.body)
+    } catch (err) {
+      throw new Error(
+        `bodyForStatus(${expected}) — body is not valid JSON: ${(err as Error).message}; body: ${truncateBody(res.body)}`,
+      )
+    }
+    return schema.parse(parsedJson) as DeclaredResponseBody<Schemas, Status>
+  }) as InjectSSEResult<Schemas>['bodyForStatus']
+}
 
 /**
  * Contract type with pathResolver.
@@ -67,19 +126,21 @@ function buildUrl<Contract extends ContractWithPathResolver>(
  * ```
  */
 export function injectSSE<
+  Schemas extends Partial<Record<HttpStatusCode, z.ZodTypeAny>> | undefined,
   Contract extends SSEContractDefinition<
     'get',
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,
     undefined,
-    Record<string, z.ZodTypeAny>
+    Record<string, z.ZodTypeAny>,
+    Schemas
   >,
 >(
   app: AnyFastifyInstance,
   contract: Contract,
   options?: InjectSSEOptions<Contract>,
-): InjectSSEResult {
+): InjectSSEResult<Schemas> {
   const url = buildUrl(
     contract,
     options?.params as Record<string, string> | undefined,
@@ -102,7 +163,7 @@ export function injectSSE<
       body: res.body,
     }))
 
-  return { closed }
+  return { closed, bodyForStatus: bindBodyForStatus(contract, closed) }
 }
 
 /**
@@ -133,19 +194,21 @@ export function injectSSE<
  * ```
  */
 export function injectPayloadSSE<
+  Schemas extends Partial<Record<HttpStatusCode, z.ZodTypeAny>> | undefined,
   Contract extends SSEContractDefinition<
     'post' | 'put' | 'patch',
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,
-    Record<string, z.ZodTypeAny>
+    Record<string, z.ZodTypeAny>,
+    Schemas
   >,
 >(
   app: AnyFastifyInstance,
   contract: Contract,
   options: InjectPayloadSSEOptions<Contract>,
-): InjectSSEResult {
+): InjectSSEResult<Schemas> {
   const url = buildUrl(
     contract,
     options.params as Record<string, string> | undefined,
@@ -169,5 +232,5 @@ export function injectPayloadSSE<
       body: res.body,
     }))
 
-  return { closed }
+  return { closed, bodyForStatus: bindBodyForStatus(contract, closed) }
 }

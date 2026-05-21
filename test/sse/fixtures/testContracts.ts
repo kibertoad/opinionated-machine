@@ -467,6 +467,33 @@ export const sseRespondValidationContract = buildContract({
   },
 })
 
+/**
+ * GET SSE route declaring `responseBodySchemasByStatusCode`. Used to verify
+ * `injectSSE().bodyForStatus(status)` parses the response body against the
+ * contract's per-status schema and returns the typed payload.
+ *
+ * The handler's behavior is driven by the `mode` query string:
+ *   - `mode=ok`         → starts a streaming response and sends one event
+ *   - `mode=unauthorized` → `sse.respond(401, { message })`
+ *   - `mode=missing`    → `sse.respond(404, { resourceId })`
+ */
+export const bodyForStatusGetContract = buildContract({
+  method: 'get',
+  pathResolver: () => '/api/body-for-status/stream',
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({
+    mode: z.enum(['ok', 'unauthorized', 'missing']).optional(),
+  }),
+  requestHeaderSchema: z.object({}),
+  responseBodySchemasByStatusCode: {
+    401: z.object({ message: z.string() }),
+    404: z.object({ resourceId: z.string() }),
+  },
+  serverSentEventSchemas: {
+    message: z.object({ text: z.string() }),
+  },
+})
+
 // ============================================================================
 // Room Test Contracts
 // ============================================================================

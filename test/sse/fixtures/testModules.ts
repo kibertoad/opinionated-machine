@@ -14,6 +14,7 @@ import {
   StreamController,
   TestAsyncReconnectSSEController,
   TestAuthSSEController,
+  TestBodyForStatusController,
   TestChannelSSEController,
   TestDeferredHeaders404Controller,
   TestDeferredHeaders422Controller,
@@ -431,6 +432,28 @@ export class TestGetStreamSSEModule extends AbstractModule<TestGetStreamSSEModul
 // ============================================================================
 // Deferred Headers Test Modules
 // ============================================================================
+
+/**
+ * Module with the bodyForStatus test controller — used by injectSSE tests that
+ * cover the typed `bodyForStatus(status)` accessor.
+ */
+export type TestBodyForStatusModuleDependencies = Record<string, never>
+
+export class TestBodyForStatusModule extends AbstractModule<TestBodyForStatusModuleDependencies> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<TestBodyForStatusModuleDependencies> {
+    return {}
+  }
+
+  override resolveControllers(
+    diOptions: DependencyInjectionOptions,
+  ): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testBodyForStatusController: asSSEControllerClass(TestBodyForStatusController, {
+        diOptions,
+      }),
+    }
+  }
+}
 
 /**
  * Module with deferred headers 404 test controller
