@@ -494,6 +494,29 @@ export const bodyForStatusGetContract = buildContract({
   },
 })
 
+/**
+ * POST SSE counterpart of `bodyForStatusGetContract`. Used to verify
+ * `injectPayloadSSE().bodyForStatus(status)` — the `mode` is supplied in the
+ * request body instead of the query string.
+ */
+export const bodyForStatusPostContract = buildContract({
+  method: 'post',
+  pathResolver: () => '/api/body-for-status/stream-post',
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({
+    mode: z.enum(['ok', 'unauthorized', 'missing']).optional(),
+  }),
+  responseBodySchemasByStatusCode: {
+    401: z.object({ message: z.string() }),
+    404: z.object({ resourceId: z.string() }),
+  },
+  serverSentEventSchemas: {
+    message: z.object({ text: z.string() }),
+  },
+})
+
 // ============================================================================
 // Room Test Contracts
 // ============================================================================

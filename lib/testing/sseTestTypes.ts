@@ -141,9 +141,16 @@ export type InjectSSEResult<
    * against the contract's schema for that status, and returns the parsed
    * object. Useful for asserting on documented error response shapes.
    *
-   * - Throws if the actual status code doesn't match the expected one.
-   * - Throws if the body isn't valid JSON.
-   * - Throws if the body doesn't match the declared schema (Zod parse).
+   * Intended for non-streaming responses emitted via `sse.respond(status, body)`
+   * before streaming starts (auth failures, validation errors, not-found).
+   * Calling it for a status served by an actual SSE stream fails at the
+   * JSON-parse step, since a stream body is `text/event-stream`, not JSON.
+   *
+   * Throws (with the offending status and a truncated body snippet) if:
+   * - the actual status code doesn't match the expected one;
+   * - the contract declares no schema for that status;
+   * - the body isn't valid JSON;
+   * - the body doesn't match the declared Zod schema.
    *
    * At the type level, `statusCode` is constrained to the keys of the
    * contract's `responseBodySchemasByStatusCode`. Contracts without any

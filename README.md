@@ -1516,6 +1516,8 @@ it('streams chat completions', async () => {
 When a contract declares `responseBodySchemasByStatusCode` for non-2xx responses (the shape the handler emits via `sse.respond(status, body)` before streaming starts), `injectSSE` / `injectPayloadSSE` expose a typed `bodyForStatus(status)` accessor:
 
 ```ts
+import { buildSseContract } from '@lokalise/api-contracts'
+import { z } from 'zod'
 import { injectSSE } from 'opinionated-machine'
 
 const streamContract = buildSseContract({
@@ -1540,7 +1542,7 @@ it('returns the documented 401 body when unauthenticated', async () => {
 })
 ```
 
-`bodyForStatus(status)` awaits the response, asserts the actual status matches, JSON-parses the body, and runs it through the Zod schema declared for that status. It throws if the status doesn't match, the body isn't valid JSON, or Zod parsing fails. The raw `closed` promise is still exposed for callers that want to read `body: string` directly.
+`bodyForStatus(status)` awaits the response, asserts the actual status matches, JSON-parses the body, and runs it through the Zod schema declared for that status. It throws — with the offending status and a truncated body snippet — if the status doesn't match, the contract declares no schema for that status, the body isn't valid JSON, or Zod parsing fails. The raw `closed` promise is still exposed for callers that want to read `body: string` directly.
 
 ### SSESessionSpy API
 
