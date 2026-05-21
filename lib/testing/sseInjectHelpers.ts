@@ -1,7 +1,87 @@
-import type { RoutePathResolver, SSEContractDefinition } from '@lokalise/api-contracts'
+import type {
+  HttpStatusCode,
+  RoutePathResolver,
+  SSEContractDefinition,
+} from '@lokalise/api-contracts'
 import type { z } from 'zod'
 import type { AnyFastifyInstance } from './AnyFastifyInstance.ts'
-import type { InjectPayloadSSEOptions, InjectSSEOptions, InjectSSEResult } from './sseTestTypes.ts'
+import type {
+  DeclaredResponseBody,
+  DeclaredResponseStatus,
+  InjectPayloadSSEOptions,
+  InjectSSEOptions,
+  InjectSSEResult,
+  SSEResponse,
+} from './sseTestTypes.ts'
+
+/** Truncate a long body string for error messages. */
+const BODY_TRUNCATE_LIMIT = 500
+const truncateBody = (body: string): string => {
+  if (body.length <= BODY_TRUNCATE_LIMIT) {
+    return body
+  }
+  // Step back one unit if the cut would split a surrogate pair, so the
+  // snippet never ends in a lone (invalid) surrogate.
+  const lastCode = body.charCodeAt(BODY_TRUNCATE_LIMIT - 1)
+  const end =
+    lastCode >= 0xd800 && lastCode <= 0xdbff ? BODY_TRUNCATE_LIMIT - 1 : BODY_TRUNCATE_LIMIT
+  return `${body.slice(0, end)}…`
+}
+
+/**
+ * Build a `bodyForStatus` accessor bound to one inject call. The closure
+ * captures the contract's schemas map so the resulting helper knows which
+ * schemas to parse against; at the type level the caller is constrained to
+ * status codes the contract actually declares.
+ *
+ * @internal Exported only for unit testing — not part of the public API
+ * (the testing barrel re-exports `injectSSE`/`injectPayloadSSE` by name).
+ */
+export function bindBodyForStatus<
+  Schemas extends Partial<Record<HttpStatusCode, z.ZodTypeAny>> | undefined,
+>(
+  contract: { responseBodySchemasByStatusCode?: Schemas },
+  closed: Promise<SSEResponse>,
+): InjectSSEResult<Schemas>['bodyForStatus'] {
+  // A generic arrow function can't be assigned directly to the generic
+  // method signature, so the whole closure is cast once. Keep this
+  // implementation in sync with `InjectSSEResult['bodyForStatus']`.
+  return (async <Status extends DeclaredResponseStatus<Schemas>>(
+    statusCode: Status,
+  ): Promise<DeclaredResponseBody<Schemas, Status>> => {
+    const res = await closed
+    const expected: number = statusCode
+    if (res.statusCode !== expected) {
+      throw new Error(
+        `bodyForStatus(${expected}) — actual status ${res.statusCode}, body: ${truncateBody(res.body)}`,
+      )
+    }
+    // Widen the generic schemas map to a concrete type so it can be indexed.
+    const schemas: Partial<Record<HttpStatusCode, z.ZodTypeAny>> | undefined =
+      contract.responseBodySchemasByStatusCode
+    const schema = schemas?.[expected as HttpStatusCode]
+    if (!schema) {
+      throw new Error(
+        `bodyForStatus(${expected}) — no response body schema declared for status ${expected} in contract.responseBodySchemasByStatusCode`,
+      )
+    }
+    let parsedJson: unknown
+    try {
+      parsedJson = JSON.parse(res.body)
+    } catch (err) {
+      throw new Error(
+        `bodyForStatus(${expected}) — body is not valid JSON: ${(err as Error).message}; body: ${truncateBody(res.body)}`,
+      )
+    }
+    const parsed = schema.safeParse(parsedJson)
+    if (!parsed.success) {
+      throw new Error(
+        `bodyForStatus(${expected}) — body does not match the declared schema: ${parsed.error.message}; body: ${truncateBody(res.body)}`,
+      )
+    }
+    return parsed.data as DeclaredResponseBody<Schemas, Status>
+  }) as InjectSSEResult<Schemas>['bodyForStatus']
+}
 
 /**
  * Contract type with pathResolver.
@@ -67,19 +147,25 @@ function buildUrl<Contract extends ContractWithPathResolver>(
  * ```
  */
 export function injectSSE<
+  // `Contract` must be the only inferred type parameter: the schemas map is
+  // derived from it via indexed access below. Declaring `Schemas` as its own
+  // parameter leaves it in a non-inferable position (it only appears in
+  // `Contract`'s constraint), so TS would silently widen it to the constraint
+  // and `bodyForStatus` would lose all of its type safety.
   Contract extends SSEContractDefinition<
     'get',
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,
     undefined,
-    Record<string, z.ZodTypeAny>
+    Record<string, z.ZodTypeAny>,
+    Partial<Record<HttpStatusCode, z.ZodTypeAny>> | undefined
   >,
 >(
   app: AnyFastifyInstance,
   contract: Contract,
   options?: InjectSSEOptions<Contract>,
-): InjectSSEResult {
+): InjectSSEResult<Contract['responseBodySchemasByStatusCode']> {
   const url = buildUrl(
     contract,
     options?.params as Record<string, string> | undefined,
@@ -102,7 +188,7 @@ export function injectSSE<
       body: res.body,
     }))
 
-  return { closed }
+  return { closed, bodyForStatus: bindBodyForStatus(contract, closed) }
 }
 
 /**
@@ -133,19 +219,22 @@ export function injectSSE<
  * ```
  */
 export function injectPayloadSSE<
+  // See `injectSSE` above: `Contract` is the only inferred parameter so the
+  // schemas map can be derived from it via indexed access.
   Contract extends SSEContractDefinition<
     'post' | 'put' | 'patch',
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,
     z.ZodTypeAny,
-    Record<string, z.ZodTypeAny>
+    Record<string, z.ZodTypeAny>,
+    Partial<Record<HttpStatusCode, z.ZodTypeAny>> | undefined
   >,
 >(
   app: AnyFastifyInstance,
   contract: Contract,
   options: InjectPayloadSSEOptions<Contract>,
-): InjectSSEResult {
+): InjectSSEResult<Contract['responseBodySchemasByStatusCode']> {
   const url = buildUrl(
     contract,
     options.params as Record<string, string> | undefined,
@@ -169,5 +258,5 @@ export function injectPayloadSSE<
       body: res.body,
     }))
 
-  return { closed }
+  return { closed, bodyForStatus: bindBodyForStatus(contract, closed) }
 }

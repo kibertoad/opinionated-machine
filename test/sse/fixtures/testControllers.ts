@@ -12,6 +12,8 @@ import {
 import {
   asyncReconnectStreamContract,
   authenticatedStreamContract,
+  bodyForStatusGetContract,
+  bodyForStatusPostContract,
   channelStreamContract,
   chatCompletionContract,
   deferredHeaders404Contract,
@@ -1263,4 +1265,69 @@ export class TestRoomSSEController extends AbstractSSEController<TestRoomContrac
   public get testRoomsEnabled() {
     return this.roomsEnabled
   }
+}
+
+// ============================================================================
+// bodyForStatus Test Controller
+// ============================================================================
+
+/**
+ * Drives the documented-error paths described by `bodyForStatusGetContract`
+ * (GET) and `bodyForStatusPostContract` (POST). The `mode` — taken from the
+ * query string for GET and the request body for POST — selects which response
+ * shape to emit, mirroring the contracts' `responseBodySchemasByStatusCode`
+ * declarations so `injectSSE`/`injectPayloadSSE` tests can assert that
+ * `bodyForStatus(status)` returns the typed payload.
+ */
+export type TestBodyForStatusContracts = {
+  bodyForStatus: typeof bodyForStatusGetContract
+  bodyForStatusPost: typeof bodyForStatusPostContract
+}
+
+type BodyForStatusMode = 'ok' | 'unauthorized' | 'missing'
+
+export class TestBodyForStatusController extends AbstractSSEController<TestBodyForStatusContracts> {
+  public static contracts = {
+    bodyForStatus: bodyForStatusGetContract,
+    bodyForStatusPost: bodyForStatusPostContract,
+  } as const
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestBodyForStatusContracts> {
+    return {
+      bodyForStatus: this.handleStream,
+      bodyForStatusPost: this.handlePostStream,
+    }
+  }
+
+  private handleStream = buildHandler(bodyForStatusGetContract, {
+    sse: async (request, sse) => {
+      const mode: BodyForStatusMode = request.query.mode ?? 'ok'
+
+      if (mode === 'unauthorized') {
+        return sse.respond(401, { message: 'Unauthorized' })
+      }
+      if (mode === 'missing') {
+        return sse.respond(404, { resourceId: 'item-42' })
+      }
+
+      const session = sse.start('autoClose')
+      await session.send('message', { text: 'ok' })
+    },
+  })
+
+  private handlePostStream = buildHandler(bodyForStatusPostContract, {
+    sse: async (request, sse) => {
+      const mode: BodyForStatusMode = request.body.mode ?? 'ok'
+
+      if (mode === 'unauthorized') {
+        return sse.respond(401, { message: 'Unauthorized' })
+      }
+      if (mode === 'missing') {
+        return sse.respond(404, { resourceId: 'item-42' })
+      }
+
+      const session = sse.start('autoClose')
+      await session.send('message', { text: 'ok' })
+    },
+  })
 }
