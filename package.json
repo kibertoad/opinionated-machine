@@ -58,7 +58,7 @@
         "@lokalise/tsconfig": "^3.1.0",
         "@vitest/coverage-v8": "^4.0.18",
         "awilix": "^13.0.0",
-        "awilix-manager": "^6.3.0",
+        "awilix-manager": "^7.0.0",
         "fastify": "^5.7.4",
         "fastify-type-provider-zod": "^6.1.0",
         "vitest": "^4.0.18",
