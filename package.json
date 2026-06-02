@@ -36,7 +36,7 @@
         "@fastify/sse": "^0.4.0",
         "fast-querystring": "^1.1.2",
         "fastify-plugin": "^5.0.0",
-        "ts-deepmerge": "^7.0.3"
+        "ts-deepmerge": "^8.0.0"
     },
     "peerDependencies": {
         "@lokalise/api-contracts": ">=6.12.0",
