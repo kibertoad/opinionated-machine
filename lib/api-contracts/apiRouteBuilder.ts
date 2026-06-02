@@ -8,6 +8,7 @@ import {
   hasAnySuccessSseResponse,
   isAnyOfResponses,
   isBlobResponse,
+  isNoBodyResponse,
   isSseResponse,
   isTextResponse,
   mapApiContractToPath,
@@ -76,6 +77,7 @@ function getSchemaForStatusCode(contract: ApiContract, status: number): z.ZodTyp
   if (
     !entry ||
     entry === ContractNoBody ||
+    isNoBodyResponse(entry) ||
     isSseResponse(entry) ||
     isTextResponse(entry) ||
     isBlobResponse(entry)
