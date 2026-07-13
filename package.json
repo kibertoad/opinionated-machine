@@ -26,7 +26,9 @@
         "lint:fix": "biome check --write .",
         "test": "vitest --typecheck",
         "test:ci": "npm run test -- --coverage",
-        "prepublishOnly": "npm run build"
+        "prepublishOnly": "npm run build",
+        "changeset": "changeset",
+        "ci:publish": "changeset publish"
     },
     "repository": {
         "type": "git",
@@ -49,21 +51,22 @@
         "zod": ">=4.1.12"
     },
     "devDependencies": {
-        "@types/node": "^22.19.7",
         "@biomejs/biome": "2.4.4",
+        "@changesets/cli": "^2.31.0",
         "@lokalise/api-contracts": "^6.12.0",
         "@lokalise/biome-config": "^3.1.1",
         "@lokalise/fastify-api-contracts": "^5.3.1",
         "@lokalise/node-core": "^14.7.4",
         "@lokalise/tsconfig": "^3.1.0",
+        "@types/node": "^22.19.7",
         "@vitest/coverage-v8": "^4.0.18",
         "awilix": "^13.0.0",
         "awilix-manager": "^7.0.0",
         "fastify": "^5.7.4",
         "fastify-type-provider-zod": "^7.0.0",
-        "vitest": "^4.0.18",
         "rimraf": "^6.1.2",
         "typescript": "^5.9.3",
+        "vitest": "^4.0.18",
         "zod": "^4.3.6"
     },
     "private": false,
