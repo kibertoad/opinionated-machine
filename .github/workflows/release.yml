@@ -48,7 +48,7 @@ jobs:
       - name: Auto-merge Changesets PR
         if: steps.changesets.outputs.hasChangesets == 'true'
         run: |
-          gh pr merge --squash "$PR_NUMBER"
+          gh pr merge --squash --admin "$PR_NUMBER"
           gh api --method POST /repos/$REPO/dispatches -f 'event_type=release'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
