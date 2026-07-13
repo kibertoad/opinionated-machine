@@ -4,6 +4,7 @@ import type {
   ContractResponseMode,
   InferSseSuccessResponses,
   PayloadApiContract,
+  SSEEventSchemas,
 } from '@lokalise/api-contracts'
 import type { FastifyRequest, RouteOptions } from 'fastify'
 import type { z } from 'zod/v4'
@@ -129,8 +130,20 @@ export type ApiNonSseHandler<Contract extends ApiContract> = (
  */
 export type ApiSseHandler<Contract extends ApiContract> = (
   request: InferApiRequest<Contract>,
-  sse: SSEContext<InferSseSuccessResponses<Contract['responsesByStatusCode']>>,
+  sse: SSEContext<
+    EnsureSseEventSchemas<InferSseSuccessResponses<Contract['responsesByStatusCode']>>
+  >,
 ) => SSEHandlerResult | Promise<SSEHandlerResult>
+
+/**
+ * `InferSseSuccessResponses` resolves to the contract's SSE event schema map, but for a
+ * generic `Contract` the content-map response path can widen it beyond `SSEEventSchemas`.
+ * This narrows it back so it satisfies the `SSEContext` constraint, falling back to the
+ * base `SSEEventSchemas` when the inferred type is not a valid schema map.
+ */
+export type EnsureSseEventSchemas<TEvents> = [TEvents] extends [SSEEventSchemas]
+  ? TEvents
+  : SSEEventSchemas
 
 /**
  * Infer the handler shape based on the contract's response mode:
