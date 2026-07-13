@@ -8,10 +8,13 @@ import {
   hasAnySuccessSseResponse,
   isAnyOfResponses,
   isBlobResponse,
-  isNoBodyResponse,
+  isContentResponseEntry,
+  isSseBody,
   isSseResponse,
   isTextResponse,
   mapApiContractToPath,
+  type ResponseEntry,
+  resolveContractResponse,
   type SseSchemaByEventName,
   SUCCESSFUL_HTTP_STATUS_CODES,
 } from '@lokalise/api-contracts'
@@ -38,7 +41,13 @@ import type { ApiRouteOptions, InferApiHandler } from './apiHandlerTypes.ts'
 
 type ResponseMode = 'non-sse' | 'sse' | 'dual'
 
-function isSuccessResponseDual(value: ApiContractResponse): boolean {
+function isSuccessResponseDual(value: ApiContractResponse | ResponseEntry): boolean {
+  if (isContentResponseEntry(value)) {
+    // A content-map entry offers a non-SSE representation when it allows an empty
+    // body or declares any non-SSE media type descriptor.
+    if (value.allowNoBody || !value.content) return true
+    return Object.values(value.content).some((descriptor) => !isSseBody(descriptor))
+  }
   if (value === ContractNoBody || isTextResponse(value) || isBlobResponse(value)) return true
   if (!isSseResponse(value) && !isAnyOfResponses(value)) return true
   if (isAnyOfResponses(value)) {
@@ -73,34 +82,13 @@ function buildSSERouteConfig<C extends ApiContract>(
 
 function getSchemaForStatusCode(contract: ApiContract, status: number): z.ZodType | null {
   const entry = contract.responsesByStatusCode[status as HttpStatusCode]
+  if (!entry) return null
 
-  if (
-    !entry ||
-    entry === ContractNoBody ||
-    isNoBodyResponse(entry) ||
-    isSseResponse(entry) ||
-    isTextResponse(entry) ||
-    isBlobResponse(entry)
-  ) {
-    return null
-  }
-
-  if (isAnyOfResponses(entry)) {
-    for (const anyResponse of entry.responses) {
-      if (
-        isSseResponse(anyResponse) ||
-        isTextResponse(anyResponse) ||
-        isBlobResponse(anyResponse)
-      ) {
-        continue
-      }
-      return anyResponse
-    }
-
-    return null
-  } else {
-    return entry
-  }
+  // Resolve the JSON representation for this status code, covering both legacy
+  // response entries (bare Zod schema, anyOfResponses, …) and the new content-map
+  // entries. Non-JSON responses (text, blob, SSE, no-body) are not validated here.
+  const resolved = resolveContractResponse(entry, 'application/json', false)
+  return resolved?.kind === 'json' ? resolved.schema : null
 }
 
 function validateApiResponseHeaders(contract: ApiContract, reply: FastifyReply): void {
