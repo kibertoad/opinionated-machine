@@ -141,7 +141,7 @@ export type ApiSseHandler<Contract extends ApiContract> = (
  * This narrows it back so it satisfies the `SSEContext` constraint, falling back to the
  * base `SSEEventSchemas` when the inferred type is not a valid schema map.
  */
-type EnsureSseEventSchemas<TEvents> = [TEvents] extends [SSEEventSchemas]
+export type EnsureSseEventSchemas<TEvents> = [TEvents] extends [SSEEventSchemas]
   ? TEvents
   : SSEEventSchemas
 
