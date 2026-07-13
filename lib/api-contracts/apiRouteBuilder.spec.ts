@@ -1,7 +1,9 @@
 import {
   anyOfResponses,
+  blobBody,
   ContractNoBody,
   defineApiContract,
+  sseBody,
   sseResponse,
 } from '@lokalise/api-contracts'
 import { describe, expect, it, vi } from 'vitest'
@@ -54,6 +56,55 @@ const dualModeContract = defineApiContract({
   requestBodySchema: z.object({ message: z.string() }),
   responsesByStatusCode: {
     200: anyOfResponses([userSchema, sseResponse(sseEventsSchema)]),
+  },
+})
+
+// Content-map response entries (api-contracts >= 6.15) — the new `{ content: {...} }` shape.
+const contentJsonContract = defineApiContract({
+  method: 'get',
+  pathResolver: () => '/content-json',
+  responsesByStatusCode: {
+    200: { content: { 'application/json': userSchema } },
+  },
+})
+
+const contentSseOnlyContract = defineApiContract({
+  method: 'get',
+  pathResolver: () => '/content-stream',
+  responsesByStatusCode: {
+    200: { content: { 'text/event-stream': sseBody(sseEventsSchema) } },
+  },
+})
+
+const contentDualContract = defineApiContract({
+  method: 'post',
+  pathResolver: () => '/content-chat',
+  requestBodySchema: z.object({ message: z.string() }),
+  responsesByStatusCode: {
+    200: {
+      content: { 'application/json': userSchema, 'text/event-stream': sseBody(sseEventsSchema) },
+    },
+  },
+})
+
+const contentBlobDualContract = defineApiContract({
+  method: 'get',
+  pathResolver: () => '/content-blob',
+  responsesByStatusCode: {
+    200: {
+      content: {
+        'application/octet-stream': blobBody(),
+        'text/event-stream': sseBody(sseEventsSchema),
+      },
+    },
+  },
+})
+
+const contentAllowNoBodyContract = defineApiContract({
+  method: 'get',
+  pathResolver: () => '/content-allow-no-body',
+  responsesByStatusCode: {
+    200: { content: { 'text/event-stream': sseBody(sseEventsSchema) }, allowNoBody: true },
   },
 })
 
@@ -273,6 +324,77 @@ describe('buildApiRoute — response schemas', () => {
       expect.objectContaining({
         schema: expect.objectContaining({ response: { 200: userSchema } }),
       }),
+    )
+  })
+})
+
+// ============================================================================
+// buildApiRoute — content-map response entries (api-contracts >= 6.15)
+// ============================================================================
+
+describe('buildApiRoute — content-map response entries', () => {
+  it('treats a JSON-only content entry as non-SSE', () => {
+    const routeOptions = buildApiRoute(contentJsonContract, async () => ({
+      status: 200,
+      body: undefined,
+    }))
+    expect((routeOptions as { sse?: unknown }).sse).toBeUndefined()
+    expect(routeOptions).toEqual(
+      expect.objectContaining({
+        schema: expect.objectContaining({ response: { 200: userSchema } }),
+      }),
+    )
+  })
+
+  it('treats an SSE-only content entry as SSE and omits its response schema', () => {
+    const routeOptions = buildApiRoute(contentSseOnlyContract, (_request, sse) => {
+      sse.start('keepAlive')
+    })
+    expect((routeOptions as { sse?: unknown }).sse).toBe(true)
+    expect(routeOptions).toEqual(
+      expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
+    )
+  })
+
+  it('treats a JSON + SSE content entry as dual and resolves the JSON response schema', () => {
+    const routeOptions = buildApiRoute(contentDualContract, {
+      nonSse: async () => ({ status: 200, body: undefined }),
+      sse: (_request, sse) => {
+        sse.start('autoClose')
+      },
+    })
+    expect((routeOptions as { sse?: unknown }).sse).toBe(true)
+    expect(routeOptions).toEqual(
+      expect.objectContaining({
+        schema: expect.objectContaining({ response: { 200: userSchema } }),
+      }),
+    )
+  })
+
+  it('treats a blob + SSE content entry as dual (non-JSON, non-SSE descriptor counts)', () => {
+    const routeOptions = buildApiRoute(contentBlobDualContract, {
+      nonSse: async () => ({ status: 200, body: undefined }),
+      sse: (_request, sse) => {
+        sse.start('autoClose')
+      },
+    })
+    expect((routeOptions as { sse?: unknown }).sse).toBe(true)
+    // No JSON media type is declared, so no response schema is registered.
+    expect(routeOptions).toEqual(
+      expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
+    )
+  })
+
+  it('treats an allowNoBody content entry as dual', () => {
+    const routeOptions = buildApiRoute(contentAllowNoBodyContract, {
+      nonSse: async () => ({ status: 200, body: undefined }),
+      sse: (_request, sse) => {
+        sse.start('autoClose')
+      },
+    })
+    expect((routeOptions as { sse?: unknown }).sse).toBe(true)
+    expect(routeOptions).toEqual(
+      expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
     )
   })
 })
