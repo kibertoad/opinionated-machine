@@ -76,9 +76,9 @@ function getSchemaForStatusCode(contract: ApiContract, status: number): z.ZodTyp
   const entry = contract.responsesByStatusCode[status as HttpStatusCode]
   if (!entry) return null
 
-  // Resolve the JSON representation for this status code, covering both legacy
-  // response entries (bare Zod schema, anyOfResponses, …) and the new content-map
-  // entries. Non-JSON responses (text, blob, SSE, no-body) are not validated here.
+  // Resolve the JSON representation for this status code, covering both bare Zod
+  // schemas and content-map entries. Non-JSON responses (blob, SSE, no-body) are
+  // not validated here.
   const resolved = resolveContractResponse(entry, 'application/json', false)
   return resolved?.kind === 'json' ? resolved.schema : null
 }
