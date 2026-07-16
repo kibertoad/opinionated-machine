@@ -1,8 +1,7 @@
 import {
-  anyOfResponses,
   blobBody,
-  ContractNoBody,
   defineApiContract,
+  noBodyResponse,
   sseBody,
   sseResponse,
 } from '@lokalise/api-contracts'
@@ -36,9 +35,10 @@ const createUserContract = defineApiContract({
 
 const deleteUserContract = defineApiContract({
   method: 'delete',
+  summary: 'Delete user',
   pathResolver: (p: { userId: string }) => `/users/${p.userId}`,
   requestPathParamsSchema: z.object({ userId: z.string() }),
-  responsesByStatusCode: { 204: ContractNoBody },
+  responsesByStatusCode: { 204: noBodyResponse() },
 })
 
 const sseEventsSchema = {
@@ -55,10 +55,13 @@ const sseOnlyContract = defineApiContract({
 
 const dualModeContract = defineApiContract({
   method: 'post',
+  summary: 'Dual mode',
   pathResolver: () => '/chat',
   requestBodySchema: z.object({ message: z.string() }),
   responsesByStatusCode: {
-    200: anyOfResponses([userSchema, sseResponse(sseEventsSchema)]),
+    200: {
+      content: { 'application/json': userSchema, 'text/event-stream': sseBody(sseEventsSchema) },
+    },
   },
 })
 
@@ -151,7 +154,7 @@ describe('buildApiRoute — non-SSE', () => {
     )
   })
 
-  it('excludes body schema for ContractNoBody', () => {
+  it('excludes body schema for contracts without a request body', () => {
     const routeOptions = buildApiRoute(deleteUserContract, async () => ({
       status: 204,
       body: undefined,
@@ -295,7 +298,7 @@ describe('buildApiRoute — response schemas', () => {
     )
   })
 
-  it('omits ContractNoBody status codes from response schemas', () => {
+  it('omits noBodyResponse status codes from response schemas', () => {
     const routeOptions = buildApiRoute(deleteUserContract, async () => ({
       status: 204,
       body: undefined,
@@ -314,12 +317,18 @@ describe('buildApiRoute — response schemas', () => {
     )
   })
 
-  it('picks the JSON schema from anyOfResponses even when SSE variant comes first', () => {
+  it('picks the JSON schema from a content map even when the SSE media type comes first', () => {
     const sseFirstContract = defineApiContract({
       method: 'get',
+      summary: 'Sse first',
       pathResolver: () => '/mixed',
       responsesByStatusCode: {
-        200: anyOfResponses([sseResponse(sseEventsSchema), userSchema]),
+        200: {
+          content: {
+            'text/event-stream': sseBody(sseEventsSchema),
+            'application/json': userSchema,
+          },
+        },
       },
     })
     const routeOptions = buildApiRoute(sseFirstContract, {

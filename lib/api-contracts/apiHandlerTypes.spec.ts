@@ -1,5 +1,4 @@
 import {
-  anyOfResponses,
   defineApiContract,
   type SSEEventSchemas,
   sseBody,
