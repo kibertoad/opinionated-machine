@@ -21,19 +21,25 @@ import type {
 // Status+Body Response
 // ============================================================================
 
+type NonSseBodyDescriptor<D> = D extends { _tag: 'SseBody' }
+  ? never
+  : D extends { _tag: 'BlobBody' }
+    ? Blob
+    : D extends z.ZodType
+      ? z.output<D>
+      : never
+
 type NonSseBodyEntry<T> = T extends undefined
   ? never
-  : T extends { _tag: 'SseResponse' }
-    ? never
-    : T extends { _tag: 'BlobResponse' }
-      ? Blob
-      : T extends { _tag: 'TextResponse' }
-        ? string
-        : T extends { _tag: 'AnyOfResponses'; responses: Array<infer R> }
-          ? NonSseBodyEntry<R>
-          : T extends z.ZodType
-            ? z.output<T>
-            : undefined
+  : T extends { content: infer TContent }
+    ?
+        | NonSseBodyDescriptor<TContent[keyof TContent]>
+        | (T extends { allowNoBody: true } ? undefined : never)
+    : T extends { allowNoBody: true }
+      ? undefined
+      : T extends z.ZodType
+        ? z.output<T>
+        : undefined
 
 /**
  * Discriminated union of `{ status, body }` pairs for all non-SSE responses in a contract.

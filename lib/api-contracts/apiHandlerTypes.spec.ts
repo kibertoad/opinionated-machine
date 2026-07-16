@@ -51,7 +51,9 @@ describe('EnsureSseEventSchemas', () => {
 // ============================================================================
 
 describe('ApiSseHandler — SSEContext inference', () => {
-  it('extracts event schemas from a legacy sseResponse entry', () => {
+  it('falls back to untyped event schemas for an sseResponse() entry', () => {
+    // sseResponse() returns a plain BodyContentResponseEntry, erasing the event schema
+    // types — use an sseBody content map when typed event senders are needed.
     const contract = defineApiContract({
       method: 'get',
       summary: 'Contract',
@@ -59,7 +61,7 @@ describe('ApiSseHandler — SSEContext inference', () => {
       responsesByStatusCode: { 200: sseResponse(eventSchemas) },
     })
     expectTypeOf<Parameters<ApiSseHandler<typeof contract>>[1]>().toEqualTypeOf<
-      SSEContext<EventSchemas>
+      SSEContext<SSEEventSchemas>
     >()
   })
 
@@ -116,7 +118,9 @@ describe('ApiSseHandler — SSEContext inference', () => {
       method: 'get',
       summary: 'Contract',
       pathResolver: () => '/stream',
-      responsesByStatusCode: { 200: sseResponse(eventSchemas) },
+      responsesByStatusCode: {
+        200: { content: { 'text/event-stream': sseBody(eventSchemas) } },
+      },
     })
 
     const handler: ApiSseHandler<typeof contract> = (_request, sse) => {

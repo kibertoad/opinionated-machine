@@ -50,7 +50,7 @@ const sseOnlyContract = defineApiContract({
   method: 'get',
   summary: 'Sse only',
   pathResolver: () => '/stream',
-  responsesByStatusCode: { 200: sseResponse(sseEventsSchema) },
+  responsesByStatusCode: { 200: { content: { 'text/event-stream': sseBody(sseEventsSchema) } } },
 })
 
 const dualModeContract = defineApiContract({
@@ -353,7 +353,7 @@ describe('buildApiRoute — content-map response entries', () => {
   it('treats a JSON-only content entry as non-SSE', () => {
     const routeOptions = buildApiRoute(contentJsonContract, async () => ({
       status: 200,
-      body: undefined,
+      body: { id: '1', name: 'Alice' },
     }))
     expect((routeOptions as { sse?: unknown }).sse).toBeUndefined()
     expect(routeOptions).toEqual(
@@ -375,7 +375,7 @@ describe('buildApiRoute — content-map response entries', () => {
 
   it('treats a JSON + SSE content entry as dual and resolves the JSON response schema', () => {
     const routeOptions = buildApiRoute(contentDualContract, {
-      nonSse: async () => ({ status: 200, body: undefined }),
+      nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
       sse: (_request, sse) => {
         sse.start('autoClose')
       },
@@ -390,7 +390,7 @@ describe('buildApiRoute — content-map response entries', () => {
 
   it('treats a blob + SSE content entry as dual (non-JSON, non-SSE descriptor counts)', () => {
     const routeOptions = buildApiRoute(contentBlobDualContract, {
-      nonSse: async () => ({ status: 200, body: undefined }),
+      nonSse: async () => ({ status: 200, body: new Blob(['binary']) }),
       sse: (_request, sse) => {
         sse.start('autoClose')
       },
