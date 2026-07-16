@@ -1,5 +1,4 @@
 import {
-  anyOfResponses,
   defineApiContract,
   type SSEEventSchemas,
   sseBody,
@@ -52,20 +51,24 @@ describe('EnsureSseEventSchemas', () => {
 // ============================================================================
 
 describe('ApiSseHandler — SSEContext inference', () => {
-  it('extracts event schemas from a legacy sseResponse entry', () => {
+  it('falls back to untyped event schemas for an sseResponse() entry', () => {
+    // sseResponse() returns a plain BodyContentResponseEntry, erasing the event schema
+    // types — use an sseBody content map when typed event senders are needed.
     const contract = defineApiContract({
       method: 'get',
+      summary: 'Contract',
       pathResolver: () => '/stream',
       responsesByStatusCode: { 200: sseResponse(eventSchemas) },
     })
     expectTypeOf<Parameters<ApiSseHandler<typeof contract>>[1]>().toEqualTypeOf<
-      SSEContext<EventSchemas>
+      SSEContext<SSEEventSchemas>
     >()
   })
 
   it('extracts event schemas from a content-map sseBody entry', () => {
     const contract = defineApiContract({
       method: 'get',
+      summary: 'Contract',
       pathResolver: () => '/content-stream',
       responsesByStatusCode: {
         200: { content: { 'text/event-stream': sseBody(eventSchemas) } },
@@ -79,6 +82,7 @@ describe('ApiSseHandler — SSEContext inference', () => {
   it('extracts event schemas from a content-map entry that also carries JSON (dual)', () => {
     const contract = defineApiContract({
       method: 'post',
+      summary: 'Contract',
       pathResolver: () => '/content-chat',
       requestBodySchema: z.object({ message: z.string() }),
       responsesByStatusCode: {
@@ -92,13 +96,16 @@ describe('ApiSseHandler — SSEContext inference', () => {
     >()
   })
 
-  it('extracts event schemas nested inside anyOfResponses', () => {
+  it('extracts event schemas when the SSE media type is listed first (dual)', () => {
     const contract = defineApiContract({
       method: 'post',
+      summary: 'Contract',
       pathResolver: () => '/mixed',
       requestBodySchema: z.object({ message: z.string() }),
       responsesByStatusCode: {
-        200: anyOfResponses([userSchema, sseResponse(eventSchemas)]),
+        200: {
+          content: { 'text/event-stream': sseBody(eventSchemas), 'application/json': userSchema },
+        },
       },
     })
     expectTypeOf<Parameters<ApiSseHandler<typeof contract>>[1]>().toEqualTypeOf<
@@ -109,8 +116,11 @@ describe('ApiSseHandler — SSEContext inference', () => {
   it('gives the handler a fully typed session sender', () => {
     const contract = defineApiContract({
       method: 'get',
+      summary: 'Contract',
       pathResolver: () => '/stream',
-      responsesByStatusCode: { 200: sseResponse(eventSchemas) },
+      responsesByStatusCode: {
+        200: { content: { 'text/event-stream': sseBody(eventSchemas) } },
+      },
     })
 
     const handler: ApiSseHandler<typeof contract> = (_request, sse) => {

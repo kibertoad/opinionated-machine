@@ -28,17 +28,18 @@ The response mode is **inferred automatically** from the contract's `responsesBy
 
 Use `defineApiContract` from `@lokalise/api-contracts`. The response mode is determined by the values in `responsesByStatusCode`:
 
-- **Non-SSE** — all success responses are plain Zod schemas or `ContractNoBody`
-- **SSE-only** — all success responses are `sseResponse(...)`
-- **Dual** — success responses include both `sseResponse(...)` and non-SSE schemas (via `anyOfResponses`)
+- **Non-SSE** — all success responses are plain Zod schemas, `noBodyResponse()`, or content maps without an SSE media type
+- **SSE-only** — all success responses are content maps whose only media type is `sseBody(...)`
+- **Dual** — success responses are content maps declaring both `sseBody(...)` and a non-SSE media type
 
 ```ts
-import { defineApiContract, sseResponse, anyOfResponses, ContractNoBody } from '@lokalise/api-contracts'
+import { defineApiContract, noBodyResponse, sseBody } from '@lokalise/api-contracts'
 import { z } from 'zod/v4'
 
 // Non-SSE (sync JSON)
 const getUserContract = defineApiContract({
   method: 'get',
+  summary: 'Get user',
   pathResolver: (p: { userId: string }) => `/users/${p.userId}`,
   requestPathParamsSchema: z.object({ userId: z.string() }),
   responsesByStatusCode: {
@@ -49,36 +50,50 @@ const getUserContract = defineApiContract({
 // SSE-only
 const streamUpdatesContract = defineApiContract({
   method: 'get',
+  summary: 'Stream updates',
   pathResolver: () => '/updates/stream',
   responsesByStatusCode: {
-    200: sseResponse({
-      update: z.object({ value: z.number() }),
-      done: z.object({ total: z.number() }),
-    }),
+    200: {
+      content: {
+        'text/event-stream': sseBody({
+          update: z.object({ value: z.number() }),
+          done: z.object({ total: z.number() }),
+        }),
+      },
+    },
   },
 })
 
 // Dual-mode (branches on Accept header)
 const chatContract = defineApiContract({
   method: 'post',
+  summary: 'Chat',
   pathResolver: () => '/chat',
   requestBodySchema: z.object({ message: z.string() }),
   responsesByStatusCode: {
-    200: anyOfResponses([
-      z.object({ reply: z.string() }),
-      sseResponse({ chunk: z.object({ delta: z.string() }), done: z.object({}) }),
-    ]),
+    200: {
+      content: {
+        'application/json': z.object({ reply: z.string() }),
+        'text/event-stream': sseBody({
+          chunk: z.object({ delta: z.string() }),
+          done: z.object({}),
+        }),
+      },
+    },
   },
 })
 
 // No-body response
 const deleteUserContract = defineApiContract({
   method: 'delete',
+  summary: 'Delete user',
   pathResolver: (p: { userId: string }) => `/users/${p.userId}`,
   requestPathParamsSchema: z.object({ userId: z.string() }),
-  responsesByStatusCode: { 204: ContractNoBody },
+  responsesByStatusCode: { 204: noBodyResponse() },
 })
 ```
+
+> **Note:** prefer `sseBody(...)` content maps over the `sseResponse(...)` helper — `sseResponse` erases the event schema types, so handlers lose the typed `session.send(...)` inference.
 
 ## Response Modes
 
@@ -86,8 +101,8 @@ const deleteUserContract = defineApiContract({
 
 | Mode | Contract shape | Handler type |
 |------|---------------|--------------|
-| **non-sse** | All success responses are plain schemas / `ContractNoBody` | `(request, reply) => { status, body }` |
-| **sse** | All success responses are `sseResponse(...)` | `(request, sse) => void` |
+| **non-sse** | All success responses are plain schemas / `noBodyResponse()` | `(request, reply) => { status, body }` |
+| **sse** | All success responses are `sseBody(...)`-only content maps | `(request, sse) => void` |
 | **dual** | Mix of SSE and non-SSE success responses | Object `{ nonSse, sse }` |
 
 TypeScript enforces the correct shape — passing `{ nonSse, sse }` to a non-dual contract is a compile error.

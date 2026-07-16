@@ -6,12 +6,8 @@ import {
   getSseSchemaByEventName,
   type HttpStatusCode,
   hasAnySuccessSseResponse,
-  isAnyOfResponses,
-  isBlobResponse,
   isContentResponseEntry,
   isSseBody,
-  isSseResponse,
-  isTextResponse,
   mapApiContractToPath,
   type ResponseEntry,
   resolveContractResponse,
@@ -48,12 +44,8 @@ function isSuccessResponseDual(value: ApiContractResponse | ResponseEntry): bool
     if (value.allowNoBody || !value.content) return true
     return Object.values(value.content).some((descriptor) => !isSseBody(descriptor))
   }
-  if (value === ContractNoBody || isTextResponse(value) || isBlobResponse(value)) return true
-  if (!isSseResponse(value) && !isAnyOfResponses(value)) return true
-  if (isAnyOfResponses(value)) {
-    return value.responses.some((response: ApiContractResponse) => !isSseResponse(response))
-  }
-  return false
+  // A bare Zod schema is a JSON response, which always has a non-SSE representation.
+  return true
 }
 
 function getContractResponseMode(contract: ApiContract): ResponseMode {
@@ -84,9 +76,9 @@ function getSchemaForStatusCode(contract: ApiContract, status: number): z.ZodTyp
   const entry = contract.responsesByStatusCode[status as HttpStatusCode]
   if (!entry) return null
 
-  // Resolve the JSON representation for this status code, covering both legacy
-  // response entries (bare Zod schema, anyOfResponses, …) and the new content-map
-  // entries. Non-JSON responses (text, blob, SSE, no-body) are not validated here.
+  // Resolve the JSON representation for this status code, covering both bare Zod
+  // schemas and content-map entries. Non-JSON responses (blob, SSE, no-body) are
+  // not validated here.
   const resolved = resolveContractResponse(entry, 'application/json', false)
   return resolved?.kind === 'json' ? resolved.schema : null
 }
