@@ -1,4 +1,4 @@
-import { anyOfResponses, defineApiContract, sseResponse } from '@lokalise/api-contracts'
+import { defineApiContract, sseBody, sseResponse } from '@lokalise/api-contracts'
 import { z } from 'zod/v4'
 
 export const apiSseKeepAliveContract = defineApiContract({
@@ -127,6 +127,11 @@ export const apiFeedContract = defineApiContract({
   pathResolver: () => '/api/feed',
   requestQuerySchema: z.object({ limit: z.coerce.number().int().optional() }),
   responsesByStatusCode: {
-    200: anyOfResponses([userSchema, sseResponse(feedEventSchemas)]),
+    200: {
+      content: {
+        'application/json': userSchema,
+        'text/event-stream': sseBody(feedEventSchemas),
+      },
+    },
   },
 })

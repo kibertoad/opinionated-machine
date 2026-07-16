@@ -94,14 +94,16 @@ describe('ApiSseHandler — SSEContext inference', () => {
     >()
   })
 
-  it('extracts event schemas nested inside anyOfResponses', () => {
+  it('extracts event schemas when the SSE media type is listed first (dual)', () => {
     const contract = defineApiContract({
       method: 'post',
       summary: 'Contract',
       pathResolver: () => '/mixed',
       requestBodySchema: z.object({ message: z.string() }),
       responsesByStatusCode: {
-        200: anyOfResponses([userSchema, sseResponse(eventSchemas)]),
+        200: {
+          content: { 'text/event-stream': sseBody(eventSchemas), 'application/json': userSchema },
+        },
       },
     })
     expectTypeOf<Parameters<ApiSseHandler<typeof contract>>[1]>().toEqualTypeOf<
