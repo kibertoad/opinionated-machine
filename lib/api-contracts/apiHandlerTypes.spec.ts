@@ -55,6 +55,7 @@ describe('ApiSseHandler — SSEContext inference', () => {
   it('extracts event schemas from a legacy sseResponse entry', () => {
     const contract = defineApiContract({
       method: 'get',
+      summary: 'Contract',
       pathResolver: () => '/stream',
       responsesByStatusCode: { 200: sseResponse(eventSchemas) },
     })
@@ -66,6 +67,7 @@ describe('ApiSseHandler — SSEContext inference', () => {
   it('extracts event schemas from a content-map sseBody entry', () => {
     const contract = defineApiContract({
       method: 'get',
+      summary: 'Contract',
       pathResolver: () => '/content-stream',
       responsesByStatusCode: {
         200: { content: { 'text/event-stream': sseBody(eventSchemas) } },
@@ -79,6 +81,7 @@ describe('ApiSseHandler — SSEContext inference', () => {
   it('extracts event schemas from a content-map entry that also carries JSON (dual)', () => {
     const contract = defineApiContract({
       method: 'post',
+      summary: 'Contract',
       pathResolver: () => '/content-chat',
       requestBodySchema: z.object({ message: z.string() }),
       responsesByStatusCode: {
@@ -95,6 +98,7 @@ describe('ApiSseHandler — SSEContext inference', () => {
   it('extracts event schemas nested inside anyOfResponses', () => {
     const contract = defineApiContract({
       method: 'post',
+      summary: 'Contract',
       pathResolver: () => '/mixed',
       requestBodySchema: z.object({ message: z.string() }),
       responsesByStatusCode: {
@@ -109,6 +113,7 @@ describe('ApiSseHandler — SSEContext inference', () => {
   it('gives the handler a fully typed session sender', () => {
     const contract = defineApiContract({
       method: 'get',
+      summary: 'Contract',
       pathResolver: () => '/stream',
       responsesByStatusCode: { 200: sseResponse(eventSchemas) },
     })

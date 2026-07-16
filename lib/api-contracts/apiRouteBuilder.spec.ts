@@ -20,6 +20,7 @@ const userSchema = z.object({ id: z.string(), name: z.string() })
 
 const getUserContract = defineApiContract({
   method: 'get',
+  summary: 'Get user',
   pathResolver: (p: { userId: string }) => `/users/${p.userId}`,
   requestPathParamsSchema: z.object({ userId: z.string() }),
   responsesByStatusCode: { 200: userSchema },
@@ -27,6 +28,7 @@ const getUserContract = defineApiContract({
 
 const createUserContract = defineApiContract({
   method: 'post',
+  summary: 'Create user',
   pathResolver: () => '/users',
   requestBodySchema: z.object({ name: z.string() }),
   responsesByStatusCode: { 201: userSchema },
@@ -46,6 +48,7 @@ const sseEventsSchema = {
 
 const sseOnlyContract = defineApiContract({
   method: 'get',
+  summary: 'Sse only',
   pathResolver: () => '/stream',
   responsesByStatusCode: { 200: sseResponse(sseEventsSchema) },
 })
@@ -62,6 +65,7 @@ const dualModeContract = defineApiContract({
 // Content-map response entries (api-contracts >= 6.15) — the new `{ content: {...} }` shape.
 const contentJsonContract = defineApiContract({
   method: 'get',
+  summary: 'Content json',
   pathResolver: () => '/content-json',
   responsesByStatusCode: {
     200: { content: { 'application/json': userSchema } },
@@ -70,6 +74,7 @@ const contentJsonContract = defineApiContract({
 
 const contentSseOnlyContract = defineApiContract({
   method: 'get',
+  summary: 'Content sse only',
   pathResolver: () => '/content-stream',
   responsesByStatusCode: {
     200: { content: { 'text/event-stream': sseBody(sseEventsSchema) } },
@@ -78,6 +83,7 @@ const contentSseOnlyContract = defineApiContract({
 
 const contentDualContract = defineApiContract({
   method: 'post',
+  summary: 'Content dual',
   pathResolver: () => '/content-chat',
   requestBodySchema: z.object({ message: z.string() }),
   responsesByStatusCode: {
@@ -89,6 +95,7 @@ const contentDualContract = defineApiContract({
 
 const contentBlobDualContract = defineApiContract({
   method: 'get',
+  summary: 'Content blob dual',
   pathResolver: () => '/content-blob',
   responsesByStatusCode: {
     200: {
@@ -102,6 +109,7 @@ const contentBlobDualContract = defineApiContract({
 
 const contentAllowNoBodyContract = defineApiContract({
   method: 'get',
+  summary: 'Content allow no body',
   pathResolver: () => '/content-allow-no-body',
   responsesByStatusCode: {
     200: { content: { 'text/event-stream': sseBody(sseEventsSchema) }, allowNoBody: true },
@@ -420,6 +428,7 @@ describe('buildApiRoute — no path params', () => {
 
 const headerAwareContract = defineApiContract({
   method: 'get',
+  summary: 'Header aware',
   pathResolver: (p: { tenantId: string }) => `/tenants/${p.tenantId}`,
   requestPathParamsSchema: z.object({ tenantId: z.string() }),
   requestHeaderSchema: z.object({ 'x-trace-id': z.string() }),
@@ -428,6 +437,7 @@ const headerAwareContract = defineApiContract({
 
 const queryAwareContract = defineApiContract({
   method: 'get',
+  summary: 'Query aware',
   pathResolver: () => '/search',
   requestQuerySchema: z.object({ q: z.string(), limit: z.coerce.number().optional() }),
   responsesByStatusCode: { 200: userSchema },

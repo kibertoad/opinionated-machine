@@ -124,6 +124,7 @@ describe('buildGatewayManifestFrom', () => {
   it('reads inline gatewayMetadata passed via buildApiRoute options', () => {
     const apiGetUserContract = defineApiContract({
       method: 'get',
+      summary: 'Api get user',
       pathResolver: (p: { userId: string }) => `/api/users/${p.userId}`,
       requestPathParamsSchema: z.object({ userId: z.string() }),
       requestHeaderSchema: z.object({ 'x-trace-id': z.string() }),
@@ -131,6 +132,7 @@ describe('buildGatewayManifestFrom', () => {
     })
     const apiCreateUserContract = defineApiContract({
       method: 'post',
+      summary: 'Api create user',
       pathResolver: () => '/api/users',
       requestBodySchema: z.object({ name: z.string() }),
       responsesByStatusCode: { 201: z.object({ id: z.string() }) },
