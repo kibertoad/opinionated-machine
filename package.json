@@ -62,7 +62,7 @@
         "fastify": "^5.7.4",
         "fastify-type-provider-zod": "^7.0.0",
         "rimraf": "^6.1.2",
-        "typescript": "^5.9.3",
+        "typescript": "^7.0.2",
         "vitest": "^4.0.18",
         "zod": "^4.3.6"
     },
