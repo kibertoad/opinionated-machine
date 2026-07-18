@@ -48,7 +48,7 @@
         "zod": ">=4.1.12"
     },
     "devDependencies": {
-        "@biomejs/biome": "2.4.4",
+        "@biomejs/biome": "2.5.3",
         "@changesets/cli": "^2.31.0",
         "@lokalise/api-contracts": "^7.0.0",
         "@lokalise/biome-config": "^3.1.1",
