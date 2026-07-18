@@ -15,7 +15,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20.x, 22.x, 24.x]
+        node-version: [22.x, 24.x]
 
     steps:
       - name: Checkout Repository
@@ -23,23 +23,27 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
+
       - name: Setup Node ${{ matrix.node-version }}
         uses: actions/setup-node@v7
         with:
           always-auth: false
           node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
       - name: Run Tests
-        run: npm run test:ci
+        run: pnpm run test:ci
 
       - name: Run Linting
-        run: npm run lint
+        run: pnpm run lint
 
   automerge:
     needs: build

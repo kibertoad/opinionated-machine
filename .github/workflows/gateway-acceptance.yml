@@ -36,19 +36,21 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+      - uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
       - uses: actions/setup-node@v7
         with:
           node-version: 24.x
-      - name: Install root dependencies
-        run: npm install
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
         working-directory: .
       - name: Build root package
-        run: npm run build
+        run: pnpm run build
         working-directory: .
       - name: Run unit tests
-        run: npm test
+        run: pnpm test
       - name: Run acceptance tests (docker compose)
-        run: npm run test:acceptance
+        run: pnpm run test:acceptance
 
   krakend:
     runs-on: ubuntu-latest
@@ -59,19 +61,21 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+      - uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
       - uses: actions/setup-node@v7
         with:
           node-version: 24.x
-      - name: Install root dependencies
-        run: npm install
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
         working-directory: .
       - name: Build root package
-        run: npm run build
+        run: pnpm run build
         working-directory: .
       - name: Run unit tests
-        run: npm test
+        run: pnpm test
       - name: Run acceptance tests (docker compose)
-        run: npm run test:acceptance
+        run: pnpm run test:acceptance
 
   kong:
     runs-on: ubuntu-latest
@@ -82,16 +86,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+      - uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
       - uses: actions/setup-node@v7
         with:
           node-version: 24.x
-      - name: Install root dependencies
-        run: npm install
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
         working-directory: .
       - name: Build root package
-        run: npm run build
+        run: pnpm run build
         working-directory: .
       - name: Run unit tests
-        run: npm test
+        run: pnpm test
       - name: Run acceptance tests (docker compose)
-        run: npm run test:acceptance
+        run: pnpm run test:acceptance
