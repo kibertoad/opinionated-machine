@@ -32,7 +32,7 @@
         "url": "git+https://github.com/kibertoad/opinionated-machine.git"
     },
     "dependencies": {
-        "@fastify/sse": "^0.4.0",
+        "@fastify/sse": "^0.5.0",
         "fast-querystring": "^1.1.2",
         "fastify-plugin": "^6.0.0",
         "ts-deepmerge": "^8.0.0"
