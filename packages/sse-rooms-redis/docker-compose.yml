@@ -11,3 +11,37 @@ services:
       timeout: 3s
       retries: 30
     command: redis-server --appendonly yes
+
+  # Multi-node Redis Cluster used by RedisShardedAdapter integration tests.
+  # Provides 3 masters + 3 replicas on ports 7000-7005, with cluster-bus
+  # ports 17000-17005. The grokzen image bootstraps the cluster automatically
+  # on first start.
+  #
+  # Tests assume the cluster is reachable on 127.0.0.1:7000.
+  redis-cluster:
+    image: grokzen/redis-cluster:7.2.4
+    ports:
+      - '7000:7000'
+      - '7001:7001'
+      - '7002:7002'
+      - '7003:7003'
+      - '7004:7004'
+      - '7005:7005'
+      - '17000:17000'
+      - '17001:17001'
+      - '17002:17002'
+      - '17003:17003'
+      - '17004:17004'
+      - '17005:17005'
+    environment:
+      - 'IP=0.0.0.0'
+      - 'INITIAL_PORT=7000'
+      - 'MASTERS=3'
+      - 'SLAVES_PER_MASTER=1'
+      - 'STANDALONE=false'
+      - 'SENTINEL=false'
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-p', '7000', 'cluster', 'info']
+      interval: 2s
+      timeout: 3s
+      retries: 30
