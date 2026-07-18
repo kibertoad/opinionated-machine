@@ -25,8 +25,8 @@
         "acceptance:render": "node acceptance/render-config.mjs",
         "acceptance:up": "docker compose up -d --wait",
         "acceptance:down": "docker compose down -v",
-        "test:acceptance": "npm run build && npm run acceptance:render && npm run acceptance:up && vitest run -c vitest.acceptance.config.ts; ec=$?; npm run acceptance:down; exit $ec",
-        "prepublishOnly": "npm run build"
+        "test:acceptance": "pnpm run build && pnpm run acceptance:render && pnpm run acceptance:up && vitest run -c vitest.acceptance.config.ts; ec=$?; pnpm run acceptance:down; exit $ec",
+        "prepublishOnly": "pnpm run build"
     },
     "repository": {
         "type": "git",
@@ -44,7 +44,7 @@
         "@lokalise/biome-config": "^3.1.1",
         "@lokalise/tsconfig": "^3.1.0",
         "@types/node": "^22.19.7",
-        "opinionated-machine": "^7.0.0",
+        "opinionated-machine": "workspace:*",
         "rimraf": "^6.1.2",
         "typescript": "^5.9.3",
         "vitest": "^4.0.18"

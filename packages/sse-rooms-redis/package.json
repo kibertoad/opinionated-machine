@@ -24,8 +24,8 @@
         "test:watch": "vitest",
         "docker:up": "docker compose up -d --wait",
         "docker:down": "docker compose down",
-        "test:docker": "npm run docker:up && npm run test; npm run docker:down",
-        "prepublishOnly": "npm run build"
+        "test:docker": "pnpm run docker:up && pnpm run test; pnpm run docker:down",
+        "prepublishOnly": "pnpm run build"
     },
     "repository": {
         "type": "git",
@@ -41,7 +41,7 @@
         "@lokalise/tsconfig": "^3.1.0",
         "@types/node": "^22.19.7",
         "ioredis": "^5.9.2",
-        "opinionated-machine": "^7.0.0",
+        "opinionated-machine": "workspace:*",
         "rimraf": "^6.1.2",
         "typescript": "^5.9.3",
         "vitest": "^4.0.18"
