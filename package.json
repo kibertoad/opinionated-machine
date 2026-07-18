@@ -54,7 +54,7 @@
         "@lokalise/biome-config": "^3.1.1",
         "@lokalise/fastify-api-contracts": "^5.4.1",
         "@lokalise/node-core": "^14.7.4",
-        "@lokalise/tsconfig": "^3.1.0",
+        "@lokalise/tsconfig": "^5.0.0",
         "@types/node": "^22.19.7",
         "@vitest/coverage-v8": "^4.0.18",
         "awilix": "^13.0.0",
