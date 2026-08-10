@@ -98,6 +98,13 @@ export type SSEHttpConnectResult = {
 export class SSEHttpClient {
   /** The fetch Response object. Available immediately after connect() returns. */
   readonly response: Response
+  /**
+   * Optional hook invoked with every decoded raw text chunk as it arrives —
+   * including comment frames (e.g. `: heartbeat`) that the SSE parser drops.
+   * Useful for asserting heartbeat delivery or tracking byte-level liveness.
+   * Only fires while the stream is being consumed via events()/collectEvents().
+   */
+  onRawChunk?: (chunk: string) => void
   private readonly abortController: AbortController
   private readonly reader: ReadableStreamDefaultReader<Uint8Array>
   private readonly decoder = new TextDecoder()
@@ -240,7 +247,9 @@ export class SSEHttpClient {
         break
       }
 
-      this.buffer += this.decoder.decode(readResult.value, { stream: true })
+      const chunk = this.decoder.decode(readResult.value, { stream: true })
+      this.onRawChunk?.(chunk)
+      this.buffer += chunk
       const parseResult = parseSSEBuffer(this.buffer)
       this.buffer = parseResult.remaining
 

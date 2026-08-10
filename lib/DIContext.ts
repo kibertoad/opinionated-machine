@@ -6,7 +6,6 @@ import type { RouteType } from '@lokalise/fastify-api-contracts'
 import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance, RouteOptions } from 'fastify'
-import { merge } from 'ts-deepmerge'
 import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
 import type { AbstractApiController } from './api-contracts/index.ts'
@@ -24,6 +23,8 @@ import {
   type RegisterDualModeRoutesOptions,
   type RegisterSSERoutesOptions,
 } from './routes/index.js'
+import { SSE_ROUTE_CONFIG_KEY, type SSERouteRuntimeConfig } from './routes/sseHeartbeat.js'
+import { mergeSSERouteField } from './routes/sseRouteConfig.js'
 import type { AbstractSSEController } from './sse/AbstractSSEController.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
@@ -225,7 +226,11 @@ export class DIContext<
    * like `@opinionated-machine/gateway-envoy` or
    * `@opinionated-machine/gateway-krakend` to produce a config.
    *
-   * SSE and dual-mode controllers are not included in v1.
+   * SSE and dual-mode routes declared through `AbstractApiController` are
+   * always included and carry a `streaming: 'sse' | 'dual'` marker. Routes
+   * from legacy `AbstractSSEController` / `AbstractDualModeController`
+   * controllers are included only when `includeStreamingControllers: true`
+   * is passed (off by default so existing manifests don't silently grow).
    *
    * @example
    * ```ts
@@ -250,6 +255,19 @@ export class DIContext<
       // biome-ignore lint/suspicious/noExplicitAny: any api controller works here
       const controller: AbstractApiController<any> = this.diContainer.resolve(name)
       collected.push({ name, kind: 'api', controller })
+    }
+
+    if (options.includeStreamingControllers) {
+      for (const name of this.sseControllerNames) {
+        // biome-ignore lint/suspicious/noExplicitAny: any SSE controller works here
+        const controller: AbstractSSEController<any> = this.diContainer.resolve(name)
+        collected.push({ name, kind: 'sse-legacy', controller })
+      }
+      for (const name of this.dualModeControllerNames) {
+        // biome-ignore lint/suspicious/noExplicitAny: any dual-mode controller works here
+        const controller: AbstractDualModeController<any> = this.diContainer.resolve(name)
+        collected.push({ name, kind: 'dualmode-legacy', controller })
+      }
     }
 
     return buildGatewayManifestFrom(collected, options)
@@ -361,46 +379,51 @@ export class DIContext<
     route: RouteOptions,
     options?: RegisterDualModeRoutesOptions,
   ): void {
-    if (options?.preHandler) {
-      this.applyPreHandlers(route, options.preHandler)
-    }
-    if (options?.rateLimit) {
-      this.applyRateLimit(route, options.rateLimit)
-    }
-    // Apply SSE-specific options (heartbeatInterval, serializer) for SSE mode
-    if (options?.heartbeatInterval !== undefined || options?.serializer !== undefined) {
-      // biome-ignore lint/suspicious/noExplicitAny: config types vary by plugins
-      const routeWithConfig = route as RouteOptions & { config?: any }
-      routeWithConfig.config = merge(routeWithConfig.config || {}, {
-        sse: {
-          ...(options.heartbeatInterval !== undefined && {
-            heartbeatInterval: options.heartbeatInterval,
-          }),
-          ...(options.serializer !== undefined && { serializer: options.serializer }),
-        },
-      })
-    }
+    this.applyStreamRouteOptions(route, options)
   }
 
   private applySSERouteOptions(route: RouteOptions, options?: RegisterSSERoutesOptions): void {
+    this.applyStreamRouteOptions(route, options)
+  }
+
+  /**
+   * Apply registration-time options to an SSE/dual-mode route before app.route().
+   *
+   * The serializer is merged into the route's `sse` field (honored by
+   * @fastify/sse per route); a heartbeat interval disables the plugin's own
+   * heartbeat on the `sse` field and is stashed under
+   * `route.config[SSE_ROUTE_CONFIG_KEY]` where the framework heartbeat reads
+   * it at request time. Route-level options (buildHandler) take precedence.
+   */
+  private applyStreamRouteOptions(
+    route: RouteOptions,
+    options?: RegisterSSERoutesOptions | RegisterDualModeRoutesOptions,
+  ): void {
     if (options?.preHandler) {
       this.applyPreHandlers(route, options.preHandler)
     }
     if (options?.rateLimit) {
       this.applyRateLimit(route, options.rateLimit)
     }
-    // Apply SSE-specific options (heartbeatInterval, serializer)
-    if (options?.heartbeatInterval !== undefined || options?.serializer !== undefined) {
-      // biome-ignore lint/suspicious/noExplicitAny: config types vary by plugins
-      const routeWithConfig = route as RouteOptions & { config?: any }
-      routeWithConfig.config = merge(routeWithConfig.config || {}, {
-        sse: {
-          ...(options.heartbeatInterval !== undefined && {
-            heartbeatInterval: options.heartbeatInterval,
-          }),
-          ...(options.serializer !== undefined && { serializer: options.serializer }),
-        },
-      })
+    if (options?.heartbeatInterval === undefined && options?.serializer === undefined) {
+      return
+    }
+
+    route.sse = mergeSSERouteField(route.sse, {
+      serializer: options.serializer,
+      disablePluginHeartbeat: options.heartbeatInterval !== undefined,
+    })
+
+    if (options.heartbeatInterval !== undefined) {
+      if (!route.config) {
+        route.config = {} as NonNullable<RouteOptions['config']>
+      }
+      const config = route.config as unknown as Record<string, unknown>
+      const existing = config[SSE_ROUTE_CONFIG_KEY] as SSERouteRuntimeConfig | undefined
+      config[SSE_ROUTE_CONFIG_KEY] = {
+        ...existing,
+        heartbeatInterval: options.heartbeatInterval,
+      } satisfies SSERouteRuntimeConfig
     }
   }
 

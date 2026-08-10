@@ -92,7 +92,12 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Field Reference](#field-reference)
   - [Generating Gateway Configs](#generating-gateway-configs)
   - [Inspecting the Manifest at Runtime](#inspecting-the-manifest-at-runtime)
+  - [Streaming Routes](#streaming-routes)
   - [What's Not Covered](#whats-not-covered)
+- [Polling Fallback for SSE](#polling-fallback-for-sse)
+  - [Serving the Pattern](#serving-the-pattern)
+  - [Monotonic Event IDs](#monotonic-event-ids)
+  - [Server-Side Guarantees Checklist](#server-side-guarantees-checklist)
 
 ## Basic usage
 
@@ -1097,7 +1102,7 @@ private handleAdminStream = buildHandler(adminStreamContract, {
 | `onReconnect` | Handle Last-Event-ID reconnection, return events to replay |
 | `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
 | `serializer` | Custom serializer for SSE data (e.g., for custom JSON encoding) |
-| `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages |
+| `heartbeatInterval` | Interval in ms for `: heartbeat` keep-alive comments, managed by a framework timer (the @fastify/sse plugin heartbeat is disabled for the route). Set to `0` or `false` to disable heartbeats for the route entirely; leave unset to use the plugin-level default (30s) |
 | `contractMetadataToRouteMapper` | Maps contract metadata to Fastify route options (see below) |
 
 **onClose reason parameter:**
@@ -2619,6 +2624,13 @@ await app.ready()
 
 ### Accept Header Routing
 
+Dual-mode routes are registered with @fastify/sse kind `'manual'`, so the
+framework's `determineMode()` is the single Accept negotiator: q-value aware,
+`defaultMode` applies for `*/*` or a missing `Accept` header (including
+`defaultMode: 'sse'`). SSE-only routes use kind `'only'` — a missing header or
+`*/*` streams, and a client that explicitly refuses `text/event-stream`
+(e.g. `Accept: application/json`) receives a clean 406.
+
 The `Accept` header determines response mode:
 
 ```bash
@@ -3077,7 +3089,7 @@ time.
 | Field | Example | Notes |
 | ----- | ------- | ----- |
 | `upstream` | `'users-service'` | Logical cluster name; resolved to a host by the generator |
-| `timeouts` | `{ request: '5s', idle: '60s', connect: '1s' }` | Duration units: `ms` / `s` / `m` / `h` |
+| `timeouts` | `{ request: '5s', idle: '60s', connect: '1s' }` | Duration units: `ms` / `s` / `m` / `h`. `idle` maps to Envoy route `idle_timeout`, joins Kong's loosest-wins `read_timeout`, and raises KrakenD's endpoint `timeout` — declare it on streaming routes to bound liveness (pair with heartbeats) |
 | `retry` | `{ attempts: 2, on: ['5xx', 'connect-failure'], perTryTimeout: '2s' }` | |
 | `rateLimit` | `{ requests: 100, per: '1m', key: 'ip' }` | `key`: `'ip'`, `{ header }`, `{ customHeader }`, `{ query }`, `{ customQuery }` |
 | `cache` | `{ ttl: '60s', methods: ['GET'], vary: ['Accept-Language'] }` | |
@@ -3164,11 +3176,41 @@ const manifest = app.buildGatewayManifest()
 The manifest is rebuilt on every call, so it always reflects the current set
 of registered controllers.
 
+### Streaming Routes
+
+SSE and dual-mode routes need gateway treatment that request-response routes
+must not get: Envoy's defaults (15s route timeout, 5-minute stream idle
+timeout) reset long-lived streams, and buffering proxies hold SSE frames until
+the response completes. Routes built from SSE-capable contracts are therefore
+stamped with a streaming mode, and the manifest carries it as
+`streaming: 'sse' | 'dual'`:
+
+- **Envoy** — streaming routes default to `timeout: 0s` and `idle_timeout: 0s`
+  (declare `timeouts.idle` to reinstate a liveness bound; heartbeats are the
+  intended keep-alive). `EnvoyOptions.streamIdleTimeout` sets the listener-wide
+  HCM `stream_idle_timeout` for everything else. Declaring `timeouts.request`
+  on a streaming route warns — it bounds the stream's total lifetime.
+- **Kong** — streaming routes emit `response_buffering: false` (Kong ≥ 2.3);
+  `timeouts.idle` joins the loosest-wins service `read_timeout`. Streaming
+  routes without a declared idle warn: heartbeats must arrive within the
+  effective `read_timeout` (Kong default 60s) or the stream is reset.
+- **KrakenD** — the endpoint `timeout` uses the looser of `timeouts.request` /
+  `timeouts.idle`; streaming routes with neither warn about KrakenD's 2s
+  default endpoint timeout.
+
+Routes declared through `AbstractApiController` are always included in the
+manifest. Legacy `AbstractSSEController` / `AbstractDualModeController` routes
+are included when you opt in:
+
+```ts
+const manifest = context.buildGatewayManifest({
+  service: 'users-api',
+  includeStreamingControllers: true, // default false — existing manifests don't silently grow
+})
+```
+
 ### What's Not Covered
 
-- **SSE and dual-mode controllers.** Only routes from `AbstractController` and
-  `AbstractApiController` appear in the manifest today. Streaming routes still
-  proxy through every gateway, but they aren't listed.
 - **Fields a particular gateway can't natively express.** They show up in
   `result.warnings` rather than disappearing. Reach for `extensions.<vendor>`
   to hand-write the missing piece on a per-route basis.
@@ -3176,3 +3218,103 @@ of registered controllers.
   gateway runs separately. The generators don't compare deployed gateway
   state against the manifest.
 
+
+## Polling Fallback for SSE
+
+Push channels fail silently: connections die without an error event, proxies
+kill idle streams, a broadcast misses a rebalancing room. When the missed
+notification gates workflow progress ("upload finished"), the user is stuck.
+
+[`@opinionated-machine/sse-fallback`](./packages/sse-fallback/README.md) is a
+browser-safe, zero-dependency client core that makes **polling the correctness
+backbone** and SSE the latency optimization: the client subscribes to the SSE
+branch of a dual-mode route and keeps a deadman timer — when no data event
+arrives within the window, it polls the JSON branch of the same route. A
+version gate reconciles the two channels so app code sees exactly one uniform
+event stream:
+
+```ts
+// Shared contracts module — the binding is the reconciliation declaration
+export const uploadStatusBinding = defineFallbackBinding(uploadStatusContract, {
+  snapshotToEvents: (s) =>
+    s.status === 'completed' ? [{ event: 'uploadFinished', data: { result: s.result } }] : [],
+  version: { ofSnapshot: (s) => s.version },
+  terminalEvents: ['uploadFinished', 'uploadFailed'],
+})
+
+// Client — identical result whether it traveled over SSE, replay, or a poll
+const sub = createResilientSubscription(uploadStatusBinding, { transport, params })
+const { result } = await sub.waitFor('uploadFinished')
+```
+
+See the [package README](./packages/sse-fallback/README.md) for the state
+machine, reconciliation semantics, hydration (initial load + live updates),
+and the transport interface.
+
+### Serving the Pattern
+
+One dual-mode `AbstractApiController` route serves both channels — the sync
+branch answers the fallback polls, the SSE branch joins a room that the domain
+service broadcasts into:
+
+```ts
+readonly routes = {
+  jobStatus: buildApiRoute(jobStatusContract, {
+    // The fallback poll: return the current snapshot with its version
+    nonSse: async (request) => ({ status: 200, body: this.jobs.get(request.params.jobId) }),
+    // The push channel: join the job's room and stay open
+    sse: (request, sse) => {
+      const session = sse.start('keepAlive')
+      session.rooms.join(`job:${request.params.jobId}`)
+    },
+  }, {
+    sseRooms: this.sseRoomBroadcaster,   // enables session.rooms + broadcast delivery
+    heartbeatInterval: 15_000,           // fast client-side stale detection
+  }),
+}
+```
+
+```ts
+// Domain service — broadcast with a monotonic id so clients can order events
+await this.sseRoomBroadcaster.broadcastToRoom(`job:${jobId}`, doneEvent, { result }, {
+  id: String(job.version),
+})
+```
+
+### Monotonic Event IDs
+
+`Last-Event-ID` replay, client-side ordering, and the fallback version gate
+all need event ids a client can ORDER, not just deduplicate. Use
+`createEventIdSequence()` (one sequence per ordering scope — per room, per
+resource):
+
+```ts
+import { compareEventIds, createEventIdSequence } from 'opinionated-machine'
+
+const seq = createEventIdSequence()
+await broadcaster.broadcastToRoom(room, statusEvent, data, { id: seq.next() })
+
+// Ids order lexicographically within an epoch; across epochs (e.g. after a
+// process restart) compareEventIds returns undefined — clients resync via poll
+compareEventIds('e1-000000000001', 'e1-000000000002') // -1
+```
+
+### Server-Side Guarantees Checklist
+
+For a resource to participate in the fallback pattern:
+
+1. **Required** — a monotonic version per resource, present in both the
+   snapshot body and each event, and truthful: a snapshot at version *v*
+   reflects every event ≤ *v* (publish events after commit; read committed
+   state in the poll handler). Snapshots must **subsume** prior events.
+2. **Recommended** — stamp the SSE `id:` with that version; the client's
+   default version extraction and `Last-Event-ID` replay then compose free.
+3. **Recommended** — heartbeats every ~15s (route-level `heartbeatInterval`)
+   so clients detect silently dead connections fast; correctness holds
+   without them (polls bound staleness), detection latency improves with them.
+4. Optional — dense (consecutive) versions enable client gap detection;
+   `onReconnect` replay lets clients skip the post-reconnect poll
+   (`replay: 'trusted'` in the binding).
+5. Gateway — declare `timeouts.idle` on streaming routes (or rely on the
+   streaming-route defaults) so proxies don't reset quiet streams; see
+   [Streaming Routes](#streaming-routes).

@@ -1,5 +1,5 @@
 import type { GatewayManifest, GatewayMetadataValue } from 'opinionated-machine'
-import { toKrakendDuration } from './durations.ts'
+import { toKrakendDuration, toMilliseconds } from './durations.ts'
 
 export type KrakendOptions = {
   /** KrakenD listener port. */
@@ -41,6 +41,18 @@ export function renderKrakendConfig(
       )
     }
 
+    // KrakenD's endpoint timeout bounds the WHOLE request (there is no
+    // separate idle timeout), so the looser of timeouts.request /
+    // timeouts.idle wins. Streaming routes with neither declared get a
+    // warning: KrakenD's default endpoint timeout (2s) kills any long-lived
+    // stream.
+    const endpointTimeout = pickEndpointTimeout(route.metadata)
+    if (route.streaming !== undefined && endpointTimeout === undefined) {
+      warnings.push(
+        `Route "${route.id}": streaming (${route.streaming}) route without timeouts.request/timeouts.idle — KrakenD applies its default endpoint timeout (2s) to the whole response, which kills long-lived SSE streams. Declare a large timeouts.idle to raise it.`,
+      )
+    }
+
     const endpoint: KrakendEndpoint = {
       endpoint: route.path,
       method: route.method,
@@ -48,9 +60,7 @@ export function renderKrakendConfig(
       // KrakenD's request timeout is an endpoint-level field, NOT a
       // `backend/http/client` extra_config — that plugin doesn't have a
       // `timeout` setting and silently ignores it.
-      ...(route.metadata.timeouts?.request
-        ? { timeout: toKrakendDuration(route.metadata.timeouts.request) }
-        : {}),
+      ...(endpointTimeout !== undefined ? { timeout: toKrakendDuration(endpointTimeout) } : {}),
       backend: [
         {
           host: [upstreamHost],
@@ -116,6 +126,19 @@ function collectUnsupportedWarnings(
       `Route "${routeId}": metadata.auth.mTLS is not modelled — terminate mTLS at the listener / reverse proxy in front of KrakenD.`,
     )
   }
+}
+
+/**
+ * Pick the endpoint timeout: the looser of `timeouts.request` and
+ * `timeouts.idle` (KrakenD has a single whole-request timeout).
+ */
+function pickEndpointTimeout(meta: GatewayMetadataValue): string | undefined {
+  const request = meta.timeouts?.request
+  const idle = meta.timeouts?.idle
+  if (request !== undefined && idle !== undefined) {
+    return toMilliseconds(idle) > toMilliseconds(request) ? idle : request
+  }
+  return request ?? idle
 }
 
 function applyRewrite(path: string, rewrite: GatewayMetadataValue['rewrite']): string {

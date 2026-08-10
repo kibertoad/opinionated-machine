@@ -34,6 +34,13 @@ export type EnvoyOptions = {
   /** Optional name for the route_config; defaults to "<service>_routes". */
   routeConfigName?: string
   /**
+   * Optional HCM-level `stream_idle_timeout` (e.g. `'5m'`, `'0s'` to
+   * disable). Envoy's default is 5 minutes. Streaming routes (SSE/dual)
+   * override it per route via `idle_timeout` regardless of this setting;
+   * this knob controls the listener-wide default for everything else.
+   */
+  streamIdleTimeout?: string
+  /**
    * Optional admin listener config. Off by default. When set, Envoy exposes
    * its admin interface (/ready, /stats, /clusters, /config_dump) on the
    * given port — usually 9901 in production deployments.
@@ -97,6 +104,9 @@ export function renderEnvoyConfig(
                     '@type':
                       'type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager',
                     stat_prefix: manifest.service,
+                    ...(options.streamIdleTimeout !== undefined
+                      ? { stream_idle_timeout: toEnvoyDuration(options.streamIdleTimeout) }
+                      : {}),
                     route_config: {
                       name: options.routeConfigName ?? `${manifest.service}_routes`,
                       virtual_hosts: [
@@ -230,12 +240,44 @@ function collectUnsupportedWarnings(
   }
 }
 
-function buildRouteAction(meta: GatewayMetadataValue, upstream: string): EnvoyRouteAction {
+function buildRouteAction(
+  route: GatewayManifestRoute,
+  upstream: string,
+  warnings: string[],
+): EnvoyRouteAction {
+  const meta = route.metadata
+  const streaming = route.streaming !== undefined
+
+  let timeout: string | undefined
+  if (meta.timeouts?.request !== undefined) {
+    timeout = toEnvoyDuration(meta.timeouts.request)
+    if (streaming) {
+      warnings.push(
+        `Route "${route.id}": timeouts.request bounds the TOTAL lifetime of a streaming (${route.streaming}) response — long-lived SSE streams are reset when it elapses. Prefer timeouts.idle for streaming routes.`,
+      )
+    }
+  } else if (streaming) {
+    // Envoy's default route timeout (15s) would reset any stream longer than
+    // that. Disable it for streaming routes; liveness is bounded by
+    // idle_timeout + server heartbeats instead.
+    timeout = '0s'
+  }
+
+  let idleTimeout: string | undefined
+  if (meta.timeouts?.idle !== undefined) {
+    idleTimeout = toEnvoyDuration(meta.timeouts.idle)
+  } else if (streaming) {
+    // Route-level idle_timeout overrides the HCM stream_idle_timeout
+    // (Envoy default: 5m), which would otherwise reset quiet streams.
+    // With no declared timeouts.idle we disable it — heartbeats are the
+    // intended liveness bound; declare timeouts.idle to reinstate one.
+    idleTimeout = '0s'
+  }
+
   return {
     cluster: upstream,
-    ...(meta.timeouts?.request !== undefined
-      ? { timeout: toEnvoyDuration(meta.timeouts.request) }
-      : {}),
+    ...(timeout !== undefined ? { timeout } : {}),
+    ...(idleTimeout !== undefined ? { idle_timeout: idleTimeout } : {}),
     ...(meta.retry ? { retry_policy: buildRetryPolicy(meta.retry) } : {}),
   }
 }
@@ -285,7 +327,7 @@ function buildRoute(
       ...(headerMatchers.length > 0 ? { headers: headerMatchers } : {}),
       ...(queryMatchers.length > 0 ? { query_parameters: queryMatchers } : {}),
     },
-    route: buildRouteAction(meta, meta.upstream),
+    route: buildRouteAction(route, meta.upstream, warnings),
     ...buildRouteHeaderRules(meta),
   }
 
@@ -411,6 +453,7 @@ type EnvoyRetryPolicy = {
 type EnvoyRouteAction = {
   cluster: string
   timeout?: string
+  idle_timeout?: string
   prefix_rewrite?: string
   retry_policy?: EnvoyRetryPolicy
 }

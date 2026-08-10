@@ -12,8 +12,32 @@ exports[`renderKongConfig > matches the JSON snapshot for the fixture manifest 1
       "path": undefined,
       "port": 8081,
       "protocol": "http",
-      "read_timeout": 5000,
+      "read_timeout": 600000,
       "routes": [
+        {
+          "methods": [
+            "GET",
+          ],
+          "name": "jobsController.status",
+          "paths": [
+            "~/jobs/(?<jobId>[^/]+)/status$",
+          ],
+          "preserve_host": false,
+          "response_buffering": false,
+          "strip_path": false,
+        },
+        {
+          "methods": [
+            "GET",
+          ],
+          "name": "notificationsController.stream",
+          "paths": [
+            "/notifications/stream",
+          ],
+          "preserve_host": false,
+          "response_buffering": false,
+          "strip_path": false,
+        },
         {
           "methods": [
             "POST",
@@ -117,8 +141,24 @@ services:
     protocol: http
     host: users
     port: 8081
-    read_timeout: 5000
+    read_timeout: 600000
     routes:
+      - name: jobsController.status
+        methods:
+          - GET
+        paths:
+          - ~/jobs/(?<jobId>[^/]+)/status$
+        strip_path: false
+        preserve_host: false
+        response_buffering: false
+      - name: notificationsController.stream
+        methods:
+          - GET
+        paths:
+          - /notifications/stream
+        strip_path: false
+        preserve_host: false
+        response_buffering: false
       - name: usersController.createItem
         methods:
           - POST

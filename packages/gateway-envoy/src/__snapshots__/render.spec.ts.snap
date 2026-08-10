@@ -165,6 +165,48 @@ exports[`renderEnvoyConfig > matches the JSON snapshot for the fixture manifest 
                               "timeout": "3s",
                             },
                           },
+                          {
+                            "match": {
+                              "headers": [
+                                {
+                                  "name": ":method",
+                                  "string_match": {
+                                    "exact": "GET",
+                                  },
+                                },
+                              ],
+                              "safe_regex": {
+                                "regex": "/notifications/stream",
+                              },
+                            },
+                            "name": "notificationsController.stream",
+                            "route": {
+                              "cluster": "users-service",
+                              "idle_timeout": "0s",
+                              "timeout": "0s",
+                            },
+                          },
+                          {
+                            "match": {
+                              "headers": [
+                                {
+                                  "name": ":method",
+                                  "string_match": {
+                                    "exact": "GET",
+                                  },
+                                },
+                              ],
+                              "safe_regex": {
+                                "regex": "/jobs/[^/]+/status",
+                              },
+                            },
+                            "name": "jobsController.status",
+                            "route": {
+                              "cluster": "users-service",
+                              "idle_timeout": "600s",
+                              "timeout": "0s",
+                            },
+                          },
                         ],
                       },
                     ],
@@ -261,6 +303,30 @@ exports[`renderEnvoyConfig > matches the YAML snapshot for the fixture manifest 
                             timeout: 3s
                           decorator:
                             operation: usersController.deleteItem
+                        - name: notificationsController.stream
+                          match:
+                            safe_regex:
+                              regex: /notifications/stream
+                            headers:
+                              - name: :method
+                                string_match:
+                                  exact: GET
+                          route:
+                            cluster: users-service
+                            timeout: 0s
+                            idle_timeout: 0s
+                        - name: jobsController.status
+                          match:
+                            safe_regex:
+                              regex: /jobs/[^/]+/status
+                            headers:
+                              - name: :method
+                                string_match:
+                                  exact: GET
+                          route:
+                            cluster: users-service
+                            timeout: 0s
+                            idle_timeout: 600s
                 http_filters:
                   - name: envoy.filters.http.router
                     typed_config:

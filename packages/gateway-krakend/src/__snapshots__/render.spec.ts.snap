@@ -73,6 +73,35 @@ exports[`renderKrakendConfig > matches the JSON snapshot for the fixture manifes
       "method": "GET",
       "output_encoding": "no-op",
     },
+    {
+      "backend": [
+        {
+          "encoding": "no-op",
+          "host": [
+            "http://users:8081",
+          ],
+          "url_pattern": "/notifications/stream",
+        },
+      ],
+      "endpoint": "/notifications/stream",
+      "method": "GET",
+      "output_encoding": "no-op",
+    },
+    {
+      "backend": [
+        {
+          "encoding": "no-op",
+          "host": [
+            "http://users:8081",
+          ],
+          "url_pattern": "/jobs/{jobId}/status",
+        },
+      ],
+      "endpoint": "/jobs/{jobId}/status",
+      "method": "GET",
+      "output_encoding": "no-op",
+      "timeout": "10m",
+    },
   ],
   "extra_config": {
     "security/cors": {

@@ -15,6 +15,7 @@ import type {
   SSEStartOptions,
   SSEStreamMessage,
 } from './fastifyRouteTypes.ts'
+import { resolveHeartbeatInterval, startFrameworkHeartbeat } from './sseHeartbeat.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
@@ -62,6 +63,12 @@ export type SSELifecycleOptions<TConnection = SSESession> = {
     lastEventId: string,
   ) => Iterable<SSEMessage> | AsyncIterable<SSEMessage> | void | Promise<void>
   logger?: SSELogger
+  /**
+   * Route-level heartbeat interval in ms (framework-managed timer), or
+   * `0`/`false` to disable heartbeats for this route. When unset, the
+   * registration-time value (route.config) or the plugin default applies.
+   */
+  heartbeatInterval?: number | false
 }
 
 /**
@@ -404,6 +411,17 @@ export function createSSEContext<Events extends SSEEventSchemas>(
   let onCloseCalled = false
   let responseData: { code: number; body: unknown } | undefined
 
+  // Framework-managed per-route heartbeat (plugin heartbeat is disabled via
+  // `heartbeat: false` on the route's `sse` field whenever an interval is set)
+  let stopHeartbeat: (() => void) | undefined
+  const maybeStartHeartbeat = () => {
+    if (stopHeartbeat) return
+    const intervalMs = resolveHeartbeatInterval(options?.heartbeatInterval, request)
+    if (!intervalMs) return
+    stopHeartbeat = startFrameworkHeartbeat(reply, intervalMs)
+    sseReply.sse.onClose(() => stopHeartbeat?.())
+  }
+
   // Helper to call onClose exactly once
   const callOnClose = async (reason: SSECloseReason) => {
     if (onCloseCalled || !connection) return
@@ -474,6 +492,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
         sseReply.sse.sendHeaders()
         reply.raw.flushHeaders()
         headersSent = true
+        maybeStartHeartbeat()
       }
 
       // Handle reconnection with Last-Event-ID
@@ -556,6 +575,7 @@ export function createSSEContext<Events extends SSEEventSchemas>(
       sseReply.sse.sendHeaders()
       reply.raw.flushHeaders()
       headersSent = true
+      maybeStartHeartbeat()
     },
 
     reply,

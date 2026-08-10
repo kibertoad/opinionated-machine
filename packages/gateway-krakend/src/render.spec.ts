@@ -19,6 +19,8 @@ describe('renderKrakendConfig', () => {
       'POST /users',
       'GET /users/{userId}',
       'GET /v2/users',
+      'GET /notifications/stream',
+      'GET /jobs/{jobId}/status',
     ])
   })
 
@@ -52,5 +54,30 @@ describe('renderKrakendConfig', () => {
     const { json } = renderKrakendConfig(fixtureManifest, options)
     const listItems = json.endpoints.find((e) => e.endpoint === '/v2/users')
     expect(listItems?.extra_config?.['qos/http-cache']).toEqual({ ttl: '10s' })
+  })
+})
+
+describe('renderKrakendConfig — streaming routes', () => {
+  const options = { port: 8080, upstreams: { 'users-service': 'http://users:8081' } }
+
+  it('uses the looser of timeouts.request / timeouts.idle as the endpoint timeout', () => {
+    const { json } = renderKrakendConfig(fixtureManifest, options)
+    const status = json.endpoints.find((e) => e.endpoint === '/jobs/{jobId}/status')
+    expect(status?.timeout).toBe('10m')
+  })
+
+  it('warns for streaming routes without any timeout (KrakenD default 2s kills streams)', () => {
+    const { warnings } = renderKrakendConfig(fixtureManifest, options)
+    expect(
+      warnings.some(
+        (w) =>
+          w.includes('notificationsController.stream') && w.includes('default endpoint timeout'),
+      ),
+    ).toBe(true)
+    expect(
+      warnings.some(
+        (w) => w.includes('jobsController.status') && w.includes('default endpoint timeout'),
+      ),
+    ).toBe(false)
   })
 })

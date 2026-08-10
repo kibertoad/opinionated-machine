@@ -22,6 +22,8 @@ describe('renderKongConfig', () => {
     expect(json.services).toHaveLength(1)
     expect(json.services[0]?.name).toBe('users-service')
     expect(json.services[0]?.routes.map((r) => r.name).sort()).toEqual([
+      'jobsController.status',
+      'notificationsController.stream',
       'usersController.createItem',
       'usersController.deleteItem',
       'usersController.getItem',
@@ -83,10 +85,12 @@ describe('renderKongConfig', () => {
 
   it('reads service-level read_timeout from the LOOSEST route timeout in that upstream', () => {
     // Kong CE has no per-route timeout override; using the loosest avoids
-    // silently shortening timeouts on routes that asked for more.
+    // silently shortening timeouts on routes that asked for more. Both
+    // timeouts.request and timeouts.idle participate — Kong's read_timeout
+    // fires between successive reads, so it is the idle bound for streams.
     const { json } = renderKongConfig(fixtureManifest, options)
-    // Loosest among 5s / 2s / (no timeout) is 5s = 5000ms.
-    expect(json.services[0]?.read_timeout).toBe(5000)
+    // Loosest among 5s / 2s / 10m (streaming idle) is 10m = 600000ms.
+    expect(json.services[0]?.read_timeout).toBe(600000)
   })
 
   it('warns when a route asked for a tighter timeout than the service-level one allows', () => {
@@ -133,5 +137,36 @@ describe('renderKongConfig', () => {
       expect(route?.plugins?.some((p) => p.name === 'mtls-auth') ?? false).toBe(false)
       expect(warnings.some((w) => w.includes('auth.mTLS') && w.includes('Enterprise'))).toBe(true)
     })
+  })
+})
+
+describe('renderKongConfig — streaming routes', () => {
+  const options = { upstreams: { 'users-service': { url: 'http://users:8081' } } }
+
+  it('disables response buffering on streaming routes only', () => {
+    const { json } = renderKongConfig(fixtureManifest, options)
+    const routes = Object.fromEntries(json.services[0]?.routes.map((r) => [r.name, r]) ?? [])
+    expect(routes['notificationsController.stream']?.response_buffering).toBe(false)
+    expect(routes['jobsController.status']?.response_buffering).toBe(false)
+    expect('response_buffering' in (routes['usersController.getItem'] ?? {})).toBe(false)
+  })
+
+  it('lets timeouts.idle participate in the loosest-wins read_timeout', () => {
+    const { json } = renderKongConfig(fixtureManifest, options)
+    // 10m idle on the dual streaming route wins over 5s/2s request timeouts.
+    expect(json.services[0]?.read_timeout).toBe(600000)
+  })
+
+  it('warns for streaming routes without timeouts.idle (heartbeats must beat read_timeout)', () => {
+    const { warnings } = renderKongConfig(fixtureManifest, options)
+    expect(
+      warnings.some(
+        (w) => w.includes('notificationsController.stream') && w.includes('heartbeats'),
+      ),
+    ).toBe(true)
+    // The dual route declared timeouts.idle — no warning for it.
+    expect(
+      warnings.some((w) => w.includes('jobsController.status') && w.includes('heartbeats')),
+    ).toBe(false)
   })
 })
