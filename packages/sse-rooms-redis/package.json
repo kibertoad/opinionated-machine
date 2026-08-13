@@ -60,6 +60,7 @@
     "homepage": "https://github.com/kibertoad/opinionated-machine/tree/main/packages/sse-rooms-redis",
     "files": [
         "README.md",
+        "TRACKER.md",
         "LICENSE",
         "dist/*"
     ]

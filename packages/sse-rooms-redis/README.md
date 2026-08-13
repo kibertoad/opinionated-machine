@@ -4,6 +4,15 @@ Redis Pub/Sub adapter for SSE rooms in [opinionated-machine](https://github.com/
 
 This package enables cross-node room broadcasting for SSE connections in multi-server deployments using Redis Pub/Sub.
 
+Two adapters, pick by topology:
+
+| Adapter | Underlying commands | Use with |
+|---|---|---|
+| `RedisAdapter` | `SUBSCRIBE` / `UNSUBSCRIBE` / `PUBLISH` | Standalone Redis, Redis Sentinel, ElastiCache (Cluster Mode Disabled) |
+| `RedisShardedAdapter` | `SSUBSCRIBE` / `SUNSUBSCRIBE` / `SPUBLISH` (Redis 7.0+) | Redis Cluster, Valkey, ElastiCache (Cluster Mode Enabled), ElastiCache Serverless |
+
+Both adapters also accept an optional, opt-in presence tracker that can skip publishes for rooms with no subscribers anywhere — narrow applicability, see [TRACKER.md](./TRACKER.md) before enabling.
+
 ## Installation
 
 ```bash
@@ -144,6 +153,50 @@ Messages are JSON-encoded with the following structure:
   n: string          // Source node ID
 }
 ```
+
+## Sharded Pub/Sub for Redis Cluster
+
+For deployments on Redis Cluster (Redis 7.0+), Valkey, or AWS ElastiCache with Cluster Mode Enabled, use `RedisShardedAdapter` instead of `RedisAdapter`. Sharded pub/sub (`SPUBLISH` / `SSUBSCRIBE`) hashes each channel name to a single slot and confines message propagation to that shard, rather than broadcasting across the entire cluster bus the way classic pub/sub does. For workloads with many sparse channels on a multi-shard cluster this dramatically reduces inter-node traffic — AWS explicitly recommends it for high-throughput pub/sub workloads.
+
+```typescript
+import { Cluster } from 'ioredis'
+import { RedisShardedAdapter } from '@opinionated-machine/sse-rooms-redis'
+
+const nodes = [{ host: 'redis-1', port: 6379 }, { host: 'redis-2', port: 6379 }]
+const pubClient = new Cluster(nodes)
+const subClient = new Cluster(nodes)
+
+const adapter = new RedisShardedAdapter({ pubClient, subClient })
+```
+
+**When to use which adapter:**
+
+| Deployment | Adapter |
+|---|---|
+| Self-hosted single Redis | `RedisAdapter` |
+| Self-hosted Redis Sentinel | `RedisAdapter` |
+| Self-hosted Redis Cluster (>= 7.0) | `RedisShardedAdapter` |
+| Self-hosted Valkey Cluster | `RedisShardedAdapter` |
+| AWS ElastiCache for Redis OSS, Cluster Mode Disabled | `RedisAdapter` |
+| AWS ElastiCache for Redis OSS 7+, Cluster Mode Enabled | `RedisShardedAdapter` |
+| AWS ElastiCache for Valkey, Cluster Mode Disabled | `RedisAdapter` |
+| AWS ElastiCache for Valkey, Cluster Mode Enabled | `RedisShardedAdapter` |
+| AWS ElastiCache Serverless | `RedisShardedAdapter` (it rewrites classic commands to sharded internally — using the sharded adapter avoids the translation overhead) |
+
+If you are unsure: classic pub/sub works everywhere, sharded pub/sub does not. Start with `RedisAdapter` and migrate to `RedisShardedAdapter` if you move to Cluster Mode.
+
+### Sharded Pub/Sub Caveats
+
+- **No pattern subscriptions.** `SSUBSCRIBE` does not support `PSUBSCRIBE` patterns. This adapter never uses patterns, so it is unaffected — but custom subscribers on the same channels cannot use `PSUBSCRIBE` either.
+- **Client must be Cluster-aware.** Pass an `ioredis.Cluster` or `node-redis` `createCluster` client. Standalone clients will not route `SPUBLISH` correctly.
+
+## Presence-Aware Publishing (Optional)
+
+Both adapters accept an optional `presence` config that skips `PUBLISH` / `SPUBLISH` when no node in the cluster has a subscriber. The two bundled trackers query Redis via `PUBSUB NUMSUB` / `PUBSUB SHARDNUMSUB` with cached results.
+
+**Default recommendation: do not enable.** The optimisation is narrow — break-even is roughly 2 publishes per second to the same empty room, below which the NUMSUB query you pay roughly equals the PUBLISH you avoid. Enable only after measuring a workload that clears that bar (heartbeat-style fanouts, bursty rebroadcasts).
+
+See **[TRACKER.md](./TRACKER.md)** for the full picture: break-even analysis, when to use vs not, configuration, failure modes, observability (`onPresenceError`), custom trackers, and design rationale.
 
 ## Pub/Sub vs Streams
 
