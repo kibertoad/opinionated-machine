@@ -457,11 +457,14 @@ export type FastifySSERouteOptions = {
   serializer?: (data: unknown) => string
   /**
    * Heartbeat interval in milliseconds for this route.
-   * Overrides the global heartbeat interval if set.
-   * Set to 0 to disable heartbeats.
-   * @default 30000
+   *
+   * When set to a number, a framework-managed timer writes `: heartbeat`
+   * comment frames at that interval (the @fastify/sse plugin's own heartbeat
+   * is disabled for the route). Set to `0` or `false` to disable heartbeats
+   * for this route entirely. When unset, the plugin-level heartbeat applies
+   * (default 30000 ms, configured when registering @fastify/sse).
    */
-  heartbeatInterval?: number
+  heartbeatInterval?: number | false
 
   /**
    * Maps contract metadata to additional Fastify route options.
@@ -993,10 +996,12 @@ export function buildHandler<
  */
 export type RegisterSSERoutesOptions = {
   /**
-   * Heartbeat interval in milliseconds.
-   * @default 30000
+   * Heartbeat interval in milliseconds, applied to all registered SSE routes
+   * via a framework-managed timer (the @fastify/sse plugin heartbeat is
+   * disabled for those routes). Set to `0` or `false` to disable heartbeats.
+   * Route-level `heartbeatInterval` (buildHandler options) takes precedence.
    */
-  heartbeatInterval?: number
+  heartbeatInterval?: number | false
   /**
    * Custom serializer for SSE message data.
    * @default JSON.stringify
@@ -1029,10 +1034,13 @@ export type RegisterSSERoutesOptions = {
  */
 export type RegisterDualModeRoutesOptions = {
   /**
-   * Heartbeat interval in milliseconds for SSE mode.
-   * @default 30000
+   * Heartbeat interval in milliseconds for SSE mode, applied to all
+   * registered dual-mode routes via a framework-managed timer (the
+   * @fastify/sse plugin heartbeat is disabled for those routes). Set to `0`
+   * or `false` to disable heartbeats. Route-level `heartbeatInterval`
+   * (buildHandler options) takes precedence.
    */
-  heartbeatInterval?: number
+  heartbeatInterval?: number | false
   /**
    * Custom serializer for SSE message data.
    * @default JSON.stringify

@@ -9,12 +9,12 @@ import type { z } from 'zod'
 import { ZodObject } from 'zod'
 import type { AbstractDualModeController } from '../dualmode/AbstractDualModeController.ts'
 import { isErrorLike } from '../errorUtils.ts'
+import { attachRouteStreamingMode } from '../gateway/routeStreaming.ts'
 import type { AbstractSSEController } from '../sse/AbstractSSEController.ts'
 import type {
   DualModeRouteHandler,
   FastifyDualModeHandlerConfig,
   FastifySSEHandlerConfig,
-  FastifySSERouteOptions,
   SSERouteHandler,
 } from './fastifyRouteTypes.ts'
 import {
@@ -24,33 +24,10 @@ import {
   handleSSEError,
   hasHttpStatusCode,
 } from './fastifyRouteUtils.ts'
+import { buildSSERouteField } from './sseRouteConfig.ts'
 
 // Re-export for convenience
 export { extractPathTemplate }
-
-/**
- * Build the SSE config object for route options.
- * Returns true for basic SSE support, or an object with custom serializer/heartbeat.
- */
-function buildSSEConfig(
-  options: FastifySSERouteOptions | undefined,
-): true | { serializer?: (data: unknown) => string; heartbeatInterval?: number } {
-  if (!options?.serializer && options?.heartbeatInterval === undefined) {
-    return true
-  }
-
-  const sseConfig: { serializer?: (data: unknown) => string; heartbeatInterval?: number } = {}
-
-  if (options.serializer) {
-    sseConfig.serializer = options.serializer
-  }
-
-  if (options.heartbeatInterval !== undefined) {
-    sseConfig.heartbeatInterval = options.heartbeatInterval
-  }
-
-  return sseConfig
-}
 
 /**
  * Validate response body against the successResponseBodySchema (for 2xx success responses).
@@ -366,7 +343,9 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
     ...(options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}),
     method: contract.method,
     url,
-    sse: buildSSEConfig(options), // Enable SSE support with optional per-route config
+    // 'manual' kind: the plugin does no Accept negotiation — determineMode()
+    // below is the single negotiator (q-value aware, honors defaultMode).
+    sse: buildSSERouteField('manual', options),
     schema: {
       params: contract.requestPathParamsSchema,
       querystring: contract.requestQuerySchema,
@@ -391,7 +370,7 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
     routeOptions.preHandler = options.preHandler
   }
 
-  return routeOptions
+  return attachRouteStreamingMode(routeOptions, 'dual')
 }
 
 /**
@@ -423,7 +402,9 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
     ...(options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}),
     method: contract.method,
     url,
-    sse: buildSSEConfig(options), // Enable SSE support with optional per-route config
+    // 'only' kind: lenient Accept gate — `*/*` or a missing Accept header
+    // admits SSE; explicit refusal of text/event-stream gets a clean 406.
+    sse: buildSSERouteField('only', options),
     schema: {
       params: contract.requestPathParamsSchema,
       querystring: contract.requestQuerySchema,
@@ -507,7 +488,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
     routeOptions.preHandler = options.preHandler
   }
 
-  return routeOptions
+  return attachRouteStreamingMode(routeOptions, 'sse')
 }
 
 // ============================================================================

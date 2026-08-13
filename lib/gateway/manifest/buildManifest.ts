@@ -2,7 +2,11 @@ import type { RouteOptions } from 'fastify'
 import { merge } from 'ts-deepmerge'
 import type { AbstractController } from '../../AbstractController.ts'
 import type { AbstractApiController } from '../../api-contracts/AbstractApiController.ts'
+import type { AbstractDualModeController } from '../../dualmode/AbstractDualModeController.ts'
+import { buildFastifyRoute } from '../../routes/fastifyRouteBuilder.ts'
+import type { AbstractSSEController } from '../../sse/AbstractSSEController.ts'
 import type { GatewayMetadataValue } from '../gatewayMetadata.ts'
+import { readRouteStreamingMode } from '../routeStreaming.ts'
 import { readGatewayMetadata } from '../withGatewayMetadata.ts'
 import {
   type GatewayManifest,
@@ -18,6 +22,14 @@ export type BuildGatewayManifestOptions = {
   version?: string
   /** Service-wide metadata defaults; merged underneath controller- and route-level metadata. */
   defaults?: GatewayMetadataValue
+  /**
+   * Include routes from legacy `AbstractSSEController` /
+   * `AbstractDualModeController` controllers in the manifest (marked with
+   * `streaming: 'sse' | 'dual'`). Off by default so existing manifests don't
+   * silently gain routes; routes declared through `AbstractApiController` are
+   * always included regardless of this flag.
+   */
+  includeStreamingControllers?: boolean
 }
 
 /**
@@ -37,6 +49,10 @@ type CollectedController =
     }
   // biome-ignore lint/suspicious/noExplicitAny: contract generic erased at the manifest boundary
   | { name: string; kind: 'api'; controller: AbstractApiController<any> }
+  // biome-ignore lint/suspicious/noExplicitAny: contract generic erased at the manifest boundary
+  | { name: string; kind: 'sse-legacy'; controller: AbstractSSEController<any> }
+  // biome-ignore lint/suspicious/noExplicitAny: contract generic erased at the manifest boundary
+  | { name: string; kind: 'dualmode-legacy'; controller: AbstractDualModeController<any> }
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const
 type CanonicalMethod = (typeof HTTP_METHODS)[number]
@@ -69,6 +85,20 @@ function collectRouteEntries(
   if (collected.kind === 'rest') {
     const built = collected.controller.buildRoutes() as Record<string, RouteOptions>
     return Object.entries(built).map(([routeKey, route]) => ({ routeKey, route }))
+  }
+  if (collected.kind === 'sse-legacy' || collected.kind === 'dualmode-legacy') {
+    // Legacy streaming controllers return branded handler containers; build
+    // the Fastify RouteOptions from them (pure construction — no side
+    // effects, no registration) so path/method/streaming can be read.
+    const routeConfigs =
+      collected.kind === 'sse-legacy'
+        ? collected.controller.buildSSERoutes()
+        : collected.controller.buildDualModeRoutes()
+    return Object.entries(routeConfigs).map(([routeKey, routeConfig]) => ({
+      routeKey,
+      // biome-ignore lint/suspicious/noExplicitAny: overload selection erased at the manifest boundary
+      route: buildFastifyRoute(collected.controller as any, routeConfig as any),
+    }))
   }
   // AbstractApiController: routes is a Record — key becomes the routeKey.
   return Object.entries(collected.controller.routes).map(([routeKey, route]) => ({
@@ -117,12 +147,14 @@ export function buildGatewayManifestFrom(
       }
       idOrigin.set(id, origin)
 
+      const streaming = readRouteStreamingMode(route)
       routes.push({
         id,
         method,
         path,
         controller: collected.name,
         routeKey,
+        ...(streaming !== undefined ? { streaming } : {}),
         metadata: merged,
       })
     }

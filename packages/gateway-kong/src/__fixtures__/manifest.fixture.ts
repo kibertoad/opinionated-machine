@@ -51,5 +51,28 @@ export const fixtureManifest: GatewayManifest = {
         circuitBreaker: { maxRequests: 100 },
       },
     },
+    {
+      id: 'notificationsController.stream',
+      method: 'GET',
+      path: '/notifications/stream',
+      controller: 'notificationsController',
+      routeKey: 'stream',
+      streaming: 'sse',
+      metadata: {
+        upstream: 'users-service',
+      },
+    },
+    {
+      id: 'jobsController.status',
+      method: 'GET',
+      path: '/jobs/{jobId}/status',
+      controller: 'jobsController',
+      routeKey: 'status',
+      streaming: 'dual',
+      metadata: {
+        upstream: 'users-service',
+        timeouts: { idle: '10m' },
+      },
+    },
   ],
 }

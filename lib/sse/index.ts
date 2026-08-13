@@ -31,6 +31,12 @@ export {
   type SSEMessage,
 } from './AbstractSSEController.js'
 export { defineEvent, type SSEEventDefinition } from './defineEvent.js'
+export {
+  type CreateEventIdSequenceOptions,
+  compareEventIds,
+  createEventIdSequence,
+  type EventIdSequence,
+} from './eventIds.js'
 // Re-export room types and classes
 export {
   defineRoom,

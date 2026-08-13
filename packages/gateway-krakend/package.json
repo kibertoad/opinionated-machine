@@ -34,7 +34,7 @@
         "directory": "packages/gateway-krakend"
     },
     "peerDependencies": {
-        "opinionated-machine": ">=6.17.0"
+        "opinionated-machine": ">=7.1.0"
     },
     "devDependencies": {
         "@biomejs/biome": "2.4.4",

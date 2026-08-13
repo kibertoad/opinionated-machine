@@ -18,6 +18,7 @@ import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
 import type { z } from 'zod/v4'
 import { isErrorLike } from '../errorUtils.ts'
+import { attachRouteStreamingMode } from '../gateway/routeStreaming.ts'
 import { attachGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
 import type {
   SSEContext,
@@ -29,7 +30,11 @@ import type {
 } from '../routes/fastifyRouteTypes.ts'
 import type { SSEReply } from '../routes/fastifyRouteUtils.ts'
 import { determineMode, hasHttpStatusCode } from '../routes/fastifyRouteUtils.ts'
+import { resolveHeartbeatInterval, startFrameworkHeartbeat } from '../routes/sseHeartbeat.ts'
+import { buildSSERouteField, type SSERouteKind } from '../routes/sseRouteConfig.ts'
+import type { SSERoomOperations } from '../sse/rooms/types.ts'
 import type { ApiRouteOptions, InferApiHandler } from './apiHandlerTypes.ts'
+import { getApiSseConnectionRegistry } from './apiSseConnectionRegistry.ts'
 
 // ============================================================================
 // Internal Helpers — Response Mode
@@ -57,15 +62,14 @@ function getContractResponseMode(contract: ApiContract): ResponseMode {
   return 'sse'
 }
 
-function buildSSERouteConfig<C extends ApiContract>(
+function buildApiSSERouteField<C extends ApiContract>(
+  kind: SSERouteKind,
   options: ApiRouteOptions<C> | undefined,
-): true | { serializer?: (data: unknown) => string; heartbeatInterval?: number } {
-  if (!options?.serializer && options?.heartbeatInterval === undefined) return true
-  const sseConfig: { serializer?: (data: unknown) => string; heartbeatInterval?: number } = {}
-  if (options.serializer) sseConfig.serializer = options.serializer
-  if (options.heartbeatInterval !== undefined)
-    sseConfig.heartbeatInterval = options.heartbeatInterval
-  return sseConfig
+) {
+  return buildSSERouteField(kind, {
+    serializer: options?.serializer,
+    heartbeatInterval: options?.heartbeatInterval,
+  })
 }
 
 // ============================================================================
@@ -168,6 +172,17 @@ function buildApiSSEContext<C extends ApiContract>(
   let responseData: { code: number; body: unknown } | undefined
   const sseReply = reply as SSEReply
 
+  // Framework-managed per-route heartbeat (plugin heartbeat is disabled via
+  // `heartbeat: false` on the route's `sse` field whenever an interval is set)
+  let stopHeartbeat: (() => void) | undefined
+  const maybeStartHeartbeat = () => {
+    if (stopHeartbeat) return
+    const intervalMs = resolveHeartbeatInterval(options?.heartbeatInterval, request)
+    if (!intervalMs) return
+    stopHeartbeat = startFrameworkHeartbeat(reply, intervalMs)
+    sseReply.sse.onClose(() => stopHeartbeat?.())
+  }
+
   const sseContext: SSEContext = {
     start: <Context = unknown>(mode: SSESessionMode, startOptions?: SSEStartOptions<Context>) => {
       started = true
@@ -180,6 +195,7 @@ function buildApiSSEContext<C extends ApiContract>(
       // flushHeaders() forces them onto the wire so the client's fetch() returns.
       sseReply.sse.sendHeaders()
       reply.raw.flushHeaders()
+      maybeStartHeartbeat()
 
       const connectionId = randomUUID()
 
@@ -211,6 +227,43 @@ function buildApiSSEContext<C extends ApiContract>(
         }
       }
 
+      // Wire up rooms when the route opted in via options.sseRooms
+      let rooms: SSERoomOperations = { join: () => {}, leave: () => {} }
+      const broadcaster = options?.sseRooms
+      if (broadcaster) {
+        const registry = getApiSseConnectionRegistry(broadcaster)
+        // Raw send for room broadcasts — returns false (never throws) so a
+        // failed delivery doesn't abort the broadcast fan-out.
+        registry.register(connectionId, async (message) => {
+          try {
+            await sseReply.sse.send({
+              event: message.event,
+              data: message.data,
+              id: message.id,
+              retry: message.retry,
+            })
+            return true
+          } catch {
+            return false
+          }
+        })
+        // Unconditional cleanup, independent of options.onClose
+        sseReply.sse.onClose(() => registry.unregister(connectionId))
+
+        const roomManager = broadcaster.roomManager
+        rooms = {
+          join: (room) => {
+            // Guard against startup races where the stream is already dead:
+            // joining such a session would leave stale room members behind.
+            if (!sseReply.sse.isConnected || reply.raw.destroyed || reply.raw.writableEnded) {
+              return
+            }
+            roomManager.join(connectionId, room)
+          },
+          leave: (room) => roomManager.leave(connectionId, room),
+        }
+      }
+
       const session: SSESession<typeof eventSchemas, Context> = {
         id: connectionId,
         request,
@@ -226,7 +279,7 @@ function buildApiSSEContext<C extends ApiContract>(
             await send(message.event, message.data, { id: message.id, retry: message.retry })
           }
         },
-        rooms: { join: () => {}, leave: () => {} },
+        rooms,
         eventSchemas,
       }
 
@@ -270,6 +323,7 @@ function buildApiSSEContext<C extends ApiContract>(
 
     sendHeaders: () => {
       sseReply.sse.sendHeaders()
+      maybeStartHeartbeat()
     },
 
     reply,
@@ -416,6 +470,7 @@ export function buildApiRoute<Contract extends ApiContract>(
     onClose: _onClose,
     onReconnect: _onReconnect,
     logger: _logger,
+    sseRooms: _sseRooms,
     ...fastifyOptions
   } = options ?? {}
 
@@ -425,8 +480,14 @@ export function buildApiRoute<Contract extends ApiContract>(
   const baseSchema = buildBaseSchema(contract)
   const contractMetadata = contractMetadataToRouteMapper?.(contract.metadata) ?? {}
 
-  const finalize = (route: RouteOptions): RouteOptions =>
-    gatewayMetadata !== undefined ? attachGatewayMetadata(route, gatewayMetadata) : route
+  const finalize = (route: RouteOptions): RouteOptions => {
+    // Mark streaming routes (derived from the contract's response mode) so
+    // gateway generators can apply streaming-appropriate timeouts/buffering.
+    if (mode !== 'non-sse') {
+      attachRouteStreamingMode(route, mode)
+    }
+    return gatewayMetadata !== undefined ? attachGatewayMetadata(route, gatewayMetadata) : route
+  }
 
   if (mode === 'non-sse') {
     // biome-ignore lint/suspicious/noExplicitAny: handler shape validated by InferApiHandler at call site
@@ -450,7 +511,9 @@ export function buildApiRoute<Contract extends ApiContract>(
       ...contractMetadata,
       method: contract.method,
       url,
-      sse: buildSSERouteConfig(options),
+      // 'manual' kind: the plugin does no Accept negotiation — determineMode()
+      // below is the single negotiator (q-value aware, honors defaultMode).
+      sse: buildApiSSERouteField('manual', options),
       schema: baseSchema,
       handler: (request, reply) => {
         const responseMode = determineMode(request.headers.accept, resolvedDefaultMode)
@@ -470,7 +533,9 @@ export function buildApiRoute<Contract extends ApiContract>(
     ...contractMetadata,
     method: contract.method,
     url,
-    sse: buildSSERouteConfig(options),
+    // 'only' kind: lenient Accept gate — `*/*` or a missing Accept header
+    // admits SSE; explicit refusal of text/event-stream gets a clean 406.
+    sse: buildApiSSERouteField('only', options),
     schema: baseSchema,
     handler: async (request, reply) =>
       handleApiSseRoute(sseHandler, eventSchemas, options, request, reply),

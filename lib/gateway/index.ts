@@ -29,4 +29,10 @@ export {
   gatewayManifestSchema,
 } from './manifest/manifestSchema.ts'
 export { normalizePath } from './manifest/pathNormalize.ts'
+export {
+  attachRouteStreamingMode,
+  ROUTE_STREAMING_SYMBOL,
+  type RouteStreamingMode,
+  readRouteStreamingMode,
+} from './routeStreaming.ts'
 export { readGatewayMetadata, withGatewayMetadata } from './withGatewayMetadata.ts'

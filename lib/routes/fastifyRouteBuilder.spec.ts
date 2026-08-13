@@ -106,7 +106,7 @@ describe('buildFastifyRoute', () => {
           querystring: sseGetContract.requestQuerySchema,
           headers: sseGetContract.requestHeaderSchema,
         },
-        sse: true,
+        sse: 'only',
         url: '/api/test/:testGetParam',
       })
     })
@@ -127,7 +127,7 @@ describe('buildFastifyRoute', () => {
           headers: ssePostContract.requestHeaderSchema,
           body: ssePostContract.requestBodySchema,
         },
-        sse: true,
+        sse: 'only',
         url: '/api/test/:testPostParam',
       })
     })
@@ -142,7 +142,7 @@ describe('buildFastifyRoute', () => {
 
       const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ serializer })
+      expect(routeOptions.sse).toEqual({ kind: 'only', serializer })
     })
 
     it('should set sse config with heartbeatInterval when heartbeatInterval is provided', () => {
@@ -154,7 +154,9 @@ describe('buildFastifyRoute', () => {
 
       const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ heartbeatInterval: 5000 })
+      // A route-level interval disables the plugin heartbeat; the framework
+      // timer (started on sse.start()) handles the interval itself.
+      expect(routeOptions.sse).toEqual({ kind: 'only', heartbeat: false })
     })
 
     describe('contractMetadataToRouteMapper', () => {
@@ -208,7 +210,7 @@ describe('buildFastifyRoute', () => {
           querystring: dualModeGetContract.requestQuerySchema,
           headers: dualModeGetContract.requestHeaderSchema,
         },
-        sse: true,
+        sse: 'manual',
         url: '/api/dual/:dualGetParam',
       })
     })
@@ -230,7 +232,7 @@ describe('buildFastifyRoute', () => {
           headers: dualModePostContract.requestHeaderSchema,
           body: dualModePostContract.requestBodySchema,
         },
-        sse: true,
+        sse: 'manual',
         url: '/api/dual/:dualPostParam',
       })
     })
@@ -248,7 +250,7 @@ describe('buildFastifyRoute', () => {
 
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ serializer })
+      expect(routeOptions.sse).toEqual({ kind: 'manual', serializer })
     })
 
     it('should set sse config with heartbeatInterval when heartbeatInterval is provided', () => {
@@ -263,7 +265,9 @@ describe('buildFastifyRoute', () => {
 
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ heartbeatInterval: 5000 })
+      // A route-level interval disables the plugin heartbeat; the framework
+      // timer (started on sse.start()) handles the interval itself.
+      expect(routeOptions.sse).toEqual({ kind: 'manual', heartbeat: false })
     })
 
     describe('contractMetadataToRouteMapper', () => {

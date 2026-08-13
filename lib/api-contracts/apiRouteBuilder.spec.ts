@@ -180,11 +180,11 @@ describe('buildApiRoute — non-SSE', () => {
 // ============================================================================
 
 describe('buildApiRoute — SSE-only', () => {
-  it('produces a route with sse: true', () => {
+  it("produces a route with sse: 'only'", () => {
     const routeOptions = buildApiRoute(sseOnlyContract, (_request, sse) => {
       sse.start('keepAlive')
     })
-    expect((routeOptions as { sse?: unknown }).sse).toBe(true)
+    expect((routeOptions as { sse?: unknown }).sse).toBe('only')
   })
 
   it('produces correct url', () => {
@@ -200,14 +200,14 @@ describe('buildApiRoute — SSE-only', () => {
 // ============================================================================
 
 describe('buildApiRoute — dual-mode', () => {
-  it('produces a route with sse: true', () => {
+  it("produces a route with sse: 'manual' (determineMode owns Accept negotiation)", () => {
     const routeOptions = buildApiRoute(dualModeContract, {
       nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
       sse: (_request, sse) => {
         sse.start('autoClose')
       },
     })
-    expect((routeOptions as { sse?: unknown }).sse).toBe(true)
+    expect((routeOptions as { sse?: unknown }).sse).toBe('manual')
   })
 
   it('produces correct url and method', () => {
@@ -248,7 +248,7 @@ describe('buildApiRoute — SSE config via options', () => {
       },
       { serializer },
     )
-    expect((routeOptions as { sse?: unknown }).sse).toEqual({ serializer })
+    expect((routeOptions as { sse?: unknown }).sse).toEqual({ kind: 'only', serializer })
   })
 
   it('passes heartbeatInterval into sse config', () => {
@@ -259,7 +259,9 @@ describe('buildApiRoute — SSE config via options', () => {
       },
       { heartbeatInterval: 10000 },
     )
-    expect((routeOptions as { sse?: unknown }).sse).toEqual({ heartbeatInterval: 10000 })
+    // A route-level interval disables the plugin heartbeat; the framework
+    // timer (started on sse.start()) handles the interval itself.
+    expect((routeOptions as { sse?: unknown }).sse).toEqual({ kind: 'only', heartbeat: false })
   })
 })
 
@@ -361,7 +363,7 @@ describe('buildApiRoute — content-map response entries', () => {
     const routeOptions = buildApiRoute(contentSseOnlyContract, (_request, sse) => {
       sse.start('keepAlive')
     })
-    expect((routeOptions as { sse?: unknown }).sse).toBe(true)
+    expect((routeOptions as { sse?: unknown }).sse).toBe('only')
     expect(routeOptions).toEqual(
       expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
     )
@@ -374,7 +376,7 @@ describe('buildApiRoute — content-map response entries', () => {
         sse.start('autoClose')
       },
     })
-    expect((routeOptions as { sse?: unknown }).sse).toBe(true)
+    expect((routeOptions as { sse?: unknown }).sse).toBe('manual')
     expect(routeOptions).toEqual(
       expect.objectContaining({
         schema: expect.objectContaining({ response: { 200: userSchema } }),
@@ -389,7 +391,7 @@ describe('buildApiRoute — content-map response entries', () => {
         sse.start('autoClose')
       },
     })
-    expect((routeOptions as { sse?: unknown }).sse).toBe(true)
+    expect((routeOptions as { sse?: unknown }).sse).toBe('manual')
     // No JSON media type is declared, so no response schema is registered.
     expect(routeOptions).toEqual(
       expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
@@ -403,7 +405,7 @@ describe('buildApiRoute — content-map response entries', () => {
         sse.start('autoClose')
       },
     })
-    expect((routeOptions as { sse?: unknown }).sse).toBe(true)
+    expect((routeOptions as { sse?: unknown }).sse).toBe('manual')
     expect(routeOptions).toEqual(
       expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
     )

@@ -14,3 +14,17 @@ export function toKrakendDuration(input: string): string {
   }
   return input
 }
+
+const UNIT_MS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }
+
+/**
+ * Convert a universal `Duration` string to milliseconds, for comparing
+ * durations (e.g. picking the looser of `timeouts.request` / `timeouts.idle`).
+ */
+export function toMilliseconds(input: string): number {
+  const match = /^(\d+)(ms|s|m|h)$/.exec(input)
+  if (!match) {
+    throw new Error(`Unsupported duration "${input}" — expected formats like "5s", "300ms".`)
+  }
+  return Number(match[1]) * (UNIT_MS[match[2] as string] as number)
+}

@@ -10,6 +10,7 @@ The `lib/api-contracts/` module provides `AbstractApiController` and `buildApiRo
 - [Creating a Controller](#creating-a-controller)
 - [Registering with DI](#registering-with-di)
 - [Route Options](#route-options)
+- [SSE Rooms](#sse-rooms)
 - [Testing](#testing)
 
 ## Overview
@@ -264,11 +265,69 @@ buildApiRoute(contract, handler, {
 | `onClose` | Called when SSE session closes. `reason` is `'server'` or `'client'` |
 | `onReconnect` | Handle `Last-Event-ID` reconnection; return events to replay |
 | `serializer` | Custom serializer for SSE event data |
-| `heartbeatInterval` | Interval in ms for SSE keep-alive heartbeats |
+| `heartbeatInterval` | Interval in ms for SSE keep-alive heartbeats (framework-managed timer; `0`/`false` disables heartbeats for the route) |
 | `defaultMode` | Default response mode for dual-mode routes (`'json'` or `'sse'`). Default: `'json'` |
+| `sseRooms` | Enable SSE rooms for this route by passing the shared `SSERoomBroadcaster` (see [SSE Rooms](#sse-rooms)) |
 | `contractMetadataToRouteMapper` | Map contract metadata to Fastify `RouteOptions` fields |
 
 Any other [Fastify `RouteOptions`](https://fastify.dev/docs/latest/Reference/Routes/) fields (`bodyLimit`, `onRequest`, `config`, etc.) can also be passed and are forwarded directly to Fastify.
+
+## SSE Rooms
+
+Without configuration, `session.rooms.join()/leave()` are no-ops in
+`buildApiRoute` sessions. Pass the shared `SSERoomBroadcaster` via
+`options.sseRooms` to make them real: the session joins/leaves rooms on the
+shared `SSERoomManager`, receives `broadcastToRoom` / `broadcastMessage`
+deliveries, and is cleaned up (rooms left, dedup cache cleared) when the
+connection closes.
+
+This unlocks the polling-fallback serving pattern — one dual-mode route whose
+sync branch answers snapshot polls while a domain service broadcasts events
+into a room the SSE branch joined:
+
+```ts
+export class JobController extends AbstractApiController<typeof JobController.contracts> {
+  public static contracts = { jobStatus: jobStatusContract } as const
+  private readonly jobService: JobService
+  private readonly sseRoomBroadcaster: SSERoomBroadcaster
+
+  constructor({ jobService, sseRoomBroadcaster }: Dependencies) {
+    super()
+    this.jobService = jobService
+    this.sseRoomBroadcaster = sseRoomBroadcaster
+    this.routes = {
+      jobStatus: buildApiRoute(JobController.contracts.jobStatus, {
+        // Fallback poll: current snapshot, including its version
+        nonSse: async (request) => ({
+          status: 200,
+          body: this.jobService.get(request.params.jobId),
+        }),
+        // Push channel: join the job's room and stay open
+        sse: (request, sse) => {
+          const session = sse.start('keepAlive')
+          session.rooms.join(`job:${request.params.jobId}`)
+        },
+      }, {
+        sseRooms: this.sseRoomBroadcaster,
+        heartbeatInterval: 15_000,
+      }),
+    }
+  }
+
+  readonly routes: BuildApiRoutesReturnType<typeof JobController.contracts>
+}
+
+// Domain service, anywhere in the app — stamp monotonic ids so clients can
+// order events (see createEventIdSequence):
+await this.sseRoomBroadcaster.broadcastToRoom(`job:${jobId}`, doneEvent, { result }, {
+  id: String(job.version),
+})
+```
+
+Register `sseRoomManager` + `sseRoomBroadcaster` in DI exactly as for the
+legacy controllers (see the root README's "SSE Rooms" section); the same
+broadcaster instance can serve legacy controllers and `buildApiRoute` routes
+simultaneously.
 
 ## Testing
 

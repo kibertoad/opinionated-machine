@@ -16,6 +16,7 @@ import type {
   SSEHandlerResult,
   SyncModeReply,
 } from '../routes/fastifyRouteTypes.ts'
+import type { SSERoomBroadcaster } from '../sse/rooms/SSERoomBroadcaster.ts'
 
 // ============================================================================
 // Status+Body Response
@@ -196,6 +197,15 @@ export type ApiRouteOptions<Contract extends ApiContract> = Omit<
      * @default 'json'
      */
     defaultMode?: DualModeType
+    /**
+     * Enable SSE rooms for this route by passing the shared
+     * `SSERoomBroadcaster` from the DI container. Sessions started by the
+     * route's SSE handler get working `session.rooms.join()/leave()`, receive
+     * room broadcasts (`broadcastToRoom`/`broadcastMessage`), and are cleaned
+     * up (rooms left, dedup cache cleared) when the connection closes.
+     * Without this option, `session.rooms` operations are no-ops.
+     */
+    sseRooms?: SSERoomBroadcaster
     /**
      * Per-route gateway metadata. `match.headers` / `match.query` keys are
      * narrowed to the contract's request schemas; `customHeaders` /

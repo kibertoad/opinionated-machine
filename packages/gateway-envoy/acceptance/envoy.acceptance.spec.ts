@@ -50,4 +50,26 @@ describe('envoy acceptance', () => {
     const res = await fetchGateway('/nope')
     expect(res.status).toBe(404)
   })
+
+  describe('streaming routes (HCM stream_idle_timeout is 2s)', () => {
+    it('marked streaming route survives an idle gap longer than the listener idle timeout', async () => {
+      // The upstream sends the second event after a 3s silence — past the 2s
+      // HCM stream_idle_timeout. The route is marked streaming, so the
+      // generator disabled its route timeout and idle timeout.
+      const res = await fetchGateway('/sse?gapMs=3000')
+      expect(res.status).toBe(200)
+      const body = await res.text()
+      expect(body).toContain('event: first')
+      expect(body).toContain('event: second')
+    })
+
+    it('unmarked route stream is reset at the listener idle timeout', async () => {
+      // Same upstream behavior, but the route carries no streaming marker —
+      // Envoy resets the stream during the 3s gap. Depending on timing the
+      // reset surfaces as a truncated body or a network error.
+      const res = await fetchGateway('/sse-unmarked?gapMs=3000')
+      const body = await res.text().catch(() => '')
+      expect(body).not.toContain('event: second')
+    })
+  })
 })

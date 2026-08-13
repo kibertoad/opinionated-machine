@@ -34,7 +34,7 @@
         "directory": "packages/gateway-kong"
     },
     "peerDependencies": {
-        "opinionated-machine": ">=6.17.0"
+        "opinionated-machine": ">=7.1.0"
     },
     "dependencies": {
         "yaml": "^2.5.1"

@@ -57,3 +57,19 @@ export {
   sendReplayEvents,
   setupSSESession,
 } from './fastifyRouteUtils.js'
+
+// SSE route configuration for @fastify/sse 0.6 (route kinds + heartbeats)
+export {
+  resolveHeartbeatInterval,
+  SSE_ROUTE_CONFIG_KEY,
+  type SSERouteRuntimeConfig,
+  startFrameworkHeartbeat,
+} from './sseHeartbeat.js'
+export {
+  buildSSERouteField,
+  type FrameworkSSERouteOptions,
+  mergeSSERouteField,
+  type SSERouteField,
+  type SSERouteFieldObject,
+  type SSERouteKind,
+} from './sseRouteConfig.js'
