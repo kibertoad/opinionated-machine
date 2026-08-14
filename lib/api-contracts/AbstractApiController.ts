@@ -21,9 +21,12 @@ import type { GatewayMetadataValue } from '../gateway/gatewayMetadata.ts'
  *       status: 200,
  *       body: { id: req.params.id },
  *     })),
- *     streamUpdates: buildApiRoute(UserController.contracts.streamUpdates, async (_req, sse) => {
- *       sse.start('keepAlive')
- *     }),
+ *     streamUpdates: buildApiRoute(
+ *       UserController.contracts.streamUpdates,
+ *       async (_req, _reply, { sse }) => {
+ *         sse.start('keepAlive')
+ *       },
+ *     ),
  *   }
  * }
  * ```

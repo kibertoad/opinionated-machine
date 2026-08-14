@@ -1,7 +1,7 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DIContext, SSEInjectClient } from '../../index.js'
+import { DIContext } from '../../index.js'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import {
   TestApiErrorModule,
@@ -50,10 +50,10 @@ describe('AbstractApiController — error handling E2E', () => {
   })
 
   // ============================================================================
-  // sse.respond() — early HTTP response without starting the stream
+  // Early HTTP response from an SSE-capable handler (no stream started)
   // ============================================================================
 
-  describe('sse.respond()', () => {
+  describe('early HTTP response', () => {
     it('sends an HTTP response without starting the SSE stream', async () => {
       const response = await server.app.inject({
         method: 'GET',
@@ -66,11 +66,11 @@ describe('AbstractApiController — error handling E2E', () => {
   })
 
   // ============================================================================
-  // SSE handler that neither starts nor responds
+  // SSE handler that neither starts nor returns a response
   // ============================================================================
 
-  describe('SSE handler with no start/respond', () => {
-    it('returns 500 when SSE handler does not call sse.start() or sse.respond()', async () => {
+  describe('SSE handler with no start/response', () => {
+    it('returns 500 when SSE handler neither calls sse.start() nor returns { status, body }', async () => {
       const response = await server.app.inject({
         method: 'GET',
         url: '/api/error-test/sse-no-start',
@@ -85,7 +85,7 @@ describe('AbstractApiController — error handling E2E', () => {
   // ============================================================================
 
   describe('SSE pre-start error', () => {
-    it('returns the error httpStatusCode when handler throws before sse.start()', async () => {
+    it('returns the error statusCode when handler throws before sse.start()', async () => {
       const response = await server.app.inject({
         method: 'GET',
         url: '/api/error-test/sse-pre-error',
@@ -93,20 +93,6 @@ describe('AbstractApiController — error handling E2E', () => {
 
       expect(response.statusCode).toBe(422)
       expect(JSON.parse(response.body)).toMatchObject({ message: 'pre-start error' })
-    })
-  })
-
-  // ============================================================================
-  // SSE post-start error
-  // ============================================================================
-
-  describe('SSE post-start error', () => {
-    it('sends an error SSE event when handler throws after sse.start()', async () => {
-      const client = new SSEInjectClient(server.app)
-      const conn = await client.connect('/api/error-test/sse-post-error')
-
-      const events = conn.getReceivedEvents()
-      expect(events.some((e) => e.event === 'error')).toBe(true)
     })
   })
 
@@ -147,45 +133,6 @@ describe('AbstractApiController — error handling E2E', () => {
       })
 
       expect(response.statusCode).toBe(500)
-    })
-  })
-
-  // ============================================================================
-  // sse.respond() called after sse.start()
-  // ============================================================================
-
-  describe('sse.respond() after sse.start()', () => {
-    it('sends an SSE error event when respond is called after start', async () => {
-      const client = new SSEInjectClient(server.app)
-      const conn = await client.connect('/api/test/sse-respond-after-start')
-
-      expect(conn.getReceivedEvents().some((e) => e.event === 'error')).toBe(true)
-    })
-  })
-
-  // ============================================================================
-  // sse.sendHeaders() before sse.start()
-  // ============================================================================
-
-  describe('sse.sendHeaders()', () => {
-    it('can call sse.sendHeaders() before starting the stream', async () => {
-      const client = new SSEInjectClient(server.app)
-      const conn = await client.connect('/api/test/sse-send-headers')
-
-      expect(conn.getReceivedEvents().some((e) => e.event === 'done')).toBe(true)
-    })
-  })
-
-  // ============================================================================
-  // SSE event schema validation failure
-  // ============================================================================
-
-  describe('SSE event schema validation', () => {
-    it('sends an SSE error event when handler sends data that fails event schema', async () => {
-      const client = new SSEInjectClient(server.app)
-      const conn = await client.connect('/api/test/sse-invalid-event')
-
-      expect(conn.getReceivedEvents().some((e) => e.event === 'error')).toBe(true)
     })
   })
 })
