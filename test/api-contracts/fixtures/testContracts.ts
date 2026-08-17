@@ -19,33 +19,6 @@ export const apiSseSendStreamContract = defineApiContract({
   },
 })
 
-export const apiSseRespondAfterStartContract = defineApiContract({
-  method: 'get',
-  summary: 'Api sse respond after start',
-  pathResolver: () => '/api/test/sse-respond-after-start',
-  responsesByStatusCode: {
-    200: { content: { 'text/event-stream': sseBody({ msg: z.object({ text: z.string() }) }) } },
-  },
-})
-
-export const apiSseSendHeadersContract = defineApiContract({
-  method: 'get',
-  summary: 'Api sse send headers',
-  pathResolver: () => '/api/test/sse-send-headers',
-  responsesByStatusCode: {
-    200: { content: { 'text/event-stream': sseBody({ done: z.object({ ok: z.boolean() }) }) } },
-  },
-})
-
-export const apiSseInvalidEventContract = defineApiContract({
-  method: 'get',
-  summary: 'Api sse invalid event',
-  pathResolver: () => '/api/test/sse-invalid-event',
-  responsesByStatusCode: {
-    200: { content: { 'text/event-stream': sseBody({ typed: z.object({ value: z.number() }) }) } },
-  },
-})
-
 export const apiSseOnConnectContract = defineApiContract({
   method: 'get',
   summary: 'Api sse on connect',
@@ -61,6 +34,7 @@ export const apiSseRespondContract = defineApiContract({
   pathResolver: () => '/api/error-test/sse-respond',
   responsesByStatusCode: {
     200: { content: { 'text/event-stream': sseBody({ update: z.object({ value: z.number() }) }) } },
+    404: z.object({ error: z.string() }),
   },
 })
 
@@ -88,6 +62,15 @@ export const apiSsePostErrorContract = defineApiContract({
   pathResolver: () => '/api/error-test/sse-post-error',
   responsesByStatusCode: {
     200: { content: { 'text/event-stream': sseBody({ update: z.object({ value: z.number() }) }) } },
+  },
+})
+
+export const apiSseInvalidEventContract = defineApiContract({
+  method: 'get',
+  summary: 'Api sse invalid event',
+  pathResolver: () => '/api/error-test/sse-invalid-event',
+  responsesByStatusCode: {
+    200: { content: { 'text/event-stream': sseBody({ typed: z.object({ value: z.number() }) }) } },
   },
 })
 

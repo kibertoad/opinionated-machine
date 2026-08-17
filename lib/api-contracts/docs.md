@@ -1,12 +1,18 @@
 # ApiContract Controllers
 
-The `lib/api-contracts/` module provides `AbstractApiController` and `buildApiRoute` — a lightweight way to register typed API routes (sync JSON, SSE-only, and dual-mode) using contracts from `@lokalise/api-contracts`.
+The `lib/api-contracts/` module provides `AbstractApiController`, `asApiControllerClass`, and `buildApiRoute` — the DI-side glue for registering typed API routes (sync JSON, SSE, and dual-mode) using contracts from `@lokalise/api-contracts`.
+
+The route-building, handler-shape inference, response validation, and SSE streaming logic itself lives in [`@lokalise/fastify-api-contracts`](https://github.com/lokalise/fastify-api-contracts) (`buildFastifyApiRoute`) — this module wraps it and adds:
+
+- `AbstractApiController` — the controller base class `DIContext.registerRoutes()` understands
+- `asApiControllerClass` — the awilix resolver that tags a controller with `isApiController`
+- `buildApiRoute` — a thin wrapper over `buildFastifyApiRoute` that additionally accepts the `gatewayMetadata` option (contract-narrowed, stamped via the shared gateway Symbol)
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Defining Contracts](#defining-contracts)
-- [Response Modes](#response-modes)
+- [Handler Model](#handler-model)
 - [Creating a Controller](#creating-a-controller)
 - [Registering with DI](#registering-with-di)
 - [Route Options](#route-options)
@@ -21,22 +27,17 @@ The `lib/api-contracts/` module provides `AbstractApiController` and `buildApiRo
 | Dual-mode routes | `AbstractDualModeController` + `asDualModeControllerClass` | `AbstractApiController` + `asApiControllerClass` |
 | Mixed route types | Three separate controllers | One controller for all modes |
 | Contract format | `buildSseContract` / `buildGetApiContract` etc. | `defineApiContract` from `@lokalise/api-contracts` |
-
-The response mode is **inferred automatically** from the contract's `responsesByStatusCode` shape — no separate contract builder per mode.
+| Route builder | local implementation | `buildFastifyApiRoute` from `@lokalise/fastify-api-contracts` |
 
 ## Defining Contracts
 
-Use `defineApiContract` from `@lokalise/api-contracts`. The response mode is determined by the values in `responsesByStatusCode`:
-
-- **Non-SSE** — all success responses are plain Zod schemas, `noBodyResponse()`, or content maps without an SSE media type
-- **SSE-only** — all success responses are content maps whose only media type is `sseBody(...)`
-- **Dual** — success responses are content maps declaring both `sseBody(...)` and a non-SSE media type
+Use `defineApiContract` from `@lokalise/api-contracts`. Response representations are declared per status code in `responsesByStatusCode`: a bare Zod schema is JSON, `sseBody(...)` inside a content map is an SSE stream, `blobBody()` is a raw body, and a status may declare several media types at once.
 
 ```ts
 import { defineApiContract, noBodyResponse, sseBody } from '@lokalise/api-contracts'
 import { z } from 'zod/v4'
 
-// Non-SSE (sync JSON)
+// Sync JSON
 const getUserContract = defineApiContract({
   method: 'get',
   summary: 'Get user',
@@ -47,7 +48,7 @@ const getUserContract = defineApiContract({
   },
 })
 
-// SSE-only
+// SSE
 const streamUpdatesContract = defineApiContract({
   method: 'get',
   summary: 'Stream updates',
@@ -64,7 +65,7 @@ const streamUpdatesContract = defineApiContract({
   },
 })
 
-// Dual-mode (branches on Accept header)
+// Dual-mode (JSON and SSE on the same status)
 const chatContract = defineApiContract({
   method: 'post',
   summary: 'Chat',
@@ -93,29 +94,29 @@ const deleteUserContract = defineApiContract({
 })
 ```
 
-> **Note:** prefer `sseBody(...)` content maps over the `sseResponse(...)` helper — `sseResponse` erases the event schema types, so handlers lose the typed `session.send(...)` inference.
+## Handler Model
 
-## Response Modes
+Every handler has the same shape — `(request, reply, context) => { status, body }` — regardless of response mode (this is `buildFastifyApiRoute`'s model; see its docs for the full semantics):
 
-`buildApiRoute` infers the correct handler shape from the contract at compile time:
+- **`request`** is fully typed from the contract's request schemas.
+- **`reply`** is the Fastify reply minus `send()` — the framework sends the response after validation.
+- **`context.expectedContentType`** is the `Accept`-negotiated response content-type among the contract's success representations (`null` when the client expressed no acceptable preference).
+- **`context.sse`** exists only for contracts that declare an SSE response; `context.sse.start(mode)` opens the stream imperatively and returns a typed session (after which the handler returns nothing).
+- Returning `{ status, body }` where the status's representation is `sseBody(...)` streams the returned `AsyncIterable` of events declaratively.
+- When a status declares several media types, the result must carry `contentType`: `{ status, contentType, body }`.
 
-| Mode | Contract shape | Handler type |
-|------|---------------|--------------|
-| **non-sse** | All success responses are plain schemas / `noBodyResponse()` | `(request, reply) => { status, body }` |
-| **sse** | All success responses are `sseBody(...)`-only content maps | `(request, sse) => void` |
-| **dual** | Mix of SSE and non-SSE success responses | Object `{ nonSse, sse }` |
+Response bodies are validated by the `fastify-type-provider-zod` serializer compiler — register `validatorCompiler` / `serializerCompiler` on the app. SSE-capable routes require the `@fastify/sse` plugin.
 
-TypeScript enforces the correct shape — passing `{ nonSse, sse }` to a non-dual contract is a compile error.
+### Error handling
+
+Errors thrown by handlers propagate to the app's global `fastify.setErrorHandler` — including on SSE routes — as described in the `@lokalise/fastify-api-contracts` README. The route builder adds no error mapping of its own: if you rely on the node-core `httpStatusCode` convention or want a terminal SSE `error` event when a handler throws mid-stream, implement it in the global error handler.
 
 ## Creating a Controller
 
 Extend `AbstractApiController` with a `static contracts` object and a `routes` object built with `buildApiRoute`. The generic ensures every contract has a matching named route:
 
 ```ts
-import {
-  AbstractApiController,
-  buildApiRoute,
-} from 'opinionated-machine'
+import { AbstractApiController, buildApiRoute } from 'opinionated-machine'
 
 class UserController extends AbstractApiController<typeof UserController.contracts> {
   static contracts = {
@@ -134,73 +135,57 @@ class UserController extends AbstractApiController<typeof UserController.contrac
   }
 
   readonly routes = {
-    // Non-SSE: return { status, body }
+    // Sync JSON: return { status, body }
     getUser: buildApiRoute(UserController.contracts.getUser, async (request) => ({
       status: 200,
       body: await this.userService.findById(request.params.userId),
     })),
 
-    // Non-SSE no-body response
+    // No-body response
     deleteUser: buildApiRoute(UserController.contracts.deleteUser, async (request) => {
       await this.userService.delete(request.params.userId)
       return { status: 204, body: null }
     }),
 
-    // SSE-only: second param is the SSE context
-    streamUpdates: buildApiRoute(UserController.contracts.streamUpdates, async (_request, sse) => {
-      sse.start('keepAlive')
-    }),
+    // SSE: stream imperatively via context.sse
+    streamUpdates: buildApiRoute(
+      UserController.contracts.streamUpdates,
+      async (_request, _reply, { sse }) => {
+        sse.start('keepAlive')
+      },
+    ),
 
-    // Dual-mode: { nonSse, sse } object
-    chat: buildApiRoute(UserController.contracts.chat, {
-      nonSse: async (request) => {
-        const result = await this.aiService.complete(request.body.message)
-        return { status: 200, body: { reply: result.text } }
-      },
-      sse: async (request, sse) => {
-        const session = sse.start('autoClose')
-        for await (const chunk of this.aiService.stream(request.body.message)) {
-          await session.send('chunk', { delta: chunk.text })
+    // Dual-mode: one handler, branch on the negotiated content-type
+    chat: buildApiRoute(
+      UserController.contracts.chat,
+      async (request, _reply, { expectedContentType, sse }) => {
+        if (expectedContentType === 'text/event-stream') {
+          const session = sse.start('autoClose')
+          for await (const chunk of this.aiService.stream(request.body.message)) {
+            await session.send('chunk', { delta: chunk.text })
+          }
+          await session.send('done', {})
+          return
         }
-        await session.send('done', {})
+        const result = await this.aiService.complete(request.body.message)
+        return { status: 200, contentType: 'application/json', body: { reply: result.text } }
       },
-    }),
+    ),
   }
 }
 ```
 
-**Handler signatures:**
-
-| Mode | Parameters | Return value |
-|------|-----------|--------------|
-| `non-sse` | `(request, reply: SyncModeReply)` | `{ status, body }` — status code + body, both validated against the contract |
-| `sse` | `(request, sse: SSEContext)` | `void` |
-| `dual.nonSse` | `(request, reply: SyncModeReply)` | `{ status, body }` |
-| `dual.sse` | `(request, sse: SSEContext)` | `void` |
-
-> **Note:** Non-SSE handlers must always return `{ status, body }`. The `status` is the HTTP status code to send; `body` is validated against the schema for that specific status code in the contract. TypeScript enforces the correct body shape per status code. Use `reply.header()` to set response headers when needed.
-
-### SSE context methods
-
-The `sse` parameter in SSE and dual-mode handlers:
-
-| Method | Description |
-|--------|-------------|
-| `sse.start(mode)` | Begin streaming. Returns an `SSESession`. `mode` is `'keepAlive'` or `'autoClose'` |
-| `sse.respond(code, body)` | Send an HTTP response without streaming (early return, e.g., 404) |
-
-`autoClose` closes the connection when the handler returns. `keepAlive` keeps it open until explicitly closed.
-
 ### SSE session methods
 
-The `session` returned by `sse.start(mode)`:
+The `session` returned by `sse.start(mode)` (`'autoClose'` closes the connection when the handler returns; `'keepAlive'` keeps it open until `session.close()`):
 
 | Method | Description |
 |--------|-------------|
 | `session.send(event, data)` | Send a typed event (validated against contract schema) |
 | `session.isConnected()` | Whether the client is still connected |
 | `session.sendStream(iterable)` | Stream messages from an `AsyncIterable` |
-| `session.getStream()` | Raw `WritableStream` for advanced use |
+| `session.getStream()` | Raw writable stream for advanced use |
+| `session.close()` | Close the connection from the server side |
 
 ## Registering with DI
 
@@ -222,7 +207,7 @@ export class UserModule extends AbstractModule {
 
 ## Route Options
 
-Pass options as the third argument to `buildApiRoute`:
+Pass options as the third argument to `buildApiRoute`. Everything except `gatewayMetadata` is forwarded to `buildFastifyApiRoute` unchanged:
 
 ```ts
 buildApiRoute(contract, handler, {
@@ -233,46 +218,36 @@ buildApiRoute(contract, handler, {
     }
   },
 
-  // SSE connection lifecycle hooks (ignored for non-SSE routes)
+  // SSE connection lifecycle hooks (SSE-capable contracts only)
   onConnect: (session) => console.log('connected:', session.id),
-  onClose: (session, reason) => console.log(`closed (${reason}):`, session.id),
+  onClose: (session, initiator) => console.log(`closed (${initiator}):`, session.id),
   onReconnect: async (session, lastEventId) => this.getEventsSince(lastEventId),
 
   // Custom SSE serializer
   serializer: (data) => JSON.stringify(data),
 
-  // Heartbeat keep-alive interval in ms
-  heartbeatInterval: 30_000,
-
-  // Default mode for dual-mode routes when Accept header is absent
-  defaultMode: 'sse', // default: 'json'
+  // Disable the SSE keep-alive heartbeat for this route
+  heartbeat: false,
 
   // Map contract metadata to Fastify route options
   contractMetadataToRouteMapper: (metadata) => ({
     config: { rateLimit: metadata.rateLimit },
-    onRequest: metadata.requiresAuth ? authHook : undefined,
   }),
+
+  // opinionated-machine addition: per-route gateway policy,
+  // equivalent to wrapping the route with withGatewayMetadata()
+  gatewayMetadata: {
+    cache: { ttl: '60s' },
+    match: { headers: { 'x-trace-id': { regex: '^[a-f0-9]+$' } } },
+  },
 })
 ```
 
-**Available options:**
-
-| Option | Description |
-|--------|-------------|
-| `preHandler` | Fastify pre-handler hook (auth, rate limiting, etc.) |
-| `onConnect` | Called after SSE session is established |
-| `onClose` | Called when SSE session closes. `reason` is `'server'` or `'client'` |
-| `onReconnect` | Handle `Last-Event-ID` reconnection; return events to replay |
-| `serializer` | Custom serializer for SSE event data |
-| `heartbeatInterval` | Interval in ms for SSE keep-alive heartbeats |
-| `defaultMode` | Default response mode for dual-mode routes (`'json'` or `'sse'`). Default: `'json'` |
-| `contractMetadataToRouteMapper` | Map contract metadata to Fastify `RouteOptions` fields |
-
-Any other [Fastify `RouteOptions`](https://fastify.dev/docs/latest/Reference/Routes/) fields (`bodyLimit`, `onRequest`, `config`, etc.) can also be passed and are forwarded directly to Fastify.
+Any other [Fastify `RouteOptions`](https://fastify.dev/docs/latest/Reference/Routes/) fields (`bodyLimit`, `onRequest`, `config`, etc.) can also be passed and are forwarded directly to Fastify. The contract itself is exposed as `config.apiContract` on the built route.
 
 ## Testing
 
-### Testing non-SSE routes
+### Testing sync JSON routes
 
 Use Fastify's `app.inject()` as normal. The status code comes from the `status` field of the returned `{ status, body }` object:
 
@@ -285,16 +260,7 @@ expect(response.statusCode).toBe(200)
 expect(JSON.parse(response.body)).toEqual({ id: '123', name: 'Alice' })
 ```
 
-With multiple status codes:
-
-```ts
-// Handler returns { status: 404, body: { error: 'Not found' } } when user is missing
-const response = await app.inject({ method: 'GET', url: '/users/missing' })
-expect(response.statusCode).toBe(404)
-expect(JSON.parse(response.body)).toEqual({ error: 'Not found' })
-```
-
-### Testing SSE-only routes (autoClose)
+### Testing SSE routes (autoClose)
 
 Use `SSEInjectClient` — no real HTTP server needed:
 
@@ -309,19 +275,16 @@ const events = conn.getReceivedEvents()
 expect(events.filter(e => e.event === 'done')).toHaveLength(1)
 ```
 
-### Testing SSE-only routes (keepAlive)
+### Testing SSE routes (keepAlive)
 
-Use `SSEHttpClient` with `awaitServerConnection` to reliably send events after the connection is registered:
+Use `SSEHttpClient` against a real server:
 
 ```ts
 import { SSEHttpClient, SSETestServer } from 'opinionated-machine'
 
 const server = await SSETestServer.start(app)
 
-const client = await SSEHttpClient.connect(
-  server.baseUrl,
-  '/updates/stream',
-)
+const client = await SSEHttpClient.connect(server.baseUrl, '/updates/stream')
 
 client.close()
 await server.stop()
@@ -330,7 +293,7 @@ await server.stop()
 ### Testing dual-mode routes
 
 ```ts
-// Sync mode
+// JSON mode
 const response = await app.inject({
   method: 'POST',
   url: '/chat',

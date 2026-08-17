@@ -140,23 +140,31 @@ describe('AbstractApiController — SSE lifecycle hooks', () => {
   beforeEach(async () => {
     onConnectCalls.length = 0
 
-    lifecycleServer = await createSSETestServer((app) => {
-      app.route(
-        buildApiRoute(
-          apiSseOnConnectContract,
-          async (_req, sse) => {
-            const session = sse.start('autoClose')
-            await session.send('ping', { seq: 1 })
-          },
-          {
-            onConnect: () => {
-              onConnectCalls.push(1)
+    lifecycleServer = await createSSETestServer(
+      (app) => {
+        app.route(
+          buildApiRoute(
+            apiSseOnConnectContract,
+            async (_req, _reply, { sse }) => {
+              const session = sse.start('autoClose')
+              await session.send('ping', { seq: 1 })
             },
-            onClose: () => {},
-          },
-        ),
-      )
-    })
+            {
+              onConnect: () => {
+                onConnectCalls.push(1)
+              },
+              onClose: () => {},
+            },
+          ),
+        )
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+      },
+    )
   })
 
   afterEach(async () => {
