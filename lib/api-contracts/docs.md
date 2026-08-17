@@ -107,6 +107,10 @@ Every handler has the same shape — `(request, reply, context) => { status, bod
 
 Response bodies are validated by the `fastify-type-provider-zod` serializer compiler — register `validatorCompiler` / `serializerCompiler` on the app. SSE-capable routes require the `@fastify/sse` plugin.
 
+### Error handling
+
+Errors thrown by handlers propagate to the app's global `fastify.setErrorHandler` — including on SSE routes — as described in the `@lokalise/fastify-api-contracts` README. The route builder adds no error mapping of its own: if you rely on the node-core `httpStatusCode` convention or want a terminal SSE `error` event when a handler throws mid-stream, implement it in the global error handler.
+
 ## Creating a Controller
 
 Extend `AbstractApiController` with a `static contracts` object and a `routes` object built with `buildApiRoute`. The generic ensures every contract has a matching named route:
