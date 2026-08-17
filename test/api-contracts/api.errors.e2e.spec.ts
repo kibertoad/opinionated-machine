@@ -1,7 +1,7 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DIContext } from '../../index.js'
+import { DIContext, SSEInjectClient } from '../../index.js'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import {
   TestApiErrorModule,
@@ -93,6 +93,38 @@ describe('AbstractApiController — error handling E2E', () => {
 
       expect(response.statusCode).toBe(422)
       expect(JSON.parse(response.body)).toMatchObject({ message: 'pre-start error' })
+    })
+  })
+
+  // ============================================================================
+  // Mid-stream SSE failures — pin the current silent behavior
+  //
+  // Since the migration to @lokalise/fastify-api-contracts, errors thrown after
+  // sse.start() no longer produce a terminal `error` SSE event; the stream just
+  // ends with HTTP 200 and only the events sent before the throw. This is
+  // documented in the changeset — these tests exist so a future peer bump that
+  // changes the behavior (in either direction) is noticed.
+  // ============================================================================
+
+  describe('SSE post-start error', () => {
+    it('ends the stream silently: 200, only pre-throw events, no error event', async () => {
+      const client = new SSEInjectClient(server.app)
+      const conn = await client.connect('/api/error-test/sse-post-error')
+
+      expect(conn.getStatusCode()).toBe(200)
+      const events = conn.getReceivedEvents()
+      expect(events.filter((e) => e.event === 'update')).toHaveLength(1)
+      expect(events.some((e) => e.event === 'error')).toBe(false)
+    })
+  })
+
+  describe('SSE event schema validation failure after start', () => {
+    it('ends the stream silently: 200, zero events, no error event', async () => {
+      const client = new SSEInjectClient(server.app)
+      const conn = await client.connect('/api/error-test/sse-invalid-event')
+
+      expect(conn.getStatusCode()).toBe(200)
+      expect(conn.getReceivedEvents()).toHaveLength(0)
     })
   })
 

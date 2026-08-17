@@ -5,8 +5,10 @@ import {
   apiGetUserContract,
   apiHeaderFailContract,
   apiHeaderSuccessContract,
+  apiSseInvalidEventContract,
   apiSseKeepAliveContract,
   apiSseNoStartContract,
+  apiSsePostErrorContract,
   apiSsePreErrorContract,
   apiSseRespondContract,
   apiSseSendStreamContract,
@@ -80,6 +82,8 @@ export class TestApiErrorController extends AbstractApiController<
     sseRespond: apiSseRespondContract,
     sseNoStart: apiSseNoStartContract,
     ssePreError: apiSsePreErrorContract,
+    ssePostError: apiSsePostErrorContract,
+    sseInvalidEvent: apiSseInvalidEventContract,
     validationFail: apiValidationFailContract,
     headerSuccess: apiHeaderSuccessContract,
     headerFail: apiHeaderFailContract,
@@ -100,6 +104,24 @@ export class TestApiErrorController extends AbstractApiController<
     ssePreError: buildApiRoute(TestApiErrorController.contracts.ssePreError, () => {
       throw Object.assign(new Error('pre-start error'), { statusCode: 422 })
     }),
+
+    ssePostError: buildApiRoute(
+      TestApiErrorController.contracts.ssePostError,
+      async (_request, _reply, { sse }) => {
+        const session = sse.start('autoClose')
+        await session.send('update', { value: 1 })
+        throw new Error('post-start error')
+      },
+    ),
+
+    sseInvalidEvent: buildApiRoute(
+      TestApiErrorController.contracts.sseInvalidEvent,
+      async (_request, _reply, { sse }) => {
+        const session = sse.start('autoClose')
+        // Fails the `typed` event schema after the stream has started
+        await session.send('typed', { value: 'not-a-number' as unknown as number })
+      },
+    ),
 
     validationFail: buildApiRoute(TestApiErrorController.contracts.validationFail, () => ({
       status: 200,

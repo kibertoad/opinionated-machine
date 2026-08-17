@@ -56,6 +56,24 @@ export const apiSsePreErrorContract = defineApiContract({
   },
 })
 
+export const apiSsePostErrorContract = defineApiContract({
+  method: 'get',
+  summary: 'Api sse post error',
+  pathResolver: () => '/api/error-test/sse-post-error',
+  responsesByStatusCode: {
+    200: { content: { 'text/event-stream': sseBody({ update: z.object({ value: z.number() }) }) } },
+  },
+})
+
+export const apiSseInvalidEventContract = defineApiContract({
+  method: 'get',
+  summary: 'Api sse invalid event',
+  pathResolver: () => '/api/error-test/sse-invalid-event',
+  responsesByStatusCode: {
+    200: { content: { 'text/event-stream': sseBody({ typed: z.object({ value: z.number() }) }) } },
+  },
+})
+
 export const apiValidationFailContract = defineApiContract({
   method: 'get',
   summary: 'Api validation fail',
