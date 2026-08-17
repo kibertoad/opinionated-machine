@@ -81,6 +81,7 @@
     "homepage": "https://github.com/kibertoad/opinionated-machine",
     "files": [
         "README.md",
+        "CHANGELOG.md",
         "LICENSE",
         "dist/*"
     ]
