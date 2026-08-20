@@ -966,6 +966,9 @@ describe('Dual-Mode Route Builder Validation', () => {
       successResponseBodySchema: z.object({ result: z.string() }),
       serverSentEventSchemas: { result: z.object({ success: z.boolean() }) },
       isDualMode: true as const,
+      isEmptyResponseExpected: false,
+      isNonJSONResponseExpected: false,
+      visibility: 'public' as const,
     } satisfies AnyDualModeContractDefinition
 
     expect(() =>
@@ -1002,6 +1005,7 @@ describe('Dual-Mode Route Builder Validation', () => {
       requestBodySchema: undefined,
       serverSentEventSchemas: { data: z.object({ value: z.string() }) },
       isSSE: true as const,
+      visibility: 'public' as const,
     } satisfies AnySSEContractDefinition
 
     expect(() =>
