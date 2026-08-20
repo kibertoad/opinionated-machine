@@ -3088,7 +3088,7 @@ time.
 | `rewrite` | `{ stripPrefix: '/v2' }` or `{ replacePrefix: { from: '/v1', to: '/v2' } }` | |
 | `traffic` | `{ weights: [{ upstream: 'a', weight: 80 }, { upstream: 'b', weight: 20 }] }` | Also `shadow: { upstream, percent }` |
 | `headers` | `{ request: { add: { 'x-internal': 'true' }, remove: ['cookie'] }, response: … }` | Free-form keys; typically infra headers not in the contract |
-| `tags`, `visibility` | `tags: ['users']`, `visibility: 'internal'` | Documentation / partitioning |
+| `tags` | `tags: ['users']` | Documentation / partitioning |
 | `extensions` | `{ envoy: { … }, krakend: { … }, kong: { … } }` | Vendor escape hatch; merged onto the generated route last |
 
 ### Generating Gateway Configs
