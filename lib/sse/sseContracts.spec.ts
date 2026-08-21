@@ -17,7 +17,7 @@ describe('sseContracts', () => {
     }
 
     it('creates post SSE route', () => {
-      const route = buildContract({ method: 'post', ...baseFields })
+      const route = buildContract({ visibility: 'public', method: 'post', ...baseFields })
 
       expect(route.method).toBe('post')
       expect(route.pathResolver({})).toBe('/api/test')
@@ -26,6 +26,7 @@ describe('sseContracts', () => {
 
     it('uses specified method when provided', () => {
       const route = buildContract({
+        visibility: 'public',
         method: 'put',
         ...baseFields,
       })
@@ -35,6 +36,7 @@ describe('sseContracts', () => {
 
     it('supports patch method', () => {
       const route = buildContract({
+        visibility: 'public',
         method: 'patch',
         ...baseFields,
       })
@@ -46,6 +48,7 @@ describe('sseContracts', () => {
   describe('buildContract (SSE GET)', () => {
     it('creates get SSE route', () => {
       const route = buildContract({
+        visibility: 'public',
         method: 'get',
         pathResolver: () => '/api/stream',
         requestPathParamsSchema: z.object({}),
@@ -65,6 +68,7 @@ describe('sseContracts', () => {
 
   describe('buildHandler type checking', () => {
     const testContract = buildContract({
+      visibility: 'public',
       method: 'post',
       pathResolver: (params) => `/api/test/${params.id}/stream`,
       requestPathParamsSchema: z.object({ id: z.string() }),

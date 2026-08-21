@@ -7,6 +7,7 @@ describe('sseTestTypes type inference', () => {
   describe('InjectSSEOptions', () => {
     it('params should infer the correct type from contract schema, not unknown', () => {
       const contract = buildContract({
+        visibility: 'public',
         method: 'get',
         pathResolver: (params) => `/api/items/${params.id}/stream`,
         requestPathParamsSchema: z.object({ id: z.string() }),
@@ -27,6 +28,7 @@ describe('sseTestTypes type inference', () => {
   describe('InjectPayloadSSEOptions', () => {
     it('params should infer the correct type from contract schema, not unknown', () => {
       const contract = buildContract({
+        visibility: 'public',
         method: 'post',
         pathResolver: (params) => `/api/items/${params.id}/process`,
         requestPathParamsSchema: z.object({ id: z.string() }),

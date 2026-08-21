@@ -714,6 +714,7 @@ describe('Dual-Mode sync handler that calls reply.send() directly', () => {
       )
 
       const replyDotSendContract = buildContract({
+        visibility: 'public',
         method: 'post',
         pathResolver: () => '/api/reply-send-test',
         requestPathParamsSchema: z.object({}),
@@ -1082,6 +1083,7 @@ describe('Dual-Mode Response Headers', () => {
 
     // Create a contract with responseHeaders schema
     const contractWithHeaders = buildContract({
+      visibility: 'public',
       method: 'post',
       pathResolver: () => '/api/with-headers',
       requestPathParamsSchema: z.object({}),
@@ -1154,6 +1156,7 @@ describe('Dual-Mode Response Headers', () => {
 
     // Create a contract with responseHeaders schema
     const contractWithHeaders = buildContract({
+      visibility: 'public',
       method: 'post',
       pathResolver: () => '/api/missing-headers',
       requestPathParamsSchema: z.object({}),
@@ -1222,6 +1225,7 @@ describe('Dual-Mode Response Headers', () => {
 
     // Create a contract WITHOUT responseHeaders schema
     const contractWithoutHeaders = buildContract({
+      visibility: 'public',
       method: 'post',
       pathResolver: () => '/api/no-headers',
       requestPathParamsSchema: z.object({}),

@@ -2,6 +2,7 @@ import { defineApiContract, sseBody } from '@lokalise/api-contracts'
 import { z } from 'zod/v4'
 
 export const apiSseKeepAliveContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api sse keep alive',
   pathResolver: () => '/api/test/sse-keep-alive',
@@ -11,6 +12,7 @@ export const apiSseKeepAliveContract = defineApiContract({
 })
 
 export const apiSseSendStreamContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api sse send stream',
   pathResolver: () => '/api/test/sse-stream',
@@ -20,6 +22,7 @@ export const apiSseSendStreamContract = defineApiContract({
 })
 
 export const apiSseOnConnectContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api sse on connect',
   pathResolver: () => '/api/test/sse-on-connect',
@@ -29,6 +32,7 @@ export const apiSseOnConnectContract = defineApiContract({
 })
 
 export const apiSseRespondContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api sse respond',
   pathResolver: () => '/api/error-test/sse-respond',
@@ -39,6 +43,7 @@ export const apiSseRespondContract = defineApiContract({
 })
 
 export const apiSseNoStartContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api sse no start',
   pathResolver: () => '/api/error-test/sse-no-start',
@@ -48,6 +53,7 @@ export const apiSseNoStartContract = defineApiContract({
 })
 
 export const apiSsePreErrorContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api sse pre error',
   pathResolver: () => '/api/error-test/sse-pre-error',
@@ -57,6 +63,7 @@ export const apiSsePreErrorContract = defineApiContract({
 })
 
 export const apiSsePostErrorContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api sse post error',
   pathResolver: () => '/api/error-test/sse-post-error',
@@ -66,6 +73,7 @@ export const apiSsePostErrorContract = defineApiContract({
 })
 
 export const apiSseInvalidEventContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api sse invalid event',
   pathResolver: () => '/api/error-test/sse-invalid-event',
@@ -75,6 +83,7 @@ export const apiSseInvalidEventContract = defineApiContract({
 })
 
 export const apiValidationFailContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api validation fail',
   pathResolver: () => '/api/error-test/validation-fail',
@@ -82,6 +91,7 @@ export const apiValidationFailContract = defineApiContract({
 })
 
 export const apiHeaderSuccessContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api header success',
   pathResolver: () => '/api/error-test/header-ok',
@@ -90,6 +100,7 @@ export const apiHeaderSuccessContract = defineApiContract({
 })
 
 export const apiHeaderFailContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api header fail',
   pathResolver: () => '/api/error-test/header-fail',
@@ -105,6 +116,7 @@ export const roomStreamEventSchemas = {
 export const userSchema = z.object({ id: z.string(), name: z.string() })
 
 export const apiGetUserContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api get user',
   pathResolver: ({ userId }) => `/api/users/${userId}`,
@@ -113,6 +125,7 @@ export const apiGetUserContract = defineApiContract({
 })
 
 export const apiCreateUserContract = defineApiContract({
+  visibility: 'public',
   method: 'post',
   summary: 'Api create user',
   pathResolver: () => '/api/users',
@@ -125,6 +138,7 @@ export const feedEventSchemas = {
 }
 
 export const apiFeedContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Api feed',
   pathResolver: () => '/api/feed',

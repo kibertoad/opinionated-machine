@@ -20,6 +20,7 @@ import {
 
 // Define a realistic contract like users would
 const chatStreamContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/chat/stream',
   requestPathParamsSchema: z.object({}),
@@ -381,6 +382,7 @@ describe('SSE Controller Type Safety', () => {
       // This test demonstrates that a controller with multiple contracts
       // gets autocomplete for all events across all routes
       const notificationContract = buildContract({
+        visibility: 'public',
         method: 'get',
         pathResolver: () => '/api/notifications',
         requestPathParamsSchema: z.object({}),
@@ -454,6 +456,7 @@ describe('Dual-Mode Contract Type Safety', () => {
     it('infers responseHeaders type when defined', () => {
       // Contract with responseHeaders
       const contractWithHeaders = buildContract({
+        visibility: 'public',
         method: 'post',
         pathResolver: () => '/api/test',
         requestPathParamsSchema: z.object({}),
@@ -478,6 +481,7 @@ describe('Dual-Mode Contract Type Safety', () => {
     it('allows omitting responseHeaders', () => {
       // Contract WITHOUT responseHeaders - should compile fine
       const contractWithoutHeaders = buildContract({
+        visibility: 'public',
         method: 'post',
         pathResolver: () => '/api/test',
         requestPathParamsSchema: z.object({}),
@@ -498,6 +502,7 @@ describe('Dual-Mode Contract Type Safety', () => {
     it('SSE contracts do not have responseHeaders', () => {
       // SSE contract (no successResponseBodySchema)
       const sseContract = buildContract({
+        visibility: 'public',
         method: 'post',
         pathResolver: () => '/api/sse',
         requestPathParamsSchema: z.object({}),
@@ -524,6 +529,7 @@ describe('Dual-Mode Contract Type Safety', () => {
 describe('GET SSE Controller Type Safety (non-payload)', () => {
   // GET SSE contract - no body field
   const notificationsContract = buildContract({
+    visibility: 'public',
     method: 'get',
     pathResolver: (params) => `/api/users/${params.userId}/notifications`,
     requestPathParamsSchema: z.object({ userId: z.string() }),
@@ -672,6 +678,7 @@ describe('GET SSE Controller Type Safety (non-payload)', () => {
 describe('Dual-Mode Handler Type Safety', () => {
   // POST dual-mode contract (with body)
   const chatCompletionContract = buildContract({
+    visibility: 'public',
     method: 'post',
     pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
     requestPathParamsSchema: z.object({ chatId: z.string().uuid() }),
@@ -939,6 +946,7 @@ describe('Dual-Mode Handler Type Safety', () => {
 
   // GET dual-mode contract (no body)
   const jobStatusContract = buildContract({
+    visibility: 'public',
     method: 'get',
     pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
     requestPathParamsSchema: z.object({ jobId: z.string().uuid() }),
@@ -1059,6 +1067,7 @@ describe('Dual-Mode Handler Type Safety', () => {
 describe('Unified buildHandler Type Safety', () => {
   // SSE-only contract
   const notificationsContract = buildContract({
+    visibility: 'public',
     method: 'get',
     pathResolver: (params) => `/api/users/${params.userId}/notifications`,
     requestPathParamsSchema: z.object({ userId: z.string() }),
@@ -1072,6 +1081,7 @@ describe('Unified buildHandler Type Safety', () => {
 
   // Dual-mode contract
   const chatCompletionContract = buildContract({
+    visibility: 'public',
     method: 'post',
     pathResolver: () => '/api/chat/completions',
     requestPathParamsSchema: z.object({}),

@@ -96,6 +96,7 @@ function validateSyncResponseBody(
  * ```typescript
  * // In a contract definition:
  * const contract = buildContract({
+   visibility: 'public',
  *   responseBodySchemasByStatusCode: {
  *     400: z.object({ error: z.string(), details: z.array(z.string()) }),
  *     404: z.object({ error: z.string(), resourceId: z.string() }),

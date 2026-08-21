@@ -11,6 +11,7 @@ import { withGatewayMetadata } from '../withGatewayMetadata.ts'
 import { buildGatewayManifestFrom, type CollectedController } from './buildManifest.ts'
 
 const getContract = buildRestContract({
+  visibility: 'public',
   method: 'get',
   successResponseBodySchema: z.object({ ok: z.boolean() }),
   requestPathParamsSchema: z.object({ userId: z.string() }),
@@ -19,6 +20,7 @@ const getContract = buildRestContract({
 })
 
 const createContract = buildRestContract({
+  visibility: 'public',
   method: 'post',
   successResponseBodySchema: z.object({ ok: z.boolean() }),
   requestBodySchema: z.object({ name: z.string() }),
@@ -123,6 +125,7 @@ describe('buildGatewayManifestFrom', () => {
 
   it('reads inline gatewayMetadata passed via buildApiRoute options', () => {
     const apiGetUserContract = defineApiContract({
+      visibility: 'public',
       method: 'get',
       summary: 'Api get user',
       pathResolver: (p: { userId: string }) => `/api/users/${p.userId}`,
@@ -131,6 +134,7 @@ describe('buildGatewayManifestFrom', () => {
       responsesByStatusCode: { 200: z.object({ id: z.string() }) },
     })
     const apiCreateUserContract = defineApiContract({
+      visibility: 'public',
       method: 'post',
       summary: 'Api create user',
       pathResolver: () => '/api/users',

@@ -18,6 +18,7 @@ import { buildHandler } from './fastifyRouteTypes.ts'
 // ============================================================================
 
 const sseGetContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
   requestPathParamsSchema: z.object({ testGetParam: z.string() }),
@@ -31,6 +32,7 @@ const sseGetContract = buildSseContract({
 })
 
 const ssePostContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: (pathParams) => `/api/test/${pathParams.testPostParam}`,
   requestPathParamsSchema: z.object({ testPostParam: z.string() }),
@@ -54,6 +56,7 @@ class MinimalSSEController extends AbstractSSEController<any> {
 }
 
 const dualModeGetContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
   requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
@@ -68,6 +71,7 @@ const dualModeGetContract = buildSseContract({
 })
 
 const dualModePostContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: (pathParams) => `/api/dual/${pathParams.dualPostParam}`,
   requestPathParamsSchema: z.object({ dualPostParam: z.string() }),

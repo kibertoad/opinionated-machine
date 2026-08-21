@@ -6,6 +6,7 @@ import { GATEWAY_METADATA_SYMBOL } from './gatewaySymbol.ts'
 import { readGatewayMetadata, withGatewayMetadata } from './withGatewayMetadata.ts'
 
 const headerAwareContract = buildRestContract({
+  visibility: 'public',
   method: 'post',
   successResponseBodySchema: z.object({ ok: z.boolean() }),
   requestBodySchema: z.object({ name: z.string() }),
