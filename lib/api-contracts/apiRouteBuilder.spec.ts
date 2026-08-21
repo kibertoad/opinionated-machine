@@ -12,6 +12,7 @@ import { buildApiRoute } from './apiRouteBuilder.ts'
 const userSchema = z.object({ id: z.string(), name: z.string() })
 
 const getUserContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Get user',
   pathResolver: (p: { userId: string }) => `/users/${p.userId}`,
@@ -25,6 +26,7 @@ const sseEventsSchema = {
 }
 
 const sseOnlyContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Sse only',
   pathResolver: () => '/stream',
@@ -32,6 +34,7 @@ const sseOnlyContract = defineApiContract({
 })
 
 const dualModeContract = defineApiContract({
+  visibility: 'public',
   method: 'post',
   summary: 'Dual mode',
   pathResolver: () => '/chat',
@@ -83,6 +86,7 @@ describe('buildApiRoute — delegation', () => {
 // ============================================================================
 
 const headerAwareContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Header aware',
   pathResolver: (p: { tenantId: string }) => `/tenants/${p.tenantId}`,
@@ -92,6 +96,7 @@ const headerAwareContract = defineApiContract({
 })
 
 const queryAwareContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Query aware',
   pathResolver: () => '/search',

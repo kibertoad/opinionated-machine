@@ -6,6 +6,7 @@ import { z } from 'zod'
  * Used for basic Accept header routing tests.
  */
 export const chatCompletionContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/chat/completions',
   requestPathParamsSchema: z.object({}),
@@ -26,6 +27,7 @@ export const chatCompletionContract = buildContract({
  * POST dual-mode route with path params demonstrating type-safe pathResolver.
  */
 export const conversationCompletionContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: (params) => `/api/conversations/${params.conversationId}/completions`,
   requestPathParamsSchema: z.object({ conversationId: z.string().uuid() }),
@@ -46,6 +48,7 @@ export const conversationCompletionContract = buildContract({
  * GET dual-mode route for status polling/streaming.
  */
 export const jobStatusContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   requestPathParamsSchema: z.object({ jobId: z.string().uuid() }),
@@ -69,6 +72,7 @@ export const jobStatusContract = buildContract({
  * unauthenticated requests - the preHandler handles 401 responses.
  */
 export const authenticatedDualModeContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/protected/action',
   requestPathParamsSchema: z.object({}),
@@ -90,6 +94,7 @@ export const authenticatedDualModeContract = buildContract({
  * Simple POST dual-mode route for testing default mode behavior.
  */
 export const defaultModeTestContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/default-mode-test',
   requestPathParamsSchema: z.object({}),
@@ -106,6 +111,7 @@ export const defaultModeTestContract = buildContract({
  * POST dual-mode route for testing error handling in SSE mode.
  */
 export const errorTestContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/error-test',
   requestPathParamsSchema: z.object({}),
@@ -123,6 +129,7 @@ export const errorTestContract = buildContract({
  * This covers the `config.method ?? 'post'` branch in buildContract.
  */
 export const defaultMethodContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/default-method-test',
   requestPathParamsSchema: z.object({}),
@@ -140,6 +147,7 @@ export const defaultMethodContract = buildContract({
  * The successResponseBodySchema is strict, but the handler will return mismatched data.
  */
 export const jsonValidationContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/json-validation-test',
   requestPathParamsSchema: z.object({}),
@@ -160,6 +168,7 @@ export const jsonValidationContract = buildContract({
  * Tests that non-2xx responses are validated against the appropriate schema.
  */
 export const statusCodeValidationContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/status-code-validation',
   requestPathParamsSchema: z.object({}),
@@ -188,6 +197,7 @@ export const statusCodeValidationContract = buildContract({
  * SSE mode uses keepAlive for long-lived streaming of live updates.
  */
 export const keepaliveDashboardContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/dashboard/updates',
   requestPathParamsSchema: z.object({}),

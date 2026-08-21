@@ -3,6 +3,7 @@ import type {
   AnySSEContractDefinition,
   HttpStatusCode,
 } from '@lokalise/api-contracts'
+import type { ExtendedFastifySchema } from '@lokalise/fastify-api-contracts'
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
 import type { z } from 'zod'
@@ -96,6 +97,7 @@ function validateSyncResponseBody(
  * ```typescript
  * // In a contract definition:
  * const contract = buildContract({
+ *   visibility: 'public',
  *   responseBodySchemasByStatusCode: {
  *     400: z.object({ error: z.string(), details: z.array(z.string()) }),
  *     404: z.object({ error: z.string(), resourceId: z.string() }),
@@ -362,18 +364,24 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
   }
   const url = extractPathTemplate(contract.pathResolver, contract.requestPathParamsSchema)
 
+  const schema: ExtendedFastifySchema = {
+    params: contract.requestPathParamsSchema,
+    querystring: contract.requestQuerySchema,
+    headers: contract.requestHeaderSchema,
+    description: contract.description,
+    summary: contract.summary,
+    tags: contract.tags,
+    hide: contract.visibility !== 'public',
+    ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
+    // Note: response schema for sync mode could be added here
+  }
+
   const routeOptions: RouteOptions = {
     ...(options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}),
     method: contract.method,
     url,
     sse: buildSSEConfig(options), // Enable SSE support with optional per-route config
-    schema: {
-      params: contract.requestPathParamsSchema,
-      querystring: contract.requestQuerySchema,
-      headers: contract.requestHeaderSchema,
-      ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
-      // Note: response schema for sync mode could be added here
-    },
+    schema,
     handler: async (request, reply) => {
       // Determine mode based on Accept header
       const mode = determineMode(request.headers.accept, defaultMode)
@@ -419,17 +427,23 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
   }
   const url = extractPathTemplate(contract.pathResolver, contract.requestPathParamsSchema)
 
+  const schema: ExtendedFastifySchema = {
+    params: contract.requestPathParamsSchema,
+    querystring: contract.requestQuerySchema,
+    headers: contract.requestHeaderSchema,
+    description: contract.description,
+    summary: contract.summary,
+    tags: contract.tags,
+    hide: contract.visibility !== 'public',
+    ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
+  }
+
   const routeOptions: RouteOptions = {
     ...(options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}),
     method: contract.method,
     url,
     sse: buildSSEConfig(options), // Enable SSE support with optional per-route config
-    schema: {
-      params: contract.requestPathParamsSchema,
-      querystring: contract.requestQuerySchema,
-      headers: contract.requestHeaderSchema,
-      ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
-    },
+    schema,
     // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Core SSE route handler must coordinate context, error handling, and result processing
     handler: async (request, reply) => {
       // Create SSE context for deferred header sending

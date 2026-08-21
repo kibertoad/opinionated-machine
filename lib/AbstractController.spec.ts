@@ -13,18 +13,21 @@ describe('AbstractController', () => {
 
     const contracts = {
       getItem: buildContract({
+        visibility: 'public',
         method: 'get',
         successResponseBodySchema: ITEM_SCHEMA,
         requestPathParamsSchema: ITEM_SCHEMA.pick({ id: true }),
         pathResolver: (pathParams) => `/users/${pathParams.id}`,
       }),
       deleteItem: buildContract({
+        visibility: 'public',
         method: 'delete',
         successResponseBodySchema: z.undefined(),
         requestPathParamsSchema: ITEM_SCHEMA.pick({ id: true }),
         pathResolver: (pathParams) => `/users/${pathParams.id}`,
       }),
       updateItem: buildContract({
+        visibility: 'public',
         method: 'patch',
         requestBodySchema: ITEM_SCHEMA.pick({ value: true }),
         successResponseBodySchema: z.undefined(),
@@ -34,6 +37,7 @@ describe('AbstractController', () => {
         pathResolver: (pathParams) => `/users/${pathParams.id}`,
       }),
       createItem: buildContract({
+        visibility: 'public',
         method: 'post',
         requestBodySchema: ITEM_SCHEMA.pick({ value: true }),
         successResponseBodySchema: z.object({ success: z.boolean() }),

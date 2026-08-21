@@ -5,6 +5,7 @@ import { z } from 'zod'
  * Simple GET SSE route for integration tests
  */
 export const streamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/stream',
   requestPathParamsSchema: z.object({}),
@@ -17,6 +18,7 @@ export const streamContract = buildContract({
  * GET SSE route for notifications stream
  */
 export const notificationsStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/notifications/stream',
   requestPathParamsSchema: z.object({}),
@@ -36,6 +38,7 @@ export const notificationsStreamContract = buildContract({
  * POST SSE route for chat completions (OpenAI-style)
  */
 export const chatCompletionContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/chat/completions',
   requestPathParamsSchema: z.object({}),
@@ -59,6 +62,7 @@ export const chatCompletionContract = buildContract({
  * GET SSE route with authentication header
  */
 export const authenticatedStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/protected/stream',
   requestPathParamsSchema: z.object({}),
@@ -77,6 +81,7 @@ export const authenticatedStreamContract = buildContract({
  * GET SSE route with path params
  */
 export const channelStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
   requestPathParamsSchema: z.object({
@@ -99,6 +104,7 @@ export const channelStreamContract = buildContract({
  * GET SSE route for testing Last-Event-ID reconnection (sync replay)
  */
 export const reconnectStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/reconnect/stream',
   requestPathParamsSchema: z.object({}),
@@ -118,6 +124,7 @@ export const reconnectStreamContract = buildContract({
  * GET SSE route for testing Last-Event-ID reconnection (async replay)
  */
 export const asyncReconnectStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/async-reconnect/stream',
   requestPathParamsSchema: z.object({}),
@@ -138,6 +145,7 @@ export const asyncReconnectStreamContract = buildContract({
  * Verifies that closeConnection doesn't cut off data transfer
  */
 export const largeContentStreamContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/large-content/stream',
   requestPathParamsSchema: z.object({}),
@@ -163,6 +171,7 @@ export const largeContentStreamContract = buildContract({
  * GET SSE route for testing logger error handling in onClose
  */
 export const loggerTestStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/logger-test/stream',
   requestPathParamsSchema: z.object({}),
@@ -177,6 +186,7 @@ export const loggerTestStreamContract = buildContract({
  * GET SSE route for testing logger error handling in onConnect
  */
 export const onConnectErrorStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/on-connect-error/stream',
   requestPathParamsSchema: z.object({}),
@@ -191,6 +201,7 @@ export const onConnectErrorStreamContract = buildContract({
  * GET SSE route for testing logger error handling in onReconnect
  */
 export const onReconnectErrorStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/on-reconnect-error/stream',
   requestPathParamsSchema: z.object({}),
@@ -209,6 +220,7 @@ export const onReconnectErrorStreamContract = buildContract({
  * to verify validation behavior with different payloads.
  */
 export const validationTestStreamContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/validation-test/stream',
   requestPathParamsSchema: z.object({}),
@@ -247,6 +259,7 @@ export const validationTestStreamContract = buildContract({
  * ```
  */
 export const openaiStyleStreamContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/openai-style/stream',
   requestPathParamsSchema: z.object({}),
@@ -276,6 +289,7 @@ export const openaiStyleStreamContract = buildContract({
  * GET SSE route for testing logger error handling in onClose
  */
 export const onCloseErrorStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/on-close-error/stream',
   requestPathParamsSchema: z.object({}),
@@ -290,6 +304,7 @@ export const onCloseErrorStreamContract = buildContract({
  * GET SSE route for testing isConnected() method
  */
 export const isConnectedTestStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/is-connected-test/stream',
   requestPathParamsSchema: z.object({}),
@@ -305,6 +320,7 @@ export const isConnectedTestStreamContract = buildContract({
  * POST SSE route for testing sendStream() method with validation
  */
 export const sendStreamTestContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/send-stream-test/stream',
   requestPathParamsSchema: z.object({}),
@@ -323,6 +339,7 @@ export const sendStreamTestContract = buildContract({
  * GET SSE route for testing getStream() method
  */
 export const getStreamTestContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/get-stream-test/stream',
   requestPathParamsSchema: z.object({}),
@@ -341,6 +358,7 @@ export const getStreamTestContract = buildContract({
  * GET SSE route for testing deferred headers - 404 before streaming
  */
 export const deferredHeaders404Contract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (params) => `/api/deferred/${params.id}/stream`,
   requestPathParamsSchema: z.object({
@@ -357,6 +375,7 @@ export const deferredHeaders404Contract = buildContract({
  * POST SSE route for testing deferred headers - 422 validation error
  */
 export const deferredHeaders422Contract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/deferred/validate/stream',
   requestPathParamsSchema: z.object({}),
@@ -374,6 +393,7 @@ export const deferredHeaders422Contract = buildContract({
  * GET SSE route for testing forgotten start() detection
  */
 export const forgottenStartContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/deferred/forgotten-start/stream',
   requestPathParamsSchema: z.object({}),
@@ -388,6 +408,7 @@ export const forgottenStartContract = buildContract({
  * GET SSE route for testing error thrown after start()
  */
 export const errorAfterStartContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/deferred/error-after-start/stream',
   requestPathParamsSchema: z.object({}),
@@ -402,6 +423,7 @@ export const errorAfterStartContract = buildContract({
  * GET SSE route for testing PublicNonRecoverableError with custom status code
  */
 export const publicErrorContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (params) => `/api/deferred/public-error/${params.statusCode}/stream`,
   requestPathParamsSchema: z.object({
@@ -418,6 +440,7 @@ export const publicErrorContract = buildContract({
  * GET SSE route for testing non-Error throws (e.g., string or plain object)
  */
 export const nonErrorThrowContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/deferred/non-error-throw/stream',
   requestPathParamsSchema: z.object({}),
@@ -432,6 +455,7 @@ export const nonErrorThrowContract = buildContract({
  * GET SSE route for testing sse.respond() without explicit return
  */
 export const respondWithoutReturnContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (params) => `/api/deferred/respond-no-return/${params.id}/stream`,
   requestPathParamsSchema: z.object({
@@ -449,6 +473,7 @@ export const respondWithoutReturnContract = buildContract({
  * Tests that sse.respond() responses are validated against status-specific schemas.
  */
 export const sseRespondValidationContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/sse-respond-validation/stream',
   requestPathParamsSchema: z.object({}),
@@ -478,6 +503,7 @@ export const sseRespondValidationContract = buildContract({
  *   - `mode=missing`    → `sse.respond(404, { resourceId })`
  */
 export const bodyForStatusGetContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/body-for-status/stream',
   requestPathParamsSchema: z.object({}),
@@ -500,6 +526,7 @@ export const bodyForStatusGetContract = buildContract({
  * request body instead of the query string.
  */
 export const bodyForStatusPostContract = buildContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/body-for-status/stream-post',
   requestPathParamsSchema: z.object({}),
@@ -525,6 +552,7 @@ export const bodyForStatusPostContract = buildContract({
  * GET SSE route for testing room functionality
  */
 export const roomStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (params) => `/api/rooms/${params.roomId}/stream`,
   requestPathParamsSchema: z.object({

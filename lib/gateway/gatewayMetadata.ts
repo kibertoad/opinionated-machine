@@ -168,7 +168,6 @@ export const gatewayMetadataSchema = z
   .object({
     id: z.string().optional(),
     upstream: z.string().optional(),
-    visibility: z.enum(['public', 'internal', 'admin']).optional(),
     tags: z.array(z.string()).optional(),
 
     match: matchSchema.optional(),

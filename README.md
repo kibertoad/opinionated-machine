@@ -475,6 +475,7 @@ const PATH_PARAMS_SCHEMA = z.object({
 })
 
 const contract = buildRestContract({
+  visibility: 'public',
   method: 'delete',
   successResponseBodySchema: BODY_SCHEMA,
   requestPathParamsSchema: PATH_PARAMS_SCHEMA,
@@ -741,6 +742,7 @@ import { buildSseContract } from '@lokalise/api-contracts'
 
 // GET-based SSE stream with path params
 export const channelStreamContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
   requestPathParamsSchema: z.object({ channelId: z.string() }),
@@ -753,6 +755,7 @@ export const channelStreamContract = buildSseContract({
 
 // GET-based SSE stream without path params
 export const notificationsContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/notifications/stream',
   requestPathParamsSchema: z.object({}),
@@ -768,6 +771,7 @@ export const notificationsContract = buildSseContract({
 
 // POST-based SSE stream (e.g., AI chat completions)
 export const chatCompletionContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/chat/completions',
   requestPathParamsSchema: z.object({}),
@@ -1128,6 +1132,7 @@ The mapper can return any of: `config`, `bodyLimit`, `onRequest`, `preParsing`, 
 ```ts
 // In the contract definition
 const adminStreamContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/admin/stream',
   // ...schemas...
@@ -1521,6 +1526,7 @@ import { z } from 'zod'
 import { injectSSE } from 'opinionated-machine'
 
 const streamContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/stream',
   requestQuerySchema: z.object({}),
@@ -2262,6 +2268,7 @@ import { buildSseContract } from '@lokalise/api-contracts'
 
 // GET dual-mode route (polling or streaming job status)
 export const jobStatusContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   requestPathParamsSchema: z.object({ jobId: z.string().uuid() }),
@@ -2280,6 +2287,7 @@ export const jobStatusContract = buildSseContract({
 
 // POST dual-mode route (OpenAI-style chat completion)
 export const chatCompletionContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
   requestPathParamsSchema: z.object({ chatId: z.string().uuid() }),
@@ -2305,6 +2313,7 @@ Dual-mode contracts support an optional `responseHeaderSchema` to define and val
 
 ```ts
 export const rateLimitedContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/rate-limited',
   requestPathParamsSchema: z.object({}),
@@ -2350,6 +2359,7 @@ Dual-mode and SSE contracts support `responseBodySchemasByStatusCode` to define 
 
 ```ts
 export const resourceContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: (params) => `/api/resources/${params.id}`,
   requestPathParamsSchema: z.object({ id: z.string() }),
@@ -2876,12 +2886,14 @@ import {
 import { z } from 'zod/v4'
 
 const getUser = buildRestContract({
+  visibility: 'public',
   method: 'get',
   successResponseBodySchema: z.object({ id: z.string() }),
   requestPathParamsSchema: z.object({ userId: z.string() }),
   pathResolver: (p) => `/users/${p.userId}`,
 })
 const createUser = buildRestContract({
+  visibility: 'public',
   method: 'post',
   requestBodySchema: z.object({ name: z.string() }),
   successResponseBodySchema: z.object({ id: z.string() }),
@@ -3031,6 +3043,7 @@ become compile errors before you ever ship a config:
 
 ```ts
 const getUser = buildRestContract({
+  visibility: 'public',
   method: 'get',
   successResponseBodySchema: ResponseBody,
   requestHeaderSchema: z.object({ 'x-trace-id': z.string() }),
@@ -3088,7 +3101,7 @@ time.
 | `rewrite` | `{ stripPrefix: '/v2' }` or `{ replacePrefix: { from: '/v1', to: '/v2' } }` | |
 | `traffic` | `{ weights: [{ upstream: 'a', weight: 80 }, { upstream: 'b', weight: 20 }] }` | Also `shadow: { upstream, percent }` |
 | `headers` | `{ request: { add: { 'x-internal': 'true' }, remove: ['cookie'] }, response: … }` | Free-form keys; typically infra headers not in the contract |
-| `tags`, `visibility` | `tags: ['users']`, `visibility: 'internal'` | Documentation / partitioning |
+| `tags` | `tags: ['users']` | Documentation / partitioning |
 | `extensions` | `{ envoy: { … }, krakend: { … }, kong: { … } }` | Vendor escape hatch; merged onto the generated route last |
 
 ### Generating Gateway Configs

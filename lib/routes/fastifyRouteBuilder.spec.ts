@@ -18,6 +18,7 @@ import { buildHandler } from './fastifyRouteTypes.ts'
 // ============================================================================
 
 const sseGetContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
   requestPathParamsSchema: z.object({ testGetParam: z.string() }),
@@ -25,9 +26,13 @@ const sseGetContract = buildSseContract({
   requestHeaderSchema: z.object({ testGetHeader: z.string() }),
   serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
   metadata: { requiresAuth: true, rateLimit: 100 },
+  summary: 'SSE get route',
+  description: 'Streams test messages',
+  tags: ['sse-test'],
 })
 
 const ssePostContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: (pathParams) => `/api/test/${pathParams.testPostParam}`,
   requestPathParamsSchema: z.object({ testPostParam: z.string() }),
@@ -51,6 +56,7 @@ class MinimalSSEController extends AbstractSSEController<any> {
 }
 
 const dualModeGetContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
   requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
@@ -59,9 +65,13 @@ const dualModeGetContract = buildSseContract({
   successResponseBodySchema: z.object({ result: z.string() }),
   serverSentEventSchemas: { messageDualGet: z.object({ text: z.string() }) },
   metadata: { requiresAuth: true, rateLimit: 100 },
+  summary: 'Dual-mode get route',
+  description: 'Returns or streams the result',
+  tags: ['dual-mode-test'],
 })
 
 const dualModePostContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: (pathParams) => `/api/dual/${pathParams.dualPostParam}`,
   requestPathParamsSchema: z.object({ dualPostParam: z.string() }),
@@ -105,6 +115,9 @@ describe('buildFastifyRoute', () => {
           params: sseGetContract.requestPathParamsSchema,
           querystring: sseGetContract.requestQuerySchema,
           headers: sseGetContract.requestHeaderSchema,
+          description: 'Streams test messages',
+          summary: 'SSE get route',
+          tags: ['sse-test'],
         },
         sse: true,
         url: '/api/test/:testGetParam',
@@ -157,6 +170,58 @@ describe('buildFastifyRoute', () => {
       expect(routeOptions.sse).toEqual({ heartbeatInterval: 5000 })
     })
 
+    it('should hide route from OpenAPI docs when contract visibility is internal', () => {
+      const internalContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
+        requestPathParamsSchema: z.object({ testGetParam: z.string() }),
+        serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
+        visibility: 'internal',
+      })
+      const handler = buildHandler(internalContract, {
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true })
+    })
+
+    it('should not hide route from OpenAPI docs when contract visibility is public', () => {
+      const publicContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
+        requestPathParamsSchema: z.object({ testGetParam: z.string() }),
+        serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      const handler = buildHandler(publicContract, {
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: false })
+    })
+
+    it('fails closed: hides routes whose contract lacks visibility at runtime', () => {
+      const legacyContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
+        requestPathParamsSchema: z.object({ testGetParam: z.string() }),
+        serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      delete (legacyContract as { visibility?: unknown }).visibility
+      const handler = buildHandler(legacyContract, {
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true })
+    })
+
     describe('contractMetadataToRouteMapper', () => {
       it('should use contract metadata mapper', () => {
         const onRequestHook = vi.fn()
@@ -207,6 +272,9 @@ describe('buildFastifyRoute', () => {
           params: dualModeGetContract.requestPathParamsSchema,
           querystring: dualModeGetContract.requestQuerySchema,
           headers: dualModeGetContract.requestHeaderSchema,
+          description: 'Returns or streams the result',
+          summary: 'Dual-mode get route',
+          tags: ['dual-mode-test'],
         },
         sse: true,
         url: '/api/dual/:dualGetParam',
@@ -264,6 +332,64 @@ describe('buildFastifyRoute', () => {
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
       expect(routeOptions.sse).toEqual({ heartbeatInterval: 5000 })
+    })
+
+    it('should hide route from OpenAPI docs when contract visibility is internal', () => {
+      const internalContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
+        requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { messageDualGet: z.object({ text: z.string() }) },
+        visibility: 'internal',
+      })
+      const handler = buildHandler(internalContract, {
+        sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true })
+    })
+
+    it('should not hide route from OpenAPI docs when contract visibility is public', () => {
+      const publicContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
+        requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { messageDualGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      const handler = buildHandler(publicContract, {
+        sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: false })
+    })
+
+    it('fails closed: hides routes whose contract lacks visibility at runtime', () => {
+      const legacyContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
+        requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { messageDualGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      delete (legacyContract as { visibility?: unknown }).visibility
+      const handler = buildHandler(legacyContract, {
+        sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true })
     })
 
     describe('contractMetadataToRouteMapper', () => {
