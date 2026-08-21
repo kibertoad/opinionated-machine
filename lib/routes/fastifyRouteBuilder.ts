@@ -374,7 +374,7 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
       description: contract.description,
       summary: contract.summary,
       tags: contract.tags,
-      hide: contract.visibility === 'internal',
+      hide: contract.visibility !== 'public',
       ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
       // Note: response schema for sync mode could be added here
     },
@@ -435,7 +435,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
       description: contract.description,
       summary: contract.summary,
       tags: contract.tags,
-      hide: contract.visibility === 'internal',
+      hide: contract.visibility !== 'public',
       ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
     },
     // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Core SSE route handler must coordinate context, error handling, and result processing

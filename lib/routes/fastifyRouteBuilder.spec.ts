@@ -183,14 +183,39 @@ describe('buildFastifyRoute', () => {
       expect(routeOptions.schema).toMatchObject({ hide: true })
     })
 
-    it('should not hide route from OpenAPI docs when contract visibility is omitted', () => {
-      const handler = buildHandler(sseGetContract, {
+    it('should not hide route from OpenAPI docs when contract visibility is public', () => {
+      const publicContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
+        requestPathParamsSchema: z.object({ testGetParam: z.string() }),
+        serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      const handler = buildHandler(publicContract, {
         sse: async (_req, _sse) => await Promise.resolve(),
       })
 
       const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
 
       expect(routeOptions.schema).toMatchObject({ hide: false })
+    })
+
+    it('fails closed: hides routes whose contract lacks visibility at runtime', () => {
+      const legacyContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
+        requestPathParamsSchema: z.object({ testGetParam: z.string() }),
+        serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      delete (legacyContract as { visibility?: unknown }).visibility
+      const handler = buildHandler(legacyContract, {
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true })
     })
 
     describe('contractMetadataToRouteMapper', () => {
@@ -324,8 +349,16 @@ describe('buildFastifyRoute', () => {
       expect(routeOptions.schema).toMatchObject({ hide: true })
     })
 
-    it('should not hide route from OpenAPI docs when contract visibility is omitted', () => {
-      const handler = buildHandler(dualModeGetContract, {
+    it('should not hide route from OpenAPI docs when contract visibility is public', () => {
+      const publicContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
+        requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { messageDualGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      const handler = buildHandler(publicContract, {
         sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
         sse: async (_req, _sse) => await Promise.resolve(),
       })
@@ -333,6 +366,26 @@ describe('buildFastifyRoute', () => {
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
       expect(routeOptions.schema).toMatchObject({ hide: false })
+    })
+
+    it('fails closed: hides routes whose contract lacks visibility at runtime', () => {
+      const legacyContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
+        requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { messageDualGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      delete (legacyContract as { visibility?: unknown }).visibility
+      const handler = buildHandler(legacyContract, {
+        sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true })
     })
 
     describe('contractMetadataToRouteMapper', () => {
