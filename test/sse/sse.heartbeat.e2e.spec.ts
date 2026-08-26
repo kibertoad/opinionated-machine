@@ -27,6 +27,16 @@ import { createSSETestServer, type SSETestServerWithResources } from '../sseTest
 // Short enough that a handful of heartbeats land well within the assertion window.
 const HEARTBEAT_INTERVAL = 20
 
+// How long each connection stays open before we assert on what the server wrote.
+const COLLECTION_WINDOW = 300
+
+// The comment line `@fastify/sse` writes on every heartbeat tick.
+const HEARTBEAT_COMMENT = ': heartbeat'
+
+// Every route below opens its stream with this payload, so a test can tell a genuinely
+// silent stream apart from one that never carried anything. See `collectRawStream`.
+const STREAM_OPEN_MARKER = 'stream-open'
+
 const defaultHeartbeatContract = buildSseContract({
   visibility: 'public',
   method: 'get',
@@ -66,16 +76,18 @@ class HeartbeatSSEController extends AbstractSSEController<HeartbeatContracts> {
   }
 
   private handleDefaultHeartbeat = buildHandler(defaultHeartbeatContract, {
-    sse: (_request, sse) => {
-      sse.start('keepAlive')
+    sse: async (_request, sse) => {
+      const session = sse.start('keepAlive')
+      await session.send('message', { text: STREAM_OPEN_MARKER })
     },
   })
 
   private handleDisabledHeartbeat = buildHandler(
     disabledHeartbeatContract,
     {
-      sse: (_request, sse) => {
-        sse.start('keepAlive')
+      sse: async (_request, sse) => {
+        const session = sse.start('keepAlive')
+        await session.send('message', { text: STREAM_OPEN_MARKER })
       },
     },
     { heartbeat: false },
@@ -99,6 +111,16 @@ class HeartbeatSSEModule extends AbstractModule<object> {
 /**
  * Opens a raw SSE connection and returns everything the server wrote within `durationMs`,
  * including heartbeat comment lines (which an event-level client would discard).
+ *
+ * Most assertions in this file are negative (`not.toContain(HEARTBEAT_COMMENT)`), and a
+ * body that never arrived satisfies those just as happily as a correctly silent stream.
+ * So this helper asserts the two preconditions that make those assertions mean something,
+ * for every test at once:
+ *
+ *  1. the response is a committed SSE stream (200 + `text/event-stream`), which rules out
+ *     a mistyped path (404) or a handler that never called `sse.start()` (JSON error), and
+ *  2. the stream actually delivered this route's opening event inside the window, which
+ *     rules out a connection that was established but carried nothing back.
  */
 async function collectRawStream(url: string, durationMs: number): Promise<string> {
   const abortController = new AbortController()
@@ -106,10 +128,14 @@ async function collectRawStream(url: string, durationMs: number): Promise<string
     headers: { accept: 'text/event-stream' },
     signal: abortController.signal,
   })
-  const body = response.body
-  expect(body).toBeTruthy()
 
-  const reader = (body as ReadableStream<Uint8Array>).getReader()
+  expect(response.status).toBe(200)
+  expect(response.headers.get('content-type')).toContain('text/event-stream')
+  if (!response.body) {
+    throw new Error(`Expected a readable SSE body from ${url}`)
+  }
+
+  const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let received = ''
 
@@ -128,6 +154,8 @@ async function collectRawStream(url: string, durationMs: number): Promise<string
   await delay(durationMs)
   abortController.abort()
   await readLoop
+
+  expect(received).toContain(STREAM_OPEN_MARKER)
 
   return received
 }
@@ -166,15 +194,21 @@ describe('SSE heartbeat E2E', () => {
     })
 
     it('emits heartbeat comments by default', async () => {
-      const received = await collectRawStream(`${server.baseUrl}/api/heartbeat/default`, 300)
+      const received = await collectRawStream(
+        `${server.baseUrl}/api/heartbeat/default`,
+        COLLECTION_WINDOW,
+      )
 
-      expect(received).toContain(': heartbeat')
+      expect(received).toContain(HEARTBEAT_COMMENT)
     })
 
     it('emits no heartbeat comments when the route sets heartbeat: false', async () => {
-      const received = await collectRawStream(`${server.baseUrl}/api/heartbeat/disabled`, 300)
+      const received = await collectRawStream(
+        `${server.baseUrl}/api/heartbeat/disabled`,
+        COLLECTION_WINDOW,
+      )
 
-      expect(received).not.toContain(': heartbeat')
+      expect(received).not.toContain(HEARTBEAT_COMMENT)
     })
   })
 
@@ -182,17 +216,23 @@ describe('SSE heartbeat E2E', () => {
     it('disables heartbeats for routes that do not set their own value', async () => {
       await startServer({ heartbeat: false })
 
-      const received = await collectRawStream(`${server.baseUrl}/api/heartbeat/default`, 300)
+      const received = await collectRawStream(
+        `${server.baseUrl}/api/heartbeat/default`,
+        COLLECTION_WINDOW,
+      )
 
-      expect(received).not.toContain(': heartbeat')
+      expect(received).not.toContain(HEARTBEAT_COMMENT)
     })
 
     it('does not override a route that sets heartbeat itself', async () => {
       await startServer({ heartbeat: true })
 
-      const received = await collectRawStream(`${server.baseUrl}/api/heartbeat/disabled`, 300)
+      const received = await collectRawStream(
+        `${server.baseUrl}/api/heartbeat/disabled`,
+        COLLECTION_WINDOW,
+      )
 
-      expect(received).not.toContain(': heartbeat')
+      expect(received).not.toContain(HEARTBEAT_COMMENT)
     })
   })
 })
