@@ -1,3 +1,4 @@
+import type { SSERouteKind } from '@fastify/sse'
 import type {
   AnyDualModeContractDefinition,
   AnySSEContractDefinition,
@@ -405,9 +406,31 @@ export type FastifySSEPreHandler = (
 // ============================================================================
 
 /**
+ * Re-exported from `@fastify/sse` so consumers can type the `kind` route option without
+ * depending on the plugin directly.
+ */
+export type { SSERouteKind }
+
+/**
  * Options for configuring an SSE route.
  */
 export type FastifySSERouteOptions = {
+  /**
+   * `@fastify/sse` route kind, controlling how the plugin negotiates the SSE/non-SSE split.
+   *
+   * - `'manual'` (default): no `Accept` negotiation. `reply.sse` is always attached and the
+   *   route handler decides at runtime whether to stream or to send a regular HTTP response.
+   *   This keeps SSE-only routes working for clients that send a wildcard Accept header,
+   *   `Accept: application/json` or no `Accept` header at all, and keeps `sse.respond()`
+   *   available to every client.
+   * - `'only'`: SSE-only with a lenient `Accept` gate. Clients that explicitly refuse
+   *   `text/event-stream` get `406 Not Acceptable` before the handler runs.
+   * - `'dual'`: strict `Accept` gate - only an explicit `text/event-stream` token admits SSE,
+   *   everything else reaches the handler with `reply.sse` undefined.
+   *
+   * @default 'manual'
+   */
+  kind?: SSERouteKind
   /**
    * Async preHandler hook for authentication/authorization.
    * Runs BEFORE the SSE connection is established.

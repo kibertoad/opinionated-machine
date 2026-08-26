@@ -1102,6 +1102,7 @@ private handleAdminStream = buildHandler(adminStreamContract, {
 | `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
 | `serializer` | Custom serializer for SSE data (e.g., for custom JSON encoding) |
 | `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages |
+| `kind` | `@fastify/sse` route kind - how the `Accept` header is negotiated. Defaults to `'manual'` (see below) |
 | `contractMetadataToRouteMapper` | Maps contract metadata to Fastify route options (see below) |
 
 **onClose reason parameter:**
@@ -1119,6 +1120,40 @@ options: {
   heartbeatInterval: 30000, // Send heartbeat every 30 seconds
 }
 ```
+
+#### `kind` and `Accept` header negotiation
+
+Routes are registered with the `@fastify/sse` kind `'manual'`, which means the plugin performs **no**
+`Accept` header negotiation: `reply.sse` is always attached and the route handler decides at runtime
+whether to stream or to send a regular HTTP response.
+
+This matters because SSE handlers built with `buildHandler` have a single code path that calls
+`sse.start()`. Clients that do not send an explicit `Accept: text/event-stream` token - a wildcard
+`Accept` header (the default for most non-browser HTTP clients), `Accept: application/json`, or no
+`Accept` header at all (typical of clients generated from the route's OpenAPI spec) - would otherwise
+reach the handler with `reply.sse` left undefined and get a `500` instead of a stream. It also keeps
+`sse.respond()` early returns available to every client. Dual-mode routes negotiate the `Accept`
+header themselves (honouring `defaultMode`), so they use the same kind.
+
+Override it per route when you want different semantics:
+
+```ts
+private handleAdminStream = buildHandler(adminStreamContract, {
+  sse: async (request, sse) => {
+    const session = sse.start('keepAlive')
+    // ... handler logic
+  },
+}, {
+  // Reject clients that explicitly refuse text/event-stream with 406 Not Acceptable
+  kind: 'only',
+})
+```
+
+| Kind | Behavior |
+| ---- | -------- |
+| `'manual'` (default) | No negotiation. `reply.sse` is always attached, the handler decides |
+| `'only'` | Lenient gate. Clients that explicitly refuse `text/event-stream` get `406 Not Acceptable` before the handler runs |
+| `'dual'` | Strict gate. Only an explicit `text/event-stream` token admits SSE; everything else reaches the handler with `reply.sse` undefined |
 
 #### `contractMetadataToRouteMapper`
 

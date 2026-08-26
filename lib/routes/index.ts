@@ -30,6 +30,7 @@ export {
   type SSERespondResult,
   // Handler container type (new pattern)
   type SSERouteHandler,
+  type SSERouteKind,
   type SSESession,
   type SSESessionMode,
   type SSEStartOptions,

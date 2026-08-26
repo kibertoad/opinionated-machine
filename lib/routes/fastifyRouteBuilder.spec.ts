@@ -119,7 +119,7 @@ describe('buildFastifyRoute', () => {
           summary: 'SSE get route',
           tags: ['sse-test'],
         },
-        sse: true,
+        sse: { kind: 'manual' },
         url: '/api/test/:testGetParam',
       })
     })
@@ -140,7 +140,7 @@ describe('buildFastifyRoute', () => {
           headers: ssePostContract.requestHeaderSchema,
           body: ssePostContract.requestBodySchema,
         },
-        sse: true,
+        sse: { kind: 'manual' },
         url: '/api/test/:testPostParam',
       })
     })
@@ -155,7 +155,7 @@ describe('buildFastifyRoute', () => {
 
       const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ serializer })
+      expect(routeOptions.sse).toEqual({ kind: 'manual', serializer })
     })
 
     it('should set sse config with heartbeatInterval when heartbeatInterval is provided', () => {
@@ -167,7 +167,29 @@ describe('buildFastifyRoute', () => {
 
       const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ heartbeatInterval: 5000 })
+      expect(routeOptions.sse).toEqual({ kind: 'manual', heartbeatInterval: 5000 })
+    })
+
+    it('should default sse kind to manual so non-SSE Accept headers still reach the handler', () => {
+      const handler = buildHandler(sseGetContract, {
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'manual' })
+    })
+
+    it('should allow overriding sse kind per route', () => {
+      const handler = buildHandler(
+        sseGetContract,
+        { sse: async (_req, _sse) => await Promise.resolve() },
+        { kind: 'only' },
+      )
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'only' })
     })
 
     it('should hide route from OpenAPI docs when contract visibility is internal', () => {
@@ -276,7 +298,7 @@ describe('buildFastifyRoute', () => {
           summary: 'Dual-mode get route',
           tags: ['dual-mode-test'],
         },
-        sse: true,
+        sse: { kind: 'manual' },
         url: '/api/dual/:dualGetParam',
       })
     })
@@ -298,7 +320,7 @@ describe('buildFastifyRoute', () => {
           headers: dualModePostContract.requestHeaderSchema,
           body: dualModePostContract.requestBodySchema,
         },
-        sse: true,
+        sse: { kind: 'manual' },
         url: '/api/dual/:dualPostParam',
       })
     })
@@ -316,7 +338,7 @@ describe('buildFastifyRoute', () => {
 
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ serializer })
+      expect(routeOptions.sse).toEqual({ kind: 'manual', serializer })
     })
 
     it('should set sse config with heartbeatInterval when heartbeatInterval is provided', () => {
@@ -331,7 +353,33 @@ describe('buildFastifyRoute', () => {
 
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ heartbeatInterval: 5000 })
+      expect(routeOptions.sse).toEqual({ kind: 'manual', heartbeatInterval: 5000 })
+    })
+
+    it('should default sse kind to manual so the handler owns Accept negotiation', () => {
+      const handler = buildHandler(dualModeGetContract, {
+        sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'manual' })
+    })
+
+    it('should allow overriding sse kind per route', () => {
+      const handler = buildHandler(
+        dualModeGetContract,
+        {
+          sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+          sse: async (_req, _sse) => await Promise.resolve(),
+        },
+        { kind: 'dual' },
+      )
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'dual' })
     })
 
     it('should hide route from OpenAPI docs when contract visibility is internal', () => {
