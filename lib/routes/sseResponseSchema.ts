@@ -27,10 +27,14 @@ const frameworkErrorSchema = z.looseObject({
   code: z.string().optional(),
 })
 
-function isSuccessStatus(statusCode: number): boolean {
-  return statusCode >= 200 && statusCode < 300
-}
-
+/**
+ * Combine alternative body schemas for one status.
+ *
+ * A single schema is returned as-is rather than wrapped, so a status with only one possible
+ * body does not pick up a pointless `anyOf` in the generated spec.
+ *
+ * @returns The combined schema, or `undefined` when there is nothing to describe
+ */
 function unionOf(schemas: z.ZodTypeAny[]): z.ZodTypeAny | undefined {
   const [first, ...rest] = schemas
   if (!first) {
@@ -89,7 +93,8 @@ function buildStatusSchema(
   declaredSchema: z.ZodTypeAny | undefined,
   syncSuccessSchema: z.ZodTypeAny | undefined,
 ): z.ZodTypeAny | undefined {
-  if (isSuccessStatus(statusCode)) {
+  const isSuccessStatus = statusCode >= 200 && statusCode < 300
+  if (isSuccessStatus) {
     return unionOf([syncSuccessSchema, declaredSchema].filter((schema) => schema !== undefined))
   }
 
