@@ -25,6 +25,7 @@ import {
   handleSSEError,
   hasHttpStatusCode,
 } from './fastifyRouteUtils.ts'
+import { buildSseResponseSchemas } from './sseResponseSchema.ts'
 
 // Re-export for convenience
 export { extractPathTemplate }
@@ -373,7 +374,14 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
     tags: contract.tags,
     hide: contract.visibility !== 'public',
     ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
-    // Note: response schema for sync mode could be added here
+    // 200 describes both branches: the JSON sync body and the SSE event stream.
+    // `isEmptyResponseExpected` contracts have no sync body to describe, so they get the
+    // stream alone rather than a schema that would serialize an empty response.
+    response: buildSseResponseSchemas(
+      contract.serverSentEventSchemas,
+      contract.responseBodySchemasByStatusCode,
+      contract.isEmptyResponseExpected ? undefined : contract.successResponseBodySchema,
+    ),
   }
 
   const routeOptions: RouteOptions = {
@@ -436,6 +444,10 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
     tags: contract.tags,
     hide: contract.visibility !== 'public',
     ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
+    response: buildSseResponseSchemas(
+      contract.serverSentEventSchemas,
+      contract.responseBodySchemasByStatusCode,
+    ),
   }
 
   const routeOptions: RouteOptions = {

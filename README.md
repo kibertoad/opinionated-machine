@@ -2452,6 +2452,22 @@ sync: (request, reply) => {
 - `responseBodySchemasByStatusCode` is only used for non-2xx status codes
 - If you define the same 2xx code in both, `successResponseBodySchema` takes precedence
 
+**OpenAPI output and serialization:**
+
+`buildFastifyRoute` fills in the route's `schema.response` from the contract, so the generated
+spec describes each status instead of showing a bare "Default Response":
+
+- 200 carries `text/event-stream` with one `{ id?, event, data, retry? }` envelope per entry in
+  `serverSentEventSchemas`, discriminated by the `event` name, plus `application/json` with
+  `successResponseBodySchema` for dual-mode routes
+- Every status in `responseBodySchemasByStatusCode` gets its declared schema
+
+Because Fastify drives serialization from the same `schema.response`, a response body for a
+status the contract declares is serialized against that schema. Keys the schema does not
+declare are dropped from the body that goes out. Streamed SSE events are written directly by
+`@fastify/sse` and bypass the serializer, so the 200 event schema documents the stream without
+affecting it.
+
 ### Single Sync Handler
 
 Dual-mode contracts use a single `sync` handler that returns the response data. The framework validates the return value against the contract schema, then sends it. Do not call `reply.send()` — return the data directly instead. Use `reply.code()` to set status codes and `reply.header()` to set response headers.

@@ -57,3 +57,10 @@ export {
   sendReplayEvents,
   setupSSESession,
 } from './fastifyRouteUtils.js'
+
+// Response schema helpers
+export {
+  buildSseEventSchema,
+  buildSseResponseSchemas,
+  type ResponseSchemasByStatusCode,
+} from './sseResponseSchema.js'
