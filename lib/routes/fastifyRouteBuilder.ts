@@ -329,11 +329,13 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
     // Respect httpStatusCode from errors like PublicNonRecoverableError
     const statusCode = hasHttpStatusCode(err) ? err.httpStatusCode : 500
     const statusText = statusCode >= 500 ? 'Internal Server Error' : 'Error'
-    reply.code(statusCode).type('application/json').send({
-      statusCode,
-      error: statusText,
-      message,
-    })
+    // Sent pre-serialized: Fastify skips the response serializer for string payloads, so this
+    // envelope reaches the client intact even when the contract declares a different body for
+    // `statusCode`. Serializing it against that schema would drop `message`.
+    reply
+      .code(statusCode)
+      .type('application/json')
+      .send(JSON.stringify({ statusCode, error: statusText, message }))
   }
 }
 
@@ -519,11 +521,13 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         // Respect httpStatusCode from errors like PublicNonRecoverableError
         const statusCode = hasHttpStatusCode(err) ? err.httpStatusCode : 500
         const statusText = statusCode >= 500 ? 'Internal Server Error' : 'Error'
-        reply.code(statusCode).type('application/json').send({
-          statusCode,
-          error: statusText,
-          message,
-        })
+        // Sent pre-serialized: Fastify skips the response serializer for string payloads, so
+        // this envelope reaches the client intact even when the contract declares a different
+        // body for `statusCode`. Serializing it against that schema would drop `message`.
+        reply
+          .code(statusCode)
+          .type('application/json')
+          .send(JSON.stringify({ statusCode, error: statusText, message }))
       }
     },
   }

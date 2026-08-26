@@ -276,9 +276,22 @@ describe('buildFastifyRoute', () => {
 
         const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
 
-        const response = getResponseSchemas(routeOptions)
-        expect(response[404]).toBe(sseErrorsContract.responseBodySchemasByStatusCode?.[404])
-        expect(response[422]).toBe(sseErrorsContract.responseBodySchemasByStatusCode?.[422])
+        const response = getResponseSchemas(routeOptions) as Record<string, z.ZodTypeAny>
+        expect(response[404]?.parse({ error: 'Not found' })).toEqual({ error: 'Not found' })
+        expect(response[422]?.parse({ details: 'nope' })).toEqual({ details: 'nope' })
+      })
+
+      it('keeps framework error envelopes serializable at a declared error status', () => {
+        const handler = buildHandler(sseErrorsContract, {
+          sse: async (_req, _sse) => await Promise.resolve(),
+        })
+
+        const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+        const response = getResponseSchemas(routeOptions) as Record<string, z.ZodTypeAny>
+        expect(
+          response[422]?.parse({ statusCode: 422, error: 'Bad Request', message: 'invalid' }),
+        ).toEqual({ statusCode: 422, error: 'Bad Request', message: 'invalid' })
       })
     })
 
