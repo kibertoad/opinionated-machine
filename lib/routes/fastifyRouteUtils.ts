@@ -253,8 +253,12 @@ function closeSSESession(
   try {
     sseReply.sse.close()
   } catch (err) {
-    if (sseReply.sse.isConnected) {
-      // Log error if connection closure failed and connection is still live
+    // Never let the recovery path throw: this runs from error handling, and an exception
+    // raised here would replace the error we are recovering from with a far less useful one.
+    // `sseReply.sse` itself can be undefined - the plugin only attaches it when its Accept
+    // gate admits SSE - so read `isConnected` defensively rather than dereferencing blind.
+    if (sseReply.sse?.isConnected !== false) {
+      // Log error if connection closure failed and the connection is not known to be closed
       logger?.error(
         {
           connectionId,
@@ -457,13 +461,19 @@ export function createSSEContext<Events extends SSEEventSchemas>(
         throw new Error('Cannot start streaming after sending a response.')
       }
 
-      started = true
-      sessionMode = mode
-
-      // Register callback for when server explicitly closes via reply.sse.close()
+      // Register callback for when server explicitly closes via reply.sse.close().
+      // This is the first `reply.sse` dereference, and it runs before `started` flips: if
+      // the plugin never attached the SSE context (its Accept gate refused, which the
+      // supported route kinds prevent but a JavaScript caller can still reach), the route
+      // handler's catch then takes the not-yet-streaming branch and reports the real error
+      // instead of trying to tear down a stream that was never set up. Everything after
+      // this point may have written to the socket, so it stays inside `started`.
       sseReply.sse.onClose(async () => {
         await callOnClose('server')
       })
+
+      started = true
+      sessionMode = mode
 
       // Send headers if not already sent via sendHeaders()
       if (!headersSent) {

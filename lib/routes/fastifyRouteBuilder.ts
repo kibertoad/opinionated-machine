@@ -1,3 +1,4 @@
+import type { SSERouteKind } from '@fastify/sse'
 import type {
   AnyDualModeContractDefinition,
   AnySSEContractDefinition,
@@ -14,6 +15,7 @@ import type { AbstractSSEController } from '../sse/AbstractSSEController.ts'
 import type {
   DualModeRouteHandler,
   FastifyDualModeHandlerConfig,
+  FastifyDualModeRouteOptions,
   FastifySSEHandlerConfig,
   FastifySSERouteOptions,
   SSERouteHandler,
@@ -30,24 +32,64 @@ import { buildSseResponseSchemas } from './sseResponseSchema.ts'
 // Re-export for convenience
 export { extractPathTemplate }
 
+/** Shape of the `sse` route option handed to `@fastify/sse`. */
+type SSERouteConfig = {
+  kind: SSERouteKind
+  serializer?: (data: unknown) => string
+  /**
+   * Passed through for backwards compatibility only - the plugin reads its heartbeat
+   * interval from `app.register(fastifySSE, { heartbeatInterval })`, never from the route,
+   * so this currently has no effect. See issue #232.
+   */
+  heartbeatInterval?: number
+}
+
+/**
+ * Default `@fastify/sse` route kind used by both SSE-only and dual-mode routes.
+ *
+ * `'manual'` disables the plugin's `Accept` header negotiation entirely: `reply.sse` is
+ * always attached and the route handler decides at runtime whether to stream or to send a
+ * regular HTTP response. That matches what the handlers this builder produces already do,
+ * and it is the only kind that is safe for every shape of route:
+ *
+ * - SSE-only handlers have a single code path that calls `sse.start()`. Under the plugin's
+ *   `sse: true` default (`kind: 'legacy'`) a client that does not send an explicit
+ *   `text/event-stream` token - a wildcard `Accept` header, `Accept: application/json`, or
+ *   no `Accept` header at all, which is what most non-browser clients and OpenAPI-generated
+ *   clients send - leaves `reply.sse` undefined while still running the handler, so the
+ *   first `sse.start()` throws and the request 500s.
+ * - Dual-mode handlers negotiate themselves via `determineMode()`, which honours
+ *   `defaultMode`. Under a plugin-side gate, `defaultMode: 'sse'` combined with a
+ *   non-specific `Accept` header hits the same 500.
+ * - `sse.respond()` (an early HTTP response before streaming starts) stays reachable for
+ *   every client. `kind: 'only'` would cut that off for JSON clients: its gate admits a
+ *   missing `Accept` header plus the `*\/*` and `text/*` wildcards, but answers `406` to
+ *   every other concrete media type, `application/json` included.
+ *
+ * Override per route with the `kind` route option when different semantics are wanted -
+ * `'only'` on an SSE-only route for `406 Not Acceptable` content negotiation, or `'dual'`
+ * on a dual-mode route to let the plugin gate before the handler runs.
+ */
+const DEFAULT_SSE_ROUTE_KIND: SSERouteKind = 'manual'
+
 /**
  * Build the SSE config object for route options.
- * Returns true for basic SSE support, or an object with custom serializer/heartbeat.
+ *
+ * Always returns the object form with an explicit `kind`: omitting it (or passing
+ * `sse: true`) makes `@fastify/sse` fall back to its `'legacy'` kind, which applies a
+ * strict `Accept` gate and leaves `reply.sse` undefined for clients that do not ask
+ * for `text/event-stream` explicitly.
  */
 function buildSSEConfig(
-  options: FastifySSERouteOptions | undefined,
-): true | { serializer?: (data: unknown) => string; heartbeatInterval?: number } {
-  if (!options?.serializer && options?.heartbeatInterval === undefined) {
-    return true
-  }
+  options: FastifySSERouteOptions | FastifyDualModeRouteOptions | undefined,
+): SSERouteConfig {
+  const sseConfig: SSERouteConfig = { kind: options?.kind ?? DEFAULT_SSE_ROUTE_KIND }
 
-  const sseConfig: { serializer?: (data: unknown) => string; heartbeatInterval?: number } = {}
-
-  if (options.serializer) {
+  if (options?.serializer) {
     sseConfig.serializer = options.serializer
   }
 
-  if (options.heartbeatInterval !== undefined) {
+  if (options?.heartbeatInterval !== undefined) {
     sseConfig.heartbeatInterval = options.heartbeatInterval
   }
 
@@ -367,6 +409,26 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
   }
   const url = extractPathTemplate(contract.pathResolver, contract.requestPathParamsSchema)
 
+  // `kind: 'dual'` hands Accept negotiation to @fastify/sse, which admits SSE only for an
+  // explicit `text/event-stream` token. `determineMode()` then negotiates a second time
+  // inside the handler and falls back to `defaultMode` for anything non-specific, so with
+  // `defaultMode: 'sse'` a wildcard or absent Accept header takes the SSE branch after the
+  // plugin already declined to attach `reply.sse` - a guaranteed 500 on every such request.
+  // The two negotiators only agree when the fallback is JSON, so reject the combination at
+  // route-build time rather than letting it fail per request. `kind: 'manual'` (the default)
+  // performs no plugin-side gating and supports `defaultMode: 'sse'` fine.
+  if (options?.kind === 'dual' && defaultMode === 'sse') {
+    throw new InternalError({
+      message:
+        `Dual-mode route ${contract.method.toUpperCase()} ${url} cannot combine kind: "dual" ` +
+        'with defaultMode: "sse": @fastify/sse would decline to attach reply.sse for ' +
+        'wildcard or absent Accept headers while the handler still selects SSE mode. ' +
+        'Use kind: "manual" (the default) instead.',
+      errorCode: 'INVALID_SSE_ROUTE_KIND',
+      details: { url, method: contract.method, defaultMode, kind: options.kind },
+    })
+  }
+
   const schema: ExtendedFastifySchema = {
     params: contract.requestPathParamsSchema,
     querystring: contract.requestQuerySchema,
@@ -390,7 +452,7 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
     ...(options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}),
     method: contract.method,
     url,
-    sse: buildSSEConfig(options), // Enable SSE support with optional per-route config
+    sse: buildSSEConfig(options), // Enable SSE support with explicit kind + optional per-route config
     schema,
     handler: async (request, reply) => {
       // Determine mode based on Accept header
@@ -456,7 +518,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
     ...(options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}),
     method: contract.method,
     url,
-    sse: buildSSEConfig(options), // Enable SSE support with optional per-route config
+    sse: buildSSEConfig(options), // Enable SSE support with explicit kind + optional per-route config
     schema,
     // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Core SSE route handler must coordinate context, error handling, and result processing
     handler: async (request, reply) => {
