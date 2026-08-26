@@ -10,6 +10,7 @@ export {
   type DualModeHandlers,
   // Handler container types (new pattern)
   type DualModeRouteHandler,
+  type DualModeRouteKind,
   type FastifyDualModeHandlerConfig,
   type FastifyDualModeRouteOptions,
   type FastifySSEHandlerConfig,
@@ -27,10 +28,10 @@ export {
   type SSEHandlerResult,
   type SSEModeHandler,
   type SSEOnlyHandlers,
+  type SSEOnlyRouteKind,
   type SSERespondResult,
   // Handler container type (new pattern)
   type SSERouteHandler,
-  type SSERouteKind,
   type SSESession,
   type SSESessionMode,
   type SSEStartOptions,

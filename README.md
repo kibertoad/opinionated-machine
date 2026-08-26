@@ -1101,7 +1101,7 @@ private handleAdminStream = buildHandler(adminStreamContract, {
 | `onReconnect` | Handle Last-Event-ID reconnection, return events to replay |
 | `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
 | `serializer` | Custom serializer for SSE data (e.g., for custom JSON encoding) |
-| `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages |
+| `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages. Currently has no effect - `@fastify/sse` reads the interval only from `app.register(fastifySSE, { heartbeatInterval })` ([#232](https://github.com/kibertoad/opinionated-machine/issues/232)) |
 | `kind` | `@fastify/sse` route kind - how the `Accept` header is negotiated. Defaults to `'manual'` (see below) |
 | `contractMetadataToRouteMapper` | Maps contract metadata to Fastify route options (see below) |
 
@@ -1135,6 +1135,26 @@ reach the handler with `reply.sse` left undefined and get a `500` instead of a s
 `sse.respond()` early returns available to every client. Dual-mode routes negotiate the `Accept`
 header themselves (honouring `defaultMode`), so they use the same kind.
 
+Each route type accepts only the kinds that can actually work for it:
+
+**SSE-only routes** - `'manual' | 'only'`
+
+| Kind | Behavior |
+| ---- | -------- |
+| `'manual'` (default) | No negotiation. `reply.sse` is always attached, the handler decides |
+| `'only'` | The plugin gates on `Accept` and answers `406 Not Acceptable` before the handler runs. A missing `Accept` header and the wildcards `*/*` and `text/*` pass; **every other concrete media type is rejected**, `application/json` included - so `sse.respond()` early returns become unreachable for JSON clients |
+
+**Dual-mode routes** - `'manual' | 'dual'`
+
+| Kind | Behavior |
+| ---- | -------- |
+| `'manual'` (default) | No plugin-side negotiation. The route's own `determineMode()` picks the mode, honouring `defaultMode` |
+| `'dual'` | The plugin gates first: only an explicit `text/event-stream` token admits SSE, everything else reaches the handler with `reply.sse` undefined. Sound only with `defaultMode: 'json'` - pairing it with `defaultMode: 'sse'` is rejected at route-build time, because a wildcard or absent `Accept` header would select the SSE branch after the plugin already declined to attach the stream |
+
+The plugin's other kinds are deliberately not exposed: `'dual'` on an SSE-only route (and the
+`sse: true` `'legacy'` default) can only ever leave a single-code-path handler without `reply.sse`,
+and `'only'` on a dual-mode route would make the JSON half unreachable.
+
 Override it per route when you want different semantics:
 
 ```ts
@@ -1144,16 +1164,10 @@ private handleAdminStream = buildHandler(adminStreamContract, {
     // ... handler logic
   },
 }, {
-  // Reject clients that explicitly refuse text/event-stream with 406 Not Acceptable
+  // Content-negotiate: anything that does not accept text/event-stream gets 406 Not Acceptable
   kind: 'only',
 })
 ```
-
-| Kind | Behavior |
-| ---- | -------- |
-| `'manual'` (default) | No negotiation. `reply.sse` is always attached, the handler decides |
-| `'only'` | Lenient gate. Clients that explicitly refuse `text/event-stream` get `406 Not Acceptable` before the handler runs |
-| `'dual'` | Strict gate. Only an explicit `text/event-stream` token admits SSE; everything else reaches the handler with `reply.sse` undefined |
 
 #### `contractMetadataToRouteMapper`
 

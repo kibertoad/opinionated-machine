@@ -7,6 +7,8 @@ import {
   type BuildFastifyDualModeRoutesReturnType,
   type BuildFastifySSERoutesReturnType,
   type DualModeRouteHandler,
+  type FastifyDualModeRouteOptions,
+  type FastifySSERouteOptions,
   type SSERouteHandler,
   type SyncModeReply,
 } from '../../index.js'
@@ -192,6 +194,18 @@ describe('buildFastifyRoute', () => {
       expect(routeOptions.sse).toEqual({ kind: 'only' })
     })
 
+    it('should not offer kinds that leave reply.sse undefined on an SSE-only route', () => {
+      // 'dual' (and the plugin's `sse: true` 'legacy' default) run the handler without
+      // attaching reply.sse whenever the client does not send an explicit
+      // text/event-stream token. An SSE-only handler has a single code path that calls
+      // sse.start(), so those kinds can only ever fail - keep them off the option type.
+      expectTypeOf<FastifySSERouteOptions['kind']>().toEqualTypeOf<'manual' | 'only' | undefined>()
+
+      // @ts-expect-error 'dual' always leaves an SSE-only handler without reply.sse
+      const rejected: FastifySSERouteOptions = { kind: 'dual' }
+      expect(rejected).toEqual({ kind: 'dual' })
+    })
+
     it('should hide route from OpenAPI docs when contract visibility is internal', () => {
       const internalContract = buildSseContract({
         method: 'get',
@@ -375,6 +389,51 @@ describe('buildFastifyRoute', () => {
           sse: async (_req, _sse) => await Promise.resolve(),
         },
         { kind: 'dual' },
+      )
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'dual' })
+    })
+
+    it('should not offer the SSE-only kind on a dual-mode route', () => {
+      // 'only' answers non-SSE clients with 406 before the handler runs, which would make
+      // the JSON half of a dual-mode route unreachable.
+      expectTypeOf<FastifyDualModeRouteOptions['kind']>().toEqualTypeOf<
+        'manual' | 'dual' | undefined
+      >()
+
+      // @ts-expect-error 'only' would 406 the JSON half of a dual-mode route
+      const rejected: FastifyDualModeRouteOptions = { kind: 'only' }
+      expect(rejected).toEqual({ kind: 'only' })
+    })
+
+    it('should reject kind dual combined with defaultMode sse at route-build time', () => {
+      // The plugin gate admits SSE only for an explicit text/event-stream token, while
+      // determineMode() falls back to defaultMode for anything non-specific - so this
+      // pairing selects the SSE branch precisely when reply.sse was not attached.
+      const handler = buildHandler(
+        dualModeGetContract,
+        {
+          sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+          sse: async (_req, _sse) => await Promise.resolve(),
+        },
+        { kind: 'dual', defaultMode: 'sse' },
+      )
+
+      expect(() => buildFastifyRoute(new MinimalDualModeController(handler), handler)).toThrow(
+        /cannot combine kind: "dual" with defaultMode: "sse"/,
+      )
+    })
+
+    it('should allow kind dual with the default json fallback', () => {
+      const handler = buildHandler(
+        dualModeGetContract,
+        {
+          sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+          sse: async (_req, _sse) => await Promise.resolve(),
+        },
+        { kind: 'dual', defaultMode: 'json' },
       )
 
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)

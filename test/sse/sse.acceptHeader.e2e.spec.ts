@@ -1,7 +1,17 @@
+import { buildSseContract } from '@lokalise/api-contracts'
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DIContext, parseSSEEvents } from '../../index.js'
+import { z } from 'zod'
+import {
+  AbstractSSEController,
+  type BuildFastifySSERoutesReturnType,
+  buildFastifyRoute,
+  buildHandler,
+  DIContext,
+  parseSSEEvents,
+  type SSERouteHandler,
+} from '../../index.js'
 import {
   TestChatDualModeModule,
   TestDefaultModeDualModeModule,
@@ -21,6 +31,38 @@ import { TestDeferredHeaders404Module, TestPostSSEModule } from './fixtures/test
  * clients), `Accept: application/json`, or no `Accept` header at all (clients generated from
  * the route's OpenAPI spec, since the contract declares no `Accept` parameter).
  */
+
+/**
+ * Minimal SSE route used by the `kind` tests below, registered directly through
+ * `buildFastifyRoute` so a single contract can be re-registered under different kinds.
+ */
+const onlyKindContract = buildSseContract({
+  visibility: 'public',
+  method: 'get',
+  pathResolver: (params) => `/api/only-kind/${params.id}/stream`,
+  requestPathParamsSchema: z.object({ id: z.string() }),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  serverSentEventSchemas: { message: z.object({ text: z.string() }) },
+  responseBodySchemasByStatusCode: { 404: z.object({ error: z.string() }) },
+})
+
+type OnlyKindContracts = { stream: typeof onlyKindContract }
+
+class OnlyKindController extends AbstractSSEController<OnlyKindContracts> {
+  public static contracts = { stream: onlyKindContract } as const
+
+  private readonly handler: SSERouteHandler<typeof onlyKindContract>
+
+  constructor(handler: SSERouteHandler<typeof onlyKindContract>) {
+    super({})
+    this.handler = handler
+  }
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<OnlyKindContracts> {
+    return { stream: this.handler }
+  }
+}
 
 const NON_SSE_ACCEPT_HEADERS: [name: string, headers: Record<string, string>][] = [
   ['Accept: */*', { accept: '*/*' }],
@@ -210,5 +252,149 @@ describe('Dual-mode routes negotiate the Accept header themselves (issue #231)',
 
     const events = parseSSEEvents(response.body)
     expect(events.filter((event) => event.event === 'chunk')).toHaveLength(2)
+  })
+})
+
+/**
+ * `kind: 'only'` hands the `Accept` gate to @fastify/sse, which is lenient about wildcards
+ * and a missing header but rejects every other concrete media type - `application/json`
+ * included. These tests pin that down, because it is easy to read "SSE-only" as "406 only
+ * for clients that explicitly refuse SSE".
+ */
+describe("SSE-only routes registered with kind: 'only'", () => {
+  let server: SSETestServerWithResources<undefined>
+
+  beforeEach(async () => {
+    const handler = buildHandler(
+      onlyKindContract,
+      {
+        sse: async (request, sse) => {
+          if (request.params.id === 'missing') {
+            return sse.respond(404, { error: 'Entity not found' })
+          }
+          const session = sse.start('autoClose')
+          await session.send('message', { text: `Found ${request.params.id}` })
+        },
+      },
+      { kind: 'only' },
+    )
+
+    server = await createSSETestServer(
+      (app) => {
+        app.route(buildFastifyRoute(new OnlyKindController(handler), handler))
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.close()
+  })
+
+  it.each([
+    ['Accept: text/event-stream', { accept: 'text/event-stream' }],
+    ['Accept: */*', { accept: '*/*' }],
+    ['Accept: text/*', { accept: 'text/*' }],
+    ['no Accept header', {}],
+  ])('admits %s', { timeout: 10000 }, async (_name, headers) => {
+    const response = await server.app.inject({
+      method: 'get',
+      url: '/api/only-kind/present/stream',
+      headers,
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('text/event-stream')
+  })
+
+  it.each([
+    ['Accept: application/json', { accept: 'application/json' }],
+    ['Accept: text/event-stream;q=0', { accept: 'text/event-stream;q=0' }],
+  ])('rejects %s with 406 before the handler runs', { timeout: 10000 }, async (_name, headers) => {
+    const response = await server.app.inject({
+      method: 'get',
+      url: '/api/only-kind/present/stream',
+      headers,
+    })
+
+    expect(response.statusCode).toBe(406)
+    expect(JSON.parse(response.body)).toMatchObject({ error: 'Not Acceptable' })
+  })
+
+  it(
+    'makes sse.respond() early returns unreachable for JSON clients',
+    { timeout: 10000 },
+    async () => {
+      // The same route under the default kind: 'manual' answers this with a 404 body.
+      const response = await server.app.inject({
+        method: 'get',
+        url: '/api/only-kind/missing/stream',
+        headers: { accept: 'application/json' },
+      })
+
+      expect(response.statusCode).toBe(406)
+    },
+  )
+})
+
+/**
+ * The supported `kind` values keep `reply.sse` attached for every request that reaches an
+ * SSE-only handler, but a JavaScript caller can still hand the plugin a gating kind. When
+ * that happens the failure must report the real error rather than a second TypeError raised
+ * while tearing down a stream that was never set up.
+ */
+describe('SSE-only route whose plugin gate withheld reply.sse', () => {
+  let server: SSETestServerWithResources<undefined>
+
+  beforeEach(async () => {
+    const handler = buildHandler(onlyKindContract, {
+      sse: async (_request, sse) => {
+        const session = sse.start('autoClose')
+        await session.send('message', { text: 'never reached' })
+      },
+    })
+
+    server = await createSSETestServer(
+      (app) => {
+        const routeOptions = buildFastifyRoute(new OnlyKindController(handler), handler)
+        // 'dual' is not assignable to FastifySSERouteOptions['kind'] - reach past the type
+        // to reproduce what an untyped caller can still configure.
+        app.route({ ...routeOptions, sse: { kind: 'dual' } } as typeof routeOptions)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        serverOptions: { logger: false },
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.close()
+  })
+
+  it('reports the original failure instead of masking it', { timeout: 10000 }, async () => {
+    const response = await server.app.inject({
+      method: 'get',
+      url: '/api/only-kind/present/stream',
+      headers: { accept: '*/*' },
+    })
+
+    expect(response.statusCode).toBe(500)
+
+    const body = JSON.parse(response.body)
+    // The first reply.sse dereference in start() is onClose(); that is the error the client
+    // must see. Before the fix, the teardown path re-read reply.sse.isConnected from inside
+    // its own catch and replaced this with "Cannot read properties of undefined (reading
+    // 'isConnected')".
+    expect(body.message).toContain('onClose')
+    expect(body.message).not.toContain('isConnected')
   })
 })
