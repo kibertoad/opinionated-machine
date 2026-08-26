@@ -19,6 +19,11 @@ export type CreateSSETestServerOptions<T> = {
    * Options passed to the Fastify constructor (e.g. logger configuration).
    */
   serverOptions?: FastifyServerOptions
+  /**
+   * Options passed to the `@fastify/sse` plugin registration
+   * (e.g. `heartbeatInterval`, which is a plugin-level option shared by all routes).
+   */
+  ssePluginOptions?: { heartbeatInterval?: number; serializer?: (data: unknown) => string }
 }
 
 export type SSETestServerWithResources<T> = SSETestServer & { resources: T }
@@ -47,7 +52,10 @@ export async function createSSETestServer<T = undefined>(
   const app = fastify(options?.serverOptions)
 
   // Register SSE plugin (type assertion needed due to @fastify/sse's module.exports pattern)
-  await app.register(FastifySSEPlugin as unknown as Parameters<typeof app.register>[0])
+  await app.register(
+    FastifySSEPlugin as unknown as Parameters<typeof app.register>[0],
+    options?.ssePluginOptions ?? {},
+  )
 
   // Run custom configuration
   if (options?.configureApp) {

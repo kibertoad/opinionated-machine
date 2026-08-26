@@ -6,7 +6,6 @@ import type { RouteType } from '@lokalise/fastify-api-contracts'
 import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance, RouteOptions } from 'fastify'
-import { merge } from 'ts-deepmerge'
 import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
 import type { AbstractApiController } from './api-contracts/index.ts'
@@ -45,6 +44,51 @@ export type DependencyInjectionOptions = {
    * @default false
    */
   isTestMode?: boolean
+}
+
+type SSERouteConfigObject = {
+  kind?: 'only' | 'dual' | 'manual'
+  heartbeat?: boolean
+  serializer?: (data: unknown) => string
+}
+
+/**
+ * Apply registration-level SSE defaults (`heartbeat`, `serializer`) to a route.
+ *
+ * `@fastify/sse` reads its per-route configuration from the top-level `sse` route
+ * option (not from `config.sse`), and only supports a boolean `heartbeat` there —
+ * the heartbeat interval is a plugin-registration option shared by all routes.
+ *
+ * Values already set on the route by the route builder win over the registration-level
+ * defaults.
+ */
+function applyGlobalSSEOptions(
+  route: RouteOptions,
+  options?: Pick<RegisterSSERoutesOptions, 'heartbeat' | 'serializer'>,
+): void {
+  if (options?.heartbeat === undefined && options?.serializer === undefined) {
+    return
+  }
+
+  const routeWithSSE = route as RouteOptions & { sse?: unknown }
+  const routeSSEOption = routeWithSSE.sse
+  if (!routeSSEOption) {
+    return
+  }
+
+  // The route option is either `true` (plain SSE), a bare kind string, or an options object.
+  const routeSSEConfig: SSERouteConfigObject =
+    typeof routeSSEOption === 'string'
+      ? { kind: routeSSEOption as NonNullable<SSERouteConfigObject['kind']> }
+      : typeof routeSSEOption === 'object'
+        ? (routeSSEOption as SSERouteConfigObject)
+        : {}
+
+  routeWithSSE.sse = {
+    ...(options.heartbeat !== undefined && { heartbeat: options.heartbeat }),
+    ...(options.serializer !== undefined && { serializer: options.serializer }),
+    ...routeSSEConfig,
+  } satisfies SSERouteConfigObject
 }
 
 export class DIContext<
@@ -367,19 +411,7 @@ export class DIContext<
     if (options?.rateLimit) {
       this.applyRateLimit(route, options.rateLimit)
     }
-    // Apply SSE-specific options (heartbeatInterval, serializer) for SSE mode
-    if (options?.heartbeatInterval !== undefined || options?.serializer !== undefined) {
-      // biome-ignore lint/suspicious/noExplicitAny: config types vary by plugins
-      const routeWithConfig = route as RouteOptions & { config?: any }
-      routeWithConfig.config = merge(routeWithConfig.config || {}, {
-        sse: {
-          ...(options.heartbeatInterval !== undefined && {
-            heartbeatInterval: options.heartbeatInterval,
-          }),
-          ...(options.serializer !== undefined && { serializer: options.serializer }),
-        },
-      })
-    }
+    applyGlobalSSEOptions(route, options)
   }
 
   private applySSERouteOptions(route: RouteOptions, options?: RegisterSSERoutesOptions): void {
@@ -389,19 +421,7 @@ export class DIContext<
     if (options?.rateLimit) {
       this.applyRateLimit(route, options.rateLimit)
     }
-    // Apply SSE-specific options (heartbeatInterval, serializer)
-    if (options?.heartbeatInterval !== undefined || options?.serializer !== undefined) {
-      // biome-ignore lint/suspicious/noExplicitAny: config types vary by plugins
-      const routeWithConfig = route as RouteOptions & { config?: any }
-      routeWithConfig.config = merge(routeWithConfig.config || {}, {
-        sse: {
-          ...(options.heartbeatInterval !== undefined && {
-            heartbeatInterval: options.heartbeatInterval,
-          }),
-          ...(options.serializer !== undefined && { serializer: options.serializer }),
-        },
-      })
-    }
+    applyGlobalSSEOptions(route, options)
   }
 
   private applyPreHandlers(

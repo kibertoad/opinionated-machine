@@ -456,12 +456,18 @@ export type FastifySSERouteOptions = {
    */
   serializer?: (data: unknown) => string
   /**
-   * Heartbeat interval in milliseconds for this route.
-   * Overrides the global heartbeat interval if set.
-   * Set to 0 to disable heartbeats.
-   * @default 30000
+   * Whether the SSE keep-alive heartbeat is enabled for this route.
+   *
+   * Set to `false` to suppress heartbeat comments on this route entirely.
+   *
+   * The heartbeat *interval* is not configurable per route: `@fastify/sse`
+   * only exposes a boolean at route level. Configure the interval once for all
+   * routes when registering the plugin:
+   * `app.register(fastifySSE, { heartbeatInterval: 30000 })`.
+   *
+   * @default true
    */
-  heartbeatInterval?: number
+  heartbeat?: boolean
 
   /**
    * Maps contract metadata to additional Fastify route options.
@@ -993,12 +999,22 @@ export function buildHandler<
  */
 export type RegisterSSERoutesOptions = {
   /**
-   * Heartbeat interval in milliseconds.
-   * @default 30000
+   * Whether the SSE keep-alive heartbeat is enabled for the registered routes.
+   *
+   * Set to `false` to suppress heartbeat comments. Routes that set `heartbeat`
+   * themselves keep their own value.
+   *
+   * The heartbeat *interval* is not configurable per route: `@fastify/sse`
+   * only exposes a boolean at route level. Configure the interval once for all
+   * routes when registering the plugin:
+   * `app.register(fastifySSE, { heartbeatInterval: 30000 })`.
+   *
+   * @default true
    */
-  heartbeatInterval?: number
+  heartbeat?: boolean
   /**
    * Custom serializer for SSE message data.
+   * Routes that set `serializer` themselves keep their own value.
    * @default JSON.stringify
    */
   serializer?: (data: unknown) => string
@@ -1029,12 +1045,22 @@ export type RegisterSSERoutesOptions = {
  */
 export type RegisterDualModeRoutesOptions = {
   /**
-   * Heartbeat interval in milliseconds for SSE mode.
-   * @default 30000
+   * Whether the SSE keep-alive heartbeat is enabled for the registered routes.
+   *
+   * Set to `false` to suppress heartbeat comments in SSE mode. Routes that set
+   * `heartbeat` themselves keep their own value.
+   *
+   * The heartbeat *interval* is not configurable per route: `@fastify/sse`
+   * only exposes a boolean at route level. Configure the interval once for all
+   * routes when registering the plugin:
+   * `app.register(fastifySSE, { heartbeatInterval: 30000 })`.
+   *
+   * @default true
    */
-  heartbeatInterval?: number
+  heartbeat?: boolean
   /**
    * Custom serializer for SSE message data.
+   * Routes that set `serializer` themselves keep their own value.
    * @default JSON.stringify
    */
   serializer?: (data: unknown) => string

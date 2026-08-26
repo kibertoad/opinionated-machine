@@ -158,16 +158,28 @@ describe('buildFastifyRoute', () => {
       expect(routeOptions.sse).toEqual({ serializer })
     })
 
-    it('should set sse config with heartbeatInterval when heartbeatInterval is provided', () => {
+    it('should set sse config with heartbeat when heartbeat is disabled', () => {
       const handler = buildHandler(
         sseGetContract,
         { sse: async (_req, _sse) => await Promise.resolve() },
-        { heartbeatInterval: 5000 },
+        { heartbeat: false },
       )
 
       const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ heartbeatInterval: 5000 })
+      expect(routeOptions.sse).toEqual({ heartbeat: false })
+    })
+
+    it('should set sse config with heartbeat when heartbeat is explicitly enabled', () => {
+      const handler = buildHandler(
+        sseGetContract,
+        { sse: async (_req, _sse) => await Promise.resolve() },
+        { heartbeat: true },
+      )
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ heartbeat: true })
     })
 
     it('should hide route from OpenAPI docs when contract visibility is internal', () => {
@@ -319,19 +331,19 @@ describe('buildFastifyRoute', () => {
       expect(routeOptions.sse).toEqual({ serializer })
     })
 
-    it('should set sse config with heartbeatInterval when heartbeatInterval is provided', () => {
+    it('should set sse config with heartbeat when heartbeat is disabled', () => {
       const handler = buildHandler(
         dualModeGetContract,
         {
           sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
           sse: async (_req, _sse) => await Promise.resolve(),
         },
-        { heartbeatInterval: 5000 },
+        { heartbeat: false },
       )
 
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ heartbeatInterval: 5000 })
+      expect(routeOptions.sse).toEqual({ heartbeat: false })
     })
 
     it('should hide route from OpenAPI docs when contract visibility is internal', () => {

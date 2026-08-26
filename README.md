@@ -1101,7 +1101,7 @@ private handleAdminStream = buildHandler(adminStreamContract, {
 | `onReconnect` | Handle Last-Event-ID reconnection, return events to replay |
 | `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
 | `serializer` | Custom serializer for SSE data (e.g., for custom JSON encoding) |
-| `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages |
+| `heartbeat` | Set to `false` to disable heartbeat keep-alive comments for this route. The *interval* is not per-route — configure it once via `app.register(fastifySSE, { heartbeatInterval })` |
 | `contractMetadataToRouteMapper` | Maps contract metadata to Fastify route options (see below) |
 
 **onClose reason parameter:**
@@ -1116,9 +1116,16 @@ options: {
     // reason is 'server' or 'client'
   },
   serializer: (data) => JSON.stringify(data, null, 2), // Pretty-print JSON
-  heartbeatInterval: 30000, // Send heartbeat every 30 seconds
+  heartbeat: false, // Disable heartbeat comments on this route
 }
 ```
+
+> **Note:** `@fastify/sse` only exposes a boolean `heartbeat` at route level. The heartbeat *interval*
+> is a plugin-registration option shared by every route:
+>
+> ```ts
+> await app.register(fastifySSE, { heartbeatInterval: 30000 })
+> ```
 
 #### `contractMetadataToRouteMapper`
 

@@ -32,22 +32,26 @@ export { extractPathTemplate }
 /**
  * Build the SSE config object for route options.
  * Returns true for basic SSE support, or an object with custom serializer/heartbeat.
+ *
+ * Note that `heartbeat` is a boolean: `@fastify/sse` only supports enabling or
+ * disabling the heartbeat per route, while the interval itself is a
+ * plugin-registration option (`heartbeatInterval`) shared by all routes.
  */
 function buildSSEConfig(
   options: FastifySSERouteOptions | undefined,
-): true | { serializer?: (data: unknown) => string; heartbeatInterval?: number } {
-  if (!options?.serializer && options?.heartbeatInterval === undefined) {
+): true | { serializer?: (data: unknown) => string; heartbeat?: boolean } {
+  if (!options?.serializer && options?.heartbeat === undefined) {
     return true
   }
 
-  const sseConfig: { serializer?: (data: unknown) => string; heartbeatInterval?: number } = {}
+  const sseConfig: { serializer?: (data: unknown) => string; heartbeat?: boolean } = {}
 
   if (options.serializer) {
     sseConfig.serializer = options.serializer
   }
 
-  if (options.heartbeatInterval !== undefined) {
-    sseConfig.heartbeatInterval = options.heartbeatInterval
+  if (options.heartbeat !== undefined) {
+    sseConfig.heartbeat = options.heartbeat
   }
 
   return sseConfig
