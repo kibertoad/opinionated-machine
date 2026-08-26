@@ -192,16 +192,28 @@ describe('buildFastifyRoute', () => {
       expect(routeOptions.sse).toEqual({ kind: 'manual', serializer })
     })
 
-    it('should set sse config with heartbeatInterval when heartbeatInterval is provided', () => {
+    it('should set sse config with heartbeat when heartbeat is disabled', () => {
       const handler = buildHandler(
         sseGetContract,
         { sse: async (_req, _sse) => await Promise.resolve() },
-        { heartbeatInterval: 5000 },
+        { heartbeat: false },
       )
 
       const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ kind: 'manual', heartbeatInterval: 5000 })
+      expect(routeOptions.sse).toEqual({ kind: 'manual', heartbeat: false })
+    })
+
+    it('should set sse config with heartbeat when heartbeat is explicitly enabled', () => {
+      const handler = buildHandler(
+        sseGetContract,
+        { sse: async (_req, _sse) => await Promise.resolve() },
+        { heartbeat: true },
+      )
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'manual', heartbeat: true })
     })
 
     it('should default sse kind to manual so non-SSE Accept headers still reach the handler', () => {
@@ -428,19 +440,19 @@ describe('buildFastifyRoute', () => {
       expect(routeOptions.sse).toEqual({ kind: 'manual', serializer })
     })
 
-    it('should set sse config with heartbeatInterval when heartbeatInterval is provided', () => {
+    it('should set sse config with heartbeat when heartbeat is disabled', () => {
       const handler = buildHandler(
         dualModeGetContract,
         {
           sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
           sse: async (_req, _sse) => await Promise.resolve(),
         },
-        { heartbeatInterval: 5000 },
+        { heartbeat: false },
       )
 
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ kind: 'manual', heartbeatInterval: 5000 })
+      expect(routeOptions.sse).toEqual({ kind: 'manual', heartbeat: false })
     })
 
     it('should default sse kind to manual so the handler owns Accept negotiation', () => {

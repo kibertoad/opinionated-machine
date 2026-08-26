@@ -37,11 +37,12 @@ type SSERouteConfig = {
   kind: SSERouteKind
   serializer?: (data: unknown) => string
   /**
-   * Passed through for backwards compatibility only - the plugin reads its heartbeat
-   * interval from `app.register(fastifySSE, { heartbeatInterval })`, never from the route,
-   * so this currently has no effect. See issue #232.
+   * Whether the plugin's keep-alive heartbeat runs for this route.
+   *
+   * A boolean is all `@fastify/sse` reads per route; the interval itself comes from
+   * `app.register(fastifySSE, { heartbeatInterval })` and is shared by every route.
    */
-  heartbeatInterval?: number
+  heartbeat?: boolean
 }
 
 /**
@@ -79,6 +80,9 @@ const DEFAULT_SSE_ROUTE_KIND: SSERouteKind = 'manual'
  * `sse: true`) makes `@fastify/sse` fall back to its `'legacy'` kind, which applies a
  * strict `Accept` gate and leaves `reply.sse` undefined for clients that do not ask
  * for `text/event-stream` explicitly.
+ *
+ * `heartbeat` is a boolean: the plugin only supports turning the heartbeat on or off per
+ * route, while the interval is set once for all routes at plugin registration.
  */
 function buildSSEConfig(
   options: FastifySSERouteOptions | FastifyDualModeRouteOptions | undefined,
@@ -89,8 +93,8 @@ function buildSSEConfig(
     sseConfig.serializer = options.serializer
   }
 
-  if (options?.heartbeatInterval !== undefined) {
-    sseConfig.heartbeatInterval = options.heartbeatInterval
+  if (options?.heartbeat !== undefined) {
+    sseConfig.heartbeat = options.heartbeat
   }
 
   return sseConfig
