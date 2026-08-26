@@ -732,6 +732,13 @@ const app = fastify()
 await app.register(FastifySSEPlugin)
 ```
 
+Plugin-level options apply to every SSE route. The heartbeat interval is set here and only
+here - it is not a per-route option:
+
+```ts
+await app.register(FastifySSEPlugin, { heartbeatInterval: 30000 })
+```
+
 ### Defining SSE Contracts
 
 Use `buildSseContract` from `@lokalise/api-contracts` to define SSE routes. The `method` field determines the HTTP method. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
@@ -1101,7 +1108,7 @@ private handleAdminStream = buildHandler(adminStreamContract, {
 | `onReconnect` | Handle Last-Event-ID reconnection, return events to replay |
 | `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
 | `serializer` | Custom serializer for SSE data (e.g., for custom JSON encoding) |
-| `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages. Currently has no effect - `@fastify/sse` reads the interval only from `app.register(fastifySSE, { heartbeatInterval })` ([#232](https://github.com/kibertoad/opinionated-machine/issues/232)) |
+| `heartbeatInterval` | Interval in ms for heartbeat keep-alive messages. Currently has no effect - `@fastify/sse` reads the interval only from `app.register(FastifySSEPlugin, { heartbeatInterval })` ([#232](https://github.com/kibertoad/opinionated-machine/issues/232)) |
 | `kind` | `@fastify/sse` route kind - how the `Accept` header is negotiated. Defaults to `'manual'` (see below) |
 | `contractMetadataToRouteMapper` | Maps contract metadata to Fastify route options (see below) |
 
@@ -1117,9 +1124,19 @@ options: {
     // reason is 'server' or 'client'
   },
   serializer: (data) => JSON.stringify(data, null, 2), // Pretty-print JSON
-  heartbeatInterval: 30000, // Send heartbeat every 30 seconds
 }
 ```
+
+The heartbeat interval is not a route option - `@fastify/sse` reads it once, when the plugin
+is registered, and applies it to every SSE route:
+
+```ts
+await app.register(FastifySSEPlugin, { heartbeatInterval: 30000 })
+```
+
+A route-level `heartbeatInterval` is accepted for backwards compatibility but the plugin never
+reads it, so it currently has no effect. See
+[#232](https://github.com/kibertoad/opinionated-machine/issues/232).
 
 #### `kind` and `Accept` header negotiation
 
