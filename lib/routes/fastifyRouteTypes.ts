@@ -1,3 +1,4 @@
+import type { SSERouteKind } from '@fastify/sse'
 import type {
   AnyDualModeContractDefinition,
   AnySSEContractDefinition,
@@ -405,9 +406,53 @@ export type FastifySSEPreHandler = (
 // ============================================================================
 
 /**
+ * Constrains a route kind we expose to the set `@fastify/sse` actually accepts.
+ *
+ * Used purely as a compile-time guard on the aliases below: if the plugin ever renames or
+ * drops a kind, the alias stops compiling instead of silently degrading (which is what
+ * `Extract<SSERouteKind, ...>` would do - it would quietly resolve to `never`).
+ */
+type SupportedSSERouteKind<Kind extends SSERouteKind> = Kind
+
+/**
+ * `@fastify/sse` route kinds that are sound for an **SSE-only** route.
+ *
+ * The plugin also has `'dual'` (and the `sse: true` `'legacy'` default), but neither is
+ * usable here: both leave `reply.sse` undefined for clients that do not send an explicit
+ * `text/event-stream` token, while still invoking the handler - and an SSE-only handler
+ * has a single code path that calls `sse.start()`, so it can only fail.
+ */
+export type SSEOnlyRouteKind = SupportedSSERouteKind<'manual' | 'only'>
+
+/**
+ * `@fastify/sse` route kinds that are sound for a **dual-mode** route.
+ *
+ * `'only'` is excluded: it answers non-SSE clients with `406 Not Acceptable` before the
+ * handler runs, which makes the JSON half of a dual-mode route unreachable.
+ */
+export type DualModeRouteKind = SupportedSSERouteKind<'manual' | 'dual'>
+
+/**
  * Options for configuring an SSE route.
  */
 export type FastifySSERouteOptions = {
+  /**
+   * `@fastify/sse` route kind, controlling how the plugin negotiates the `Accept` header.
+   *
+   * - `'manual'` (default): no negotiation at all. `reply.sse` is always attached and the
+   *   route handler decides at runtime whether to stream or to send a regular HTTP response.
+   *   This keeps the route working for clients that send a wildcard `Accept` header,
+   *   `Accept: application/json` or no `Accept` header at all, and keeps `sse.respond()`
+   *   early returns available to every client.
+   * - `'only'`: the plugin gates on `Accept` and answers `406 Not Acceptable` before the
+   *   handler runs unless the client accepts `text/event-stream`. A missing `Accept` header
+   *   and the wildcards `*\/*` and `text/*` pass the gate; every other concrete media type
+   *   is rejected - including `Accept: application/json`, which means `sse.respond()` early
+   *   returns become unreachable for JSON clients.
+   *
+   * @default 'manual'
+   */
+  kind?: SSEOnlyRouteKind
   /**
    * Async preHandler hook for authentication/authorization.
    * Runs BEFORE the SSE connection is established.
@@ -711,12 +756,29 @@ export type DualModeHandlers<
  * Options for configuring a dual-mode route.
  * Extends SSE route options with JSON-specific options.
  */
-export type FastifyDualModeRouteOptions = FastifySSERouteOptions & {
+export type FastifyDualModeRouteOptions = Omit<FastifySSERouteOptions, 'kind'> & {
   /**
    * Default mode when Accept header doesn't specify preference.
    * @default 'json'
    */
   defaultMode?: DualModeType
+  /**
+   * `@fastify/sse` route kind, controlling how the plugin negotiates the `Accept` header.
+   *
+   * - `'manual'` (default): no plugin-side negotiation. `reply.sse` is always attached and
+   *   the route's own `determineMode()` picks the mode, honouring {@link defaultMode}.
+   * - `'dual'`: the plugin gates first, and only an explicit `text/event-stream` token
+   *   admits SSE. Everything else reaches the handler with `reply.sse` undefined, so this
+   *   is only sound with `defaultMode: 'json'` - the two negotiators would otherwise
+   *   disagree and the SSE branch would run without a stream. `buildFastifyRoute` rejects
+   *   that combination at route-build time.
+   *
+   * `'only'` is not offered: it answers non-SSE clients with `406` before the handler runs,
+   * which would make the JSON half of the route unreachable.
+   *
+   * @default 'manual'
+   */
+  kind?: DualModeRouteKind
 }
 
 /**

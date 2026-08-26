@@ -120,8 +120,9 @@ describe('registerSSERoutes SSE options', () => {
   it('leaves the sse route option untouched when no SSE defaults are given', async () => {
     const routes = await collectRoutes()
 
-    expect(routes.get('/api/register-options/plain')?.sse).toBe(true)
+    expect(routes.get('/api/register-options/plain')?.sse).toEqual({ kind: 'manual' })
     expect(routes.get('/api/register-options/configured')?.sse).toEqual({
+      kind: 'manual',
       heartbeat: false,
       serializer: routeSerializer,
     })
@@ -131,6 +132,7 @@ describe('registerSSERoutes SSE options', () => {
     const routes = await collectRoutes({ heartbeat: false, serializer: globalSerializer })
 
     expect(routes.get('/api/register-options/plain')?.sse).toEqual({
+      kind: 'manual',
       heartbeat: false,
       serializer: globalSerializer,
     })
@@ -140,6 +142,7 @@ describe('registerSSERoutes SSE options', () => {
     const routes = await collectRoutes({ heartbeat: true, serializer: globalSerializer })
 
     expect(routes.get('/api/register-options/configured')?.sse).toEqual({
+      kind: 'manual',
       heartbeat: false,
       serializer: routeSerializer,
     })

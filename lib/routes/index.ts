@@ -10,6 +10,7 @@ export {
   type DualModeHandlers,
   // Handler container types (new pattern)
   type DualModeRouteHandler,
+  type DualModeRouteKind,
   type FastifyDualModeHandlerConfig,
   type FastifyDualModeRouteOptions,
   type FastifySSEHandlerConfig,
@@ -27,6 +28,7 @@ export {
   type SSEHandlerResult,
   type SSEModeHandler,
   type SSEOnlyHandlers,
+  type SSEOnlyRouteKind,
   type SSERespondResult,
   // Handler container type (new pattern)
   type SSERouteHandler,
@@ -57,3 +59,10 @@ export {
   sendReplayEvents,
   setupSSESession,
 } from './fastifyRouteUtils.js'
+
+// Response schema helpers
+export {
+  buildSseEventSchema,
+  buildSseResponseSchemas,
+  type ResponseSchemasByStatusCode,
+} from './sseResponseSchema.js'

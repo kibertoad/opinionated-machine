@@ -1,3 +1,4 @@
+import type { SSERouteKind } from '@fastify/sse'
 import type {
   AnyDualModeContractDefinition,
   AnySSEContractDefinition,
@@ -47,7 +48,7 @@ export type DependencyInjectionOptions = {
 }
 
 type SSERouteConfigObject = {
-  kind?: 'only' | 'dual' | 'manual'
+  kind?: SSERouteKind
   heartbeat?: boolean
   serializer?: (data: unknown) => string
 }
