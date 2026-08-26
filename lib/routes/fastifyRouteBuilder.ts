@@ -25,6 +25,7 @@ import {
   handleSSEError,
   hasHttpStatusCode,
 } from './fastifyRouteUtils.ts'
+import { buildSseResponseSchemas } from './sseResponseSchema.ts'
 
 // Re-export for convenience
 export { extractPathTemplate }
@@ -328,11 +329,13 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
     // Respect httpStatusCode from errors like PublicNonRecoverableError
     const statusCode = hasHttpStatusCode(err) ? err.httpStatusCode : 500
     const statusText = statusCode >= 500 ? 'Internal Server Error' : 'Error'
-    reply.code(statusCode).type('application/json').send({
-      statusCode,
-      error: statusText,
-      message,
-    })
+    // Sent pre-serialized: Fastify skips the response serializer for string payloads, so this
+    // envelope reaches the client intact even when the contract declares a different body for
+    // `statusCode`. Serializing it against that schema would drop `message`.
+    reply
+      .code(statusCode)
+      .type('application/json')
+      .send(JSON.stringify({ statusCode, error: statusText, message }))
   }
 }
 
@@ -373,7 +376,14 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
     tags: contract.tags,
     hide: contract.visibility !== 'public',
     ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
-    // Note: response schema for sync mode could be added here
+    // 200 describes both branches: the JSON sync body and the SSE event stream.
+    // `isEmptyResponseExpected` contracts have no sync body to describe, so they get the
+    // stream alone rather than a schema that would serialize an empty response.
+    response: buildSseResponseSchemas(
+      contract.serverSentEventSchemas,
+      contract.responseBodySchemasByStatusCode,
+      contract.isEmptyResponseExpected ? undefined : contract.successResponseBodySchema,
+    ),
   }
 
   const routeOptions: RouteOptions = {
@@ -436,6 +446,10 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
     tags: contract.tags,
     hide: contract.visibility !== 'public',
     ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
+    response: buildSseResponseSchemas(
+      contract.serverSentEventSchemas,
+      contract.responseBodySchemasByStatusCode,
+    ),
   }
 
   const routeOptions: RouteOptions = {
@@ -507,11 +521,13 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         // Respect httpStatusCode from errors like PublicNonRecoverableError
         const statusCode = hasHttpStatusCode(err) ? err.httpStatusCode : 500
         const statusText = statusCode >= 500 ? 'Internal Server Error' : 'Error'
-        reply.code(statusCode).type('application/json').send({
-          statusCode,
-          error: statusText,
-          message,
-        })
+        // Sent pre-serialized: Fastify skips the response serializer for string payloads, so
+        // this envelope reaches the client intact even when the contract declares a different
+        // body for `statusCode`. Serializing it against that schema would drop `message`.
+        reply
+          .code(statusCode)
+          .type('application/json')
+          .send(JSON.stringify({ statusCode, error: statusText, message }))
       }
     },
   }

@@ -1,4 +1,5 @@
 import { buildSseContract } from '@lokalise/api-contracts'
+import type { RouteOptions } from 'fastify'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { z } from 'zod/v4'
 import {
@@ -41,6 +42,18 @@ const ssePostContract = buildSseContract({
   requestBodySchema: z.object({ testPostBody: z.string() }),
   serverSentEventSchemas: { messagePost: z.object({ text: z.string() }) },
   metadata: { requiresAuth: true, rateLimit: 100 },
+})
+
+const sseErrorsContract = buildSseContract({
+  visibility: 'public',
+  method: 'get',
+  pathResolver: () => '/api/errors',
+  requestPathParamsSchema: z.object({}),
+  responseBodySchemasByStatusCode: {
+    404: z.object({ error: z.string() }),
+    422: z.object({ details: z.string() }),
+  },
+  serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
 })
 
 class MinimalSSEController extends AbstractSSEController<any> {
@@ -93,6 +106,25 @@ class MinimalDualModeController extends AbstractDualModeController<any> {
   buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<any> {
     return { test: this.handler }
   }
+}
+
+function getResponseSchemas(routeOptions: RouteOptions): Record<string, unknown> {
+  return (routeOptions.schema as { response: Record<string, unknown> }).response
+}
+
+function getContentSchema(
+  routeOptions: RouteOptions,
+  statusCode: number,
+  mediaType: string,
+): z.ZodTypeAny {
+  const entry = getResponseSchemas(routeOptions)[statusCode] as {
+    content: Record<string, { schema: z.ZodTypeAny }>
+  }
+  const schema = entry.content[mediaType]?.schema
+  if (!schema) {
+    throw new Error(`No response schema for ${statusCode} ${mediaType}`)
+  }
+  return schema
 }
 
 // ============================================================================
@@ -220,6 +252,47 @@ describe('buildFastifyRoute', () => {
       const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
 
       expect(routeOptions.schema).toMatchObject({ hide: true })
+    })
+
+    describe('response schema', () => {
+      it('documents the event stream under 200 text/event-stream', () => {
+        const handler = buildHandler(sseGetContract, {
+          sse: async (_req, _sse) => await Promise.resolve(),
+        })
+
+        const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+        const eventSchema = getContentSchema(routeOptions, 200, 'text/event-stream')
+        expect(eventSchema.parse({ event: 'messageGet', data: { text: 'hi' } })).toEqual({
+          event: 'messageGet',
+          data: { text: 'hi' },
+        })
+      })
+
+      it('documents error statuses declared by the contract', () => {
+        const handler = buildHandler(sseErrorsContract, {
+          sse: async (_req, _sse) => await Promise.resolve(),
+        })
+
+        const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+        const response = getResponseSchemas(routeOptions) as Record<string, z.ZodTypeAny>
+        expect(response[404]?.parse({ error: 'Not found' })).toEqual({ error: 'Not found' })
+        expect(response[422]?.parse({ details: 'nope' })).toEqual({ details: 'nope' })
+      })
+
+      it('keeps framework error envelopes serializable at a declared error status', () => {
+        const handler = buildHandler(sseErrorsContract, {
+          sse: async (_req, _sse) => await Promise.resolve(),
+        })
+
+        const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+        const response = getResponseSchemas(routeOptions) as Record<string, z.ZodTypeAny>
+        expect(
+          response[422]?.parse({ statusCode: 422, error: 'Bad Request', message: 'invalid' }),
+        ).toEqual({ statusCode: 422, error: 'Bad Request', message: 'invalid' })
+      })
     })
 
     describe('contractMetadataToRouteMapper', () => {
@@ -390,6 +463,26 @@ describe('buildFastifyRoute', () => {
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
       expect(routeOptions.schema).toMatchObject({ hide: true })
+    })
+
+    describe('response schema', () => {
+      it('documents both the sync body and the event stream under 200', () => {
+        const handler = buildHandler(dualModeGetContract, {
+          sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+          sse: async (_req, _sse) => await Promise.resolve(),
+        })
+
+        const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+        expect(getContentSchema(routeOptions, 200, 'application/json')).toBe(
+          dualModeGetContract.successResponseBodySchema,
+        )
+        const eventSchema = getContentSchema(routeOptions, 200, 'text/event-stream')
+        expect(eventSchema.parse({ event: 'messageDualGet', data: { text: 'hi' } })).toEqual({
+          event: 'messageDualGet',
+          data: { text: 'hi' },
+        })
+      })
     })
 
     describe('contractMetadataToRouteMapper', () => {

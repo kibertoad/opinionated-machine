@@ -2448,9 +2448,44 @@ sync: (request, reply) => {
 
 **Validation priority for 2xx status codes:**
 
-- All 2xx responses (200, 201, 204, etc.) are validated against `successResponseBodySchema`
-- `responseBodySchemasByStatusCode` is only used for non-2xx status codes
-- If you define the same 2xx code in both, `successResponseBodySchema` takes precedence
+- All 2xx responses (200, 201, 204, etc.) returned by the `sync` handler are validated against
+  `successResponseBodySchema`
+- For the `sync` handler, `responseBodySchemasByStatusCode` is only used for non-2xx status codes,
+  so `successResponseBodySchema` takes precedence when the same 2xx code is defined in both
+- `sse.respond(code, body)` is validated against `responseBodySchemasByStatusCode[code]` at every
+  status, 2xx included, because that is the schema its argument is typed from
+
+**OpenAPI output and serialization:**
+
+`buildFastifyRoute` fills in the route's `schema.response` from the contract, so the generated
+spec describes each status instead of showing a bare "Default Response":
+
+- 200 carries `text/event-stream` with one `{ id?, event, data, retry? }` envelope per entry in
+  `serverSentEventSchemas`, rendered as a `oneOf` with the `event` name pinned to a `const` in
+  each branch, plus `application/json` for the JSON body
+- Every status in `responseBodySchemasByStatusCode` gets its declared schema
+
+Because Fastify drives serialization from the same `schema.response`, a response body for a
+status the contract declares is serialized against that schema. Keys the schema does not
+declare are dropped from the body that goes out. Streamed SSE events are written directly by
+`@fastify/sse` and bypass the serializer, so the 200 event schema documents the stream without
+affecting it.
+
+A status can be reached by more than one body shape, and Fastify rejects anything the schema
+does not accept, so each status accepts every shape the runtime can produce there:
+
+- On a 2xx of a dual-mode contract, `application/json` accepts `successResponseBodySchema` (what
+  the `sync` handler is validated against) as well as the schema declared for that status (what
+  `sse.respond()` is validated against), rather than one taking precedence over the other in the
+  spec
+- On a non-2xx, the declared schema is joined by the framework error envelope
+  (`{ statusCode, message, error?, code?, ... }`), which is what Fastify sends for a failed
+  request validation and what an application-level error handler typically returns. Without it,
+  declaring a 400 body would turn every `FST_ERR_VALIDATION` on that route into a 500
+
+Both show up in the spec as an `anyOf`. Errors the SSE builders raise themselves, before
+streaming starts, are sent pre-serialized and skip the schema entirely, so the thrown error's
+message always reaches the client.
 
 ### Single Sync Handler
 
