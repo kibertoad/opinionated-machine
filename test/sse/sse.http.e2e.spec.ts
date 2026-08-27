@@ -1,5 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { createContainer } from 'awilix'
+import { parse as parseQueryString } from 'fast-querystring'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -1800,6 +1801,19 @@ describe('SSE HTTP E2E (POST endpoints)', () => {
         configureApp: (app) => {
           app.setValidatorCompiler(validatorCompiler)
           app.setSerializerCompiler(serializerCompiler)
+
+          // Lets the form-encoded body test assert that a URLSearchParams payload
+          // reaches the handler intact instead of being JSON-stringified into {}
+          app.addContentTypeParser(
+            'application/x-www-form-urlencoded',
+            { parseAs: 'string' },
+            (_request, body, done) => {
+              done(null, parseQueryString(body as string))
+            },
+          )
+
+          // Non-SSE route without a response body, to exercise a bodiless response
+          app.post('/api/no-content', (_request, reply) => reply.code(204).send())
         },
         setup: () => ({ context }),
       },
@@ -1917,6 +1931,128 @@ describe('SSE HTTP E2E (POST endpoints)', () => {
 
     // Body is still readable as JSON - events were never consumed, so it isn't locked
     await expect(client.response.json()).resolves.toEqual({ message: 'Upstream unavailable' })
+
+    client.close()
+  })
+
+  it('accepts the lowercase method spelling used by route contracts', async () => {
+    const controller = getSlowStartController()
+
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/slow-start/stream',
+      {
+        method: 'post',
+        body: { prompt: 'lowercase method' },
+        awaitServerConnection: { controller },
+      },
+    )
+
+    expect(serverConnection.request.method).toBe('POST')
+
+    controller.releaseSlowWork()
+
+    const events = await client.collectEvents((event) => event.event === 'done')
+    expect(JSON.parse(events[0]!.data)).toEqual({ content: 'lowercase method' })
+
+    client.close()
+  })
+
+  it('rejects a body on a lowercase GET request too', async () => {
+    await expect(
+      SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+        method: 'get',
+        body: { message: 'hi', stream: true },
+      }),
+    ).rejects.toThrow('a request body requires a non-GET method')
+  })
+
+  it('sends a URLSearchParams body form-encoded instead of JSON-stringifying it', async () => {
+    const controller = getSlowStartController()
+
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/slow-start/stream',
+      {
+        method: 'POST',
+        body: new URLSearchParams({ prompt: 'form encoded prompt' }),
+        awaitServerConnection: { controller },
+      },
+    )
+
+    // fetch() describes the encoding itself - we must not have overwritten it with JSON
+    expect(serverConnection.request.headers['content-type']).toContain(
+      'application/x-www-form-urlencoded',
+    )
+
+    controller.releaseSlowWork()
+
+    const events = await client.collectEvents((event) => event.event === 'done')
+    expect(JSON.parse(events[0]!.data)).toEqual({ content: 'form encoded prompt' })
+
+    client.close()
+  })
+
+  it('sends a typed array body verbatim', async () => {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/slow-start/stream', {
+      method: 'POST',
+      body: Buffer.from(JSON.stringify({ prompt: 'binary prompt' })),
+    })
+
+    expect(client.response.status).toBe(200)
+
+    getSlowStartController().releaseSlowWork()
+
+    const events = await client.collectEvents((event) => event.event === 'done')
+    expect(JSON.parse(events[0]!.data)).toEqual({ content: 'binary prompt' })
+
+    client.close()
+  })
+
+  it('streams a ReadableStream body to the server', async () => {
+    const payload = JSON.stringify({ prompt: 'streamed prompt' })
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(payload))
+        controller.close()
+      },
+    })
+
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/slow-start/stream', {
+      method: 'POST',
+      body,
+    })
+
+    expect(client.response.status).toBe(200)
+
+    getSlowStartController().releaseSlowWork()
+
+    const events = await client.collectEvents((event) => event.event === 'done')
+    expect(JSON.parse(events[0]!.data)).toEqual({ content: 'streamed prompt' })
+
+    client.close()
+  })
+
+  it('rejects a body that cannot be serialized to JSON', async () => {
+    await expect(
+      SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+        method: 'POST',
+        body: () => 'not serializable',
+      }),
+    ).rejects.toThrow('cannot be serialized to JSON')
+  })
+
+  it('exposes a bodiless response instead of failing to construct the client', async () => {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/no-content', {
+      method: 'POST',
+    })
+
+    expect(client.response.status).toBe(204)
+
+    // Only consuming events reports the missing stream, and it says what to do instead
+    await expect(client.collectEvents(1)).rejects.toThrow(
+      'SSE response has no body to stream (status 204)',
+    )
 
     client.close()
   })

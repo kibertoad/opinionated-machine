@@ -2255,7 +2255,7 @@ client.close()
 
 **POST/PUT/PATCH endpoints**
 
-`connect()` also issues non-GET requests, so SSE endpoints that take a request body can be tested over real HTTP. Pass `method` and `body` — objects are JSON-stringified and `content-type: application/json` is set unless you provide your own content type (strings are sent verbatim, which is handy for asserting on malformed payloads):
+`connect()` also issues non-GET requests, so SSE endpoints that take a request body can be tested over real HTTP. Pass `method` and `body`. The method is accepted in either case, so the lowercase spelling your contracts already use (`method: 'post'`) works as-is:
 
 ```ts
 const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
@@ -2264,6 +2264,16 @@ const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completion
 })
 
 const events = await client.collectEvents((event) => event.event === 'done')
+```
+
+Bodies `fetch()` can send natively — strings, `URLSearchParams`, `FormData`, `Blob`/`File`, `ArrayBuffer`, typed arrays (`Buffer`, `Uint8Array`, …) and `ReadableStream` — are passed through untouched; anything else is JSON-stringified. `content-type: application/json` is defaulted for JSON-stringified and string bodies (so a raw string stays verbatim, which is handy for asserting on malformed payloads), unless you provide your own content type. Payloads that describe their own encoding — `URLSearchParams`, `FormData`, `Blob` — keep the content type `fetch()` gives them:
+
+```ts
+// Sent as application/x-www-form-urlencoded, not JSON-stringified into `{}`
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+  method: 'post',
+  body: new URLSearchParams({ message: 'Hello' }),
+})
 ```
 
 A body without a non-GET `method` throws — `fetch()` cannot attach one to a GET request.
@@ -2299,6 +2309,8 @@ expect(client.response.status).toBe(503)
 expect(client.response.headers.get('content-type')).not.toContain('text/event-stream')
 expect(await client.response.json()).toEqual({ message: 'Upstream unavailable' })
 ```
+
+Read that body *before* `close()`: closing aborts the request, so a body read after it (or from a `finally { client.close() }` block that runs first) rejects with an `AbortError`.
 
 #### SSEInjectClient
 
