@@ -92,6 +92,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [`@scalar/fastify-api-reference`](#scalarfastify-api-reference)
     - [Just the JSON](#just-the-json)
   - [With fastify-type-provider-zod](#with-fastify-type-provider-zod)
+    - [Models in the UI](#models-in-the-ui)
   - [One Document, Both Audiences](#one-document-both-audiences)
   - [Marking Routes Built Elsewhere](#marking-routes-built-elsewhere)
 - [Gateway Configuration](#gateway-configuration)
@@ -3196,6 +3197,55 @@ do not need this: it prunes as part of the same pass.
 
 Covered end to end in `test/openapi/openapi.zodRegistry.e2e.spec.ts`, including the un-pruned case,
 so the leak stays pinned.
+
+#### Models in the UI
+
+Both `@fastify/swagger-ui` and `@scalar/fastify-api-reference` render their **Models** (Scalar:
+**Schemas**) panel straight from `components.schemas`. Without the prune step that panel lists every
+registered Zod schema, so an internal model is not just present in the JSON — a reader browsing the
+public reference sees its name and its fields.
+
+Given a registry where `Report` is reached only by an internal operation, `Audit` by both audiences,
+and `Orphan` by nothing:
+
+| Model | reached by | unpruned public panel | pruned public panel |
+| --- | --- | --- | --- |
+| `User`, `Address`, `Category` | public operations | listed | listed |
+| `Audit` | a public *and* an internal operation | listed | listed |
+| `Report` | internal operation only | **listed** | dropped |
+| `Orphan` | nothing | **listed** | dropped |
+
+Three details worth knowing, all pinned in `test/openapi/openapi.zodModels.e2e.spec.ts`:
+
+- **Input/output pairs.** The Zod provider emits a `Foo` and a `FooInput` variant for every
+  registered schema. Pruning keeps only the direction actually used: a schema that is only ever a
+  response loses its `…Input` twin, while one used as a request body keeps both — and keeps both for
+  everything it nests, too. Expect the panel to be shorter than the registry even for a document
+  with nothing internal in it.
+- **Self-referential models survive.** The walk is cycle-safe, so a recursive schema (the Zod 4
+  getter pattern) keeps its own reference.
+- **A catalogue is the case to skip pruning for.** If the document deliberately publishes models
+  beyond what its operations reference — a shared type library, say — pruning is exactly what you do
+  not want. Leave the `transformObject` unchained there and hide internal models some other way.
+
+To drop the panel altogether rather than curate it:
+
+```ts
+// @fastify/swagger-ui — -1 hides the models section completely
+await scope.register(fastifySwaggerUi, {
+  routePrefix: '/documentation',
+  uiConfig: { defaultModelsExpandDepth: -1 },
+})
+
+// @scalar/fastify-api-reference — hides models in sidebar, search and content
+await app.register(scalarApiReference, {
+  routePrefix: '/reference',
+  configuration: { hideModels: true },
+})
+```
+
+That is a display setting only: the schemas stay in the document either way, so it hides nothing
+from anyone reading the JSON. Prune for the leak; hide for the noise.
 
 ### One Document, Both Audiences
 

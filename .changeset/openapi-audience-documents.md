@@ -41,7 +41,11 @@ out of the customer-facing spec but also out of any document internal teams coul
   never sees which operations the audience transform hid — so without it the customer-facing
   document carries internal request and response shapes even though its operations are correctly
   filtered. Chain it as `transformObject: (input) => pruneUnreachableComponents(jsonSchemaTransformObject(input))`.
-  `stripInternalOperations` already prunes as part of its own pass.
+  `stripInternalOperations` already prunes as part of its own pass. Both documentation UIs render
+  their Models panel straight from `components.schemas`, so this is what keeps an internal model
+  from being visible to anyone browsing the public reference. Pruning keeps only the direction of
+  each `Foo` / `FooInput` pair that is actually used, and is cycle-safe for self-referential
+  schemas.
 - `stripInternalOperations` and `pruneUnreachableComponents` take an unconstrained document type
   parameter. `openapi-types`' `Document` interfaces have no index signatures, so a structural
   constraint rejected `app.swagger()` — the one argument that matters.
