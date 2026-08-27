@@ -2332,6 +2332,14 @@ const conn = await client.connectWithBody(
   { model: 'gpt-4', messages: [...], stream: true },
 )
 
+// Any other method inject() accepts works too - the option is typed as
+// `SSEInjectMethod`, exported so you never have to redeclare that union
+const conn = await client.connectWithBody(
+  '/api/exports/42',
+  { reason: 'cleanup' },
+  { method: 'DELETE' },
+)
+
 // All events are available immediately (inject waits for handler to complete)
 expect(conn.getStatusCode()).toBe(200)
 const events = conn.getReceivedEvents()

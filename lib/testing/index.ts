@@ -14,6 +14,7 @@ export type {
   InjectSSEOptions,
   InjectSSEResult,
   SSEConnectOptions,
+  SSEInjectMethod,
   SSEResponse,
   SSETestConnection,
 } from './sseTestTypes.js'

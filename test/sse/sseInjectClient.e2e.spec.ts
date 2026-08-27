@@ -269,4 +269,40 @@ describe('SSEInjectClient E2E', () => {
       expect(events1).toEqual(events2)
     })
   })
+
+  describe('methods beyond POST', () => {
+    let server: SSETestServerWithResources<undefined>
+    let client: SSEInjectClient
+
+    beforeEach(async () => {
+      // A raw route, since the contract DSL has no DELETE SSE builder - this is
+      // about `connectWithBody` accepting every method inject() takes
+      server = await createSSETestServer((app) => {
+        app.delete('/api/raw-delete-stream', (request, reply) => {
+          reply.header('content-type', 'text/event-stream')
+          return `event: chunk\ndata: ${JSON.stringify(request.body)}\n\n`
+        })
+      })
+
+      client = new SSEInjectClient(server.app)
+    })
+
+    afterEach(async () => {
+      await server.close()
+    })
+
+    it('streams a DELETE request carrying a body', async () => {
+      const conn = await client.connectWithBody(
+        '/api/raw-delete-stream',
+        { id: 'to-delete' },
+        { method: 'DELETE' },
+      )
+
+      expect(conn.getStatusCode()).toBe(200)
+
+      const events = conn.getReceivedEvents()
+      expect(events).toHaveLength(1)
+      expect(JSON.parse(events[0]!.data)).toEqual({ id: 'to-delete' })
+    })
+  })
 })
