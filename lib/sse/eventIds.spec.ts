@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { compareEventIds, createEventIdSequence, MAX_EVENT_ID_COUNTER } from './eventIds.ts'
+import {
+  compareEventIds,
+  createEventIdSequence,
+  formatEventId,
+  MAX_EVENT_ID_COUNTER,
+} from './eventIds.ts'
 
 describe('createEventIdSequence', () => {
   it('produces monotonically increasing ids within an epoch', () => {
@@ -84,5 +89,27 @@ describe('compareEventIds', () => {
 
   it('compares counters numerically beyond Number.MAX_SAFE_INTEGER padding', () => {
     expect(compareEventIds('e1-999999999998', 'e1-999999999999')).toBe(-1)
+  })
+})
+
+describe('formatEventId', () => {
+  it('produces ids that compare against an in-process sequence of the same epoch', () => {
+    expect(formatEventId('e1', 2)).toBe('e1-000000000002')
+    expect(compareEventIds(formatEventId('e1', 1), formatEventId('e1', 2))).toBe(-1)
+  })
+
+  it('accepts a bigint counter', () => {
+    expect(formatEventId('e1', 42n)).toBe('e1-000000000042')
+  })
+
+  it('rejects an empty epoch', () => {
+    // '-000000000001' has no epoch to compare against, so compareEventIds()
+    // could never order it. createEventIdSequence() refuses the same input.
+    expect(() => formatEventId('', 1)).toThrow(TypeError)
+  })
+
+  it('rejects a counter outside the fixed id width', () => {
+    expect(() => formatEventId('e1', 0)).toThrow(RangeError)
+    expect(() => formatEventId('e1', MAX_EVENT_ID_COUNTER + 1)).toThrow(RangeError)
   })
 })

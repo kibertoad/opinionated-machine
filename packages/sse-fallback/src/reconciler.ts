@@ -76,6 +76,20 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
   private stateValue: State | undefined
   private stateInitialized = false
   private stateSuspended = false
+  /**
+   * Events delivered while the state layer is gap-suspended, in arrival
+   * order, so the repair snapshot can re-apply the ones it does not cover.
+   */
+  private stateReplayBuffer: Array<{
+    delivered: FallbackEvent<Events>
+    version: Version | undefined
+  }> = []
+  /**
+   * The replay buffer overflowed and was dropped. A below-watermark snapshot
+   * can no longer repair state without losing the events it does not cover,
+   * so the suspension holds until a snapshot reaches the watermark.
+   */
+  private stateReplayTruncated = false
   private terminated = false
 
   constructor(
@@ -190,37 +204,13 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
       ? (this.config.version as { ofSnapshot: (s: Snapshot) => Version }).ofSnapshot(snapshot)
       : null
 
-    if (
-      versioned &&
-      snapshotVersion !== null &&
-      this.highWatermark !== null &&
-      this.compare(snapshotVersion, this.highWatermark) <= 0
-    ) {
-      // The stale-poll race: everything this snapshot describes has already
-      // been delivered (or superseded) through the stream.
-      outcome.stale = true
-      // One exception: a gap-suspended state layer is repaired by ANY
-      // snapshot, not only one whose version matches the watermark exactly.
-      // Live events keep advancing the watermark after a gap, so the repair
-      // snapshot this branch was polled for usually arrives strictly below it;
-      // requiring equality left `apply` disabled forever and froze
-      // `getState()` at its pre-gap value while events kept flowing.
-      //
-      // Re-initializing from a below-watermark snapshot can miss the effect of
-      // events delivered between the snapshot and the watermark, but the gap
-      // already lost events, and a stale-but-advancing state beats a state
-      // that never updates again. The watermark is NOT rewound, so nothing is
-      // re-delivered.
-      if (this.stateSuspended && this.config.state) {
-        this.stateValue = this.config.state.init(snapshot)
-        this.stateInitialized = true
-        this.stateSuspended = false
-        outcome.state = { value: this.stateValue }
-        outcome.stateRepaired = true
-      }
-      this.finishHydration(snapshotVersion, outcome)
-      outcome.stateSuspended = this.stateSuspended
-      return outcome
+    const watermarkComparison =
+      versioned && snapshotVersion !== null && this.highWatermark !== null
+        ? this.compare(snapshotVersion, this.highWatermark)
+        : undefined
+
+    if (snapshotVersion !== null && watermarkComparison !== undefined && watermarkComparison <= 0) {
+      return this.handleStaleSnapshot(snapshot, snapshotVersion, watermarkComparison, outcome)
     }
 
     // Deliver the snapshot: state layer first (replacement semantics), then
@@ -229,7 +219,11 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
     if (this.config.state) {
       this.stateValue = this.config.state.init(snapshot)
       this.stateInitialized = true
+      // This snapshot is at or above the watermark, so it covers every event
+      // delivered during a suspension: there is nothing left to replay.
       this.stateSuspended = false
+      this.stateReplayBuffer = []
+      this.stateReplayTruncated = false
       outcome.state = { value: this.stateValue }
     }
 
@@ -259,6 +253,104 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
     this.finishHydration(snapshotVersion, outcome)
     outcome.stateSuspended = this.stateSuspended
     return outcome
+  }
+
+  /**
+   * The stale-poll race: everything this snapshot describes has already been
+   * delivered (or superseded) through the stream.
+   *
+   * One exception: a gap-suspended state layer is repaired by ANY snapshot,
+   * not only one whose version matches the watermark exactly. Live events keep
+   * advancing the watermark after a gap, so the repair snapshot this branch
+   * was polled for usually arrives strictly below it; requiring equality left
+   * `apply` disabled forever and froze `getState()` at its pre-gap value while
+   * events kept flowing. The events the snapshot does not cover are replayed
+   * onto it, so nothing delivered during the suspension is dropped from state.
+   * The watermark is NOT rewound, so nothing is re-delivered.
+   *
+   * With a dropped replay buffer that is impossible, so the suspension holds
+   * until a snapshot reaches the watermark, which covers everything delivered
+   * during it and needs no replay.
+   */
+  private handleStaleSnapshot(
+    snapshot: Snapshot,
+    snapshotVersion: Version,
+    watermarkComparison: number,
+    outcome: SnapshotOutcome<Events>,
+  ): SnapshotOutcome<Events> {
+    outcome.stale = true
+    const canRepair = !this.stateReplayTruncated || watermarkComparison === 0
+    if (this.stateSuspended && this.config.state && canRepair) {
+      this.repairState(snapshot, snapshotVersion, outcome)
+    }
+    this.finishHydration(snapshotVersion, outcome)
+    outcome.stateSuspended = this.stateSuspended
+    return outcome
+  }
+
+  /**
+   * Re-initialize a gap-suspended state layer from a snapshot below the
+   * watermark, then re-apply the buffered events the snapshot does not cover.
+   *
+   * The repair snapshot is usually older than the watermark, because live
+   * events keep arriving while the repair poll is in flight. Without the
+   * replay those events would be missing from state permanently: delivered to
+   * listeners, skipped by `apply` while suspended, then overwritten by an
+   * `init` that predates them. The next event would apply to a state that
+   * never saw them.
+   *
+   * The cut is by arrival order, anchored on the last buffered event the
+   * snapshot demonstrably covers. Events after it are replayed even when they
+   * carry no orderable version, because arrival order is the only ordering
+   * they have.
+   */
+  private repairState(
+    snapshot: Snapshot,
+    snapshotVersion: Version,
+    outcome: SnapshotOutcome<Events>,
+  ): void {
+    const state = this.config.state
+    if (!state) return
+
+    this.stateValue = state.init(snapshot)
+    this.stateInitialized = true
+    this.stateSuspended = false
+
+    const buffered = this.stateReplayBuffer
+    this.stateReplayBuffer = []
+    this.stateReplayTruncated = false
+
+    let covered = -1
+    for (const [index, entry] of buffered.entries()) {
+      if (entry.version !== undefined && this.compare(entry.version, snapshotVersion) <= 0) {
+        covered = index
+      }
+    }
+    for (const entry of buffered.slice(covered + 1)) {
+      this.stateValue = state.apply(this.stateValue as State, entry.delivered)
+    }
+
+    outcome.state = { value: this.stateValue }
+    outcome.stateRepaired = true
+  }
+
+  /**
+   * Keep a delivered event for the repair snapshot to replay. Overflow drops
+   * the whole buffer rather than half of it: replaying a partial buffer would
+   * apply deltas across a hole, which is exactly what the suspension exists
+   * to prevent.
+   */
+  private recordSuspendedEvent(
+    delivered: FallbackEvent<Events>,
+    version: Version | undefined,
+  ): void {
+    if (this.stateReplayTruncated) return
+    if (this.stateReplayBuffer.length >= this.hydrationBufferLimit) {
+      this.stateReplayBuffer = []
+      this.stateReplayTruncated = true
+      return
+    }
+    this.stateReplayBuffer.push({ delivered, version })
   }
 
   private finishHydration(snapshotVersion: Version | null, outcome: SnapshotOutcome<Events>): void {
@@ -328,6 +420,8 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
     if (this.config.state && this.stateInitialized && !this.stateSuspended) {
       this.stateValue = this.config.state.apply(this.stateValue as State, delivered)
       outcome.state = { value: this.stateValue }
+    } else if (this.config.state && this.stateSuspended) {
+      this.recordSuspendedEvent(delivered, version)
     }
 
     if (versioned && version !== undefined) {

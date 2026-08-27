@@ -3521,6 +3521,22 @@ const seq = createRedisEventIdSequence({ client: redis, key: `sse:seq:job:${jobI
 await broadcaster.broadcastToRoom(room, statusEvent, data, { id: await seq.next() })
 ```
 
+A shared counter orders **allocation**, not delivery. Between `next()` and the
+broadcast a writer can be descheduled while another pod allocates the next id
+and publishes first, so the client sees the higher id and drops the lower one
+as stale. What to do about it depends on what the events carry:
+
+- **Replacement-safe events** (the payload describes the state of the scope,
+  or the id is a domain version read in the same transaction that wrote it):
+  nothing. The dropped event is superseded by the one that overtook it, which
+  is what the version gate is for.
+- **Delta events applied to client state** (`state.apply`): the drop is a real
+  loss. Serialize allocation and publication per ordering scope — one writer
+  per scope, or a per-scope lock or outbox that publishes in id order.
+
+Either way, call `next()` immediately before the broadcast with nothing awaited
+in between: the window that reorders is exactly that gap.
+
 ### Server-Side Guarantees Checklist
 
 For a resource to participate in the fallback pattern:

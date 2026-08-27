@@ -55,6 +55,17 @@ const DEFAULT_EPOCH = '0'
  * holding an earlier block publish after a pod holding a later one, which is
  * exactly the out-of-order delivery this exists to prevent.
  *
+ * The counter orders ALLOCATION, not delivery. A writer can be descheduled
+ * between `next()` and its broadcast while another pod allocates the next id
+ * and publishes first; the client's version gate then drops the lower id as
+ * stale. That is harmless for replacement-safe events (the payload describes
+ * the state of the scope, or the id is a domain version written in the same
+ * transaction) and is a real loss for delta events fed to a client-side
+ * `state.apply`. For those, serialize allocation and publication per ordering
+ * scope: one writer per scope, or a per-scope lock or outbox that publishes in
+ * id order. Either way call `next()` immediately before the broadcast, with
+ * nothing awaited in between — that gap is the window that reorders.
+ *
  * When the resource already has a domain version (`job.version`, a revision
  * column), prefer that over any generated sequence — it is per-scope and
  * writer-independent for free, and the snapshot body has to carry it anyway.

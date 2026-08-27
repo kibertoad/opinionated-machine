@@ -408,13 +408,12 @@ const SSE_ACCEPT_MATCHER: EnvoyHeaderMatcher = {
  * not match, so a merely deprioritized stream still takes this branch — the
  * same thing `determineMode()` does when nothing outranks it.
  */
+const SSE_ACCEPT_REFUSED_REGEX =
+  '.*text/event-stream[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?'
+
 const SSE_ACCEPT_NOT_REFUSED_MATCHER: EnvoyHeaderMatcher = {
   name: 'accept',
-  string_match: {
-    safe_regex: {
-      regex: '.*text/event-stream[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?',
-    },
-  },
+  string_match: { safe_regex: { regex: SSE_ACCEPT_REFUSED_REGEX } },
   invert_match: true,
 }
 
@@ -433,6 +432,23 @@ const SSE_BRANCH_MATCHERS: EnvoyHeaderMatcher[] = [
 const JSON_BRANCH_MATCHERS: EnvoyHeaderMatcher[] = [
   { name: 'accept', string_match: { contains: 'application/json' } },
   { name: 'accept', string_match: { contains: 'text/event-stream' }, invert_match: true },
+]
+
+/**
+ * The second JSON branch of a `defaultMode: 'sse'` route: the client asks for
+ * JSON and names `text/event-stream` only to refuse it (`q=0`).
+ *
+ * {@link JSON_BRANCH_MATCHERS} cannot cover this on its own — Envoy ANDs the
+ * matchers on a route, and "does not accept the stream" is a disjunction
+ * (either the type is absent, or it is present with `q=0`). Splitting it into
+ * a second route matched before the streaming catch-all keeps the gateway on
+ * `determineMode()`'s answer, which is JSON: a refused type is filtered out
+ * before the media types are ranked. Without it the request took the stream
+ * branch and ran without `timeouts.request`.
+ */
+const JSON_BRANCH_SSE_REFUSED_MATCHERS: EnvoyHeaderMatcher[] = [
+  { name: 'accept', string_match: { contains: 'application/json' } },
+  { name: 'accept', string_match: { safe_regex: { regex: SSE_ACCEPT_REFUSED_REGEX } } },
 ]
 
 /**
@@ -478,13 +494,20 @@ function buildRoutes(
   // the plain branch would put a request timeout on a live stream.
   if (route.streamingDefaultMode === 'sse') {
     warnings.push(
-      `Route "${route.id}": defaultMode "sse" makes the STREAM the catch-all branch, so only an explicit application/json Accept (without text/event-stream) takes the JSON branch. A request listing both types resolves to JSON on the server but takes the stream branch here, and so runs without the JSON branch's request timeout.`,
+      `Route "${route.id}": defaultMode "sse" makes the STREAM the catch-all branch, so the JSON branch is taken only by an Accept header that asks for application/json and either omits text/event-stream or refuses it with q=0. A request listing both as acceptable resolves to JSON on the server when JSON outranks the stream (application/json;q=0.9, text/event-stream;q=0.5), but takes the stream branch here, and so runs without the JSON branch's request timeout.`,
     )
     return [
       buildRoute(route, meta.upstream, {
         branch: 'plain',
         name: `${route.id}__json`,
         extraHeaderMatchers: JSON_BRANCH_MATCHERS,
+        warnings,
+        options,
+      }),
+      buildRoute(route, meta.upstream, {
+        branch: 'plain',
+        name: `${route.id}__json_sse_refused`,
+        extraHeaderMatchers: JSON_BRANCH_SSE_REFUSED_MATCHERS,
         warnings,
         options,
       }),

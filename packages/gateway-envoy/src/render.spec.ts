@@ -314,7 +314,27 @@ describe('renderEnvoyConfig — Accept negotiation on dual routes', () => {
     expect(warnings.some((w) => w.includes('defaultMode "sse"'))).toBe(true)
   })
 
-  it('orders the json branch before the stream catch-all with defaultMode sse', () => {
+  it('sends a JSON request that refuses the stream to a plain branch with defaultMode sse', () => {
+    const { json } = renderEnvoyConfig(dualManifest({ streamingDefaultMode: 'sse' }), options)
+    const refusedBranch = findRoute(json, 'jobsController.status__json_sse_refused')
+
+    // determineMode() filters q=0 out before ranking, so this resolves to JSON
+    // on the server; the plain JSON branch's `contains` exclusion cannot match
+    // it, and without this route it fell through to the stream catch-all.
+    const jsonBranch = findRoute(json, 'jobsController.status__json')
+    expect(matchesBranch(jsonBranch, 'application/json, text/event-stream;q=0')).toBe(false)
+    expect(matchesBranch(refusedBranch, 'application/json, text/event-stream;q=0')).toBe(true)
+    // Same plain-branch route action as the ordinary JSON branch: no disabled
+    // route timeout, no stream-duration ceiling.
+    expect(refusedBranch?.route).toEqual(jsonBranch?.route)
+
+    // It stays narrow: an accepted stream, and a refusal without a JSON ask,
+    // both keep the catch-all.
+    expect(matchesBranch(refusedBranch, 'application/json, text/event-stream')).toBe(false)
+    expect(matchesBranch(refusedBranch, 'text/event-stream;q=0')).toBe(false)
+  })
+
+  it('orders both json branches before the stream catch-all with defaultMode sse', () => {
     const { json } = renderEnvoyConfig(dualManifest({ streamingDefaultMode: 'sse' }), options)
     const typedConfig = json.static_resources.listeners[0]?.filter_chains[0]?.filters[0]
       ?.typed_config as {
@@ -323,6 +343,9 @@ describe('renderEnvoyConfig — Accept negotiation on dual routes', () => {
     const names = typedConfig.route_config.virtual_hosts[0]?.routes.map((r) => r.name) ?? []
 
     expect(names.indexOf('jobsController.status__json')).toBeLessThan(
+      names.indexOf('jobsController.status__sse'),
+    )
+    expect(names.indexOf('jobsController.status__json_sse_refused')).toBeLessThan(
       names.indexOf('jobsController.status__sse'),
     )
   })

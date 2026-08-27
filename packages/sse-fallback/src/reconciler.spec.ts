@@ -267,11 +267,53 @@ describe('Reconciler — state layer', () => {
     expect(repair.stale).toBe(true)
     expect(repair.stateRepaired).toBe(true)
     expect(reconciler.isStateSuspended).toBe(false)
-    expect(reconciler.getState()).toEqual({ revision: 4, items: ['a', 'b', 'c', 'd'] })
+    // Revision 5 was delivered while suspended and the snapshot predates it,
+    // so it is replayed onto the repaired state instead of being lost.
+    expect(reconciler.getState()).toEqual({ revision: 5, items: ['a', 'b', 'c', 'd', 'e'] })
 
     // apply is live again, and the watermark was not rewound.
     reconciler.handleEvent({ event: 'itemAdded', data: { revision: 6, item: 'f' } })
-    expect(reconciler.getState()).toEqual({ revision: 6, items: ['a', 'b', 'c', 'd', 'f'] })
+    expect(reconciler.getState()).toEqual({ revision: 6, items: ['a', 'b', 'c', 'd', 'e', 'f'] })
+  })
+
+  it('does not replay events the repair snapshot already covers', () => {
+    const reconciler = stateReconciler()
+    reconciler.handleSnapshot({ revision: 1, items: ['a'] })
+
+    reconciler.handleEvent({ event: 'itemAdded', data: { revision: 3, item: 'c' } })
+    reconciler.handleEvent({ event: 'itemAdded', data: { revision: 4, item: 'd' } })
+
+    // The snapshot describes revision 4, so 'c' and 'd' are already in it.
+    reconciler.handleSnapshot({ revision: 4, items: ['a', 'b', 'c', 'd'] })
+
+    expect(reconciler.getState()).toEqual({ revision: 4, items: ['a', 'b', 'c', 'd'] })
+  })
+
+  it('holds the suspension when the replay buffer overflowed', () => {
+    const reconciler = new Reconciler(stateConfig, { hydrationBufferLimit: 2 })
+    reconciler.handleSnapshot({ revision: 1, items: ['a'] })
+
+    // Gap at revision 3, then more events than the buffer holds.
+    reconciler.handleEvent({ event: 'itemAdded', data: { revision: 3, item: 'c' } })
+    reconciler.handleEvent({ event: 'itemAdded', data: { revision: 4, item: 'd' } })
+    reconciler.handleEvent({ event: 'itemAdded', data: { revision: 5, item: 'e' } })
+
+    // A below-watermark snapshot can no longer prove what it misses, so state
+    // stays suspended rather than silently dropping revision 5.
+    const stale = reconciler.handleSnapshot({ revision: 4, items: ['a', 'b', 'c', 'd'] })
+    expect(stale.stateRepaired).toBe(false)
+    expect(reconciler.isStateSuspended).toBe(true)
+    expect(reconciler.getState()).toEqual({ revision: 1, items: ['a'] })
+
+    // A snapshot that reaches the watermark covers everything the dropped
+    // buffer held, so it repairs state with nothing left to replay.
+    const covering = reconciler.handleSnapshot({
+      revision: 5,
+      items: ['a', 'b', 'c', 'd', 'e'],
+    })
+    expect(covering.stateRepaired).toBe(true)
+    expect(reconciler.isStateSuspended).toBe(false)
+    expect(reconciler.getState()).toEqual({ revision: 5, items: ['a', 'b', 'c', 'd', 'e'] })
   })
 
   it('does not double-apply snapshot-synthesized events to state', () => {

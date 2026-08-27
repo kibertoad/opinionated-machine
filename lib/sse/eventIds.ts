@@ -180,9 +180,15 @@ export type AsyncEventIdSequence = {
  * {@link createEventIdSequence} produces, so ids from a shared counter compare
  * against ids from an in-process sequence with the same epoch.
  *
+ * @throws TypeError if `epoch` is empty. `createEventIdSequence()` refuses the
+ *   same input: an id with no epoch (`"-000000000001"`) is one
+ *   {@link compareEventIds} cannot parse, so nothing downstream can order it.
  * @throws RangeError if the counter does not fit the fixed id width.
  */
 export function formatEventId(epoch: string, counter: number | bigint): string {
+  if (epoch.length === 0) {
+    throw new TypeError('formatEventId: `epoch` must be a non-empty string')
+  }
   const asBigInt = typeof counter === 'bigint' ? counter : BigInt(counter)
   if (asBigInt < 1n || asBigInt > BigInt(MAX_EVENT_ID_COUNTER)) {
     throw new RangeError(
