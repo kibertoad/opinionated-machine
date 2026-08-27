@@ -189,3 +189,44 @@ export const apiTickStreamContract = defineApiContract({
     401: z.object({ message: z.string() }),
   },
 })
+
+// ============================================================================
+// Progressive delivery / connectApiSSE fixtures
+// ============================================================================
+
+export const lqaIssueEventSchemas = {
+  issue: z.object({ severity: z.enum(['neutral', 'minor', 'major', 'critical']) }),
+  review: z.object({ score: z.number() }),
+}
+
+/**
+ * The shape from the downstream reports: one `issue` event per quality issue found, as soon
+ * as it exists, then a terminal `review`. Its point is *when* each event reaches the client,
+ * so the handlers built on it are driven by a gate the test releases.
+ */
+export const apiLqaIssueStreamContract = defineApiContract({
+  visibility: 'internal',
+  method: 'post',
+  summary: 'Stream LQA issues as they are found',
+  pathResolver: () => '/api/sse-stream/lqa-issues',
+  requestBodySchema: z.object({ segment: z.string() }),
+  responsesByStatusCode: {
+    200: sseResponse(lqaIssueEventSchemas),
+    400: z.object({ message: z.string() }),
+  },
+})
+
+/** GET + path params and a required header, streaming on a session that outlives the handler. */
+export const apiChannelFeedContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'Subscribe to a channel feed',
+  pathResolver: ({ channelId }) => `/api/sse-stream/channels/${channelId}/feed`,
+  requestPathParamsSchema: z.object({ channelId: z.string() }),
+  requestQuerySchema: z.object({ since: z.coerce.number().int().optional() }),
+  requestHeaderSchema: z.object({ authorization: z.string() }),
+  responsesByStatusCode: {
+    200: sseResponse({ ping: z.object({ channelId: z.string(), seq: z.number() }) }),
+    401: z.object({ message: z.string() }),
+  },
+})

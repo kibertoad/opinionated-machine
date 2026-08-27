@@ -1,7 +1,10 @@
+import type { ApiContract } from '@lokalise/api-contracts'
 import { stringify } from 'fast-querystring'
 import type { SSESession } from '../routes/fastifyRouteTypes.ts'
 import type { SpiedSSESession, SSESessionSpy } from '../sse/SSESessionSpy.ts'
 import { type ParsedSSEEvent, parseSSEBuffer } from '../sse/sseParser.ts'
+import { resolveApiSseSchemas, validateApiSseEvent } from './apiSseEventValidation.ts'
+import type { ApiSSEEvent } from './apiSseTestTypes.ts'
 
 /**
  * Interface for objects that have a sessionSpy (e.g., SSE controllers in test mode).
@@ -571,6 +574,77 @@ export class SSEHttpClient {
     }
 
     return collected
+  }
+
+  /**
+   * Async generator that yields events typed and validated against an `ApiContract`.
+   *
+   * The contract-aware counterpart of {@link SSEHttpClient.events}: each event is JSON-parsed,
+   * checked against the contract's `sseResponse` / `sseBody` schema for its name, and typed as
+   * a member of the contract's discriminated union — the same events `injectApiSSE().events()`
+   * returns, so an assertion reads the same on either path.
+   *
+   * {@link connectApiSSE} is usually the better entry point: it also resolves the path, method
+   * and body from the contract. Reach for this method when the connection already exists — one
+   * opened with `awaitServerConnection`, say.
+   *
+   * @param contract - Contract built with `defineApiContract`, declaring the SSE events
+   * @param signal - Optional `AbortSignal` to stop the generator early
+   *
+   * @throws if the contract declares no SSE response, if an event name it doesn't declare
+   *   arrives, or if a payload fails its schema
+   *
+   * @example
+   * ```typescript
+   * for await (const event of client.apiEvents(lqaSegmentContract)) {
+   *   if (event.event === 'issue') expect(event.data.severity).toBe('minor')
+   * }
+   * ```
+   */
+  async *apiEvents<Contract extends ApiContract>(
+    contract: Contract,
+    signal?: AbortSignal,
+  ): AsyncGenerator<ApiSSEEvent<Contract>, void, unknown> {
+    const schemaByEventName = resolveApiSseSchemas(contract, 'apiEvents()')
+    for await (const event of this.events(signal)) {
+      yield validateApiSseEvent<Contract>(schemaByEventName, event, 'apiEvents()')
+    }
+  }
+
+  /**
+   * Collect events typed and validated against an `ApiContract`, until a count is reached or
+   * a predicate matches.
+   *
+   * The contract-aware counterpart of {@link SSEHttpClient.collectEvents}; the predicate sees
+   * the typed event, so it can narrow on `event.event` and read `event.data` without a cast.
+   *
+   * @param contract - Contract built with `defineApiContract`, declaring the SSE events
+   * @param countOrPredicate - Number of events to collect, or a predicate that ends collection
+   *   (the matching event is included)
+   * @param timeout - Maximum time to wait in milliseconds (default: 5000)
+   *
+   * @example
+   * ```typescript
+   * const events = await client.collectApiEvents(contract, (e) => e.event === 'review')
+   * expect(events.at(-1)?.data).toMatchObject({ score: 5 })
+   * ```
+   */
+  async collectApiEvents<Contract extends ApiContract>(
+    contract: Contract,
+    countOrPredicate: number | ((event: ApiSSEEvent<Contract>) => boolean),
+    timeout?: number,
+  ): Promise<ApiSSEEvent<Contract>[]> {
+    const schemaByEventName = resolveApiSseSchemas(contract, 'collectApiEvents()')
+    const validate = (event: ParsedSSEEvent) =>
+      validateApiSseEvent<Contract>(schemaByEventName, event, 'collectApiEvents()')
+
+    const collected = await this.collectEvents(
+      typeof countOrPredicate === 'number'
+        ? countOrPredicate
+        : (event) => countOrPredicate(validate(event)),
+      timeout,
+    )
+    return collected.map(validate)
   }
 
   /**

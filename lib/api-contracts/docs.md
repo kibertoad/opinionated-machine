@@ -284,9 +284,10 @@ const { closed, events, bodyForStatus } = injectApiSSE(app, lqaSegmentContract, 
 })
 ```
 
-It returns three accessors:
+It returns these accessors:
 
 - `closed` — resolves with `{ statusCode, headers, body }` once the response completes, exactly as with `injectSSE`.
+- `head` — resolves with `{ statusCode, headers }` as soon as the response head is on the wire, which for a streaming handler is the moment it calls `sse.start()`. Assert the status of a stream without waiting for the handler to finish it.
 - `events()` — parses the SSE body and validates each event against the contract's `sseResponse` / `sseBody` schemas, returning a union discriminated on `event`:
 
   ```ts
@@ -336,6 +337,23 @@ It returns three accessors:
 
   Reach for `injectByApiContract` when you want the JSON side of such a status instead.
 
+- `stream()` — yields the same typed, validated events *as the handler writes them*, instead of after the response completes:
+
+  ```ts
+  const { stream } = injectApiSSE(app, lqaSegmentContract, { body: { segment } })
+
+  for await (const event of stream()) {
+    // observed while the handler is still working — `events()` cannot show this
+    if (event.event === 'issue') expect(handlerFinished).toBe(false)
+  }
+  ```
+
+  The request is injected with Fastify's `payloadAsStream`, so asserting progressive delivery ("event N reached the client while the handler was still producing N+1") needs no `app.listen()`, base URL or manual connection cleanup. Events are buffered from the moment the request is injected, so a generator started late still replays the stream from its first event, and the handler is never blocked by a slow or absent consumer. `stream(signal)` takes an optional `AbortSignal` to stop early.
+
+  It throws the same errors `events()` does, and — like `events()` — is typed `never` for a contract that declares no SSE response.
+
+  `closed` and `events()` still wait for the response to complete, so a route that never closes its stream (a `keepAlive` session) can only be read through `stream()`; use `connectApiSSE` against a real server for those.
+
 Query params, path params, headers (a plain object or a sync/async factory) and `pathPrefix` all come from the contract-derived params:
 
 ```ts
@@ -361,7 +379,47 @@ const events = conn.getReceivedEvents()
 expect(events.filter(e => e.event === 'done')).toHaveLength(1)
 ```
 
-### Testing SSE routes (keepAlive)
+### Testing SSE routes over real HTTP with the contract (`connectApiSSE`)
+
+`injectApiSSE` covers streams that complete. When the endpoint keeps its connection open — a `keepAlive` session — the response never completes, so the test needs a real HTTP connection. `connectApiSSE` is that path, read through the contract: the method, path, query params, headers and body come from the contract instead of being repeated as string literals next to it, and the events are typed and validated exactly as `injectApiSSE().events()` types them.
+
+```ts
+import { connectApiSSE, SSETestServer } from 'opinionated-machine'
+
+const server = await SSETestServer.start(app)
+const client = await connectApiSSE(server.baseUrl, lqaSegmentContract, { body: { segment } })
+
+// The response head is on the wire before the handler is done
+expect(client.response.status).toBe(200)
+
+for await (const event of client.events()) {
+  if (event.event === 'issue') expect(event.data.severity).toBe('minor') // typed by the contract
+  if (event.event === 'review') break
+}
+
+client.close()
+await server.close()
+```
+
+`collectEvents(countOrPredicate, timeout?)` collects the same typed events, with the predicate seeing the narrowed union. For a `keepAlive` route, pass `awaitServerConnection` to also wait for the server-side session (wired via `createSSESessionSpy()`), the same way `SSEHttpClient.connect` does:
+
+```ts
+const { spy, routeOptions } = createSSESessionSpy()
+// app.route(buildApiRoute(contract, handler, routeOptions))
+
+const { client, serverConnection } = await connectApiSSE(
+  server.baseUrl,
+  channelFeedContract,
+  { pathParams: { channelId: 'c-1' }, queryParams: {}, headers },
+  { awaitServerConnection: { spy } },
+)
+await serverConnection.send('ping', { channelId: 'c-1', seq: 1 })
+expect(await client.collectEvents(1)).toEqual([{ event: 'ping', data: { channelId: 'c-1', seq: 1 } }])
+```
+
+On a connection you already have — from `SSEHttpClient.connect` — the same typing is available per read: `client.apiEvents(contract)` and `client.collectApiEvents(contract, countOrPredicate)`.
+
+### Testing SSE routes (keepAlive, without a contract)
 
 Use `SSEHttpClient` against a real server:
 
@@ -375,6 +433,21 @@ const client = await SSEHttpClient.connect(server.baseUrl, '/updates/stream')
 client.close()
 await server.stop()
 ```
+
+### When a handler fails to send an event
+
+`session.send(name, payload)` validates the payload against the contract's schema for that event and throws when it doesn't match. That throw happens inside the handler: the event never reaches the wire, the stream just ends early with HTTP 200, and the ZodError only shows up in the server log — so the test sees an unrelated event missing.
+
+Routes built with `buildApiRoute` report those failures back to the test that is reading the stream. `events()`, `stream()` and the `connectApiSSE` readers throw with the offending event name, its Zod issues and the payload that was rejected:
+
+```
+events() — 1 SSE event was never sent because the send threw:
+  - event "issue": severity: Invalid option: expected one of "neutral"|"minor"|"major"|"critical"; payload: {"severity":"min"}
+```
+
+`connectApiSSE(...).sendFailures()` exposes the same records (`{ eventName, data, message, issues, error }`) for assertions the message doesn't cover.
+
+This is test-only, and costs production traffic nothing: the helpers tag their requests with an `x-om-sse-diagnostics-id` header, and a session is only instrumented when that header names a diagnostics scope open in the same process — something only the helpers create. A stale or forged header matches nothing.
 
 ### Testing dual-mode routes
 

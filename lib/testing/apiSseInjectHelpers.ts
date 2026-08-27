@@ -1,27 +1,36 @@
 import {
   type ApiContract,
-  getSseSchemaByEventName,
+  buildRequestPath,
   type HttpStatusCode,
   type HttpStatusCodeRange,
   type ResponsesByStatusCode,
   resolveResponseEntry,
 } from '@lokalise/api-contracts'
-import { injectByApiContract } from '@lokalise/fastify-api-contracts'
+import type { LightMyRequestResponse } from 'fastify'
 import type { z } from 'zod'
-import { parseSSEEvents } from '../sse/sseParser.ts'
+import { type ParsedSSEEvent, parseSSEBuffer, parseSSEEvents } from '../sse/sseParser.ts'
+import {
+  describeSendFailures,
+  openSSEDiagnosticsScope,
+  type SSEDiagnosticsScope,
+} from '../sse/sseSendDiagnostics.ts'
 import type { AnyFastifyInstance } from './AnyFastifyInstance.ts'
+import { resolveApiSseSchemas, validateApiSseEvent } from './apiSseEventValidation.ts'
 import type {
   ApiDeclaredResponseBody,
   ApiDeclaredResponseStatus,
-  ApiSSEEvent,
   ApiSSEEventReader,
+  ApiSSEStreamReader,
   InjectApiSSEParams,
   InjectApiSSEResult,
 } from './apiSseTestTypes.ts'
 import { truncateBody } from './sseInjectShared.ts'
-import type { SSEResponse } from './sseTestTypes.ts'
+import type { SSEInjectMethod, SSEResponse, SSEResponseHead } from './sseTestTypes.ts'
 
 const SSE_CONTENT_TYPE = 'text/event-stream'
+
+/** Methods whose contracts can declare a request body. */
+const METHODS_WITH_BODY = new Set(['POST', 'PUT', 'PATCH'])
 
 /** Read a response header that light-my-request may expose as an array. */
 function readHeader(value: string | string[] | undefined): string | undefined {
@@ -147,6 +156,18 @@ export function bindApiBodyForStatus<Contract extends ApiContract>(
   }) as InjectApiSSEResult<Contract>['bodyForStatus']
 }
 
+/** Reject a response that is not an event stream, naming the reader that asked for one. */
+function assertSSEResponse(head: SSEResponseHead, reader: string, body?: string): void {
+  const contentType = mediaTypeOf(readHeader(head.headers['content-type']))
+  if (contentType === SSE_CONTENT_TYPE) {
+    return
+  }
+  const bodySuffix = body === undefined ? '' : ` Body: ${truncateBody(body)}`
+  throw new Error(
+    `${reader} — response is not an SSE stream (status ${head.statusCode}, content-type ${contentType ?? 'absent'}); use bodyForStatus(${head.statusCode}) for declared error responses.${bodySuffix}`,
+  )
+}
+
 /**
  * Build an `events` accessor bound to one `injectApiSSE` call: parses the SSE body and
  * validates every event against the contract's `sseBody` schemas.
@@ -160,44 +181,166 @@ export function bindApiEvents<Contract extends ApiContract>(
   return async () => {
     const res = await closed
     // Merges the SSE schemas of every declared status, not just the successful ones.
-    const schemaByEventName = getSseSchemaByEventName(contract)
-    if (!schemaByEventName) {
-      throw new Error('events() — the contract declares no SSE response')
+    const schemaByEventName = resolveApiSseSchemas(contract, 'events()')
+    assertSSEResponse(res, 'events()', res.body)
+    return parseSSEEvents(res.body).map((event) =>
+      validateApiSseEvent<Contract>(schemaByEventName, event, 'events()'),
+    )
+  }
+}
+
+/**
+ * Consumes an injected SSE response as it is written, so events can be read while the handler
+ * is still running and the completed body is still available afterwards.
+ *
+ * Fastify's `inject({ payloadAsStream: true })` resolves as soon as the response head is on
+ * the wire — for a streaming handler, at `sse.start()` — and exposes the payload as a
+ * `Readable` that receives every write. This pump drains it eagerly (so a slow or absent
+ * consumer never blocks the handler), keeping both the parsed events seen so far and the raw
+ * body text, and wakes any generator waiting on more.
+ */
+class InjectedSSEStream {
+  /** Head of the response, available before the handler finished streaming. */
+  readonly head: Promise<SSEResponseHead>
+  /** Full response, once the stream ended. */
+  readonly closed: Promise<SSEResponse>
+
+  private readonly received: ParsedSSEEvent[] = []
+  private waiters: Array<() => void> = []
+  private ended = false
+  private failure: unknown
+
+  constructor(injected: Promise<LightMyRequestResponse>) {
+    this.head = injected.then((res) => ({
+      statusCode: res.statusCode,
+      headers: res.headers as Record<string, string | string[] | undefined>,
+    }))
+    this.closed = this.drain(injected)
+
+    // The pump owns both promises from the moment the request is injected; a caller reading
+    // only one of them (or neither, for a request it expects to fail) must not turn the other
+    // into an unhandled rejection. Awaiting either still rejects as usual.
+    this.head.catch(() => {})
+    this.closed.catch(() => {})
+  }
+
+  private async drain(injected: Promise<LightMyRequestResponse>): Promise<SSEResponse> {
+    let res: LightMyRequestResponse
+    try {
+      res = await injected
+    } catch (err) {
+      this.fail(err)
+      throw err
     }
-    const contentType = mediaTypeOf(readHeader(res.headers['content-type']))
-    if (contentType !== SSE_CONTENT_TYPE) {
-      throw new Error(
-        `events() — response is not an SSE stream (status ${res.statusCode}, content-type ${contentType ?? 'absent'}); use bodyForStatus(${res.statusCode}) for declared error responses. Body: ${truncateBody(res.body)}`,
-      )
+
+    let body = ''
+    let buffer = ''
+    const decoder = new TextDecoder()
+    try {
+      for await (const chunk of res.stream()) {
+        const text =
+          typeof chunk === 'string' ? chunk : decoder.decode(chunk as Uint8Array, { stream: true })
+        body += text
+        buffer += text
+        const { events, remaining } = parseSSEBuffer(buffer)
+        buffer = remaining
+        if (events.length > 0) {
+          this.received.push(...events)
+          this.notify()
+        }
+      }
+    } catch (err) {
+      this.fail(err)
+      throw err
     }
-    return parseSSEEvents(res.body).map((event) => {
-      // An SSE event without an `event:` field is a `message` event per the spec.
-      const name = event.event ?? 'message'
-      const schema = schemaByEventName[name]
-      if (!schema) {
-        throw new Error(`events() — the contract declares no schema for event "${name}"`)
+
+    // A stream that ended without a terminating blank line still carries one last event.
+    const trailing = parseSSEEvents(buffer)
+    if (trailing.length > 0) {
+      this.received.push(...trailing)
+    }
+
+    this.ended = true
+    this.notify()
+
+    return {
+      statusCode: res.statusCode,
+      headers: res.headers as Record<string, string | string[] | undefined>,
+      body,
+    }
+  }
+
+  private fail(err: unknown): void {
+    this.failure = err
+    this.ended = true
+    this.notify()
+  }
+
+  private notify(): void {
+    const waiters = this.waiters
+    this.waiters = []
+    for (const wake of waiters) {
+      wake()
+    }
+  }
+
+  /** Resolve once more events arrived, the stream ended, or the caller aborted. */
+  private nextTick(signal?: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let settled = false
+      const wake = () => {
+        if (settled) {
+          return
+        }
+        settled = true
+        signal?.removeEventListener('abort', wake)
+        resolve()
       }
-      let parsedJson: unknown
-      try {
-        parsedJson = JSON.parse(event.data)
-      } catch (err) {
-        throw new Error(
-          `events() — data of event "${name}" is not valid JSON: ${(err as Error).message}; data: ${truncateBody(event.data)}`,
-        )
-      }
-      const parsed = schema.safeParse(parsedJson)
-      if (!parsed.success) {
-        throw new Error(
-          `events() — data of event "${name}" does not match the declared schema: ${parsed.error.message}; data: ${truncateBody(event.data)}`,
-        )
-      }
-      return {
-        ...(event.id !== undefined && { id: event.id }),
-        ...(event.retry !== undefined && { retry: event.retry }),
-        event: name,
-        data: parsed.data,
-      } as ApiSSEEvent<Contract>
+      this.waiters.push(wake)
+      signal?.addEventListener('abort', wake, { once: true })
     })
+  }
+
+  /**
+   * Yield every event of the stream, from the first one, waiting for more while the handler
+   * is still writing. Replayable: each call starts from the beginning of the stream.
+   */
+  async *events(signal?: AbortSignal): AsyncGenerator<ParsedSSEEvent, void, unknown> {
+    let index = 0
+    while (true) {
+      if (signal?.aborted) {
+        return
+      }
+      while (index < this.received.length) {
+        // biome-ignore lint/style/noNonNullAssertion: index is bounded by the array length
+        yield this.received[index++]!
+        if (signal?.aborted) {
+          return
+        }
+      }
+      if (this.failure) {
+        throw this.failure
+      }
+      if (this.ended) {
+        return
+      }
+      await this.nextTick(signal)
+    }
+  }
+}
+
+/**
+ * Throw the failures the handler's own sends produced, if any were recorded for this request.
+ *
+ * A payload that fails the contract's schema for its event makes `session.send()` throw
+ * inside the handler; the event never reaches the wire and the reason only reaches the server
+ * log. Reading the stream through these helpers surfaces it here instead, so the test fails
+ * on the event that was never sent rather than on the next one it did receive.
+ */
+function assertNoSendFailures(scope: SSEDiagnosticsScope, reader: string): void {
+  const failures = scope.failures()
+  if (failures.length > 0) {
+    throw new Error(`${reader} — ${describeSendFailures(failures)}`)
   }
 }
 
@@ -216,8 +359,12 @@ export function bindApiEvents<Contract extends ApiContract>(
  * statuses expose no JSON body through `bodyForStatus`; read them with `events()`, or use
  * `injectByApiContract` when you want the JSON side.
  *
- * Best for SSE endpoints that complete — Fastify's `inject()` waits for the whole response.
- * For long-lived connections, use `SSEHttpClient` against a real HTTP server.
+ * The response is injected as a stream, so `head` resolves as soon as the handler starts
+ * streaming and `stream()` yields each event as it is written — a test can assert
+ * progressive delivery without a listening server. `closed` and `events()` still wait for
+ * the response to complete, so an endpoint that never closes its stream (a `keepAlive`
+ * session) can only be read through `stream()`; use `SSEHttpClient` / `connectApiSSE`
+ * against a real server for those.
  *
  * @param app - Fastify instance
  * @param contract - Contract built with `defineApiContract`
@@ -240,6 +387,17 @@ export function bindApiEvents<Contract extends ApiContract>(
  *
  * @example
  * ```typescript
+ * // Progressive delivery: each event is observed while the handler is still working
+ * const { head, stream } = injectApiSSE(app, lqaTextSegmentContract, { body: { segment } })
+ * expect((await head).statusCode).toBe(200)
+ *
+ * for await (const event of stream()) {
+ *   if (event.event === 'issue') expect(handlerFinished).toBe(false)
+ * }
+ * ```
+ *
+ * @example
+ * ```typescript
  * // A documented pre-stream error response, typed by the contract's 400 schema
  * const { bodyForStatus } = injectApiSSE(app, lqaTextSegmentContract, { body: { segment: '' } })
  * const error = await bodyForStatus(400)
@@ -253,28 +411,76 @@ export function injectApiSSE<const Contract extends ApiContract>(
 ): InjectApiSSEResult<Contract> {
   // biome-ignore lint/suspicious/noExplicitAny: params shape depends on the contract
   const requestParams = params as any
+  const method = contract.method.toUpperCase() as SSEInjectMethod
+  const url = buildRequestPath(
+    contract.pathResolver(requestParams.pathParams),
+    requestParams.pathPrefix,
+  )
 
-  const closed = injectByApiContract(app, contract, {
-    ...requestParams,
-    // `accept` first so an explicit caller header still wins; headers may be a factory,
-    // which `injectByApiContract` resolves for us — resolve the caller's here too.
-    headers: async () => ({
-      accept: SSE_CONTENT_TYPE,
-      ...(typeof requestParams.headers === 'function'
+  // Records the sends the handler could not make (a payload that failed its event schema),
+  // matched to this request by a header the route builder honours only for open scopes.
+  const scope = openSSEDiagnosticsScope()
+
+  const injected = (async () => {
+    // `headers` may be a factory, exactly as `injectByApiContract` accepts it.
+    const callerHeaders =
+      typeof requestParams.headers === 'function'
         ? await requestParams.headers()
-        : requestParams.headers),
-    }),
-  }).then((res) => ({
-    statusCode: res.statusCode,
-    headers: res.headers as Record<string, string | string[] | undefined>,
-    body: res.body,
-  }))
+        : requestParams.headers
+
+    return app.inject({
+      method,
+      url,
+      // `accept` first so an explicit caller header still wins; the diagnostics header last,
+      // since it addresses this call's scope and nothing else may claim it.
+      headers: { accept: SSE_CONTENT_TYPE, ...callerHeaders, ...scope.headers },
+      ...(requestParams.queryParams !== undefined && { query: requestParams.queryParams }),
+      ...(METHODS_WITH_BODY.has(method) && { payload: requestParams.body }),
+      payloadAsStream: true,
+    })
+  })()
+
+  const pump = new InjectedSSEStream(injected)
+  const { head, closed } = pump
+
+  // Failures are only complete once the response is, and the scope must not outlive the
+  // request either way; disposing snapshots what was recorded, so the readers below still
+  // report it afterwards.
+  void closed.then(
+    () => scope.dispose(),
+    () => scope.dispose(),
+  )
+
+  const bufferedEvents = bindApiEvents(contract, closed)
+
+  const events: ApiSSEEventReader<Contract> = async () => {
+    await closed
+    assertNoSendFailures(scope, 'events()')
+    return bufferedEvents()
+  }
+
+  const stream: ApiSSEStreamReader<Contract> = async function* (signal?: AbortSignal) {
+    const schemaByEventName = resolveApiSseSchemas(contract, 'stream()')
+    assertSSEResponse(await head, 'stream()')
+
+    for await (const event of pump.events(signal)) {
+      yield validateApiSseEvent<Contract>(schemaByEventName, event, 'stream()')
+    }
+
+    if (!signal?.aborted) {
+      // The stream ended: anything the handler failed to send is known now, and is the
+      // reason an expected event never arrived.
+      assertNoSendFailures(scope, 'stream()')
+    }
+  }
 
   return {
     closed,
+    head,
     bodyForStatus: bindApiBodyForStatus(contract, closed),
-    // `events` is typed `never` for contracts that declare no SSE response, which no concrete
-    // function satisfies — the binder returns the callable form and it is narrowed here.
-    events: bindApiEvents(contract, closed) as InjectApiSSEResult<Contract>['events'],
+    // `events` / `stream` are typed `never` for contracts that declare no SSE response, which
+    // no concrete function satisfies — the callable forms are narrowed here.
+    events: events as InjectApiSSEResult<Contract>['events'],
+    stream: stream as InjectApiSSEResult<Contract>['stream'],
   }
 }

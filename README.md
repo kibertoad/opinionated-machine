@@ -75,6 +75,8 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [SSEHttpClient](#ssehttpclient)
     - [SSEInjectClient](#sseinjectclient)
     - [Contract-Aware Inject Helpers](#contract-aware-inject-helpers)
+    - [Contract-Aware HTTP Helpers](#contract-aware-http-helpers)
+    - [When a Handler Fails to Send an Event](#when-a-handler-fails-to-send-an-event)
 - [Dual-Mode Controllers (SSE + Sync)](#dual-mode-controllers-sse--sync)
   - [Overview](#overview)
   - [Defining Dual-Mode Contracts](#defining-dual-mode-contracts)
@@ -1484,7 +1486,7 @@ The test client depends on the session mode:
 | Session Mode | Test Client | Why |
 |-------------|-------------|--------|
 | `autoClose` | `SSEInjectClient` or `injectSSE`/`injectPayloadSSE` | Handler completes and closes connection; all events available at once |
-| `keepAlive` | `SSEHttpClient` | Connection stays open; events arrive incrementally via server push |
+| `keepAlive` | `SSEHttpClient` (`connectApiSSE` for `defineApiContract` contracts) | Connection stays open; events arrive incrementally via server push |
 
 Enable the connection spy by passing `isTestMode: true` in diOptions (required for `awaitServerConnection`).
 
@@ -1654,7 +1656,28 @@ it('returns the documented 400 body for an empty segment', async () => {
 })
 ```
 
+```ts
+it('sends each issue as soon as it is found', async () => {
+  const { head, stream } = injectApiSSE(app, lqaSegmentContract, { body: { segment: 'hello' } })
+
+  // The head is on the wire as soon as the handler calls sse.start()
+  expect((await head).statusCode).toBe(200)
+
+  for await (const event of stream()) {
+    // Each event is observed while the handler is still producing the next one
+    if (event.event === 'issue') expect(handlerFinished).toBe(false)
+  }
+})
+```
+
 `closed` and `bodyForStatus` behave as they do on `injectSSE`, except that `bodyForStatus` resolves its schema from `responsesByStatusCode`, following the same exact → range → `'default'` precedence as the contract client. `events()` is additionally available: it parses the SSE body and validates each event against the contract's SSE schemas, throwing when the response isn't a stream, when an event name isn't declared, or when a payload fails its schema.
+
+Two accessors read the response before it completes, so an inject-based suite can assert *progressive delivery* without opening a real port for it:
+
+- `head` — `{ statusCode, headers }`, resolved as soon as the response head is on the wire (for a streaming handler, at `sse.start()`).
+- `stream(signal?)` — the same typed, validated events `events()` returns, yielded as the handler writes them. The request is injected with Fastify's `payloadAsStream`; events are buffered from the moment it is injected, so a generator started late replays the stream from its first event, a consumer that breaks early leaves `closed` / `events()` intact, and the handler is never blocked waiting to be read.
+
+`closed` and `events()` still wait for the response to complete, so a route that never closes its stream (a `keepAlive` session) can only be read through `stream()` — or over real HTTP with [`connectApiSSE`](#contract-aware-http-helpers).
 
 The request always carries `accept: text/event-stream`, so a status that declares a stream answers with it — including a dual-mode status whose content map also carries a JSON schema. Those statuses are therefore not callable through `bodyForStatus`; read them with `events()`, or use `injectByApiContract` when you want the JSON side. Conversely, a contract that declares no SSE response at all types `events` as `never`, so calling it is a compile error rather than a guaranteed throw. `events()` is typed from the SSE schemas of *every* declared status, merged the same way the runtime merges them, so a contract streaming on both `200` and `'4xx'` yields the union of both event sets. See [ApiContract controller docs](./lib/api-contracts/docs.md#testing) for the full testing guide.
 
@@ -2241,7 +2264,7 @@ The library provides utilities for testing SSE endpoints.
 | Session Mode | Test Client | Reason |
 |-------------|-------------|--------|
 | `autoClose` | `SSEInjectClient` or `injectSSE`/`injectPayloadSSE` | Handler completes and closes connection; all events available at once |
-| `keepAlive` | `SSEHttpClient` | Connection stays open; events arrive incrementally via server push |
+| `keepAlive` | `SSEHttpClient` (`connectApiSSE` for `defineApiContract` contracts) | Connection stays open; events arrive incrementally via server push |
 
 `SSEInjectClient` and `injectSSE`/`injectPayloadSSE` do the same thing (Fastify inject), but `injectSSE`/`injectPayloadSSE` provide type safety via contracts while `SSEInjectClient` works with raw URLs. Contracts built with `defineApiContract` use `injectApiSSE` instead of `injectSSE`/`injectPayloadSSE`.
 
@@ -2254,7 +2277,7 @@ The library provides utilities for testing SSE endpoints.
 | **Connection lifecycle** | Handler must close for request to complete | Can stay open indefinitely |
 | **Server requirement** | No `listen()` needed | Requires a listening server (`SSETestServer.start(app)` or manual `app.listen()`) |
 | **Request body** | `injectPayloadSSE` / `connectWithBody` | `method` + `body` connect options |
-| **Assertions before the handler finishes** | Not possible (response is buffered) | `client.response` is available as soon as headers arrive |
+| **Assertions before the handler finishes** | `injectApiSSE`'s `head` / `stream()` (other inject helpers buffer the whole response) | `client.response` is available as soon as headers arrive |
 | **Best for** | `autoClose` SSE (OpenAI-style, batch exports) | `keepAlive` SSE (notifications, live feeds, rooms), streams whose headers must be asserted mid-handler |
 | **Dual-mode sync** | Use `app.inject()` with `accept: 'application/json'` | Same |
 
@@ -2505,6 +2528,55 @@ const { closed } = injectPayloadSSE(app, chatCompletionContract, {
 const result = await closed
 const events = parseSSEEvents(result.body)
 ```
+
+For contracts built with `defineApiContract`, use `injectApiSSE` — it types and validates the events for you, and `stream()` yields them as the handler writes them. See [Contracts built with `defineApiContract`: `injectApiSSE`](#contracts-built-with-defineapicontract-injectapisse).
+
+#### Contract-Aware HTTP Helpers
+
+`connectApiSSE` is the real-HTTP counterpart of `injectApiSSE`: the same typed, validated event union, over a connection that can stay open. Use it for `keepAlive` routes, whose response never completes, and wherever a suite needs a real socket.
+
+```ts
+import { connectApiSSE, SSETestServer } from 'opinionated-machine'
+
+const server = await SSETestServer.start(app)
+
+// Method, path, query params, headers and body all come from the contract
+const client = await connectApiSSE(server.baseUrl, lqaSegmentContract, {
+  body: { segment: 'hello' },
+})
+
+expect(client.response.status).toBe(200) // asserted while the handler is still working
+
+for await (const event of client.events()) {
+  if (event.event === 'issue') expect(event.data.severity).toBe('minor') // typed by the contract
+  if (event.event === 'review') break
+}
+
+client.close()
+await server.close()
+```
+
+- `client.events(signal?)` and `client.collectEvents(countOrPredicate, timeout?)` mirror `SSEHttpClient`'s readers, with each event validated against the contract's SSE schemas and typed as a union on `event` — the predicate sees the narrowed type too.
+- `client.response` is the fetch `Response`, available before any event is consumed.
+- `client.raw` is the underlying `SSEHttpClient`, for anything this wrapper doesn't cover.
+- Pass `{ awaitServerConnection: { spy } }` as a fourth argument (with a spy from `createSSESessionSpy()`) to also wait for the server-side session of a `keepAlive` route; the call then resolves to `{ client, serverConnection }`.
+
+On a connection you already have, the same typing is available per read: `client.apiEvents(contract)` and `client.collectApiEvents(contract, countOrPredicate)` on any `SSEHttpClient`.
+
+#### When a Handler Fails to Send an Event
+
+`session.send(name, payload)` validates the payload against the contract's schema for that event and throws when it doesn't match. The throw happens inside the handler: the event never reaches the wire, the stream ends early with HTTP 200, and the reason only lands in the server log — leaving the test to explain an event that is simply missing.
+
+Routes built with `buildApiRoute` report those failures to whichever helper is reading the stream. `events()`, `stream()` and the `connectApiSSE` readers throw with the offending event name, its Zod issues and the rejected payload:
+
+```
+events() — 1 SSE event was never sent because the send threw:
+  - event "issue": severity: Invalid option: expected one of "neutral"|"minor"|"major"|"critical"; payload: {"severity":"min"}
+```
+
+`connectApiSSE(...).sendFailures()` returns the same records (`{ eventName, data, message, issues, error }`) for assertions the message doesn't cover.
+
+This is test-only and costs production traffic nothing: the helpers tag their requests with an `x-om-sse-diagnostics-id` header, and a session is instrumented only when that header names a diagnostics scope open in the same process — something only those helpers create. A stale or forged header matches nothing.
 
 ## Dual-Mode Controllers (SSE + Sync)
 

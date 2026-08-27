@@ -11,7 +11,7 @@ import type {
 } from '@lokalise/api-contracts'
 import type { InjectByApiContractParams } from '@lokalise/fastify-api-contracts'
 import type { z } from 'zod'
-import type { SSEResponse } from './sseTestTypes.ts'
+import type { SSEResponse, SSEResponseHead } from './sseTestTypes.ts'
 
 /**
  * Request params for {@link injectApiSSE}, derived from a `defineApiContract` contract.
@@ -212,6 +212,16 @@ type HasApiSSEResponse<Contract extends ApiContract> = [ApiSSEEventSchemas<Contr
 export type ApiSSEEventReader<Contract extends ApiContract> = () => Promise<ApiSSEEvent<Contract>[]>
 
 /**
+ * The callable form of {@link InjectApiSSEResult.stream}.
+ *
+ * Always a function, for the same reason {@link ApiSSEEventReader} is; the result type below
+ * hides it behind {@link HasApiSSEResponse}.
+ */
+export type ApiSSEStreamReader<Contract extends ApiContract> = (
+  signal?: AbortSignal,
+) => AsyncGenerator<ApiSSEEvent<Contract>, void, unknown>
+
+/**
  * Result of an {@link injectApiSSE} call.
  *
  * The `defineApiContract` counterpart of `InjectSSEResult`: same `closed` promise and
@@ -224,6 +234,21 @@ export type InjectApiSSEResult<Contract extends ApiContract> = {
    * Parse the body with `parseSSEEvents()` — or use `events()` for typed events.
    */
   closed: Promise<SSEResponse>
+
+  /**
+   * Resolves as soon as the response head is on the wire — for a streaming response, when
+   * the handler calls `sse.start()`, long before it finishes.
+   *
+   * Lets a test assert the status and headers of a stream while the handler is still
+   * producing events, which `closed` cannot: it only settles once the stream ends.
+   *
+   * @example
+   * ```typescript
+   * const { head, stream } = injectApiSSE(app, contract, { body })
+   * expect((await head).statusCode).toBe(200)  // handler is still working
+   * ```
+   */
+  head: Promise<SSEResponseHead>
 
   /**
    * Awaits the response, asserts the status code matches, parses the body against the
@@ -273,4 +298,39 @@ export type InjectApiSSEResult<Contract extends ApiContract> = {
    * ```
    */
   events: HasApiSSEResponse<Contract> extends true ? ApiSSEEventReader<Contract> : never
+
+  /**
+   * Yields the contract's events as the handler writes them, rather than after the response
+   * completes — the same discriminated union and the same validation `events()` provides.
+   *
+   * This is what `events()` cannot show: that event N reached the client while the handler
+   * was still working. The request is injected with Fastify's `payloadAsStream`, so no
+   * `app.listen()`, base URL or manual connection cleanup is involved.
+   *
+   * Events are buffered from the moment the request is injected, so a generator started
+   * late still yields the stream from its first event, and the handler is never blocked by
+   * a slow (or absent) consumer. Breaking out of the loop leaves the rest of the stream
+   * readable through `closed` / `events()`; calling `stream()` again replays it from the
+   * start.
+   *
+   * Throws — before yielding anything — if the response isn't an SSE stream, and rethrows
+   * the same event-level validation errors `events()` does. If the handler failed to send an
+   * event at all (a payload that didn't match the contract's schema for it), the generator
+   * ends by throwing an error naming that event and its Zod issues, instead of leaving the
+   * test to explain a missing event on its own.
+   *
+   * A contract that declares no SSE response types this as `never`, exactly as `events()`.
+   *
+   * @param signal - Optional `AbortSignal` to stop the generator early
+   *
+   * @example
+   * ```typescript
+   * const { stream } = injectApiSSE(app, lqaSegmentContract, { body: { segment } })
+   *
+   * for await (const event of stream()) {
+   *   if (event.event === 'issue') expect(handlerFinished).toBe(false)  // progressive delivery
+   * }
+   * ```
+   */
+  stream: HasApiSSEResponse<Contract> extends true ? ApiSSEStreamReader<Contract> : never
 }

@@ -1,4 +1,4 @@
-import type { ApiContract } from '@lokalise/api-contracts'
+import { type ApiContract, getSseSchemaByEventName } from '@lokalise/api-contracts'
 import {
   buildFastifyApiRoute,
   type ApiRouteOptions as FastifyApiRouteOptions,
@@ -7,6 +7,7 @@ import {
 import type { RouteOptions } from 'fastify'
 import type { GatewayMetadata } from '../gateway/gatewayTypes.ts'
 import { attachGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
+import { attachSSESendDiagnostics } from '../sse/sseSendDiagnostics.ts'
 
 /**
  * Options for configuring an ApiContract route.
@@ -77,6 +78,45 @@ export function buildApiRoute<Contract extends ApiContract>(
 ): RouteOptions {
   // Gateway metadata is stamped via Symbol, not spread into Fastify options.
   const { gatewayMetadata, ...fastifyOptions } = options ?? {}
-  const route = buildFastifyApiRoute(contract, handler, fastifyOptions)
+  const route = buildFastifyApiRoute(
+    contract,
+    handler,
+    withSendDiagnostics(contract, fastifyOptions),
+  )
   return gatewayMetadata !== undefined ? attachGatewayMetadata(route, gatewayMetadata) : route
+}
+
+/**
+ * Instrument the sessions of an SSE route so a send the handler could not make is reported to
+ * the test that is reading the stream, instead of only to the server log.
+ *
+ * A payload that fails the contract's schema for its event makes `session.send()` throw from
+ * inside the handler: the event never reaches the wire, the stream just ends early, and the
+ * test sees a missing event with no reason attached. The SSE test helpers (`injectApiSSE`,
+ * `connectApiSSE`) tag their requests with a diagnostics header and surface what was recorded
+ * for them.
+ *
+ * Costs nothing outside a test run: the hook is only added for contracts that declare SSE
+ * events, and it does nothing unless the request names a diagnostics scope open in this
+ * process — something only those helpers produce.
+ */
+function withSendDiagnostics<Contract extends ApiContract>(
+  contract: Contract,
+  options: Omit<ApiRouteOptions<Contract>, 'gatewayMetadata'>,
+): FastifyApiRouteOptions {
+  const schemaByEventName = getSseSchemaByEventName(contract)
+  if (!schemaByEventName) {
+    return options
+  }
+
+  const { onConnect } = options
+  return {
+    ...options,
+    // Called synchronously by `sse.start()` before the session reaches the handler, so the
+    // instrumentation is in place before the handler's first send.
+    onConnect: (session) => {
+      attachSSESendDiagnostics(session, schemaByEventName)
+      return onConnect?.(session)
+    },
+  }
 }
