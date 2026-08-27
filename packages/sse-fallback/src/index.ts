@@ -35,6 +35,7 @@ export {
   type IncomingEvent,
   Reconciler,
   type SnapshotOutcome,
+  type VersionGap,
 } from './reconciler.ts'
 export { backoffDelay, ResettableTimer, sleep } from './scheduler.ts'
 export {

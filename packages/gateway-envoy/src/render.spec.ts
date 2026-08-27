@@ -274,15 +274,74 @@ describe('renderEnvoyConfig — Accept negotiation on dual routes', () => {
     expect(matchesBranch(streamBranch, 'text/event-stream; q=0.0')).toBe(false)
   })
 
-  it('still routes a deprioritized but accepted stream to the stream branch', () => {
+  it('routes an unambiguous stream ask to the stream branch', () => {
     const { json } = renderEnvoyConfig(dualManifest(), options)
     const streamBranch = findRoute(json, 'jobsController.status__sse')
 
+    // Nothing else is acceptable, so determineMode() has only one type to rank.
     expect(matchesBranch(streamBranch, 'text/event-stream')).toBe(true)
     expect(matchesBranch(streamBranch, 'text/event-stream;q=0.5')).toBe(true)
-    expect(matchesBranch(streamBranch, 'application/json;q=0.9, text/event-stream;q=0.1')).toBe(
-      true,
+  })
+
+  it('routes a stream ask that refuses JSON to a stream branch', () => {
+    const { json } = renderEnvoyConfig(dualManifest(), options)
+    const refusedBranch = findRoute(json, 'jobsController.status__sse_json_refused')
+    const streamBranch = findRoute(json, 'jobsController.status__sse')
+
+    // A refused type is filtered out before ranking, so this is SSE on the
+    // server. The plain `contains` exclusion on __sse cannot express it.
+    expect(matchesBranch(streamBranch, 'application/json;q=0, text/event-stream')).toBe(false)
+    expect(matchesBranch(refusedBranch, 'application/json;q=0, text/event-stream')).toBe(true)
+    expect(refusedBranch?.route).toEqual(streamBranch?.route)
+  })
+
+  it('sends an Accept naming both types to the negotiated branch, not the stream branch', () => {
+    const { json } = renderEnvoyConfig(dualManifest(), options)
+    const negotiated = findRoute(json, 'jobsController.status__negotiated')
+    const streamBranch = findRoute(json, 'jobsController.status__sse')
+    const both = 'application/json;q=0.9, text/event-stream;q=0.1'
+
+    // determineMode() ranks these by quality and answers JSON. Envoy cannot
+    // compare q=0.9 against q=0.1, so the stream branch must not claim it —
+    // that is what left the poll running with `timeout: 0s`.
+    expect(matchesBranch(streamBranch, both)).toBe(false)
+    expect(matchesBranch(negotiated, both)).toBe(true)
+    expect(matchesBranch(negotiated, 'text/event-stream, application/json')).toBe(true)
+  })
+
+  it('gives the negotiated branch bounds that are safe for either mode', () => {
+    const { json } = renderEnvoyConfig(
+      dualManifest({ metadata: { upstream: 'users-service', timeouts: { request: '20s' } } }),
+      options,
     )
+    const negotiated = findRoute(json, 'jobsController.status__negotiated')
+
+    // No total-lifetime bound (it would cut a live stream), but the declared
+    // request bound still applies as an idle bound, so a stalled poll is not
+    // left hanging the way `timeout: 0s` alone left it.
+    expect(negotiated?.route).toMatchObject({ timeout: '0s', idle_timeout: '20s' })
+  })
+
+  it('prefers a declared timeouts.idle for the negotiated branch', () => {
+    const { json } = renderEnvoyConfig(
+      dualManifest({
+        metadata: { upstream: 'users-service', timeouts: { request: '20s', idle: '45s' } },
+      }),
+      options,
+    )
+
+    expect(findRoute(json, 'jobsController.status__negotiated')?.route).toMatchObject({
+      idle_timeout: '45s',
+    })
+  })
+
+  it('warns that timeouts.request cannot be enforced on the negotiated branch', () => {
+    const { warnings } = renderEnvoyConfig(
+      dualManifest({ metadata: { upstream: 'users-service', timeouts: { request: '20s' } } }),
+      options,
+    )
+
+    expect(warnings.some((w) => w.includes('cannot be enforced on a dual-mode request'))).toBe(true)
   })
 
   it.each([
@@ -293,15 +352,13 @@ describe('renderEnvoyConfig — Accept negotiation on dual routes', () => {
     const { json } = renderEnvoyConfig(dualManifest(), options)
 
     expect(matchesBranch(findRoute(json, 'jobsController.status__sse'), accept)).toBe(false)
+    expect(matchesBranch(findRoute(json, 'jobsController.status__negotiated'), accept)).toBe(false)
     // The catch-all carries no Accept matcher, so it takes everything else.
     expect(matchesBranch(findRoute(json, 'jobsController.status'), accept)).toBe(true)
   })
 
   it('makes the stream the catch-all when the route declares defaultMode sse', () => {
-    const { json, warnings } = renderEnvoyConfig(
-      dualManifest({ streamingDefaultMode: 'sse' }),
-      options,
-    )
+    const { json } = renderEnvoyConfig(dualManifest({ streamingDefaultMode: 'sse' }), options)
     const jsonBranch = findRoute(json, 'jobsController.status__json')
     const streamBranch = findRoute(json, 'jobsController.status__sse')
 
@@ -311,7 +368,6 @@ describe('renderEnvoyConfig — Accept negotiation on dual routes', () => {
     expect(matchesBranch(jsonBranch, '*/*')).toBe(false)
     expect(matchesBranch(jsonBranch, 'application/json')).toBe(true)
     expect(streamBranch?.route).toMatchObject({ timeout: '0s' })
-    expect(warnings.some((w) => w.includes('defaultMode "sse"'))).toBe(true)
   })
 
   it('sends a JSON request that refuses the stream to a plain branch with defaultMode sse', () => {
@@ -329,12 +385,20 @@ describe('renderEnvoyConfig — Accept negotiation on dual routes', () => {
     expect(refusedBranch?.route).toEqual(jsonBranch?.route)
 
     // It stays narrow: an accepted stream, and a refusal without a JSON ask,
-    // both keep the catch-all.
+    // both keep away from it.
     expect(matchesBranch(refusedBranch, 'application/json, text/event-stream')).toBe(false)
     expect(matchesBranch(refusedBranch, 'text/event-stream;q=0')).toBe(false)
   })
 
-  it('orders both json branches before the stream catch-all with defaultMode sse', () => {
+  it('sends an Accept naming both types to the negotiated branch with defaultMode sse too', () => {
+    const { json } = renderEnvoyConfig(dualManifest({ streamingDefaultMode: 'sse' }), options)
+    const both = 'application/json;q=0.9, text/event-stream;q=0.5'
+
+    expect(matchesBranch(findRoute(json, 'jobsController.status__negotiated'), both)).toBe(true)
+    expect(matchesBranch(findRoute(json, 'jobsController.status__json'), both)).toBe(false)
+  })
+
+  it('orders every narrow branch before the stream catch-all with defaultMode sse', () => {
     const { json } = renderEnvoyConfig(dualManifest({ streamingDefaultMode: 'sse' }), options)
     const typedConfig = json.static_resources.listeners[0]?.filter_chains[0]?.filters[0]
       ?.typed_config as {
@@ -342,12 +406,13 @@ describe('renderEnvoyConfig — Accept negotiation on dual routes', () => {
     }
     const names = typedConfig.route_config.virtual_hosts[0]?.routes.map((r) => r.name) ?? []
 
-    expect(names.indexOf('jobsController.status__json')).toBeLessThan(
-      names.indexOf('jobsController.status__sse'),
-    )
-    expect(names.indexOf('jobsController.status__json_sse_refused')).toBeLessThan(
-      names.indexOf('jobsController.status__sse'),
-    )
+    for (const narrow of [
+      'jobsController.status__json',
+      'jobsController.status__json_sse_refused',
+      'jobsController.status__negotiated',
+    ]) {
+      expect(names.indexOf(narrow)).toBeLessThan(names.indexOf('jobsController.status__sse'))
+    }
   })
 })
 

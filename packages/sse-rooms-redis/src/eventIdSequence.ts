@@ -30,8 +30,11 @@ export type RedisEventIdSequenceConfig = {
    * Defaults to `'0'`, a constant: the whole point of a Redis-backed counter is
    * that it survives restarts and is shared by every pod, so the epoch must NOT
    * vary per process. Override it only to deliberately force clients to
-   * resynchronize (e.g. after deleting the counter key), and then use a label
-   * that sorts after the previous one.
+   * resynchronize (e.g. after deleting the counter key), and then use a larger
+   * number than the previous one.
+   *
+   * Must be a string of digits — the client's default version extractor only
+   * recognizes `<digits>-<digits>` ids as orderable.
    */
   epoch?: string
 }
@@ -74,8 +77,10 @@ export function createRedisEventIdSequence(
   config: RedisEventIdSequenceConfig,
 ): AsyncEventIdSequence {
   const epoch = config.epoch ?? DEFAULT_EPOCH
-  if (epoch.length === 0) {
-    throw new TypeError('createRedisEventIdSequence: `epoch` must be a non-empty string')
+  if (!/^\d+$/.test(epoch)) {
+    throw new TypeError(
+      `createRedisEventIdSequence: \`epoch\` must be a non-empty string of digits, got "${epoch}"`,
+    )
   }
   if (config.key.length === 0) {
     throw new TypeError('createRedisEventIdSequence: `key` must be a non-empty string')

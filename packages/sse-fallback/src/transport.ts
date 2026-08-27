@@ -54,6 +54,15 @@ export type ParsedSseFrame = {
   data: string
   /** The `retry:` reconnection hint in ms, when the frame carried one. */
   retry?: number
+  /**
+   * The Last-Event-ID cursor as of this frame, when the framing tracked it.
+   *
+   * The cursor persists across frames that carry no `id:` of their own and is
+   * cleared by an empty `id:`, so it is not the same thing as {@link id}.
+   * Transports wrapping a client that only exposes per-event ids leave it
+   * unset; the core then falls back to {@link id}.
+   */
+  lastEventId?: string
 }
 
 /**
@@ -329,10 +338,12 @@ async function* framesOf(
   chunks: AsyncIterable<string>,
 ): AsyncGenerator<ParsedSseFrame, void, unknown> {
   let buffer = ''
+  let cursor: string | undefined
   for await (const chunk of chunks) {
     buffer += chunk
-    const parsed = parseSSEBuffer(buffer)
+    const parsed = parseSSEBuffer(buffer, cursor)
     buffer = parsed.remaining
+    cursor = parsed.lastEventId
     for (const event of parsed.events) yield event
   }
 }

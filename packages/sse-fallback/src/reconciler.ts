@@ -19,6 +19,21 @@ import type {
  * arrival time), and replay overlap after reconnection.
  */
 
+/**
+ * A break in the version sequence that only a snapshot can repair.
+ *
+ * `'sequence'` means the dense counter skipped ahead inside one epoch, so a
+ * known number of events was lost. `'epoch-change'` means the id epoch itself
+ * changed (a writer restarted, or the ordering scope was reset): counters on
+ * either side are not comparable, so the number of missed events is unknowable
+ * and delta state has to be rebuilt from a snapshot rather than carried across.
+ */
+export type VersionGap = {
+  from: Version
+  to: Version
+  reason: 'sequence' | 'epoch-change'
+}
+
 export type IncomingEvent = {
   event: string
   data: unknown
@@ -33,8 +48,8 @@ export type EventOutcome<Events extends EventPayloadMap> = {
   buffered: boolean
   /** Hydration buffer overflowed — caller must refetch the snapshot. */
   bufferOverflow: boolean
-  /** A sequence gap was detected (dense versions) — caller should poll now. */
-  gap?: { from: Version; to: Version }
+  /** A gap or an epoch change was detected — caller should poll now. */
+  gap?: VersionGap
   /** A terminal event was delivered — the subscription is complete. */
   terminated: boolean
   /** New state value when the state layer applied the event. */
@@ -459,17 +474,24 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
     return defaultCompareVersions(a, b)
   }
 
-  private detectGap(watermark: Version, next: Version): { from: Version; to: Version } | undefined {
+  private detectGap(watermark: Version, next: Version): VersionGap | undefined {
     const versionConfig = this.config.version
-    if (versionConfig === 'none' || !versionConfig.dense) return undefined
+    if (versionConfig === 'none') return undefined
     const watermarkCounter = toCounter(watermark)
     const nextCounter = toCounter(next)
     if (watermarkCounter === undefined || nextCounter === undefined) return undefined
-    // Counters restart with a new epoch, so a cross-epoch step is a
-    // resynchronization point, not a measurable gap.
-    if (watermarkCounter.epoch !== nextCounter.epoch) return undefined
+    // Counters restart with a new epoch, so a cross-epoch step measures
+    // nothing — which makes it MORE of a resynchronization point, not less.
+    // Reporting it repairs delta state from a snapshot; staying silent would
+    // apply deltas across the restart and let a busy stream keep the deadman
+    // moving, so the repair never happens.
+    if (watermarkCounter.epoch !== nextCounter.epoch) {
+      return { from: watermark, to: next, reason: 'epoch-change' }
+    }
+    // A skipped counter is only measurable when the versions are dense.
+    if (!versionConfig.dense) return undefined
     return nextCounter.counter > watermarkCounter.counter + 1n
-      ? { from: watermark, to: next }
+      ? { from: watermark, to: next, reason: 'sequence' }
       : undefined
   }
 }
@@ -498,12 +520,14 @@ function toNumeric(version: Version): number | undefined {
  * Ids produced by the server-side `createEventIdSequence()`:
  * `"<numeric epoch>-<zero-padded counter>"`.
  *
- * The epoch is required to be numeric (it defaults to `Date.now()`) so that
- * ids in unrelated shapes are NOT mistaken for versions. A UUID, for example,
- * has several dashes and hex digits and cannot match — which matters, because
- * treating one as a version would order events at random and silently drop
- * them as duplicates. Deployments using a non-numeric epoch, or any other id
- * scheme, declare `version.ofEvent` explicitly.
+ * The epoch is required to be numeric so that ids in unrelated shapes are NOT
+ * mistaken for versions. A UUID, for example, has several dashes and hex digits
+ * and cannot match — which matters, because treating one as a version would
+ * order events at random and silently drop them as duplicates. The server-side
+ * generators (`createEventIdSequence`, `formatEventId`,
+ * `createRedisEventIdSequence`) refuse a non-numeric epoch for exactly this
+ * reason, so every id they produce is one this extractor can order. Any other
+ * id scheme declares `version.ofEvent` explicitly.
  */
 const SEQUENCE_ID_PATTERN = /^(\d+)-(\d+)$/
 

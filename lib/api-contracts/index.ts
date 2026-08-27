@@ -14,6 +14,7 @@ export {
   ApiSseConnectionRegistry,
   getApiSseConnectionRegistry,
   getSessionRooms,
+  type PendingJoin,
   type SSERoomsOptions,
   withSessionRooms,
 } from './apiSseConnectionRegistry.ts'

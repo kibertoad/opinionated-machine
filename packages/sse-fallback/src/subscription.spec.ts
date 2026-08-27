@@ -339,7 +339,7 @@ describe('createResilientSubscription', () => {
     streams[0]?.pushEvent('progress', { percent: 30 }, { id: '3' })
     await flush()
 
-    expect(gaps).toEqual([{ from: 1, to: 3 }])
+    expect(gaps).toEqual([{ from: 1, to: 3, reason: 'sequence' }])
     expect(snapshots).toHaveLength(2)
   })
 
@@ -823,6 +823,64 @@ describe('createResilientSubscription — auth challenge', () => {
 
     expect(called).toBe(false)
     expect(sub.result).toEqual({ reason: 'unretryable-status', status: 404, channel: 'poll' })
+  })
+
+  it('lets a concurrent 401 join the in-flight refresh instead of killing the subscription', async () => {
+    // Both channels see the same expired token. The poll starts the refresh
+    // and the reconnect is refused while it is still running; counting that as
+    // the second failure stopped the subscription mid-refresh.
+    const { transport, streams, snapshots } = makeHarness()
+    let release: (() => void) | undefined
+    let challenges = 0
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      onAuthChallenge: () => {
+        challenges += 1
+        return new Promise<boolean>((resolve) => {
+          release = () => resolve(true)
+        })
+      },
+    })
+    await flush()
+    expect(snapshots).toHaveLength(1)
+
+    snapshots[0]?.respond({}, 401)
+    await flush()
+    expect(challenges).toBe(1)
+
+    transport.denyNextStreamConnect({ status: 401 })
+    streams[0]?.close()
+    await vi.advanceTimersByTimeAsync(500)
+
+    // One refresh, shared: the reconnect's refusal waited for it.
+    expect(challenges).toBe(1)
+    expect(sub.result).toBeUndefined()
+
+    release?.()
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(sub.result).toBeUndefined()
+    expect(snapshots.length).toBeGreaterThan(1)
+  })
+
+  it('still stops on a refusal that arrives after the refresh completed', async () => {
+    const { transport, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      onAuthChallenge: () => Promise.resolve(true),
+    })
+    await flush()
+
+    snapshots[0]?.respond({}, 401)
+    await flush()
+    snapshots[1]?.respond({}, 401)
+    await flush()
+
+    expect(sub.result).toEqual({ reason: 'unretryable-status', status: 401, channel: 'poll' })
   })
 
   it('recovers a stream connect refused with 401', async () => {

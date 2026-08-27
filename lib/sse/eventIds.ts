@@ -51,6 +51,19 @@
  */
 
 /**
+ * Epochs are digits only, and so are counters.
+ *
+ * The client's default version extractor (`@opinionated-machine/sse-fallback`)
+ * has to tell a generated id apart from any other id shape a stream might
+ * carry, and a UUID matches `<anything>-<digits>` too — ordering events by a
+ * chunk of a UUID drops them at random. Restricting the epoch to digits is what
+ * makes `<digits>-<digits>` an unambiguous marker, so every id these helpers
+ * produce is one that extractor can order. Any other id scheme needs
+ * `version.ofEvent` declared on the client.
+ */
+const NUMERIC_EPOCH_PATTERN = /^\d+$/
+
+/**
  * A monotonic id generator: ids are lexicographically AND numerically
  * increasing within the sequence's epoch.
  */
@@ -77,7 +90,9 @@ export type CreateEventIdSequenceOptions = {
    * rather than compare counters. Defaults to the creation timestamp in ms —
    * a process restart naturally starts a new (larger) epoch.
    *
-   * Must be a non-empty string. Pass an explicit shared epoch when several
+   * Must be a string of digits, and a later epoch must be numerically larger
+   * than the one before it (see {@link NUMERIC_EPOCH_PATTERN} for why a
+   * free-form label is refused). Pass an explicit shared epoch when several
    * writers feed one ordering scope.
    */
   epoch?: string
@@ -100,13 +115,15 @@ export type CreateEventIdSequenceOptions = {
  * single-writer ordering scope. See the module docs for the multi-writer
  * hazard and the alternatives (domain versions, or a Redis-backed sequence).
  *
- * @throws TypeError if `epoch` is empty, or if `start` is not an integer in
- *   `[0, MAX_EVENT_ID_COUNTER - 1]`.
+ * @throws TypeError if `epoch` is not a string of digits, or if `start` is not
+ *   an integer in `[0, MAX_EVENT_ID_COUNTER - 1]`.
  */
 export function createEventIdSequence(options?: CreateEventIdSequenceOptions): EventIdSequence {
   const epoch = options?.epoch ?? String(Date.now())
-  if (epoch.length === 0) {
-    throw new TypeError('createEventIdSequence: `epoch` must be a non-empty string')
+  if (!NUMERIC_EPOCH_PATTERN.test(epoch)) {
+    throw new TypeError(
+      `createEventIdSequence: \`epoch\` must be a non-empty string of digits, got "${epoch}"`,
+    )
   }
 
   const start = options?.start ?? 0
@@ -136,7 +153,7 @@ export function createEventIdSequence(options?: CreateEventIdSequenceOptions): E
   }
 }
 
-const EVENT_ID_PATTERN = /^(.+)-(\d+)$/
+const EVENT_ID_PATTERN = /^(\d+)-(\d+)$/
 
 /**
  * Compare two event ids produced by {@link createEventIdSequence}.
@@ -180,14 +197,17 @@ export type AsyncEventIdSequence = {
  * {@link createEventIdSequence} produces, so ids from a shared counter compare
  * against ids from an in-process sequence with the same epoch.
  *
- * @throws TypeError if `epoch` is empty. `createEventIdSequence()` refuses the
- *   same input: an id with no epoch (`"-000000000001"`) is one
- *   {@link compareEventIds} cannot parse, so nothing downstream can order it.
+ * @throws TypeError if `epoch` is not a string of digits.
+ *   `createEventIdSequence()` refuses the same input: an id whose epoch is
+ *   empty (`"-000000000001"`) or free-form is one {@link compareEventIds}
+ *   cannot parse, so nothing downstream can order it.
  * @throws RangeError if the counter does not fit the fixed id width.
  */
 export function formatEventId(epoch: string, counter: number | bigint): string {
-  if (epoch.length === 0) {
-    throw new TypeError('formatEventId: `epoch` must be a non-empty string')
+  if (!NUMERIC_EPOCH_PATTERN.test(epoch)) {
+    throw new TypeError(
+      `formatEventId: \`epoch\` must be a non-empty string of digits, got "${epoch}"`,
+    )
   }
   const asBigInt = typeof counter === 'bigint' ? counter : BigInt(counter)
   if (asBigInt < 1n || asBigInt > BigInt(MAX_EVENT_ID_COUNTER)) {

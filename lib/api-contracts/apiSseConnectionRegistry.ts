@@ -24,8 +24,24 @@ type RegisteredConnection = {
   close?: () => void
 }
 
+/**
+ * A join whose `authorizeJoin` verdict has not resolved yet.
+ *
+ * An async verdict lands after `join()` has already returned, so anything that
+ * revokes access in between (a `leave`, an `evictFromRoom`, an eviction, a
+ * closed room, the session closing) has to be able to cancel it. Without that
+ * the resolved verdict re-adds the connection to a room it was just removed
+ * from, and the revocation silently does not stick.
+ */
+export type PendingJoin = {
+  readonly room: string
+  cancelled: boolean
+}
+
 export class ApiSseConnectionRegistry {
   private readonly connections = new Map<string, RegisteredConnection>()
+  /** In-flight async joins per connection id. Empty for a synchronous verdict. */
+  private readonly pendingJoins = new Map<string, PendingJoin[]>()
   private readonly broadcaster: SSERoomBroadcaster
 
   constructor(broadcaster: SSERoomBroadcaster) {
@@ -57,9 +73,60 @@ export class ApiSseConnectionRegistry {
    * broadcaster's dedup cache for the connection.
    */
   unregister(connectionId: string): void {
+    this.cancelPendingJoins(connectionId)
     this.connections.delete(connectionId)
     this.broadcaster.roomManager.leaveAll(connectionId)
     this.broadcaster.cleanupConnection(connectionId)
+  }
+
+  /**
+   * Record an async `authorizeJoin` verdict that is still in flight, so a
+   * revocation arriving before it resolves can cancel it.
+   *
+   * Pair every call with {@link settlePendingJoin}; the room wiring in
+   * {@link withSessionRooms} does this for routes.
+   */
+  beginPendingJoin(connectionId: string, room: string): PendingJoin {
+    const pending: PendingJoin = { room, cancelled: false }
+    const existing = this.pendingJoins.get(connectionId)
+    if (existing) existing.push(pending)
+    else this.pendingJoins.set(connectionId, [pending])
+    return pending
+  }
+
+  /**
+   * Retire an in-flight join.
+   *
+   * @returns `true` when the join is still valid and may be applied, `false`
+   *   when it was cancelled while the verdict was pending.
+   */
+  settlePendingJoin(connectionId: string, pending: PendingJoin): boolean {
+    const list = this.pendingJoins.get(connectionId)
+    if (list) {
+      const index = list.indexOf(pending)
+      if (index !== -1) list.splice(index, 1)
+      if (list.length === 0) this.pendingJoins.delete(connectionId)
+    }
+    return !pending.cancelled
+  }
+
+  /**
+   * Cancel in-flight joins for a connection — all of them, or only those for
+   * one room. A cancelled join is dropped when its verdict resolves.
+   *
+   * @returns How many joins were cancelled.
+   */
+  cancelPendingJoins(connectionId: string, room?: string): number {
+    const list = this.pendingJoins.get(connectionId)
+    if (!list) return 0
+    let cancelled = 0
+    for (const pending of list) {
+      if (room !== undefined && pending.room !== room) continue
+      if (pending.cancelled) continue
+      pending.cancelled = true
+      cancelled += 1
+    }
+    return cancelled
   }
 
   /**
@@ -81,7 +148,9 @@ export class ApiSseConnectionRegistry {
     const connection = this.connections.get(connectionId)
     if (!connection) return false
     // Leave rooms first: a broadcast racing the close must not reach a
-    // connection that is being revoked.
+    // connection that is being revoked. An async join still awaiting its
+    // verdict has to go too, or it rejoins a room after the eviction.
+    this.cancelPendingJoins(connectionId)
     this.broadcaster.roomManager.leaveAll(connectionId)
     this.connections.delete(connectionId)
     this.broadcaster.cleanupConnection(connectionId)
@@ -93,10 +162,15 @@ export class ApiSseConnectionRegistry {
    * Remove one connection from one room, leaving its other rooms and its
    * stream intact. For revoking access to a single scope.
    *
-   * @returns `true` when the connection was in the room.
+   * A join whose async `authorizeJoin` verdict is still pending counts as
+   * membership here: the connection is not in the room yet, but it is about to
+   * be, and letting that land after a revocation would undo it.
+   *
+   * @returns `true` when the connection was in the room, or was on its way in.
    */
   evictFromRoom(room: string, connectionId: string): boolean {
-    if (!this.broadcaster.roomManager.isInRoom(connectionId, room)) return false
+    const cancelled = this.cancelPendingJoins(connectionId, room) > 0
+    if (!this.broadcaster.roomManager.isInRoom(connectionId, room)) return cancelled
     this.broadcaster.roomManager.leave(connectionId, room)
     return true
   }
@@ -109,12 +183,20 @@ export class ApiSseConnectionRegistry {
    * the cluster is another node's registry to evict, so a revocation event
    * has to reach every node.
    *
+   * Joins still awaiting an async `authorizeJoin` verdict are cancelled rather
+   * than evicted: they hold no membership yet, so the revocation just denies
+   * them the room and leaves their other rooms and their stream alone. They
+   * are not counted in the return value for the same reason.
+   *
    * @returns How many connections were evicted here.
    */
   closeRoom(room: string): number {
     let evicted = 0
     for (const connectionId of this.broadcaster.roomManager.getConnectionsInRoom(room)) {
       if (this.evict(connectionId)) evicted += 1
+    }
+    for (const connectionId of this.pendingJoins.keys()) {
+      this.cancelPendingJoins(connectionId, room)
     }
     return evicted
   }
@@ -191,7 +273,9 @@ export type SSERoomsOptions = {
    * request logger and the join is dropped. A synchronous verdict is applied
    * before `join()` returns; an async one is applied when it resolves, so the
    * session joins a moment later — the client's reconciliation poll covers
-   * anything broadcast in between.
+   * anything broadcast in between. A `leave`, an `evictFromRoom`, an `evict`,
+   * a `closeRoom` or the session closing while the verdict is pending cancels
+   * it, so a revocation cannot be undone by a join that was already in flight.
    */
   authorizeJoin?: (session: SSESession, room: string) => boolean | Promise<boolean>
 
@@ -317,9 +401,22 @@ export function withSessionRooms<Options extends FastifyApiRouteOptions>(
           denied(room)
           return
         }
+        // The verdict lands after join() has returned, so a leave, an eviction
+        // or a closed room in the meantime must be able to call it off —
+        // otherwise the resolved verdict re-adds the connection and quietly
+        // undoes the revocation. The registry owns that token because those
+        // calls come through it, not through this closure.
+        const pending = registry.beginPendingJoin(session.id, room)
         void verdict.then(
-          (allowed) => (allowed ? joinRoom(room) : denied(room)),
-          (err: unknown) => denied(room, err),
+          (allowed) => {
+            if (!registry.settlePendingJoin(session.id, pending)) return
+            if (allowed) joinRoom(room)
+            else denied(room)
+          },
+          (err: unknown) => {
+            registry.settlePendingJoin(session.id, pending)
+            denied(room, err)
+          },
         )
       }
 
@@ -327,7 +424,12 @@ export function withSessionRooms<Options extends FastifyApiRouteOptions>(
         join: (room) => {
           for (const name of Array.isArray(room) ? room : [room]) authorizeAndJoin(name)
         },
-        leave: (room) => broadcaster.roomManager.leave(session.id, room),
+        leave: (room) => {
+          for (const name of Array.isArray(room) ? room : [room]) {
+            registry.cancelPendingJoins(session.id, name)
+          }
+          broadcaster.roomManager.leave(session.id, room)
+        },
       })
 
       return onConnect?.(session)

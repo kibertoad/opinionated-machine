@@ -28,35 +28,118 @@
  * const payload = JSON.parse(event.data)
  * ```
  */
+/** `retry:` carries ASCII digits only; any other value is ignored. */
+const DIGITS_ONLY = /^\d+$/
+
 /**
- * Parse a single SSE line and update the event state.
- * Returns true if a complete event was found (empty line with data).
+ * Split a field line into name and value per the spec: the value is everything
+ * after the first colon minus at most ONE leading space, and a line with no
+ * colon is a field name with an empty value.
  *
- * The caller splits on `\n` only, so a CRLF-framed stream leaves a trailing
- * `\r` on every line — including the blank line that terminates an event.
- * The spec allows CR, LF and CRLF as line terminators, so strip it here:
- * without that, consecutive events on a CRLF stream never terminate and merge
- * into one event with the wrong id and concatenated data.
+ * Trimming the value instead would corrupt payloads — `data:  two spaces  `
+ * has to keep one leading and both trailing spaces, which matters for any
+ * consumer that reads the raw string rather than JSON.
  */
-function parseSSELine(
-  rawLine: string,
-  currentEvent: Partial<ParsedSSEEvent>,
-  dataLines: string[],
-): boolean {
-  const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine
-  if (line.startsWith('id:')) {
-    currentEvent.id = line.slice(3).trim()
-  } else if (line.startsWith('event:')) {
-    currentEvent.event = line.slice(6).trim()
-  } else if (line.startsWith('data:')) {
-    dataLines.push(line.slice(5).trim())
-  } else if (line.startsWith('retry:')) {
-    currentEvent.retry = Number.parseInt(line.slice(6).trim(), 10)
-  } else if (line === '' && dataLines.length > 0) {
-    return true // Event complete
+function splitField(line: string): { field: string; value: string } {
+  const colon = line.indexOf(':')
+  if (colon === -1) return { field: line, value: '' }
+  const value = line.slice(colon + 1)
+  return { field: line.slice(0, colon), value: value.startsWith(' ') ? value.slice(1) : value }
+}
+
+/**
+ * Locate the end of the line starting at `from`.
+ *
+ * CR, LF and CRLF are all line terminators. A CR at the very end of the buffer
+ * is left unconsumed: the next chunk decides whether it was a bare CR or the
+ * first half of a CRLF, and consuming it early would split the terminator.
+ */
+function findLineEnd(buffer: string, from: number): { end: number; next: number } | undefined {
+  for (let index = from; index < buffer.length; index += 1) {
+    const char = buffer[index]
+    if (char === '\n') return { end: index, next: index + 1 }
+    if (char === '\r') {
+      if (index === buffer.length - 1) return undefined
+      return { end: index, next: buffer[index + 1] === '\n' ? index + 2 : index + 1 }
+    }
   }
-  // Comment lines (starting with :) are implicitly ignored
-  return false
+  return undefined
+}
+
+/** The frame being assembled between two blank lines. */
+type FrameState = {
+  event: Partial<ParsedSSEEvent>
+  dataLines: string[]
+  /** Whether this frame carried an `id:` field, empty value included. */
+  idSeen: boolean
+}
+
+/** Apply one non-blank line to the frame under construction. */
+function applyFieldLine(line: string, state: FrameState): void {
+  // Comment lines (starting with :) are ignored — heartbeats arrive as one.
+  if (line.startsWith(':')) return
+
+  const { field, value } = splitField(line)
+  if (field === 'id') {
+    // A NUL in an id is the one value the spec drops on the floor.
+    if (value.includes('\0')) return
+    state.event.id = value
+    state.idSeen = true
+  } else if (field === 'event') {
+    state.event.event = value
+  } else if (field === 'data') {
+    state.dataLines.push(value)
+  } else if (field === 'retry' && DIGITS_ONLY.test(value)) {
+    state.event.retry = Number(value)
+  }
+}
+
+/**
+ * One pass of the spec's event-stream interpreter over `buffer`.
+ *
+ * `consumed` is the offset just past the last dispatch, so an incremental
+ * caller can re-feed everything after it with the next chunk. `lastEventId` is
+ * the reconnect cursor: it persists across events that carry no `id:` of their
+ * own, and an `id:` with an empty value clears it.
+ */
+function interpretStream(
+  buffer: string,
+  lastEventId: string | undefined,
+): { events: ParsedSSEEvent[]; consumed: number; lastEventId: string | undefined } {
+  const events: ParsedSSEEvent[] = []
+  let cursor = lastEventId
+  let state: FrameState = { event: {}, dataLines: [], idSeen: false }
+  let consumed = 0
+  let position = 0
+
+  while (position < buffer.length) {
+    const lineEnd = findLineEnd(buffer, position)
+    if (lineEnd === undefined) break
+    const line = buffer.slice(position, lineEnd.end)
+    position = lineEnd.next
+
+    if (line !== '') {
+      applyFieldLine(line, state)
+      continue
+    }
+
+    // A blank line dispatches, whether or not there is data to emit. The event
+    // type and data buffers reset here, so an id-only frame can no longer leak
+    // its id onto the next event, while the cursor it set deliberately
+    // survives — that is what Last-Event-ID reconnects from.
+    if (state.idSeen) cursor = state.event.id === '' ? undefined : state.event.id
+    if (state.dataLines.length > 0) {
+      events.push({
+        ...state.event,
+        data: state.dataLines.join('\n'),
+        ...(cursor !== undefined ? { lastEventId: cursor } : {}),
+      } as ParsedSSEEvent)
+    }
+    state = { event: {}, dataLines: [], idSeen: false }
+    consumed = position
+  }
+
+  return { events, consumed, lastEventId: cursor }
 }
 
 export type ParsedSSEEvent = {
@@ -81,6 +164,16 @@ export type ParsedSSEEvent = {
    * Suggests how long the client should wait before reconnecting.
    */
   retry?: number
+  /**
+   * The Last-Event-ID cursor as of this event's dispatch.
+   *
+   * The spec keeps the last event ID across events, so an event with no `id:`
+   * of its own still reconnects from the previous one, and an `id:` with an
+   * empty value clears the cursor (this field is then absent). Kept apart from
+   * `id` because consumers order and deduplicate on the id the event itself
+   * carried.
+   */
+  lastEventId?: string
 }
 
 /**
@@ -156,29 +249,14 @@ export type ParsedSSEEvent = {
  * ```
  */
 export function parseSSEEvents(text: string): ParsedSSEEvent[] {
-  const events: ParsedSSEEvent[] = []
-  const lines = text.split('\n')
+  const { events, consumed, lastEventId } = interpretStream(text, undefined)
 
-  let currentEvent: Partial<ParsedSSEEvent> = {}
-  let dataLines: string[] = []
-
-  for (const line of lines) {
-    if (parseSSELine(line, currentEvent, dataLines)) {
-      events.push({
-        ...currentEvent,
-        data: dataLines.join('\n'),
-      } as ParsedSSEEvent)
-      currentEvent = {}
-      dataLines = []
-    }
-  }
-
-  // Handle case where stream doesn't end with double newline
-  if (dataLines.length > 0) {
-    events.push({
-      ...currentEvent,
-      data: dataLines.join('\n'),
-    } as ParsedSSEEvent)
+  // A response body that does not end with a blank line still carries a final
+  // event; dispatch what is left of it here.
+  const trailing = text.slice(consumed)
+  if (trailing.length > 0) {
+    const { events: tailEvents } = interpretStream(`${trailing}\n\n`, lastEventId)
+    events.push(...tailEvents)
   }
 
   return events
@@ -192,6 +270,12 @@ export type ParseSSEBufferResult = {
   events: ParsedSSEEvent[]
   /** Remaining incomplete data to prepend to next chunk */
   remaining: string
+  /**
+   * The Last-Event-ID cursor after every event the call consumed, including
+   * id-only frames that dispatched no event. Feed it back into the next call
+   * so the cursor survives across chunks.
+   */
+  lastEventId: string | undefined
 }
 
 /**
@@ -203,12 +287,14 @@ export type ParseSSEBufferResult = {
  *
  * **Usage Pattern:**
  * 1. Append new chunk to buffer
- * 2. Call parseSSEBuffer(buffer)
+ * 2. Call parseSSEBuffer(buffer, lastEventId)
  * 3. Process the events
- * 4. Set buffer = remaining for next iteration
+ * 4. Set buffer = remaining and lastEventId = result.lastEventId for the next
+ *    iteration, so the reconnect cursor survives chunk boundaries
  *
  * @param buffer - Current buffer containing SSE data
- * @returns Object with parsed events and remaining incomplete buffer
+ * @param lastEventId - The reconnect cursor the previous call returned
+ * @returns Object with parsed events, remaining incomplete buffer, and cursor
  *
  * @example
  * ```typescript
@@ -245,32 +331,13 @@ export type ParseSSEBufferResult = {
  * })
  * ```
  */
-export function parseSSEBuffer(buffer: string): ParseSSEBufferResult {
-  const events: ParsedSSEEvent[] = []
-  const lines = buffer.split('\n')
-
-  let currentEvent: Partial<ParsedSSEEvent> = {}
-  let dataLines: string[] = []
-  let lastCompleteEventEnd = 0
-  let currentPosition = 0
-
-  for (const line of lines) {
-    currentPosition += line.length + 1 // +1 for the \n
-
-    if (parseSSELine(line, currentEvent, dataLines)) {
-      events.push({
-        ...currentEvent,
-        data: dataLines.join('\n'),
-      } as ParsedSSEEvent)
-      currentEvent = {}
-      dataLines = []
-      lastCompleteEventEnd = currentPosition
-    }
+export function parseSSEBuffer(buffer: string, lastEventId?: string): ParseSSEBufferResult {
+  const result = interpretStream(buffer, lastEventId)
+  // Preserve any unconsumed content after the last dispatch, including a
+  // partial event with only id:/event:/retry: lines.
+  return {
+    events: result.events,
+    remaining: buffer.slice(result.consumed),
+    lastEventId: result.lastEventId,
   }
-
-  // Return remaining incomplete data
-  // Preserve any unconsumed content after the last complete event,
-  // including incomplete events with only id:/event:/retry: lines (not just data: lines)
-  const remaining = lastCompleteEventEnd < buffer.length ? buffer.slice(lastCompleteEventEnd) : ''
-  return { events, remaining }
 }

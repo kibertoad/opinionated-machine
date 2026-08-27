@@ -1,7 +1,8 @@
 import type { FallbackBinding, FallbackRequestParams } from './binding.ts'
-import type { EventPayloadMap, FallbackEvent, FallbackPolicy, Version } from './bindingTypes.ts'
+import type { EventPayloadMap, FallbackEvent, FallbackPolicy } from './bindingTypes.ts'
 import { DEFAULT_POLICY } from './bindingTypes.ts'
 import type { PollGate } from './pollGate.ts'
+import type { VersionGap } from './reconciler.ts'
 import { Reconciler } from './reconciler.ts'
 import { backoffDelay, ResettableTimer, sleep } from './scheduler.ts'
 import { parseSSEBuffer } from './sseParser.ts'
@@ -70,7 +71,7 @@ export class SubscriptionStoppedError extends Error {
  * fallback machinery (gap rate, duplicate rate, poll errors).
  */
 export type FallbackDiagnostics = {
-  onGap?: (gap: { from: Version; to: Version }) => void
+  onGap?: (gap: VersionGap) => void
   onDuplicate?: (event: string) => void
   onStaleSnapshot?: () => void
   onPollError?: (error: unknown) => void
@@ -79,7 +80,7 @@ export type FallbackDiagnostics = {
    * A gap suspended the state layer: `getState()` is frozen at its pre-gap
    * value until a snapshot repairs it, even though events keep flowing.
    */
-  onStateSuspended?: (gap: { from: Version; to: Version }) => void
+  onStateSuspended?: (gap: VersionGap) => void
   /** A snapshot lifted the suspension and re-initialized state. */
   onStateRepaired?: () => void
   /** A listener passed to `onEvent` / `onStateChange` / `onStatusChange` threw. */
@@ -206,6 +207,11 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   private stopDetail: SubscriptionStopDetail | undefined
   private streamConnected = false
   private lastEventId: string | undefined
+  /**
+   * The credential refresh currently running, shared by both channels so a
+   * poll and a reconnect refused by the same expired token recover together.
+   */
+  private authRefresh: Promise<boolean> | undefined
   private serverRetryHintMs: number | undefined
   private consecutiveConnectFailures = 0
   private degraded = false
@@ -576,7 +582,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     for await (const frame of frames) {
       if (this.streamLoopDone) return
       this.onStreamActivity()
-      this.handleParsedEvent(frame)
+      void this.handleParsedEvent(frame)
       if (this.streamLoopDone) return
     }
   }
@@ -584,17 +590,28 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   /** Consume raw text and do the SSE framing here. */
   private async consumeChunks(chunks: AsyncIterable<string>): Promise<void> {
     let buffer = ''
+    // The parser's cursor, carried across chunks. It is not `this.lastEventId`:
+    // an event whose data fails to parse holds that one back, and the parser
+    // knows nothing about that.
+    let cursor = this.lastEventId
     for await (const chunk of chunks) {
       if (this.streamLoopDone) return
       // ANY bytes (heartbeat comments included) prove transport liveness.
       this.onStreamActivity()
       buffer += chunk
-      const parsed = parseSSEBuffer(buffer)
+      const parsed = parseSSEBuffer(buffer, cursor)
       buffer = parsed.remaining
+      cursor = parsed.lastEventId
+      let cursorHeld = false
       for (const event of parsed.events) {
-        this.handleParsedEvent(event)
+        if (!this.handleParsedEvent(event)) cursorHeld = true
         if (this.streamLoopDone) return
       }
+      // An `id:` frame carrying no data still moves the reconnect cursor, and
+      // an empty `id:` clears it, so the cursor comes from the parser rather
+      // than from the events it emitted. A frame this batch could not read
+      // holds it where it was.
+      if (!cursorHeld) this.lastEventId = cursor
     }
   }
 
@@ -620,7 +637,29 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     }
   }
 
-  private handleParsedEvent(parsed: ParsedSseFrame): void {
+  /**
+   * Move the reconnect cursor to where this frame leaves it.
+   *
+   * The parser tracks Last-Event-ID across frames, so an event with no `id:`
+   * of its own still reports the cursor it inherited and an empty `id:` clears
+   * it. A transport that framed the stream itself reports no cursor, so there
+   * the id the frame carried is all there is.
+   */
+  private advanceEventCursor(parsed: ParsedSseFrame): void {
+    if (parsed.lastEventId !== undefined) {
+      this.lastEventId = parsed.lastEventId
+      return
+    }
+    if (parsed.id !== undefined && parsed.id !== '') this.lastEventId = parsed.id
+  }
+
+  /**
+   * Feed one framed SSE event through the reconciler.
+   *
+   * @returns `false` when the frame was unreadable, so the caller keeps the
+   *   reconnect cursor where it was.
+   */
+  private handleParsedEvent(parsed: ParsedSseFrame): boolean {
     if (parsed.retry !== undefined && Number.isFinite(parsed.retry)) {
       const { minMs, maxMs } = this.policy.serverRetryHintBounds
       this.serverRetryHintMs = Math.min(Math.max(parsed.retry, minMs), maxMs)
@@ -636,12 +675,10 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       // it for good.
       this.diagnostics.onStreamError?.(error)
       this.schedulePoll()
-      return
+      return false
     }
 
-    if (parsed.id !== undefined && parsed.id !== '') {
-      this.lastEventId = parsed.id
-    }
+    this.advanceEventCursor(parsed)
 
     // A data event (not a heartbeat) — reset the deadman. Not while
     // hydrating: there the deadman is the retry timer for the snapshot the
@@ -678,6 +715,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     if (outcome.terminated) {
       this.stopWith({ reason: 'terminal-event' })
     }
+    return true
   }
 
   private onStaleConnection(): void {
@@ -816,15 +854,34 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
    * cannot spin.
    */
   private async tryAuthChallenge(status: number, channel: 'poll' | 'stream'): Promise<boolean> {
-    if (!this.onAuthChallenge) return false
+    const onAuthChallenge = this.onAuthChallenge
+    if (!onAuthChallenge) return false
     if (!this.policy.authChallengeStatuses.includes(status)) return false
+
+    // Both channels see the same expired token, so a refusal that arrives
+    // while a refresh is running is the SAME failure, not a second one:
+    // it waits for that refresh and retries with the credentials it produced.
+    // Spending the retry here instead would kill the subscription mid-refresh.
+    const inFlight = this.authRefresh
+    if (inFlight) return await inFlight
+
     if (this.authRetrySpent) return false
     this.authRetrySpent = true
+    const refresh = (async () => {
+      try {
+        return (await onAuthChallenge({ status, channel })) === true
+      } catch (error) {
+        this.diagnostics.onListenerError?.(error)
+        return false
+      }
+    })()
+    this.authRefresh = refresh
     try {
-      return (await this.onAuthChallenge({ status, channel })) === true
-    } catch (error) {
-      this.diagnostics.onListenerError?.(error)
-      return false
+      return await refresh
+    } finally {
+      // Only a refusal AFTER this refresh completed counts as the second
+      // failure, which is what `authRetrySpent` now gates.
+      if (this.authRefresh === refresh) this.authRefresh = undefined
     }
   }
 

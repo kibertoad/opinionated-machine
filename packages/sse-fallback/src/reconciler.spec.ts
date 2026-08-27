@@ -156,7 +156,7 @@ describe('Reconciler — gap detection (dense versions)', () => {
     reconciler.handleEvent({ event: 'progress', data: { percent: 10 }, id: '1' })
     const gapped = reconciler.handleEvent({ event: 'progress', data: { percent: 30 }, id: '3' })
 
-    expect(gapped.gap).toEqual({ from: 1, to: 3 })
+    expect(gapped.gap).toEqual({ from: 1, to: 3, reason: 'sequence' })
     expect(gapped.deliveries).toHaveLength(1)
 
     // Watermark is 3 — the missing 2 can no longer sneak in.
@@ -442,7 +442,7 @@ describe('Reconciler — default event versions from SSE ids', () => {
     expect(snapshot.stale).toBe(false)
   })
 
-  it('detects gaps in sequence ids and ignores the counter restart across epochs', () => {
+  it('detects gaps in sequence ids and reports an epoch change as a resync point', () => {
     const dense = jobReconciler({ version: { ofSnapshot: (s) => s.version, dense: true } })
     dense.handleEvent({ event: 'progress', data: { percent: 10 }, id: '100-000000000001' })
 
@@ -451,15 +451,47 @@ describe('Reconciler — default event versions from SSE ids', () => {
       data: { percent: 30 },
       id: '100-000000000003',
     })
-    expect(gapped.gap).toEqual({ from: '100-000000000001', to: '100-000000000003' })
+    expect(gapped.gap).toEqual({
+      from: '100-000000000001',
+      to: '100-000000000003',
+      reason: 'sequence',
+    })
 
+    // Counters restart with the epoch, so nothing here measures how much was
+    // missed. Staying silent applied deltas across a writer restart and let a
+    // busy stream keep pushing the deadman out, so the repair never happened.
     const newEpoch = dense.handleEvent({
       event: 'progress',
       data: { percent: 40 },
       id: '200-000000000001',
     })
-    expect(newEpoch.gap).toBeUndefined()
+    expect(newEpoch.gap).toEqual({
+      from: '100-000000000003',
+      to: '200-000000000001',
+      reason: 'epoch-change',
+    })
     expect(newEpoch.deliveries).toHaveLength(1)
+  })
+
+  it('reports an epoch change even when versions are not dense', () => {
+    // A skipped counter is only measurable when versions are dense, but an
+    // epoch change is a restart either way.
+    const sparse = jobReconciler({ version: { ofSnapshot: (s) => s.version } })
+    sparse.handleEvent({ event: 'progress', data: { percent: 10 }, id: '100-000000000001' })
+
+    const skipped = sparse.handleEvent({
+      event: 'progress',
+      data: { percent: 30 },
+      id: '100-000000000009',
+    })
+    expect(skipped.gap).toBeUndefined()
+
+    const newEpoch = sparse.handleEvent({
+      event: 'progress',
+      data: { percent: 40 },
+      id: '200-000000000001',
+    })
+    expect(newEpoch.gap?.reason).toBe('epoch-change')
   })
 })
 

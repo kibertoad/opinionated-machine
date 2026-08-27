@@ -70,6 +70,8 @@ describe('createRedisEventIdSequence', () => {
   it.each([
     ['an empty key', { key: '' }],
     ['an empty epoch', { key: 'seq', epoch: '' }],
+    // The client's default extractor only orders `<digits>-<digits>` ids.
+    ['a non-numeric epoch', { key: 'seq', epoch: 'deploy-blue' }],
   ])('rejects %s', (_label, overrides) => {
     expect(() => createRedisEventIdSequence({ client: fakeCounterClient(), ...overrides })).toThrow(
       TypeError,

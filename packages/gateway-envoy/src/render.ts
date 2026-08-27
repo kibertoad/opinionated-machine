@@ -260,6 +260,17 @@ function collectUnsupportedWarnings(
 }
 
 /**
+ * Which shape of exchange an emitted Envoy route carries.
+ *
+ * `'negotiated'` is the dual-mode branch for an Accept header that names BOTH
+ * media types as acceptable. The server ranks them by quality and then by
+ * order, which RE2 header matchers cannot reproduce, so this branch is the one
+ * place the gateway admits it does not know which mode the response will be
+ * and picks bounds that are safe for either.
+ */
+type RouteBranch = 'streaming' | 'plain' | 'negotiated'
+
+/**
  * Build the route action for one BRANCH of a manifest route.
  *
  * `branch` is what this Envoy route actually carries, not what the contract
@@ -274,7 +285,7 @@ function collectUnsupportedWarnings(
 function buildRouteAction(
   route: GatewayManifestRoute,
   upstream: string,
-  branch: 'streaming' | 'plain',
+  branch: RouteBranch,
   warnings: string[],
   options: EnvoyOptions,
 ): EnvoyRouteAction {
@@ -309,10 +320,12 @@ const DEFAULT_MAX_STREAM_DURATION = '30m'
  */
 function buildMaxStreamDuration(
   route: GatewayManifestRoute,
-  branch: 'streaming' | 'plain',
+  branch: RouteBranch,
   options: EnvoyOptions,
 ): { max_stream_duration?: { max_stream_duration: string } } {
-  if (branch !== 'streaming') return {}
+  // The negotiated branch may carry a stream, so it needs the same re-auth
+  // ceiling. It is harmless on a JSON response, which finishes long before.
+  if (branch === 'plain') return {}
 
   const declared = route.metadata.timeouts?.maxDuration
   const configured = declared ?? options.maxStreamDuration ?? DEFAULT_MAX_STREAM_DURATION
@@ -325,9 +338,24 @@ function buildMaxStreamDuration(
   return { max_stream_duration: { max_stream_duration: rendered } }
 }
 
+/**
+ * The one bound the negotiated branch can enforce for both modes: a
+ * heartbeating stream resets it, a stalled response does not.
+ *
+ * `timeouts.request` stands in when no idle window was declared — the operator
+ * asked for a bound of that size, and this is the one this branch can apply.
+ * With neither declared the HCM `stream_idle_timeout` applies.
+ */
+function buildNegotiatedIdleTimeout(timeouts: GatewayMetadataValue['timeouts']): {
+  idle_timeout?: string
+} {
+  const window = timeouts?.idle ?? timeouts?.request
+  return window !== undefined ? { idle_timeout: toEnvoyDuration(window) } : {}
+}
+
 function buildBranchTimeouts(
   route: GatewayManifestRoute,
-  branch: 'streaming' | 'plain',
+  branch: RouteBranch,
   isSplit: boolean,
   warnings: string[],
 ): { timeout?: string; idle_timeout?: string } {
@@ -350,6 +378,16 @@ function buildBranchTimeouts(
       // With no declared timeouts.idle we disable it — heartbeats are the
       // intended liveness bound; declare timeouts.idle to reinstate one.
       idle_timeout: timeouts?.idle !== undefined ? toEnvoyDuration(timeouts.idle) : '0s',
+    }
+  }
+
+  if (branch === 'negotiated') {
+    return {
+      // Either mode can arrive on this branch, so a total-lifetime bound is
+      // out: timeouts.request (or, left undeclared, Envoy's 15s default) would
+      // cut a live stream. `max_stream_duration` still caps it, far higher up.
+      timeout: '0s',
+      ...buildNegotiatedIdleTimeout(timeouts),
     }
   }
 
@@ -383,83 +421,113 @@ function buildRouteHeaderRules(meta: GatewayMetadataValue): {
   }
 }
 
+const SSE_TYPE = 'text/event-stream'
+const JSON_TYPE = 'application/json'
+
 /**
- * Header matcher selecting the SSE branch of a dual-mode route.
+ * A media type listed with `q=0` — the client naming it only to REFUSE it.
  *
- * `determineMode()` on the server picks the stream exactly when the client
- * accepts `text/event-stream`, so the same predicate splits the two branches
- * at the gateway. A client that does not ask for the stream explicitly (an
- * `Accept: *\/*` request against a route configured with `defaultMode: 'sse'`)
- * takes the plain branch and its request timeout.
+ * `contains` alone matches that string, so without this exclusion a refusal
+ * would select the very branch it is refusing. Envoy's `safe_regex` uses RE2
+ * (no lookahead) and matches the full header value, hence the leading `.*` and
+ * the trailing alternation. `q=0.5` and friends do not match: a deprioritized
+ * type is still accepted, which is what `determineMode()` treats it as.
  */
-const SSE_ACCEPT_MATCHER: EnvoyHeaderMatcher = {
-  name: 'accept',
-  string_match: { contains: 'text/event-stream' },
+function acceptRefusedRegex(mediaType: string): string {
+  return `.*${mediaType}[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?`
+}
+
+function acceptContains(mediaType: string, invert = false): EnvoyHeaderMatcher {
+  return {
+    name: 'accept',
+    string_match: { contains: mediaType },
+    ...(invert ? { invert_match: true } : {}),
+  }
+}
+
+function acceptRefuses(mediaType: string, invert = false): EnvoyHeaderMatcher {
+  return {
+    name: 'accept',
+    string_match: { safe_regex: { regex: acceptRefusedRegex(mediaType) } },
+    ...(invert ? { invert_match: true } : {}),
+  }
 }
 
 /**
- * `text/event-stream` listed with `q=0` — the client naming the type only to
- * REFUSE it. `contains` alone matches that string, so the stream branch would
- * capture a request `determineMode()` routes to JSON.
- *
- * Paired with `invert_match`, this excludes exactly the refusal. Envoy's
- * `safe_regex` uses RE2 (no lookahead) and matches the full header value,
- * hence the leading `.*` and the trailing alternation. `q=0.5` and friends do
- * not match, so a merely deprioritized stream still takes this branch — the
- * same thing `determineMode()` does when nothing outranks it.
+ * The client asks for the stream and says nothing about JSON, so
+ * `determineMode()` has only one acceptable type to rank and must answer
+ * `'sse'` whatever the route's `defaultMode` is.
  */
-const SSE_ACCEPT_REFUSED_REGEX =
-  '.*text/event-stream[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?'
-
-const SSE_ACCEPT_NOT_REFUSED_MATCHER: EnvoyHeaderMatcher = {
-  name: 'accept',
-  string_match: { safe_regex: { regex: SSE_ACCEPT_REFUSED_REGEX } },
-  invert_match: true,
-}
-
-/** The Accept matchers that select the SSE branch of a dual-mode route. */
-const SSE_BRANCH_MATCHERS: EnvoyHeaderMatcher[] = [
-  SSE_ACCEPT_MATCHER,
-  SSE_ACCEPT_NOT_REFUSED_MATCHER,
+const SSE_ONLY_MATCHERS: EnvoyHeaderMatcher[] = [
+  acceptContains(SSE_TYPE),
+  acceptRefuses(SSE_TYPE, true),
+  acceptContains(JSON_TYPE, true),
 ]
 
 /**
- * Accept matchers selecting the JSON branch of a dual-mode route that
- * declares `defaultMode: 'sse'`. There the STREAM is the catch-all, so the
- * JSON branch has to be the narrow one: the client asks for JSON and does not
- * ask for the stream.
+ * The client asks for the stream and names JSON only to refuse it (`q=0`).
+ * A refused type is filtered out before ranking, so this is also unambiguously
+ * `'sse'`.
+ *
+ * It needs its own route because Envoy ANDs the matchers on a route, and "does
+ * not accept JSON" is a disjunction: either the type is absent (covered by
+ * {@link SSE_ONLY_MATCHERS}) or it is present with `q=0`.
  */
-const JSON_BRANCH_MATCHERS: EnvoyHeaderMatcher[] = [
-  { name: 'accept', string_match: { contains: 'application/json' } },
-  { name: 'accept', string_match: { contains: 'text/event-stream' }, invert_match: true },
+const SSE_JSON_REFUSED_MATCHERS: EnvoyHeaderMatcher[] = [
+  acceptContains(SSE_TYPE),
+  acceptRefuses(SSE_TYPE, true),
+  acceptRefuses(JSON_TYPE),
+]
+
+/** The mirror of {@link SSE_ONLY_MATCHERS}: JSON asked for, stream unmentioned. */
+const JSON_ONLY_MATCHERS: EnvoyHeaderMatcher[] = [
+  acceptContains(JSON_TYPE),
+  acceptRefuses(JSON_TYPE, true),
+  acceptContains(SSE_TYPE, true),
+]
+
+/** The mirror of {@link SSE_JSON_REFUSED_MATCHERS}: JSON asked for, stream refused. */
+const JSON_SSE_REFUSED_MATCHERS: EnvoyHeaderMatcher[] = [
+  acceptContains(JSON_TYPE),
+  acceptRefuses(JSON_TYPE, true),
+  acceptRefuses(SSE_TYPE),
 ]
 
 /**
- * The second JSON branch of a `defaultMode: 'sse'` route: the client asks for
- * JSON and names `text/event-stream` only to refuse it (`q=0`).
+ * Both types named as acceptable — the one case the gateway cannot decide.
  *
- * {@link JSON_BRANCH_MATCHERS} cannot cover this on its own — Envoy ANDs the
- * matchers on a route, and "does not accept the stream" is a disjunction
- * (either the type is absent, or it is present with `q=0`). Splitting it into
- * a second route matched before the streaming catch-all keeps the gateway on
- * `determineMode()`'s answer, which is JSON: a refused type is filtered out
- * before the media types are ranked. Without it the request took the stream
- * branch and ran without `timeouts.request`.
+ * `determineMode()` ranks the two by quality and breaks a tie by header order,
+ * and neither comparison is expressible in an RE2 header matcher: nothing in
+ * the syntax compares `q=0.9` against `q=0.1`. Guessing the stream here is what
+ * put `timeout: 0s` on a JSON poll (`application/json;q=0.9,
+ * text/event-stream;q=0.1` resolves to JSON on the server), and guessing JSON
+ * would cap a live stream at `timeouts.request`.
+ *
+ * So this branch does not guess: {@link buildBranchTimeouts} gives it bounds
+ * that hold for either answer. Route it before the catch-all on both
+ * `defaultMode` settings.
  */
-const JSON_BRANCH_SSE_REFUSED_MATCHERS: EnvoyHeaderMatcher[] = [
-  { name: 'accept', string_match: { contains: 'application/json' } },
-  { name: 'accept', string_match: { safe_regex: { regex: SSE_ACCEPT_REFUSED_REGEX } } },
+const NEGOTIATED_BRANCH_MATCHERS: EnvoyHeaderMatcher[] = [
+  acceptContains(SSE_TYPE),
+  acceptRefuses(SSE_TYPE, true),
+  acceptContains(JSON_TYPE),
+  acceptRefuses(JSON_TYPE, true),
 ]
 
 /**
  * Emit the Envoy routes for one manifest route.
  *
  * SSE-only and plain routes map one-to-one. A **dual-mode** route maps to
- * TWO: one matching an `Accept: text/event-stream` request with stream-shaped
- * timeouts, and one catch-all keeping ordinary request/response bounds.
- * A single route cannot do both — disabling the route and idle timeouts is
- * required for the stream and strips every bound from the JSON poll branch
- * that the fallback client leans on, which is the branch most in need of one.
+ * FOUR, because a single route cannot carry both shapes of bound: disabling
+ * the route and idle timeouts is required for the stream and strips every
+ * bound from the JSON poll branch that the fallback client leans on, which is
+ * the branch most in need of one.
+ *
+ * The four are the two unambiguous stream branches (the client asks for
+ * `text/event-stream` and either omits `application/json` or refuses it), the
+ * `negotiated` branch for a header naming both, and the catch-all. Which of
+ * them is the catch-all follows `defaultMode`: with `'json'` the stream
+ * branches are the narrow ones, with `'sse'` the JSON branches are.
  */
 function buildRoutes(
   route: GatewayManifestRoute,
@@ -487,30 +555,45 @@ function buildRoutes(
     ]
   }
 
+  if (meta.timeouts?.request !== undefined) {
+    warnings.push(
+      `Route "${route.id}": timeouts.request cannot be enforced on a dual-mode request whose Accept header names both application/json and text/event-stream as acceptable. The server ranks them by quality (and by order on a tie); Envoy's RE2 header matchers cannot, so that request takes a branch with no total-lifetime bound and only an idle bound. Declare timeouts.idle to set that bound explicitly, or have clients send a single-type Accept header.`,
+    )
+  }
+
   // Which branch the catch-all is depends on the route's own fallback. With
   // `defaultMode: 'json'` (the default) an unspecific Accept header gets JSON,
   // so the stream is the narrow branch. With `defaultMode: 'sse'` the server
   // streams for a missing or wildcard Accept header, and routing those through
   // the plain branch would put a request timeout on a live stream.
+  //
+  // Order matters within each list: Envoy takes the first matching route, so
+  // the narrow Accept-matched branches must precede the catch-all.
+  const negotiated = buildRoute(route, meta.upstream, {
+    branch: 'negotiated',
+    name: `${route.id}__negotiated`,
+    extraHeaderMatchers: NEGOTIATED_BRANCH_MATCHERS,
+    warnings,
+    options,
+  })
+
   if (route.streamingDefaultMode === 'sse') {
-    warnings.push(
-      `Route "${route.id}": defaultMode "sse" makes the STREAM the catch-all branch, so the JSON branch is taken only by an Accept header that asks for application/json and either omits text/event-stream or refuses it with q=0. A request listing both as acceptable resolves to JSON on the server when JSON outranks the stream (application/json;q=0.9, text/event-stream;q=0.5), but takes the stream branch here, and so runs without the JSON branch's request timeout.`,
-    )
     return [
       buildRoute(route, meta.upstream, {
         branch: 'plain',
         name: `${route.id}__json`,
-        extraHeaderMatchers: JSON_BRANCH_MATCHERS,
+        extraHeaderMatchers: JSON_ONLY_MATCHERS,
         warnings,
         options,
       }),
       buildRoute(route, meta.upstream, {
         branch: 'plain',
         name: `${route.id}__json_sse_refused`,
-        extraHeaderMatchers: JSON_BRANCH_SSE_REFUSED_MATCHERS,
+        extraHeaderMatchers: JSON_SSE_REFUSED_MATCHERS,
         warnings,
         options,
       }),
+      negotiated,
       buildRoute(route, meta.upstream, {
         branch: 'streaming',
         name: `${route.id}__sse`,
@@ -520,16 +603,22 @@ function buildRoutes(
     ]
   }
 
-  // Order matters: Envoy takes the first matching route, so the narrower
-  // Accept-matched stream branch must precede the catch-all.
   return [
     buildRoute(route, meta.upstream, {
       branch: 'streaming',
       name: `${route.id}__sse`,
-      extraHeaderMatchers: SSE_BRANCH_MATCHERS,
+      extraHeaderMatchers: SSE_ONLY_MATCHERS,
       warnings,
       options,
     }),
+    buildRoute(route, meta.upstream, {
+      branch: 'streaming',
+      name: `${route.id}__sse_json_refused`,
+      extraHeaderMatchers: SSE_JSON_REFUSED_MATCHERS,
+      warnings,
+      options,
+    }),
+    negotiated,
     buildRoute(route, meta.upstream, { branch: 'plain', warnings, options }),
   ]
 }
@@ -538,7 +627,7 @@ function buildRoute(
   route: GatewayManifestRoute,
   upstream: string,
   opts: {
-    branch: 'streaming' | 'plain'
+    branch: RouteBranch
     name?: string
     extraHeaderMatchers?: EnvoyHeaderMatcher[]
     warnings: string[]

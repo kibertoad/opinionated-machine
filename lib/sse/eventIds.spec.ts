@@ -8,28 +8,28 @@ import {
 
 describe('createEventIdSequence', () => {
   it('produces monotonically increasing ids within an epoch', () => {
-    const seq = createEventIdSequence({ epoch: 'e1' })
+    const seq = createEventIdSequence({ epoch: '1' })
     const first = seq.next()
     const second = seq.next()
     const third = seq.next()
 
-    expect(first).toBe('e1-000000000001')
-    expect(second).toBe('e1-000000000002')
+    expect(first).toBe('1-000000000001')
+    expect(second).toBe('1-000000000002')
     expect(third < first).toBe(false)
     // Lexicographic order matches numeric order thanks to zero padding
     expect([third, first, second].sort()).toEqual([first, second, third])
   })
 
   it('tracks the current id', () => {
-    const seq = createEventIdSequence({ epoch: 'e1' })
+    const seq = createEventIdSequence({ epoch: '1' })
     expect(seq.current).toBeUndefined()
     const id = seq.next()
     expect(seq.current).toBe(id)
   })
 
   it('supports a custom starting counter', () => {
-    const seq = createEventIdSequence({ epoch: 'e1', start: 41 })
-    expect(seq.next()).toBe('e1-000000000042')
+    const seq = createEventIdSequence({ epoch: '1', start: 41 })
+    expect(seq.next()).toBe('1-000000000042')
   })
 
   it('defaults the epoch to a timestamp so restarts start a new epoch', () => {
@@ -45,25 +45,38 @@ describe('createEventIdSequence', () => {
     ['at the width limit', MAX_EVENT_ID_COUNTER],
     ['beyond the width limit', MAX_EVENT_ID_COUNTER + 1],
   ])('rejects a %s start value', (_label, start) => {
-    expect(() => createEventIdSequence({ epoch: 'e1', start })).toThrow(TypeError)
+    expect(() => createEventIdSequence({ epoch: '1', start })).toThrow(TypeError)
   })
 
   it('rejects an empty epoch, which would produce unparseable ids', () => {
     expect(() => createEventIdSequence({ epoch: '' })).toThrow(TypeError)
   })
 
-  it('refuses to widen the counter past the padded width', () => {
-    const seq = createEventIdSequence({ epoch: 'e1', start: MAX_EVENT_ID_COUNTER - 2 })
+  it.each([
+    ['deploy-blue'],
+    ['e1'],
+    ['1.5'],
+    ['node a'],
+    ['-1'],
+  ])('rejects the non-numeric epoch %j the client could not order', (epoch) => {
+    // The client's default version extractor only recognizes
+    // `<digits>-<digits>`; anything else silently loses dedup, gap detection
+    // and stale-poll protection, so the generator refuses it here instead.
+    expect(() => createEventIdSequence({ epoch })).toThrow(TypeError)
+  })
 
-    expect(seq.next()).toBe('e1-999999999998')
-    expect(seq.next()).toBe('e1-999999999999')
+  it('refuses to widen the counter past the padded width', () => {
+    const seq = createEventIdSequence({ epoch: '1', start: MAX_EVENT_ID_COUNTER - 2 })
+
+    expect(seq.next()).toBe('1-999999999998')
+    expect(seq.next()).toBe('1-999999999999')
     expect(() => seq.next()).toThrow(RangeError)
   })
 })
 
 describe('compareEventIds', () => {
   it('orders ids within the same epoch', () => {
-    const seq = createEventIdSequence({ epoch: 'e1' })
+    const seq = createEventIdSequence({ epoch: '1' })
     const first = seq.next()
     const second = seq.next()
 
@@ -73,33 +86,36 @@ describe('compareEventIds', () => {
   })
 
   it('returns undefined across epochs (client must resync via poll)', () => {
-    expect(compareEventIds('e1-000000000005', 'e2-000000000001')).toBeUndefined()
+    expect(compareEventIds('1-000000000005', '2-000000000001')).toBeUndefined()
   })
 
   it('returns undefined for ids not produced by a sequence (e.g. UUIDs)', () => {
-    expect(compareEventIds('not-an-id', 'e1-000000000001')).toBeUndefined()
-    expect(compareEventIds('e1-000000000001', 'plainstring')).toBeUndefined()
+    expect(compareEventIds('not-an-id', '1-000000000001')).toBeUndefined()
+    expect(compareEventIds('1-000000000001', 'plainstring')).toBeUndefined()
   })
 
-  it('handles epochs that themselves contain dashes', () => {
-    // The epoch is everything before the LAST dash
-    expect(compareEventIds('node-a-000000000001', 'node-a-000000000002')).toBe(-1)
-    expect(compareEventIds('node-a-000000000001', 'node-b-000000000001')).toBeUndefined()
+  it('returns undefined for a UUID that superficially looks like a sequence id', () => {
+    // `550e8400-e29b-41d4-a716-446655440000` ends in digits after a dash. A
+    // looser epoch pattern would read `446655440000` as its counter and order
+    // unrelated events by it; the numeric epoch is what rules it out.
+    expect(
+      compareEventIds('550e8400-e29b-41d4-a716-446655440000', '1-000000000001'),
+    ).toBeUndefined()
   })
 
   it('compares counters numerically beyond Number.MAX_SAFE_INTEGER padding', () => {
-    expect(compareEventIds('e1-999999999998', 'e1-999999999999')).toBe(-1)
+    expect(compareEventIds('1-999999999998', '1-999999999999')).toBe(-1)
   })
 })
 
 describe('formatEventId', () => {
   it('produces ids that compare against an in-process sequence of the same epoch', () => {
-    expect(formatEventId('e1', 2)).toBe('e1-000000000002')
-    expect(compareEventIds(formatEventId('e1', 1), formatEventId('e1', 2))).toBe(-1)
+    expect(formatEventId('1', 2)).toBe('1-000000000002')
+    expect(compareEventIds(formatEventId('1', 1), formatEventId('1', 2))).toBe(-1)
   })
 
   it('accepts a bigint counter', () => {
-    expect(formatEventId('e1', 42n)).toBe('e1-000000000042')
+    expect(formatEventId('1', 42n)).toBe('1-000000000042')
   })
 
   it('rejects an empty epoch', () => {
@@ -108,8 +124,12 @@ describe('formatEventId', () => {
     expect(() => formatEventId('', 1)).toThrow(TypeError)
   })
 
+  it('rejects a non-numeric epoch, matching createEventIdSequence', () => {
+    expect(() => formatEventId('deploy-blue', 1)).toThrow(TypeError)
+  })
+
   it('rejects a counter outside the fixed id width', () => {
-    expect(() => formatEventId('e1', 0)).toThrow(RangeError)
-    expect(() => formatEventId('e1', MAX_EVENT_ID_COUNTER + 1)).toThrow(RangeError)
+    expect(() => formatEventId('1', 0)).toThrow(RangeError)
+    expect(() => formatEventId('1', MAX_EVENT_ID_COUNTER + 1)).toThrow(RangeError)
   })
 })

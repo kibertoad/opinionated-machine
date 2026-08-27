@@ -213,12 +213,120 @@ exports[`renderEnvoyConfig > matches the JSON snapshot for the fixture manifest 
                                     },
                                   },
                                 },
+                                {
+                                  "invert_match": true,
+                                  "name": "accept",
+                                  "string_match": {
+                                    "contains": "application/json",
+                                  },
+                                },
                               ],
                               "safe_regex": {
                                 "regex": "/jobs/[^/]+/status",
                               },
                             },
                             "name": "jobsController.status__sse",
+                            "route": {
+                              "cluster": "users-service",
+                              "idle_timeout": "600s",
+                              "max_stream_duration": {
+                                "max_stream_duration": "1800s",
+                              },
+                              "timeout": "0s",
+                            },
+                          },
+                          {
+                            "match": {
+                              "headers": [
+                                {
+                                  "name": ":method",
+                                  "string_match": {
+                                    "exact": "GET",
+                                  },
+                                },
+                                {
+                                  "name": "accept",
+                                  "string_match": {
+                                    "contains": "text/event-stream",
+                                  },
+                                },
+                                {
+                                  "invert_match": true,
+                                  "name": "accept",
+                                  "string_match": {
+                                    "safe_regex": {
+                                      "regex": ".*text/event-stream[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?",
+                                    },
+                                  },
+                                },
+                                {
+                                  "name": "accept",
+                                  "string_match": {
+                                    "safe_regex": {
+                                      "regex": ".*application/json[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?",
+                                    },
+                                  },
+                                },
+                              ],
+                              "safe_regex": {
+                                "regex": "/jobs/[^/]+/status",
+                              },
+                            },
+                            "name": "jobsController.status__sse_json_refused",
+                            "route": {
+                              "cluster": "users-service",
+                              "idle_timeout": "600s",
+                              "max_stream_duration": {
+                                "max_stream_duration": "1800s",
+                              },
+                              "timeout": "0s",
+                            },
+                          },
+                          {
+                            "match": {
+                              "headers": [
+                                {
+                                  "name": ":method",
+                                  "string_match": {
+                                    "exact": "GET",
+                                  },
+                                },
+                                {
+                                  "name": "accept",
+                                  "string_match": {
+                                    "contains": "text/event-stream",
+                                  },
+                                },
+                                {
+                                  "invert_match": true,
+                                  "name": "accept",
+                                  "string_match": {
+                                    "safe_regex": {
+                                      "regex": ".*text/event-stream[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?",
+                                    },
+                                  },
+                                },
+                                {
+                                  "name": "accept",
+                                  "string_match": {
+                                    "contains": "application/json",
+                                  },
+                                },
+                                {
+                                  "invert_match": true,
+                                  "name": "accept",
+                                  "string_match": {
+                                    "safe_regex": {
+                                      "regex": ".*application/json[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?",
+                                    },
+                                  },
+                                },
+                              ],
+                              "safe_regex": {
+                                "regex": "/jobs/[^/]+/status",
+                              },
+                            },
+                            "name": "jobsController.status__negotiated",
                             "route": {
                               "cluster": "users-service",
                               "idle_timeout": "600s",
@@ -372,6 +480,66 @@ exports[`renderEnvoyConfig > matches the YAML snapshot for the fixture manifest 
                                 string_match:
                                   safe_regex:
                                     regex: .*text/event-stream[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?
+                                invert_match: true
+                              - name: accept
+                                string_match:
+                                  contains: application/json
+                                invert_match: true
+                          route:
+                            cluster: users-service
+                            timeout: 0s
+                            idle_timeout: 600s
+                            max_stream_duration:
+                              max_stream_duration: 1800s
+                        - name: jobsController.status__sse_json_refused
+                          match:
+                            safe_regex:
+                              regex: /jobs/[^/]+/status
+                            headers:
+                              - name: :method
+                                string_match:
+                                  exact: GET
+                              - name: accept
+                                string_match:
+                                  contains: text/event-stream
+                              - name: accept
+                                string_match:
+                                  safe_regex:
+                                    regex: .*text/event-stream[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?
+                                invert_match: true
+                              - name: accept
+                                string_match:
+                                  safe_regex:
+                                    regex: .*application/json[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?
+                          route:
+                            cluster: users-service
+                            timeout: 0s
+                            idle_timeout: 600s
+                            max_stream_duration:
+                              max_stream_duration: 1800s
+                        - name: jobsController.status__negotiated
+                          match:
+                            safe_regex:
+                              regex: /jobs/[^/]+/status
+                            headers:
+                              - name: :method
+                                string_match:
+                                  exact: GET
+                              - name: accept
+                                string_match:
+                                  contains: text/event-stream
+                              - name: accept
+                                string_match:
+                                  safe_regex:
+                                    regex: .*text/event-stream[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?
+                                invert_match: true
+                              - name: accept
+                                string_match:
+                                  contains: application/json
+                              - name: accept
+                                string_match:
+                                  safe_regex:
+                                    regex: .*application/json[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?
                                 invert_match: true
                           route:
                             cluster: users-service

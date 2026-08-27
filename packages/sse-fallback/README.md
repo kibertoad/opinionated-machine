@@ -298,6 +298,17 @@ server-side `createEventIdSequence()`. Sequence ids order by epoch first and
 then counter, so a process restart — a new, larger epoch with the counter back
 at 1 — reads as *newer*, not as a flood of duplicates.
 
+The epoch is a string of digits, which is what makes `<digits>-<digits>` an
+unambiguous marker for a generated id: a UUID matches `<anything>-<digits>` too,
+and reading a chunk of one as a counter would order events at random. The
+server-side generators refuse a non-numeric epoch for that reason, so every id
+they produce is one this extractor can order.
+
+An epoch change is a resynchronization point, not a measurable gap: the counters
+on either side are unrelated, so the reconciler reports it as a gap with
+`reason: 'epoch-change'`, polls for a snapshot, and rebuilds delta state from it
+rather than applying more deltas across the restart.
+
 Ids in any other shape (a UUID, say) carry **no** version: they are unique but
 not orderable, so events are delivered at-least-once and the watermark does not
 move. Declare `version.ofEvent` explicitly for any other id scheme rather than
