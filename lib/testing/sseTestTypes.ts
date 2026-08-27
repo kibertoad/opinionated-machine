@@ -87,6 +87,36 @@ export interface SSETestConnection {
    * Get response headers.
    */
   getHeaders(): Record<string, string | string[] | undefined>
+
+  /**
+   * Get the raw response body as a string.
+   *
+   * For a successful SSE response this is the raw `text/event-stream` payload
+   * (already parsed into events, available via `getReceivedEvents()`). It is
+   * most useful when the route answered with a status code before streaming
+   * started - an auth failure, a validation error, an unavailable integration -
+   * and responded with a JSON body instead of events.
+   */
+  getBody(): string
+
+  /**
+   * Parse the raw response body as JSON.
+   *
+   * Mirrors Fastify's own inject response `json()`. Intended for non-streaming
+   * responses emitted before streaming starts; calling it on an actual SSE
+   * stream body throws, since `text/event-stream` is not JSON.
+   *
+   * @throws if the body is empty or not valid JSON (the message includes a
+   * truncated body snippet).
+   *
+   * @example
+   * ```typescript
+   * const conn = await client.connect('/api/stream')
+   * expect(conn.getStatusCode()).toBe(503)
+   * expect(conn.json()).toMatchObject({ errorCode: 'INTEGRATION_NOT_AVAILABLE' })
+   * ```
+   */
+  json<T = unknown>(): T
 }
 
 /**
