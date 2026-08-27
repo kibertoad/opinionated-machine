@@ -1559,7 +1559,7 @@ describe('NotificationsSSEController', () => {
 
 #### Testing autoClose SSE (request-response streaming)
 
-Use `SSEInjectClient` or the contract-aware `injectSSE`/`injectPayloadSSE` helpers. No real HTTP server needed - all events are available immediately after the handler completes:
+Use `SSEInjectClient` or the contract-aware `injectSSE`/`injectPayloadSSE` helpers (`injectApiSSE` for `defineApiContract` contracts). No real HTTP server needed - all events are available immediately after the handler completes:
 
 ```ts
 import { SSEInjectClient } from 'opinionated-machine'
@@ -1613,6 +1613,49 @@ it('returns the documented 401 body when unauthenticated', async () => {
 
 `bodyForStatus(status)` awaits the response, asserts the actual status matches, JSON-parses the body, and runs it through the Zod schema declared for that status. It throws — with the offending status and a truncated body snippet — if the status doesn't match, the contract declares no schema for that status, the body isn't valid JSON, or Zod parsing fails. The raw `closed` promise is still exposed for callers that want to read `body: string` directly.
 
+#### Contracts built with `defineApiContract`: `injectApiSSE`
+
+`injectSSE` / `injectPayloadSSE` are typed against the legacy `SSEContractDefinition` from `buildSseContract`. For contracts built with the newer `defineApiContract` + `sseResponse` / `sseBody` API, use `injectApiSSE` instead — one function for every method, with `params` in the same shape `injectByApiContract` takes:
+
+```ts
+import { defineApiContract, sseResponse } from '@lokalise/api-contracts'
+import { z } from 'zod/v4'
+import { injectApiSSE } from 'opinionated-machine'
+
+const lqaSegmentContract = defineApiContract({
+  visibility: 'internal',
+  method: 'post',
+  summary: 'Perform LQA on a text segment',
+  pathResolver: () => '/v1/content/actions/lqa-text-segment',
+  requestBodySchema: z.object({ segment: z.string() }),
+  responsesByStatusCode: {
+    200: sseResponse({ review: z.object({ score: z.number() }) }),
+    400: z.object({ message: z.string() }),
+  },
+})
+
+it('streams the review', async () => {
+  const { events } = injectApiSSE(app, lqaSegmentContract, { body: { segment: 'hello' } })
+
+  // Events are validated against the contract and typed as a union on `event`.
+  for (const event of await events()) {
+    if (event.event === 'review') expect(event.data.score).toBeGreaterThan(0)
+  }
+})
+
+it('returns the documented 400 body for an empty segment', async () => {
+  const { bodyForStatus } = injectApiSSE(app, lqaSegmentContract, { body: { segment: '' } })
+
+  // `body` is typed as `{ message: string }` — the contract's 400 schema.
+  const body = await bodyForStatus(400)
+  expect(body.message).toBe('segment must not be empty')
+})
+```
+
+`closed` and `bodyForStatus` behave as they do on `injectSSE`, except that `bodyForStatus` resolves its schema from `responsesByStatusCode`, following the same exact → range → `'default'` precedence as the contract client. `events()` is additionally available: it parses the SSE body and validates each event against the contract's SSE schemas, throwing when the response isn't a stream, when an event name isn't declared, or when a payload fails its schema.
+
+The request always carries `accept: text/event-stream`, so a status that declares a stream answers with it — including a dual-mode status whose content map also carries a JSON schema. Those statuses are therefore not callable through `bodyForStatus`; read them with `events()`, or use `injectByApiContract` when you want the JSON side. Conversely, a contract that declares no SSE response at all types `events` as `never`, so calling it is a compile error rather than a guaranteed throw. `events()` is typed from the SSE schemas of *every* declared status, merged the same way the runtime merges them, so a contract streaming on both `200` and `'4xx'` yields the union of both event sets. See [ApiContract controller docs](./lib/api-contracts/docs.md#testing) for the full testing guide.
+
 ### SSESessionSpy API
 
 The `connectionSpy` is available when `isTestMode: true` is passed to `asSSEControllerClass`:
@@ -1641,6 +1684,77 @@ controller.connectionSpy.clear()
 ```
 
 **Note**: `waitForConnection` tracks "claimed" sessions internally. Each call returns a unique unclaimed session, allowing sequential waits for the same URL path without returning the same session twice. This is used internally by `SSEHttpClient.connect()` with `awaitServerConnection`.
+
+#### Standalone spy for `buildApiRoute` routes
+
+`connectionSpy` only exists on `AbstractSSEController`. For routes built with `buildApiRoute` there is no controller to read it off, so `createSSESessionSpy()` returns a spy plus the `onConnect` / `onClose` route hooks that drive it:
+
+```ts
+import { createSSESessionSpy, SSEHttpClient } from 'opinionated-machine'
+
+const { spy, routeOptions } = createSSESessionSpy()
+
+// in the app under test — `routeOptions` is just `{ onConnect, onClose }`
+app.route(buildApiRoute(streamContract, handler, { ...routeOptions }))
+
+// in the test — same race-free connect as with a controller
+const { client, serverConnection } = await SSEHttpClient.connect(baseUrl, '/api/stream', {
+  awaitServerConnection: { spy },
+})
+await serverConnection.send('ping', { seq: 1 })
+```
+
+`awaitServerConnection` accepts either `{ controller }` or `{ spy }`; both wait for the server-side handler to finish registering the session before `connect()` resolves.
+
+**The hooks have to reach the `buildApiRoute()` call itself.** `buildApiRoute` captures `onConnect` / `onClose` when it builds the handler, so assigning them to the `RouteOptions` object it returns does nothing — the connect would just time out:
+
+```ts
+// Does NOT work: the route was already built without the hooks
+const route = controller.routes.streamUpdates
+Object.assign(route, routeOptions) // no-op as far as SSE lifecycle hooks go
+```
+
+A route owned by a controller therefore has to accept SSE route options for a test to be able to spy on it. Take them as a dependency and pass them through:
+
+```ts
+export class StreamController extends AbstractApiController<typeof StreamController.contracts> {
+  static contracts = { streamUpdates: streamUpdatesContract } as const
+
+  readonly routes: Record<keyof typeof StreamController.contracts, RouteOptions>
+
+  constructor({ sseRouteOptions }: StreamControllerDependencies) {
+    super()
+    this.routes = {
+      streamUpdates: buildApiRoute(
+        StreamController.contracts.streamUpdates,
+        this.streamUpdates,
+        sseRouteOptions,
+      ),
+    }
+  }
+}
+
+// production wiring registers no hooks; the test registers the spy's
+const { spy, routeOptions } = createSSESessionSpy()
+const controller = new StreamController({ sseRouteOptions: routeOptions })
+```
+
+If the route already declares lifecycle hooks of its own, use `withSpy()` rather than spreading `routeOptions` over them — spreading silently drops one side or the other, depending on the order. `withSpy()` keeps the route's hook (it runs first, and the spy is notified once it settles) and passes every other option through:
+
+```ts
+const { spy, withSpy } = createSSESessionSpy()
+
+app.route(
+  buildApiRoute(streamContract, handler, withSpy({
+    heartbeat: false,
+    onConnect: (connection) => subscriptions.add(connection.id),
+  })),
+)
+```
+
+**`keepAlive` sessions only.** An `autoClose` route closes its session as the handler returns, and `waitForConnection` only hands back sessions that are still open, since a closed one can no longer be sent events. Awaiting such a connection races and usually times out (with an error that says as much) — omit `awaitServerConnection` for `autoClose` routes and assert on the events the client received instead.
+
+The spy is typed for the `SSESession` of `@lokalise/fastify-api-contracts`, which is what `buildApiRoute` passes to its hooks. To wire the same spy into a `buildFastifyRoute`-built route, parameterize it with this package's session type: `createSSESessionSpy<SSESession>()`.
 
 ### Session Monitoring
 
@@ -2127,7 +2241,7 @@ The library provides utilities for testing SSE endpoints.
 | `autoClose` | `SSEInjectClient` or `injectSSE`/`injectPayloadSSE` | Handler completes and closes connection; all events available at once |
 | `keepAlive` | `SSEHttpClient` | Connection stays open; events arrive incrementally via server push |
 
-`SSEInjectClient` and `injectSSE`/`injectPayloadSSE` do the same thing (Fastify inject), but `injectSSE`/`injectPayloadSSE` provide type safety via contracts while `SSEInjectClient` works with raw URLs.
+`SSEInjectClient` and `injectSSE`/`injectPayloadSSE` do the same thing (Fastify inject), but `injectSSE`/`injectPayloadSSE` provide type safety via contracts while `SSEInjectClient` works with raw URLs. Contracts built with `defineApiContract` use `injectApiSSE` instead of `injectSSE`/`injectPayloadSSE`.
 
 #### Detailed Comparison
 
@@ -2242,6 +2356,9 @@ Omit `awaitServerConnection` only in these cases:
 - Testing against external SSE endpoints (not your own controller)
 - When `isTestMode: false` (connectionSpy not available)
 - Simple smoke tests that only verify response headers/status without sending server events
+- Routes whose handler starts an `autoClose` session: it closes as the handler returns, so there is no live session left to wait for — assert on the received events instead
+
+For `keepAlive` routes built with `buildApiRoute` (no controller, so no `connectionSpy`), pass a standalone spy instead of dropping the option: `awaitServerConnection: { spy }`, with the spy from [`createSSESessionSpy()`](#standalone-spy-for-buildapiroute-routes).
 
 **Consequence**: Without `awaitServerConnection`, `connect()` resolves as soon as HTTP headers are received. Server-side connection registration may not have completed yet, so you cannot reliably send events from the server immediately after `connect()` returns.
 

@@ -1,5 +1,15 @@
 # opinionated-machine
 
+## 10.1.0
+
+### Minor Changes
+
+- 45dd012: Add `createSSESessionSpy()` testing factory so `buildApiRoute` routes can use `SSEHttpClient`'s `awaitServerConnection`. It returns a standalone `SSESessionSpy`, `{ onConnect, onClose }` route options to spread into a route with no lifecycle hooks of its own, and a `withSpy()` helper that merges the spy into a route's existing options by chaining rather than replacing its `onConnect` / `onClose`. `awaitServerConnection` now accepts `{ spy }` alongside `{ controller }`, and `SSESessionSpy` is generic over the observed session type, defaulting to the previous one.
+
+### Patch Changes
+
+- 45dd012: Fix `SSEHttpClient.connect()` leaking the open SSE response when `awaitServerConnection` times out. The caller never received a client handle, so a keep-alive stream stayed open and hung the test's `app.close()`, hiding the original timeout behind a suite-level timeout. A `waitForConnection` timeout now also explains itself when matching connections were registered but had already closed, which is what an `autoClose` session looks like to the spy.
+
 ## 10.0.0
 
 ### Major Changes

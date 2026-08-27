@@ -1,4 +1,4 @@
-import { defineApiContract, sseBody } from '@lokalise/api-contracts'
+import { defineApiContract, sseBody, sseResponse } from '@lokalise/api-contracts'
 import { z } from 'zod/v4'
 
 export const apiSseKeepAliveContract = defineApiContract({
@@ -150,5 +150,42 @@ export const apiFeedContract = defineApiContract({
         'text/event-stream': sseBody(feedEventSchemas),
       },
     },
+  },
+})
+
+// ============================================================================
+// injectApiSSE fixtures
+// ============================================================================
+
+export const lqaEventSchemas = {
+  review: z.object({ score: z.number() }),
+  done: z.object({ total: z.number() }),
+}
+
+/** POST + body, an SSE 200 and a documented pre-stream error status. */
+export const apiLqaSegmentContract = defineApiContract({
+  visibility: 'internal',
+  method: 'post',
+  summary: 'Perform LQA on a text segment',
+  pathResolver: () => '/api/inject-sse/lqa-text-segment',
+  requestBodySchema: z.object({ segment: z.string() }),
+  responsesByStatusCode: {
+    200: sseResponse(lqaEventSchemas),
+    400: z.object({ message: z.string() }),
+  },
+})
+
+/** GET + path params, query params and a required header. */
+export const apiTickStreamContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'Stream ticks for a channel',
+  pathResolver: ({ channelId }) => `/api/inject-sse/channels/${channelId}/ticks`,
+  requestPathParamsSchema: z.object({ channelId: z.string() }),
+  requestQuerySchema: z.object({ count: z.coerce.number().int() }),
+  requestHeaderSchema: z.object({ authorization: z.string() }),
+  responsesByStatusCode: {
+    200: sseResponse({ tick: z.object({ channelId: z.string(), n: z.number() }) }),
+    401: z.object({ message: z.string() }),
   },
 })

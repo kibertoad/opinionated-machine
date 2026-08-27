@@ -45,7 +45,7 @@ export {
   type SSERoomMessageHandler,
   type SSERoomOperations,
 } from './rooms/index.js'
-export { type SSESessionEvent, SSESessionSpy } from './SSESessionSpy.js'
+export { type SpiedSSESession, type SSESessionEvent, SSESessionSpy } from './SSESessionSpy.js'
 export {
   type ParsedSSEEvent,
   type ParseSSEBufferResult,
