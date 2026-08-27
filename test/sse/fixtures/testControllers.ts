@@ -35,6 +35,7 @@ import {
   respondWithoutReturnContract,
   roomStreamContract,
   sendStreamTestContract,
+  slowStartPostContract,
   sseRespondValidationContract,
   streamContract,
   validationTestStreamContract,
@@ -234,6 +235,63 @@ export class TestPostSSEController extends AbstractSSEController<TestPostSSECont
       await connection.send('done', { totalTokens: words.length })
     },
   })
+}
+
+/**
+ * POST SSE controller that opens the stream first and only then does slow work,
+ * so tests can assert on status/headers while the handler is still running.
+ *
+ * The slow work is gated on `releaseSlowWork()` rather than a timer, keeping the
+ * test deterministic.
+ */
+export type TestSlowStartPostContracts = {
+  slowStart: typeof slowStartPostContract
+}
+
+export class TestSlowStartPostSSEController extends AbstractSSEController<TestSlowStartPostContracts> {
+  public static contracts = {
+    slowStart: slowStartPostContract,
+  } as const
+
+  private slowWorkResolvers: Array<() => void> = []
+
+  public buildSSERoutes(): BuildFastifySSERoutesReturnType<TestSlowStartPostContracts> {
+    return {
+      slowStart: this.handleSlowStart,
+    }
+  }
+
+  private handleSlowStart = buildHandler(slowStartPostContract, {
+    sse: async (request, sse) => {
+      if (request.body.failBeforeStart) {
+        return sse.respond(503, { message: 'Upstream unavailable' })
+      }
+
+      // Stream opens before the slow work starts - that is what the test asserts on
+      const connection = sse.start('autoClose')
+
+      await new Promise<void>((resolve) => {
+        this.slowWorkResolvers.push(resolve)
+      })
+
+      await connection.send('chunk', { content: request.body.prompt })
+      await connection.send('done', { totalTokens: 1 })
+    },
+  })
+
+  /** Call from tests to let the pending "slow" work finish. */
+  public releaseSlowWork(): void {
+    const resolvers = this.slowWorkResolvers
+    this.slowWorkResolvers = []
+    for (const resolve of resolvers) {
+      resolve()
+    }
+  }
+
+  /** Number of handlers currently blocked on the slow work. */
+  public get pendingSlowWorkCount(): number {
+    return this.slowWorkResolvers.length
+  }
 }
 
 /**

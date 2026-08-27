@@ -2251,12 +2251,14 @@ The library provides utilities for testing SSE endpoints.
 | **Event delivery** | All events returned at once (after handler closes) | Events arrive incrementally |
 | **Connection lifecycle** | Handler must close for request to complete | Can stay open indefinitely |
 | **Server requirement** | No `listen()` needed | Requires a listening server (`SSETestServer.start(app)` or manual `app.listen()`) |
-| **Best for** | `autoClose` SSE (OpenAI-style, batch exports) | `keepAlive` SSE (notifications, live feeds, rooms) |
+| **Request body** | `injectPayloadSSE` / `connectWithBody` | `method` + `body` connect options |
+| **Assertions before the handler finishes** | Not possible (response is buffered) | `client.response` is available as soon as headers arrive |
+| **Best for** | `autoClose` SSE (OpenAI-style, batch exports) | `keepAlive` SSE (notifications, live feeds, rooms), streams whose headers must be asserted mid-handler |
 | **Dual-mode sync** | Use `app.inject()` with `accept: 'application/json'` | Same |
 
 #### SSEHttpClient
 
-For testing `keepAlive` SSE connections using real HTTP. Requires a listening server — use `SSETestServer.start(app)` to start your app on a random port:
+For testing `keepAlive` SSE connections using real HTTP, and for any assertion that has to happen on the wire while the handler is still running. Supports `GET`, `POST`, `PUT` and `PATCH`. Requires a listening server — use `SSETestServer.start(app)` to start your app on a random port:
 
 ```ts
 import { SSEHttpClient } from 'opinionated-machine'
@@ -2368,6 +2370,65 @@ expect(client.response.headers.get('content-type')).toContain('text/event-stream
 client.close()
 ```
 
+**POST/PUT/PATCH endpoints**
+
+`connect()` also issues non-GET requests, so SSE endpoints that take a request body can be tested over real HTTP. Pass `method` and `body`. The method is accepted in either case, so the lowercase spelling your contracts already use (`method: 'post'`) works as-is:
+
+```ts
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+  method: 'POST',
+  body: { message: 'Hello', stream: true },
+})
+
+const events = await client.collectEvents((event) => event.event === 'done')
+```
+
+Bodies `fetch()` can send natively — strings, `URLSearchParams`, `FormData`, `Blob`/`File`, `ArrayBuffer`, typed arrays (`Buffer`, `Uint8Array`, …) and `ReadableStream` — are passed through untouched; anything else is JSON-stringified. `content-type: application/json` is defaulted for JSON-stringified and string bodies (so a raw string stays verbatim, which is handy for asserting on malformed payloads), unless you provide your own content type. Payloads that describe their own encoding — `URLSearchParams`, `FormData`, `Blob` — keep the content type `fetch()` gives them:
+
+```ts
+// Sent as application/x-www-form-urlencoded, not JSON-stringified into `{}`
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+  method: 'post',
+  body: new URLSearchParams({ message: 'Hello' }),
+})
+```
+
+A body without a non-GET `method` throws — `fetch()` cannot attach one to a GET request.
+
+**Asserting on the wire before the handler finishes**
+
+`connect()` resolves as soon as HTTP headers arrive, and `client.response` is populated at that point. That is what makes the "open the stream before the slow work starts" behaviour testable: assert on status and headers while the handler is still awaiting its slow call, then let it proceed.
+
+```ts
+// Handler calls sse.start() and only then makes its slow LLM call
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+  method: 'POST',
+  body: { message: 'Hello', stream: true },
+})
+
+// Already on the wire while the LLM call is still in flight
+expect(client.response.status).toBe(200)
+expect(client.response.headers.get('content-type')).toContain('text/event-stream')
+
+releaseSlowCall()
+const events = await client.collectEvents((event) => event.event === 'done')
+```
+
+The mirror case works too: a failure raised *before* `sse.start()` reaches the client as the JSON status the contract declares, not as a terminal `error` event. The response body is only locked once you start consuming events, so it can still be read as JSON:
+
+```ts
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+  method: 'POST',
+  body: { message: 'Hello', stream: true },
+})
+
+expect(client.response.status).toBe(503)
+expect(client.response.headers.get('content-type')).not.toContain('text/event-stream')
+expect(await client.response.json()).toEqual({ message: 'Upstream unavailable' })
+```
+
+Read that body *before* `close()`: closing aborts the request, so a body read after it (or from a `finally { client.close() }` block that runs first) rejects with an `AbortError`.
+
 #### SSEInjectClient
 
 For testing `autoClose` SSE streams (like OpenAI completions). Uses Fastify's `inject()` - no `app.listen()` needed:
@@ -2386,6 +2447,14 @@ const conn = await client.connect('/api/export/progress', {
 const conn = await client.connectWithBody(
   '/api/chat/completions',
   { model: 'gpt-4', messages: [...], stream: true },
+)
+
+// Any other method inject() accepts works too - the option is typed as
+// `SSEInjectMethod`, exported so you never have to redeclare that union
+const conn = await client.connectWithBody(
+  '/api/exports/42',
+  { reason: 'cleanup' },
+  { method: 'DELETE' },
 )
 
 // All events are available immediately (inject waits for handler to complete)

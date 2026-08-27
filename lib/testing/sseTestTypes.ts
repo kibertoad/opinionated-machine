@@ -1,6 +1,17 @@
 import type { AnySSEContractDefinition, HttpStatusCode } from '@lokalise/api-contracts'
+import type { InjectOptions } from 'fastify'
 import type { z } from 'zod'
 import type { ParsedSSEEvent } from '../sse/sseParser.ts'
+
+/**
+ * HTTP methods Fastify's `inject()` accepts, in either case.
+ *
+ * Derived from Fastify's own inject options instead of being hand-listed, so it
+ * tracks whatever the installed Fastify supports and never needs to be redefined
+ * downstream. Note that Fastify's `HTTPMethods` is wider than this - it also
+ * covers `SEARCH`, `QUERY` and the WebDAV verbs, which `inject()` does not take.
+ */
+export type SSEInjectMethod = NonNullable<InjectOptions['method']>
 
 /** Safely infer the output type of an optional Zod schema property. */
 type InferOptionalSchema<T, Fallback = unknown> =
@@ -83,7 +94,8 @@ export interface SSETestConnection {
  */
 export type SSEConnectOptions = {
   headers?: Record<string, string>
-  method?: 'GET' | 'POST' | 'PUT' | 'PATCH'
+  /** Any method `inject()` accepts (default: `'POST'` for `connectWithBody`) */
+  method?: SSEInjectMethod
   body?: unknown
 }
 

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { SSESessionSpy } from './SSESessionSpy.ts'
 
-type TestSession = { id: string; request: { url: string } }
+type TestSession = { id: string; request: { url: string; method: string } }
 
-function fakeSession(id: string, url = '/stream'): TestSession {
-  return { id, request: { url } }
+function fakeSession(id: string, url = '/stream', method = 'GET'): TestSession {
+  return { id, request: { url, method } }
 }
 
 describe('SSESessionSpy', () => {

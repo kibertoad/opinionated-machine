@@ -5,11 +5,14 @@ import type { SSESession } from './AbstractSSEController.ts'
  *
  * Both the `SSESession` produced by this package's own SSE routes and the one
  * produced by `@lokalise/fastify-api-contracts` (used by `buildApiRoute`)
- * satisfy it, which lets a single spy be attached to either route style.
+ * satisfy it, which lets a single spy be attached to either route style. Both
+ * carry a Fastify request, so `method` is always there to match a waiter
+ * against - a path served by both a GET and a POST route needs it to resolve
+ * the right session.
  */
 export type SpiedSSESession = {
   id: string
-  request: { url: string }
+  request: { url: string; method: string }
 }
 
 type ConnectionWaiter<TSession extends SpiedSSESession> = {

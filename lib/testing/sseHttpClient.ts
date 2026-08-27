@@ -8,6 +8,24 @@ import { type ParsedSSEEvent, parseSSEBuffer } from '../sse/sseParser.ts'
  */
 export type HasSessionSpy = { connectionSpy: SSESessionSpy }
 
+/** Canonical, on-the-wire spelling of a supported method. */
+type NormalizedSSEHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH'
+
+/**
+ * HTTP methods supported when connecting to an SSE endpoint.
+ *
+ * Both spellings are accepted and normalized internally, so the lowercase form
+ * used by route contracts (`buildContract({ method: 'post' })`) can be handed
+ * over as-is.
+ */
+export type SSEHttpMethod = NormalizedSSEHttpMethod | Lowercase<NormalizedSSEHttpMethod>
+
+/**
+ * Body values `fetch()` sends as-is. Mirrors the DOM `BodyInit`, which is not
+ * available as a global type here (the project builds against `lib: ES2023`).
+ */
+type FetchBody = NonNullable<RequestInit['body']>
+
 /**
  * Options for connecting to an SSE endpoint via HTTP.
  */
@@ -16,6 +34,24 @@ export type SSEHttpConnectOptions = {
   query?: Record<string, string | undefined>
   /** Additional headers to send with the request */
   headers?: Record<string, string>
+  /** HTTP method to use, upper- or lowercase (default: 'GET') */
+  method?: SSEHttpMethod
+  /**
+   * Request body.
+   *
+   * Values `fetch()` can send natively - strings, `URLSearchParams`, `FormData`,
+   * `Blob`/`File`, `ArrayBuffer`, typed arrays (`Buffer`, `Uint8Array`, ...) and
+   * `ReadableStream` - are passed through untouched. Anything else is
+   * JSON-stringified.
+   *
+   * `content-type: application/json` is defaulted for JSON-stringified and string
+   * bodies, unless `headers` already provides a content type. Bodies that describe
+   * their own encoding (`URLSearchParams`, `FormData`, `Blob`) are left for
+   * `fetch()` to label, so their content type is never overwritten with a wrong one.
+   *
+   * Requires a non-GET `method`.
+   */
+  body?: unknown
 }
 
 /**
@@ -67,6 +103,72 @@ export type SSEHttpConnectResult<TSession extends SpiedSSESession = SSESession> 
 }
 
 /**
+ * Whether `fetch()` can send this value as-is. Everything else is JSON-stringified,
+ * so binary and form payloads are not silently mangled into `{}` or `{"0":1}`.
+ */
+function isFetchBody(body: unknown): body is FetchBody {
+  return (
+    typeof body === 'string' ||
+    body instanceof URLSearchParams ||
+    body instanceof FormData ||
+    body instanceof Blob ||
+    body instanceof ArrayBuffer ||
+    ArrayBuffer.isView(body) ||
+    body instanceof ReadableStream
+  )
+}
+
+/**
+ * Whether the body carries its own content type, which `fetch()` sets correctly
+ * (form encoding, multipart boundary, blob type) and we must not overwrite.
+ */
+function describesOwnContentType(body: FetchBody): boolean {
+  return body instanceof URLSearchParams || body instanceof FormData || body instanceof Blob
+}
+
+function hasContentTypeHeader(headers: Record<string, string>): boolean {
+  return Object.keys(headers).some((header) => header.toLowerCase() === 'content-type')
+}
+
+/**
+ * Resolve the value handed to `fetch()` as the request body, defaulting the
+ * content type (into `headers`) whenever we are the ones choosing the encoding.
+ */
+function buildRequestBody(
+  body: unknown,
+  method: NormalizedSSEHttpMethod,
+  headers: Record<string, string>,
+): FetchBody | undefined {
+  if (body === undefined) {
+    return undefined
+  }
+
+  if (method === 'GET') {
+    throw new Error(
+      "SSEHttpClient.connect(): a request body requires a non-GET method. Pass e.g. { method: 'POST', body }.",
+    )
+  }
+
+  if (isFetchBody(body)) {
+    if (!describesOwnContentType(body) && !hasContentTypeHeader(headers)) {
+      headers['content-type'] = 'application/json'
+    }
+    return body
+  }
+
+  const serializedBody = JSON.stringify(body)
+  if (serializedBody === undefined) {
+    throw new Error(
+      `SSEHttpClient.connect(): a body of type ${typeof body} cannot be serialized to JSON. Pass a JSON-serializable value, a string, or a body fetch() accepts natively.`,
+    )
+  }
+  if (!hasContentTypeHeader(headers)) {
+    headers['content-type'] = 'application/json'
+  }
+  return serializedBody
+}
+
+/**
  * SSE client for testing long-lived connections using real HTTP.
  *
  * This client uses the native `fetch()` API to establish a real HTTP connection
@@ -76,6 +178,13 @@ export type SSEHttpConnectResult<TSession extends SpiedSSESession = SSESession> 
  * - **Long-lived connections** that stay open indefinitely
  * - **Real-time notifications** where events arrive over time
  * - **Push-based streaming** where the client waits for server-initiated events
+ * - **Assertions on the wire while the handler is still running** - `connect()`
+ *   resolves as soon as headers arrive, so `response.status` / `response.headers`
+ *   can be checked before the handler produces its first event
+ *
+ * GET, POST, PUT and PATCH are all supported (see `method` / `body` in
+ * {@link SSEHttpConnectOptions}), so POST SSE endpoints that take a request
+ * body can be tested over real HTTP too.
  *
  * **When to use SSEHttpClient vs SSEInjectClient:**
  *
@@ -119,10 +228,22 @@ export type SSEHttpConnectResult<TSession extends SpiedSSESession = SSESession> 
  * ```
  */
 export class SSEHttpClient {
-  /** The fetch Response object. Available immediately after connect() returns. */
+  /**
+   * The fetch Response object. Available immediately after connect() returns,
+   * before any event is consumed, so status and headers can be asserted while
+   * the handler is still running.
+   *
+   * The response body is only locked once events are first consumed, so
+   * `response.json()` / `response.text()` still work for endpoints that
+   * answered with a regular HTTP response instead of a stream (for example an
+   * error raised before `sse.start()`). Read that body *before* calling
+   * `close()` - `close()` aborts the request, which rejects any pending or
+   * subsequent body read with an `AbortError`.
+   */
   readonly response: Response
   private readonly abortController: AbortController
-  private readonly reader: ReadableStreamDefaultReader<Uint8Array>
+  private readonly responseBody: ReadableStream<Uint8Array> | null
+  private streamReader: ReadableStreamDefaultReader<Uint8Array> | undefined
   private readonly decoder = new TextDecoder()
   private buffer = ''
   private closed = false
@@ -130,10 +251,25 @@ export class SSEHttpClient {
   private constructor(response: Response, abortController: AbortController) {
     this.response = response
     this.abortController = abortController
-    if (!response.body) {
-      throw new Error('SSE response has no body')
+    this.responseBody = response.body
+  }
+
+  /**
+   * Lazily acquire the stream reader, locking the response body on first use.
+   *
+   * A missing body is reported here rather than from the constructor, so a
+   * bodiless response (e.g. `204`) can still be inspected via `response`.
+   */
+  private get reader(): ReadableStreamDefaultReader<Uint8Array> {
+    if (!this.streamReader) {
+      if (!this.responseBody) {
+        throw new Error(
+          `SSE response has no body to stream (status ${this.response.status}). Inspect \`client.response\` instead of consuming events.`,
+        )
+      }
+      this.streamReader = this.responseBody.getReader()
     }
-    this.reader = response.body.getReader()
+    return this.streamReader
   }
 
   /**
@@ -145,7 +281,7 @@ export class SSEHttpClient {
    *
    * @param baseUrl - Base URL of the server (e.g., 'http://localhost:3000')
    * @param path - SSE endpoint path (e.g., '/api/notifications')
-   * @param options - Connection options (query params, headers)
+   * @param options - Connection options (method, body, query params, headers)
    * @returns Connected SSE client ready to receive events
    *
    * @example
@@ -156,6 +292,16 @@ export class SSEHttpClient {
    *   '/api/stream',
    *   { query: { userId: '123' }, headers: { authorization: 'Bearer token' } }
    * )
+   *
+   * // POST with a JSON body (content-type defaults to application/json)
+   * const client = await SSEHttpClient.connect(
+   *   'http://localhost:3000',
+   *   '/api/chat/completions',
+   *   { method: 'POST', body: { message: 'Hello', stream: true } }
+   * )
+   * // Headers are on the wire before the handler finished its slow work
+   * expect(client.response.status).toBe(200)
+   * expect(client.response.headers.get('content-type')).toContain('text/event-stream')
    *
    * // With awaitServerConnection (waits for server-side registration)
    * const { client, serverConnection } = await SSEHttpClient.connect(
@@ -209,31 +355,38 @@ export class SSEHttpClient {
       }
     }
 
+    // Normalize once - contracts spell methods in lowercase, the wire and Node use uppercase
+    const method = (options?.method ?? 'GET').toUpperCase() as NormalizedSSEHttpMethod
+    const headers: Record<string, string> = {
+      Accept: 'text/event-stream',
+      ...options?.headers,
+    }
+
+    const body = buildRequestBody(options?.body, method, headers)
+
     // Connect - fetch() returns when headers are received
     const abortController = new AbortController()
-    const response = await fetch(`${baseUrl}${pathWithQuery}`, {
-      headers: {
-        Accept: 'text/event-stream',
-        ...options?.headers,
-      },
+    const requestInit: RequestInit = {
+      method,
+      headers,
+      body,
       signal: abortController.signal,
-    })
-
-    let client: SSEHttpClient
-    try {
-      client = new SSEHttpClient(response, abortController)
-    } catch (error) {
-      // Nothing owns the response yet, so abort it here rather than leaking it.
-      abortController.abort()
-      throw error
     }
+    if (body instanceof ReadableStream) {
+      // A streamed request body has to declare half-duplex explicitly, or fetch() rejects it
+      ;(requestInit as RequestInit & { duplex?: 'half' }).duplex = 'half'
+    }
+    const response = await fetch(`${baseUrl}${pathWithQuery}`, requestInit)
+
+    const client = new SSEHttpClient(response, abortController)
 
     // If awaitServerConnection is specified, wait for server-side registration
     if (options && 'awaitServerConnection' in options && options.awaitServerConnection) {
       const awaitOptions = options.awaitServerConnection
       const waitOptions = {
         timeout: awaitOptions.timeout ?? 5000,
-        predicate: (conn: SpiedSSESession) => conn.request.url === pathWithQuery,
+        predicate: (conn: SpiedSSESession) =>
+          conn.request.url === pathWithQuery && conn.request.method.toUpperCase() === method,
       }
       try {
         // Both branches call the same method; the spy is invariant in its session
@@ -425,11 +578,17 @@ export class SSEHttpClient {
    *
    * This aborts the underlying fetch request. Call this when done
    * consuming events to clean up resources.
+   *
+   * Aborting also discards any unread response body, so for a non-stream
+   * response (an error raised before `sse.start()`, say) read
+   * `response.json()` / `response.text()` before calling this.
    */
   close(): void {
     this.closed = true
-    // Cancel the reader first to prevent unhandled rejections from pending reads
-    this.reader.cancel().catch(() => {
+    // Cancel the reader first to prevent unhandled rejections from pending reads.
+    // Only touch it if events were actually consumed - acquiring it here would
+    // lock a body the caller may still want to read as JSON/text.
+    this.streamReader?.cancel().catch(() => {
       // Expected: may already be closed or errored
     })
     this.abortController.abort()

@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { FastifySSERouteOptions, SSESession } from '../routes/index.ts'
 import { createSSESessionSpy } from './sseSessionSpyFactory.ts'
 
-type TestSession = { id: string; request: { url: string } }
+type TestSession = { id: string; request: { url: string; method: string } }
 
-function fakeSession(id: string, url = '/stream'): TestSession {
-  return { id, request: { url } }
+function fakeSession(id: string, url = '/stream', method = 'GET'): TestSession {
+  return { id, request: { url, method } }
 }
 
 describe('createSSESessionSpy', () => {

@@ -59,6 +59,39 @@ export const chatCompletionContract = buildContract({
 })
 
 /**
+ * POST SSE route whose handler opens the stream and only then performs slow work,
+ * mirroring an LLM-backed endpoint. The test releases the slow work explicitly, so
+ * it can assert that status and SSE headers already reached the client while the
+ * handler was still running.
+ *
+ * `failBeforeStart: true` makes the handler fail *before* `sse.start()`, which must
+ * surface as the declared JSON status rather than a terminal `error` event.
+ */
+export const slowStartPostContract = buildContract({
+  visibility: 'public',
+  method: 'post',
+  pathResolver: () => '/api/slow-start/stream',
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  requestBodySchema: z.object({
+    prompt: z.string(),
+    failBeforeStart: z.boolean().optional(),
+  }),
+  responseBodySchemasByStatusCode: {
+    503: z.object({ message: z.string() }),
+  },
+  serverSentEventSchemas: {
+    chunk: z.object({
+      content: z.string(),
+    }),
+    done: z.object({
+      totalTokens: z.number(),
+    }),
+  },
+})
+
+/**
  * GET SSE route with authentication header
  */
 export const authenticatedStreamContract = buildContract({
