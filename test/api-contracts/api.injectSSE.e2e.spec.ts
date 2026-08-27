@@ -3,24 +3,40 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest'
 import { DIContext, injectApiSSE, parseSSEEvents } from '../../index.js'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
-import { apiLqaSegmentContract, apiTickStreamContract } from './fixtures/testContracts.ts'
+import {
+  apiFeedContract,
+  apiLqaSegmentContract,
+  apiTickStreamContract,
+} from './fixtures/testContracts.ts'
 import {
   TestApiInjectSSEModule,
   type TestApiInjectSSEModuleControllers,
+  TestApiModule,
+  type TestApiModuleControllers,
 } from './fixtures/testModules.ts'
 
-type TestContext = DIContext<TestApiInjectSSEModuleControllers, object>
+type TestContext = DIContext<TestApiInjectSSEModuleControllers & TestApiModuleControllers, object>
 
 describe('injectApiSSE — defineApiContract SSE routes', () => {
   let server: SSETestServerWithResources<{ context: TestContext }>
   let context: TestContext
 
   beforeEach(async () => {
-    const container = createContainer<TestApiInjectSSEModuleControllers>({
-      injectionMode: 'PROXY',
-    })
-    context = new DIContext<TestApiInjectSSEModuleControllers, object>(container, {}, {})
-    context.registerDependencies({ modules: [new TestApiInjectSSEModule()] }, undefined)
+    const container = createContainer<TestApiInjectSSEModuleControllers & TestApiModuleControllers>(
+      {
+        injectionMode: 'PROXY',
+      },
+    )
+    context = new DIContext<TestApiInjectSSEModuleControllers & TestApiModuleControllers, object>(
+      container,
+      {},
+      {},
+    )
+    // `TestApiModule` carries the dual-mode `apiFeedContract` route.
+    context.registerDependencies(
+      { modules: [new TestApiInjectSSEModule(), new TestApiModule()] },
+      undefined,
+    )
 
     server = await createSSETestServer(
       (app) => {
@@ -144,6 +160,32 @@ describe('injectApiSSE — defineApiContract SSE routes', () => {
 
       await expect(events()).rejects.toThrow(
         /response is not an SSE stream .*bodyForStatus\(401\)/s,
+      )
+    })
+  })
+
+  // ==========================================================================
+  // Dual-mode contracts (one status, both a JSON body and a stream)
+  // ==========================================================================
+
+  describe('dual-mode contracts', () => {
+    it('takes the stream branch of a status that declares both', async () => {
+      const { closed, events } = injectApiSSE(server.app, apiFeedContract, {
+        queryParams: { limit: 5 },
+      })
+
+      expect((await closed).headers['content-type']).toContain('text/event-stream')
+      expect(await events()).toEqual([{ event: 'update', data: { value: 42 } }])
+    })
+
+    it('does not expose the JSON side of that status to bodyForStatus', async () => {
+      const { bodyForStatus } = injectApiSSE(server.app, apiFeedContract, {
+        queryParams: { limit: 5 },
+      })
+
+      // @ts-expect-error — the request asks for the stream, so 200 has no reachable JSON body
+      await expect(bodyForStatus(200)).rejects.toThrow(
+        /declares a 'sse' response for status 200, not a JSON body/,
       )
     })
   })

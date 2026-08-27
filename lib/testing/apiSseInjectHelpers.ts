@@ -1,15 +1,20 @@
 import {
   type ApiContract,
   getSseSchemaByEventName,
+  type HttpStatusCode,
+  type HttpStatusCodeRange,
+  type ResponsesByStatusCode,
   resolveResponseEntry,
 } from '@lokalise/api-contracts'
 import { injectByApiContract } from '@lokalise/fastify-api-contracts'
+import type { z } from 'zod'
 import { parseSSEEvents } from '../sse/sseParser.ts'
 import type { AnyFastifyInstance } from './AnyFastifyInstance.ts'
 import type {
   ApiDeclaredResponseBody,
   ApiDeclaredResponseStatus,
   ApiSSEEvent,
+  ApiSSEEventReader,
   InjectApiSSEParams,
   InjectApiSSEResult,
 } from './apiSseTestTypes.ts'
@@ -28,12 +33,94 @@ function mediaTypeOf(contentType: string | undefined): string | undefined {
   return contentType?.split(';')[0]?.trim().toLowerCase()
 }
 
+const STATUS_RANGE_KEYS: readonly HttpStatusCodeRange[] = ['1xx', '2xx', '3xx', '4xx', '5xx']
+
+/**
+ * The `responsesByStatusCode` key that serves a status, following the same
+ * exact → range → `'default'` precedence as `resolveResponseEntry`.
+ *
+ * Diagnostics only. `resolveResponseEntry` collapses "no entry for this status" and "an entry
+ * exists but none of its content-map descriptors matched the response's content-type" into a
+ * single `null`; this tells the two apart so the error names the actual problem.
+ */
+function findResponseKeyForStatus(
+  responsesByStatusCode: ResponsesByStatusCode,
+  statusCode: number,
+): string | undefined {
+  if (responsesByStatusCode[statusCode as HttpStatusCode]) {
+    return String(statusCode)
+  }
+  const rangeKey = STATUS_RANGE_KEYS[Math.floor(statusCode / 100) - 1]
+  if (rangeKey && responsesByStatusCode[rangeKey]) {
+    return rangeKey
+  }
+  return responsesByStatusCode.default ? 'default' : undefined
+}
+
+/**
+ * The JSON schema the contract declares for the status a response actually carries, or a
+ * thrown error naming why there isn't one.
+ *
+ * Resolution follows the same exact → range → `'default'` precedence (and content-type
+ * matching) the contract client uses, so a stream on one status and JSON bodies on the others
+ * resolve independently.
+ */
+function resolveJsonSchemaForStatus(
+  responsesByStatusCode: ResponsesByStatusCode,
+  statusCode: number,
+  res: SSEResponse,
+): z.ZodType {
+  const contentType = readHeader(res.headers['content-type'])
+  // Non-strict resolution: a response without a content-type still resolves to the entry's
+  // declared kind, which keeps hand-rolled test handlers working.
+  const resolved = resolveResponseEntry(responsesByStatusCode, statusCode, contentType, false)
+
+  if (!resolved) {
+    const declaredKey = findResponseKeyForStatus(responsesByStatusCode, statusCode)
+    throw new Error(
+      declaredKey === undefined
+        ? `bodyForStatus(${statusCode}) — no response declared for status ${statusCode} in contract.responsesByStatusCode`
+        : `bodyForStatus(${statusCode}) — the '${declaredKey}' entry of contract.responsesByStatusCode declares no body for content-type '${mediaTypeOf(contentType) ?? 'absent'}'; body: ${truncateBody(res.body)}`,
+    )
+  }
+
+  if (resolved.kind !== 'json') {
+    // A dual-mode status lands here: `injectApiSSE` asks for the stream, so that is what the
+    // status resolved to. The type layer rules this out, so reaching it means a cast.
+    const hint =
+      resolved.kind === 'sse'
+        ? ` — injectApiSSE requests '${SSE_CONTENT_TYPE}', so a status declaring a stream always answers with it; read it with events()`
+        : ''
+    throw new Error(
+      `bodyForStatus(${statusCode}) — the contract declares a '${resolved.kind}' response for status ${statusCode}, not a JSON body${hint}`,
+    )
+  }
+
+  return resolved.schema
+}
+
+/** JSON-parse and schema-validate a response body, reporting either failure in context. */
+function parseJsonBody(schema: z.ZodType, statusCode: number, body: string): unknown {
+  let parsedJson: unknown
+  try {
+    parsedJson = JSON.parse(body)
+  } catch (err) {
+    throw new Error(
+      `bodyForStatus(${statusCode}) — body is not valid JSON: ${(err as Error).message}; body: ${truncateBody(body)}`,
+    )
+  }
+
+  const parsed = schema.safeParse(parsedJson)
+  if (!parsed.success) {
+    throw new Error(
+      `bodyForStatus(${statusCode}) — body does not match the declared schema: ${parsed.error.message}; body: ${truncateBody(body)}`,
+    )
+  }
+  return parsed.data
+}
+
 /**
  * Build a `bodyForStatus` accessor bound to one `injectApiSSE` call.
- *
- * The schema is resolved from the contract's `responsesByStatusCode` at call time, following
- * the same exact → range → `'default'` precedence (and content-type matching) the contract
- * client uses, so `sseResponse(...)` entries and JSON entries can coexist on one status.
  *
  * @internal Exported only for unit testing — not part of the public API
  * (the testing barrel re-exports `injectApiSSE` by name).
@@ -54,39 +141,9 @@ export function bindApiBodyForStatus<Contract extends ApiContract>(
         `bodyForStatus(${expected}) — actual status ${res.statusCode}, body: ${truncateBody(res.body)}`,
       )
     }
-    // Non-strict resolution: a response without a content-type still resolves to the entry's
-    // declared kind, which keeps hand-rolled test handlers working.
-    const resolved = resolveResponseEntry(
-      contract.responsesByStatusCode,
-      expected,
-      readHeader(res.headers['content-type']),
-      false,
-    )
-    if (!resolved) {
-      throw new Error(
-        `bodyForStatus(${expected}) — no response declared for status ${expected} in contract.responsesByStatusCode`,
-      )
-    }
-    if (resolved.kind !== 'json') {
-      throw new Error(
-        `bodyForStatus(${expected}) — the contract declares a '${resolved.kind}' response for status ${expected}, not a JSON body`,
-      )
-    }
-    let parsedJson: unknown
-    try {
-      parsedJson = JSON.parse(res.body)
-    } catch (err) {
-      throw new Error(
-        `bodyForStatus(${expected}) — body is not valid JSON: ${(err as Error).message}; body: ${truncateBody(res.body)}`,
-      )
-    }
-    const parsed = resolved.schema.safeParse(parsedJson)
-    if (!parsed.success) {
-      throw new Error(
-        `bodyForStatus(${expected}) — body does not match the declared schema: ${parsed.error.message}; body: ${truncateBody(res.body)}`,
-      )
-    }
-    return parsed.data as ApiDeclaredResponseBody<Contract, Status>
+
+    const schema = resolveJsonSchemaForStatus(contract.responsesByStatusCode, expected, res)
+    return parseJsonBody(schema, expected, res.body) as ApiDeclaredResponseBody<Contract, Status>
   }) as InjectApiSSEResult<Contract>['bodyForStatus']
 }
 
@@ -99,9 +156,10 @@ export function bindApiBodyForStatus<Contract extends ApiContract>(
 export function bindApiEvents<Contract extends ApiContract>(
   contract: Contract,
   closed: Promise<SSEResponse>,
-): InjectApiSSEResult<Contract>['events'] {
+): ApiSSEEventReader<Contract> {
   return async () => {
     const res = await closed
+    // Merges the SSE schemas of every declared status, not just the successful ones.
     const schemaByEventName = getSseSchemaByEventName(contract)
     if (!schemaByEventName) {
       throw new Error('events() — the contract declares no SSE response')
@@ -152,6 +210,11 @@ export function bindApiEvents<Contract extends ApiContract>(
  * comes from the contract, and `params` (`pathParams` / `queryParams` / `headers` / `body` /
  * `pathPrefix`) is the same shape `injectByApiContract` takes, so a body is required exactly
  * when the contract declares `requestBodySchema`.
+ *
+ * The request always carries `accept: text/event-stream` (a caller-supplied `accept` still
+ * wins), so a status declaring a stream answers with it — dual-mode statuses included. Those
+ * statuses expose no JSON body through `bodyForStatus`; read them with `events()`, or use
+ * `injectByApiContract` when you want the JSON side.
  *
  * Best for SSE endpoints that complete — Fastify's `inject()` waits for the whole response.
  * For long-lived connections, use `SSEHttpClient` against a real HTTP server.
@@ -210,6 +273,8 @@ export function injectApiSSE<const Contract extends ApiContract>(
   return {
     closed,
     bodyForStatus: bindApiBodyForStatus(contract, closed),
-    events: bindApiEvents(contract, closed),
+    // `events` is typed `never` for contracts that declare no SSE response, which no concrete
+    // function satisfies — the binder returns the callable form and it is narrowed here.
+    events: bindApiEvents(contract, closed) as InjectApiSSEResult<Contract>['events'],
   }
 }

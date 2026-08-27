@@ -4,7 +4,6 @@ import type {
   ExpandStatusRangeKey,
   HttpStatusCode,
   HttpStatusCodeRange,
-  InferSseSuccessResponses,
   InformationalHttpStatusCode,
   RedirectionHttpStatusCode,
   ServerErrorHttpStatusCode,
@@ -61,16 +60,55 @@ type RangeKeyOf<Status extends HttpStatusCode> = Status extends InformationalHtt
           ? '5xx'
           : never
 
+/** The media type `injectApiSSE` always asks for — see {@link StreamSchemasOfEntry}. */
+type SSEMediaType = 'text/event-stream'
+
 /**
- * The JSON Zod schema of a single response entry, or `never` when it carries no JSON body.
- * A bare schema is JSON; a content-map entry contributes the schemas of its non-blob,
- * non-SSE descriptors.
+ * The `event name -> schema` map of an SSE body descriptor, or `never` for any other
+ * descriptor (a bare Zod schema is JSON, `blobBody()` is opaque bytes).
  */
-type JsonSchemaOfEntry<Entry> = Entry extends z.ZodType
-  ? Entry
-  : Entry extends { content: infer Content }
-    ? Extract<Content[keyof Content], z.ZodType>
-    : never
+type SseSchemasOfDescriptor<Descriptor> = Descriptor extends {
+  _tag: 'SseBody'
+  schemaByEventName: infer Schemas
+}
+  ? Schemas
+  : never
+
+/**
+ * Every SSE schema map a response entry declares, across all of its media types — the
+ * type-level counterpart of the maps `getSseSchemaByEventName` collects at runtime.
+ */
+type SseSchemasOfEntry<Entry> = Entry extends { content: infer Content }
+  ? SseSchemasOfDescriptor<Content[keyof Content]>
+  : never
+
+/**
+ * The SSE schema map an entry declares under `text/event-stream` specifically.
+ *
+ * `injectApiSSE` always sends `accept: text/event-stream`, so this is the descriptor a
+ * status resolves to whenever it declares one — even on a dual-mode content map that also
+ * carries a JSON schema.
+ */
+type StreamSchemasOfEntry<Entry> = Entry extends { content: infer Content }
+  ? SseSchemasOfDescriptor<Content[SSEMediaType & keyof Content]>
+  : never
+
+/**
+ * The JSON Zod schema of a single response entry, or `never` when this helper can't reach a
+ * JSON body there. A bare schema is JSON; a content-map entry contributes the schemas of its
+ * non-blob, non-SSE descriptors.
+ *
+ * An entry that declares a `text/event-stream` body has no reachable JSON side: the request
+ * asks for the stream, so a dual-mode status answers with SSE and `bodyForStatus` would throw.
+ * Read those with `events()` instead.
+ */
+type JsonSchemaOfEntry<Entry> = [StreamSchemasOfEntry<Entry>] extends [never]
+  ? Entry extends z.ZodType
+    ? Entry
+    : Entry extends { content: infer Content }
+      ? Extract<Content[keyof Content], z.ZodType>
+      : never
+  : never
 
 /** Indexes a responses map with a key that may not exist on it (yielding `never` if it doesn't). */
 type EntryAt<Contract extends ApiContract, Key> = NonNullable<
@@ -109,17 +147,38 @@ export type ApiDeclaredResponseBody<
   Status extends HttpStatusCode,
 > = InferJsonBody<JsonSchemaOfEntry<EntryForStatus<Contract, Status>>>
 
-/** The merged `event name -> schema` map of every SSE response a contract declares. */
-type ApiSSEEventSchemas<Contract extends ApiContract> = InferSseSuccessResponses<
-  Responses<Contract>
+/**
+ * Union of the SSE schema maps a contract declares, over *every* status key.
+ *
+ * Deliberately not `InferSseSuccessResponses`, which only looks at success / `'2xx'` /
+ * `'default'` keys: the runtime `getSseSchemaByEventName` merges the maps of every entry in
+ * `responsesByStatusCode`, so a stream declared under e.g. `'4xx'` produces validated events
+ * too and has to be visible here.
+ */
+type ApiSSEEventSchemas<Contract extends ApiContract> = SseSchemasOfEntry<
+  NonNullable<Responses<Contract>[keyof Responses<Contract>]>
 >
 
 /**
- * Discriminated union of the SSE events a contract declares, with `data` parsed and typed
- * per event name.
+ * The event names of a union of schema maps.
+ *
+ * `keyof` a union yields only the keys shared by every member, which collapses to `never` as
+ * soon as two statuses declare different events — so distribute first and union the keys,
+ * mirroring the runtime merge.
  */
-export type ApiSSEEvent<Contract extends ApiContract> = {
-  [Name in keyof ApiSSEEventSchemas<Contract> & string]: {
+type SseEventNamesOf<Schemas> = Schemas extends unknown ? keyof Schemas & string : never
+
+/**
+ * The schema(s) a union of maps declares for one event name. Maps that don't declare it drop
+ * out; two maps declaring it with different schemas yield a union, since the runtime merge
+ * keeps only one of them and the reader can't tell which.
+ */
+type SseSchemaForEventName<Schemas, Name extends string> =
+  Schemas extends Record<Name, infer Schema> ? Schema : never
+
+/** Builds the event union for an already-resolved set of schema maps. */
+type ApiSSEEventOf<Schemas> = {
+  [Name in SseEventNamesOf<Schemas>]: {
     /** Event ID, when the server sent an `id:` field. */
     id?: string
     /** Event name, as sent in the `event:` field (defaults to `message`). */
@@ -127,9 +186,30 @@ export type ApiSSEEvent<Contract extends ApiContract> = {
     /** Reconnection hint in milliseconds, when the server sent a `retry:` field. */
     retry?: number
     /** `data:` payload, JSON-parsed and validated against the contract's schema. */
-    data: InferJsonBody<ApiSSEEventSchemas<Contract>[Name]>
+    data: InferJsonBody<SseSchemaForEventName<Schemas, Name>>
   }
-}[keyof ApiSSEEventSchemas<Contract> & string]
+}[SseEventNamesOf<Schemas>]
+
+/**
+ * Discriminated union of the SSE events a contract declares, with `data` parsed and typed
+ * per event name. `never` for a contract that declares no SSE response at all.
+ */
+export type ApiSSEEvent<Contract extends ApiContract> = ApiSSEEventOf<ApiSSEEventSchemas<Contract>>
+
+/** Whether a contract declares an SSE response on any status. */
+type HasApiSSEResponse<Contract extends ApiContract> = [ApiSSEEventSchemas<Contract>] extends [
+  never,
+]
+  ? false
+  : true
+
+/**
+ * The callable form of {@link InjectApiSSEResult.events}.
+ *
+ * Always a function, so the internal binder has a type to return regardless of what the
+ * contract declares; the result type below hides it behind {@link HasApiSSEResponse}.
+ */
+export type ApiSSEEventReader<Contract extends ApiContract> = () => Promise<ApiSSEEvent<Contract>[]>
 
 /**
  * Result of an {@link injectApiSSE} call.
@@ -174,9 +254,16 @@ export type InjectApiSSEResult<Contract extends ApiContract> = {
    * Awaits the response, parses the SSE body, and validates every event against the
    * contract's SSE schemas, returning them as a discriminated union on `event`.
    *
+   * Events are typed from the SSE schemas of *every* status the contract declares, merged
+   * exactly as the runtime merges them — a contract streaming different events on two
+   * statuses yields the union of both.
+   *
    * Throws if the response isn't an SSE stream (use `bodyForStatus` for the documented
-   * error statuses), if the contract declares no SSE response, if an event name isn't
-   * declared by the contract, or if an event payload doesn't match its schema.
+   * error statuses), if an event name isn't declared by the contract, or if an event payload
+   * doesn't match its schema.
+   *
+   * A contract that declares no SSE response at all types this as `never`, so calling it is
+   * a compile error rather than a guaranteed throw — reach for `injectByApiContract` there.
    *
    * @example
    * ```typescript
@@ -185,5 +272,5 @@ export type InjectApiSSEResult<Contract extends ApiContract> = {
    * expect(review?.data.score).toBe(42)  // `data` typed by the `review` schema
    * ```
    */
-  events(): Promise<ApiSSEEvent<Contract>[]>
+  events: HasApiSSEResponse<Contract> extends true ? ApiSSEEventReader<Contract> : never
 }

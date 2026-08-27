@@ -1,10 +1,18 @@
-import { defineApiContract, type HttpStatusCode, sseResponse } from '@lokalise/api-contracts'
+import {
+  blobBody,
+  defineApiContract,
+  type HttpStatusCode,
+  sseBody,
+  sseResponse,
+} from '@lokalise/api-contracts'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { z } from 'zod/v4'
 import { bindApiBodyForStatus, bindApiEvents } from '../../lib/testing/apiSseInjectHelpers.ts'
 import type {
   ApiDeclaredResponseBody,
   ApiDeclaredResponseStatus,
+  ApiSSEEvent,
+  InjectApiSSEResult,
 } from '../../lib/testing/apiSseTestTypes.ts'
 import type { SSEResponse } from '../../lib/testing/sseTestTypes.ts'
 
@@ -57,6 +65,61 @@ const wildcardContract = defineApiContract({
     '4xx': z.object({ clientError: z.string() }),
     default: z.object({ fallback: z.string() }),
   },
+})
+
+/** SSE declared on several statuses at once, each carrying a different event name. */
+const multiStatusSseContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'Multi-status stream',
+  pathResolver: () => '/multi-status',
+  responsesByStatusCode: {
+    200: sseResponse({ tick: z.object({ n: z.number() }) }),
+    202: sseResponse({ queued: z.object({ id: z.string() }) }),
+    // Not a success status: the runtime merges its events too, so the types must as well.
+    '4xx': sseResponse({ failure: z.object({ reason: z.string() }) }),
+  },
+})
+
+/** One status, one content map, both a JSON body and a stream — the dual-mode shape. */
+const dualModeContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'Dual mode',
+  pathResolver: () => '/dual',
+  responsesByStatusCode: {
+    200: {
+      content: {
+        'application/json': z.object({ summary: z.string() }),
+        'text/event-stream': sseBody({ update: z.object({ value: z.number() }) }),
+      },
+    },
+  },
+})
+
+/** A content map whose descriptors are all non-JSON media types. */
+const multiContentContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'Multi content',
+  pathResolver: () => '/multi-content',
+  responsesByStatusCode: {
+    200: {
+      content: {
+        'application/json': z.object({ ok: z.boolean() }),
+        'application/pdf': blobBody(),
+      },
+    },
+  },
+})
+
+/** No SSE anywhere — `events()` has nothing to read. */
+const jsonOnlyContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'Json only',
+  pathResolver: () => '/json',
+  responsesByStatusCode: { 200: z.object({ ok: z.boolean() }) },
 })
 
 describe('bindApiBodyForStatus', () => {
@@ -144,6 +207,39 @@ describe('bindApiBodyForStatus', () => {
     await expect(bodyForStatus(503)).resolves.toEqual({ fallback: 'unavailable' })
   })
 
+  it('names the offending content-type when no descriptor of the entry matches it', async () => {
+    const bodyForStatus = bindApiBodyForStatus(
+      multiContentContract,
+      resolved({ statusCode: 200, headers: { 'content-type': 'text/plain' }, body: 'plain' }),
+    )
+
+    await expect(bodyForStatus(200)).rejects.toThrow(
+      /the '200' entry of contract\.responsesByStatusCode declares no body for content-type 'text\/plain'/,
+    )
+  })
+
+  it('rejects a dual-mode status, which always answers with the stream', async () => {
+    const bodyForStatus = bindApiBodyForStatus(
+      dualModeContract,
+      streamResponse('event: update\ndata: {"value":1}\n\n'),
+    )
+
+    // @ts-expect-error — 200 declares a stream, so it carries no reachable JSON body here
+    await expect(bodyForStatus(200)).rejects.toThrow(
+      /declares a 'sse' response for status 200, not a JSON body — injectApiSSE requests/,
+    )
+  })
+
+  it('excludes a dual-mode status from the callable statuses', () => {
+    // The request forces `accept: text/event-stream`, so the JSON side is unreachable.
+    expectTypeOf<ApiDeclaredResponseStatus<typeof dualModeContract>>().toEqualTypeOf<never>()
+    // A plain multi-descriptor content map without a stream still exposes its JSON entry.
+    expectTypeOf<ApiDeclaredResponseStatus<typeof multiContentContract>>().toEqualTypeOf<200>()
+    expectTypeOf<ApiDeclaredResponseBody<typeof multiContentContract, 200>>().toEqualTypeOf<{
+      ok: boolean
+    }>()
+  })
+
   it('types the body per status, including range and default keys', () => {
     type Body<Status extends HttpStatusCode> = ApiDeclaredResponseBody<
       typeof wildcardContract,
@@ -213,17 +309,38 @@ describe('bindApiEvents', () => {
   })
 
   it('throws when the contract declares no SSE response', async () => {
-    const jsonOnlyContract = defineApiContract({
-      visibility: 'public',
-      method: 'get',
-      summary: 'Json only',
-      pathResolver: () => '/json',
-      responsesByStatusCode: { 200: z.object({ ok: z.boolean() }) },
-    })
-
     const events = bindApiEvents(jsonOnlyContract, streamResponse(''))
 
     await expect(events()).rejects.toThrow(/declares no SSE response/)
+  })
+
+  it('validates events declared on any status, not just the successful ones', async () => {
+    const events = bindApiEvents(
+      multiStatusSseContract,
+      streamResponse(
+        'event: tick\ndata: {"n":1}\n\nevent: queued\ndata: {"id":"a"}\n\nevent: failure\ndata: {"reason":"nope"}\n\n',
+      ),
+    )
+
+    await expect(events()).resolves.toEqual([
+      { event: 'tick', data: { n: 1 } },
+      { event: 'queued', data: { id: 'a' } },
+      { event: 'failure', data: { reason: 'nope' } },
+    ])
+  })
+
+  it('types the merged events of every status the contract streams on', () => {
+    type Event = ApiSSEEvent<typeof multiStatusSseContract>
+
+    // `keyof` a union of maps would collapse to `never` here — the names have to be unioned.
+    expectTypeOf<Event['event']>().toEqualTypeOf<'tick' | 'queued' | 'failure'>()
+    expectTypeOf<Extract<Event, { event: 'queued' }>['data']>().toEqualTypeOf<{ id: string }>()
+    expectTypeOf<Extract<Event, { event: 'failure' }>['data']>().toEqualTypeOf<{ reason: string }>()
+  })
+
+  it('is not callable for a contract that declares no SSE response', () => {
+    expectTypeOf<InjectApiSSEResult<typeof jsonOnlyContract>['events']>().toEqualTypeOf<never>()
+    expectTypeOf<InjectApiSSEResult<typeof multiStatusSseContract>['events']>().toBeCallableWith()
   })
 
   it('types events as a discriminated union on the event name', async () => {

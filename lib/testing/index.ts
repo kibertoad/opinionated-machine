@@ -3,6 +3,7 @@ export type {
   ApiDeclaredResponseBody,
   ApiDeclaredResponseStatus,
   ApiSSEEvent,
+  ApiSSEEventReader,
   InjectApiSSEParams,
   InjectApiSSEResult,
 } from './apiSseTestTypes.js'
