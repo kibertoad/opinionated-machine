@@ -1559,7 +1559,7 @@ describe('NotificationsSSEController', () => {
 
 #### Testing autoClose SSE (request-response streaming)
 
-Use `SSEInjectClient` or the contract-aware `injectSSE`/`injectPayloadSSE` helpers. No real HTTP server needed - all events are available immediately after the handler completes:
+Use `SSEInjectClient` or the contract-aware `injectSSE`/`injectPayloadSSE` helpers (`injectApiSSE` for `defineApiContract` contracts). No real HTTP server needed - all events are available immediately after the handler completes:
 
 ```ts
 import { SSEInjectClient } from 'opinionated-machine'
@@ -1612,6 +1612,49 @@ it('returns the documented 401 body when unauthenticated', async () => {
 ```
 
 `bodyForStatus(status)` awaits the response, asserts the actual status matches, JSON-parses the body, and runs it through the Zod schema declared for that status. It throws — with the offending status and a truncated body snippet — if the status doesn't match, the contract declares no schema for that status, the body isn't valid JSON, or Zod parsing fails. The raw `closed` promise is still exposed for callers that want to read `body: string` directly.
+
+#### Contracts built with `defineApiContract`: `injectApiSSE`
+
+`injectSSE` / `injectPayloadSSE` are typed against the legacy `SSEContractDefinition` from `buildSseContract`. For contracts built with the newer `defineApiContract` + `sseResponse` / `sseBody` API, use `injectApiSSE` instead — one function for every method, with `params` in the same shape `injectByApiContract` takes:
+
+```ts
+import { defineApiContract, sseResponse } from '@lokalise/api-contracts'
+import { z } from 'zod/v4'
+import { injectApiSSE } from 'opinionated-machine'
+
+const lqaSegmentContract = defineApiContract({
+  visibility: 'internal',
+  method: 'post',
+  summary: 'Perform LQA on a text segment',
+  pathResolver: () => '/v1/content/actions/lqa-text-segment',
+  requestBodySchema: z.object({ segment: z.string() }),
+  responsesByStatusCode: {
+    200: sseResponse({ review: z.object({ score: z.number() }) }),
+    400: z.object({ message: z.string() }),
+  },
+})
+
+it('streams the review', async () => {
+  const { events } = injectApiSSE(app, lqaSegmentContract, { body: { segment: 'hello' } })
+
+  // Events are validated against the contract and typed as a union on `event`.
+  for (const event of await events()) {
+    if (event.event === 'review') expect(event.data.score).toBeGreaterThan(0)
+  }
+})
+
+it('returns the documented 400 body for an empty segment', async () => {
+  const { bodyForStatus } = injectApiSSE(app, lqaSegmentContract, { body: { segment: '' } })
+
+  // `body` is typed as `{ message: string }` — the contract's 400 schema.
+  const body = await bodyForStatus(400)
+  expect(body.message).toBe('segment must not be empty')
+})
+```
+
+`closed` and `bodyForStatus` behave as they do on `injectSSE`, except that `bodyForStatus` resolves its schema from `responsesByStatusCode`, following the same exact → range → `'default'` precedence as the contract client. `events()` is additionally available: it parses the SSE body and validates each event against the contract's SSE schemas, throwing when the response isn't a stream, when an event name isn't declared, or when a payload fails its schema.
+
+The request always carries `accept: text/event-stream`, so a status that declares a stream answers with it — including a dual-mode status whose content map also carries a JSON schema. Those statuses are therefore not callable through `bodyForStatus`; read them with `events()`, or use `injectByApiContract` when you want the JSON side. Conversely, a contract that declares no SSE response at all types `events` as `never`, so calling it is a compile error rather than a guaranteed throw. `events()` is typed from the SSE schemas of *every* declared status, merged the same way the runtime merges them, so a contract streaming on both `200` and `'4xx'` yields the union of both event sets. See [ApiContract controller docs](./lib/api-contracts/docs.md#testing) for the full testing guide.
 
 ### SSESessionSpy API
 
@@ -2198,7 +2241,7 @@ The library provides utilities for testing SSE endpoints.
 | `autoClose` | `SSEInjectClient` or `injectSSE`/`injectPayloadSSE` | Handler completes and closes connection; all events available at once |
 | `keepAlive` | `SSEHttpClient` | Connection stays open; events arrive incrementally via server push |
 
-`SSEInjectClient` and `injectSSE`/`injectPayloadSSE` do the same thing (Fastify inject), but `injectSSE`/`injectPayloadSSE` provide type safety via contracts while `SSEInjectClient` works with raw URLs.
+`SSEInjectClient` and `injectSSE`/`injectPayloadSSE` do the same thing (Fastify inject), but `injectSSE`/`injectPayloadSSE` provide type safety via contracts while `SSEInjectClient` works with raw URLs. Contracts built with `defineApiContract` use `injectApiSSE` instead of `injectSSE`/`injectPayloadSSE`.
 
 #### Detailed Comparison
 

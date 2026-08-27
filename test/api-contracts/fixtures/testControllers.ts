@@ -5,6 +5,7 @@ import {
   apiGetUserContract,
   apiHeaderFailContract,
   apiHeaderSuccessContract,
+  apiLqaSegmentContract,
   apiSseInvalidEventContract,
   apiSseKeepAliveContract,
   apiSseNoStartContract,
@@ -12,6 +13,7 @@ import {
   apiSsePreErrorContract,
   apiSseRespondContract,
   apiSseSendStreamContract,
+  apiTickStreamContract,
   apiValidationFailContract,
 } from './testContracts.ts'
 
@@ -140,5 +142,48 @@ export class TestApiErrorController extends AbstractApiController<
       status: 200,
       body: { ok: true },
     })),
+  }
+}
+
+/**
+ * Controller backing the `injectApiSSE` tests: one POST-with-body SSE route and one
+ * GET route with path params, query params and a required auth header. Both declare a
+ * documented pre-stream error status, emitted via a plain `{ status, body }` result.
+ */
+export class TestApiInjectSSEController extends AbstractApiController<
+  typeof TestApiInjectSSEController.contracts
+> {
+  static contracts = {
+    lqaSegment: apiLqaSegmentContract,
+    tickStream: apiTickStreamContract,
+  } as const
+
+  readonly routes = {
+    lqaSegment: buildApiRoute(
+      TestApiInjectSSEController.contracts.lqaSegment,
+      async (request, _reply, { sse }) => {
+        if (request.body.segment.length === 0) {
+          return { status: 400, body: { message: 'segment must not be empty' } }
+        }
+        const session = sse.start('autoClose')
+        await session.send('review', { score: request.body.segment.length })
+        await session.send('done', { total: 1 })
+        return
+      },
+    ),
+
+    tickStream: buildApiRoute(
+      TestApiInjectSSEController.contracts.tickStream,
+      async (request, _reply, { sse }) => {
+        if (request.headers.authorization !== 'Bearer valid-token') {
+          return { status: 401, body: { message: 'Unauthorized' } }
+        }
+        const session = sse.start('autoClose')
+        for (let n = 1; n <= request.query.count; n++) {
+          await session.send('tick', { channelId: request.params.channelId, n })
+        }
+        return
+      },
+    ),
   }
 }
