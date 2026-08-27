@@ -131,11 +131,46 @@ export class SSESessionSpy<TSession extends SpiedSSESession = SSESession> {
         if (index !== -1) {
           this.connectionWaiters.splice(index, 1)
         }
-        reject(new Error(`Timeout waiting for connection after ${timeout}ms`))
+        reject(
+          new Error(
+            `Timeout waiting for connection after ${timeout}ms${this.describeMissedConnections(predicate)}`,
+          ),
+        )
       }, timeout)
 
       this.connectionWaiters.push({ resolve, reject, timeoutId, predicate })
     })
+  }
+
+  /**
+   * Explain a timeout that had matching connections which were already gone.
+   *
+   * `waitForConnection` only hands back sessions that are still active, since a
+   * closed session can no longer be sent events. A route that streams with
+   * `autoClose` closes its session as the handler returns, so its connection is
+   * registered and closed before a test can claim it — without this hint that
+   * shows up as a bare timeout with no indication of what went wrong.
+   */
+  private describeMissedConnections(predicate?: (connection: TSession) => boolean): string {
+    const missed = this.events.filter(
+      (e) =>
+        e.type === 'connect' &&
+        e.connection &&
+        !this.activeConnections.has(e.connection.id) &&
+        (!predicate || predicate(e.connection)),
+    )
+    if (missed.length === 0) {
+      return ''
+    }
+
+    const ids = missed.map((e) => e.connectionId).join(', ')
+    return (
+      `. ${missed.length} matching connection(s) were registered but had already closed: ${ids}. ` +
+      'Only sessions that are still open can be awaited, since a closed one can no longer be sent ' +
+      'events. A session started with `autoClose` closes as its handler returns, so a route that ' +
+      'uses one cannot be awaited at all - omit `awaitServerConnection` there and assert on the ' +
+      'events the client received instead.'
+    )
   }
 
   /** Wait for a specific connection to disconnect */

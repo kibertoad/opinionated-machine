@@ -1644,7 +1644,7 @@ controller.connectionSpy.clear()
 
 #### Standalone spy for `buildApiRoute` routes
 
-`connectionSpy` only exists on `AbstractSSEController`. Services built on `AbstractApiController` + `buildApiRoute` get the same capability from `createSSESessionSpy()`, which returns a spy plus the `onConnect` / `onClose` route hooks that drive it:
+`connectionSpy` only exists on `AbstractSSEController`. For routes built with `buildApiRoute` there is no controller to read it off, so `createSSESessionSpy()` returns a spy plus the `onConnect` / `onClose` route hooks that drive it:
 
 ```ts
 import { createSSESessionSpy, SSEHttpClient } from 'opinionated-machine'
@@ -1662,6 +1662,54 @@ await serverConnection.send('ping', { seq: 1 })
 ```
 
 `awaitServerConnection` accepts either `{ controller }` or `{ spy }`; both wait for the server-side handler to finish registering the session before `connect()` resolves.
+
+**The hooks have to reach the `buildApiRoute()` call itself.** `buildApiRoute` captures `onConnect` / `onClose` when it builds the handler, so assigning them to the `RouteOptions` object it returns does nothing — the connect would just time out:
+
+```ts
+// Does NOT work: the route was already built without the hooks
+const route = controller.routes.streamUpdates
+Object.assign(route, routeOptions) // no-op as far as SSE lifecycle hooks go
+```
+
+A route owned by a controller therefore has to accept SSE route options for a test to be able to spy on it. Take them as a dependency and pass them through:
+
+```ts
+export class StreamController extends AbstractApiController<typeof StreamController.contracts> {
+  static contracts = { streamUpdates: streamUpdatesContract } as const
+
+  readonly routes: Record<keyof typeof StreamController.contracts, RouteOptions>
+
+  constructor({ sseRouteOptions }: StreamControllerDependencies) {
+    super()
+    this.routes = {
+      streamUpdates: buildApiRoute(
+        StreamController.contracts.streamUpdates,
+        this.streamUpdates,
+        sseRouteOptions,
+      ),
+    }
+  }
+}
+
+// production wiring registers no hooks; the test registers the spy's
+const { spy, routeOptions } = createSSESessionSpy()
+const controller = new StreamController({ sseRouteOptions: routeOptions })
+```
+
+If the route already declares lifecycle hooks of its own, use `withSpy()` rather than spreading `routeOptions` over them — spreading silently drops one side or the other, depending on the order. `withSpy()` keeps the route's hook (it runs first, and the spy is notified once it settles) and passes every other option through:
+
+```ts
+const { spy, withSpy } = createSSESessionSpy()
+
+app.route(
+  buildApiRoute(streamContract, handler, withSpy({
+    heartbeat: false,
+    onConnect: (connection) => subscriptions.add(connection.id),
+  })),
+)
+```
+
+**`keepAlive` sessions only.** An `autoClose` route closes its session as the handler returns, and `waitForConnection` only hands back sessions that are still open, since a closed one can no longer be sent events. Awaiting such a connection races and usually times out (with an error that says as much) — omit `awaitServerConnection` for `autoClose` routes and assert on the events the client received instead.
 
 The spy is typed for the `SSESession` of `@lokalise/fastify-api-contracts`, which is what `buildApiRoute` passes to its hooks. To wire the same spy into a `buildFastifyRoute`-built route, parameterize it with this package's session type: `createSSESessionSpy<SSESession>()`.
 
@@ -2263,8 +2311,9 @@ Omit `awaitServerConnection` only in these cases:
 - Testing against external SSE endpoints (not your own controller)
 - When `isTestMode: false` (connectionSpy not available)
 - Simple smoke tests that only verify response headers/status without sending server events
+- Routes whose handler starts an `autoClose` session: it closes as the handler returns, so there is no live session left to wait for — assert on the received events instead
 
-For routes built with `buildApiRoute` (no controller, so no `connectionSpy`), pass a standalone spy instead of dropping the option: `awaitServerConnection: { spy }`, with the spy from [`createSSESessionSpy()`](#standalone-spy-for-buildapiroute-routes).
+For `keepAlive` routes built with `buildApiRoute` (no controller, so no `connectionSpy`), pass a standalone spy instead of dropping the option: `awaitServerConnection: { spy }`, with the spy from [`createSSESessionSpy()`](#standalone-spy-for-buildapiroute-routes).
 
 **Consequence**: Without `awaitServerConnection`, `connect()` resolves as soon as HTTP headers are received. Server-side connection registration may not have completed yet, so you cannot reliably send events from the server immediately after `connect()` returns.
 

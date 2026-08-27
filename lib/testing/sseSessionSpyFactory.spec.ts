@@ -55,12 +55,102 @@ describe('createSSESessionSpy', () => {
     expect(second.spy.isConnected('conn-1')).toBe(false)
   })
 
+  it('runs the route own onConnect before notifying the spy, keeping both', async () => {
+    const { spy, withSpy } = createSSESessionSpy<TestSession>()
+    const seenByRoute: string[] = []
+    const routeOptions = withSpy({
+      onConnect: (connection) => {
+        seenByRoute.push(connection.id)
+      },
+    })
+    const session = fakeSession('conn-1')
+
+    routeOptions.onConnect(session)
+
+    expect(seenByRoute).toEqual(['conn-1'])
+    await expect(spy.waitForConnection({ timeout: 50 })).resolves.toBe(session)
+  })
+
+  it('runs the route own onClose before notifying the spy, keeping both', async () => {
+    const { spy, withSpy } = createSSESessionSpy<TestSession>()
+    const closedByRoute: [string, string][] = []
+    const routeOptions = withSpy({
+      onClose: (connection, initiator) => {
+        closedByRoute.push([connection.id, initiator])
+      },
+    })
+    const session = fakeSession('conn-1')
+
+    routeOptions.onConnect(session)
+    routeOptions.onClose(session, 'client')
+
+    expect(closedByRoute).toEqual([['conn-1', 'client']])
+    await spy.waitForDisconnection('conn-1', { timeout: 50 })
+    expect(spy.isConnected('conn-1')).toBe(false)
+  })
+
+  it('awaits an async route hook before notifying the spy', async () => {
+    const { spy, withSpy } = createSSESessionSpy<TestSession>()
+    const order: string[] = []
+    const routeOptions = withSpy({
+      onConnect: async (connection) => {
+        await Promise.resolve()
+        order.push(`route:${connection.id}`)
+      },
+    })
+    const session = fakeSession('conn-1')
+
+    const pending = spy
+      .waitForConnection({ timeout: 500 })
+      .then((connection) => order.push(`spy:${connection.id}`))
+
+    await routeOptions.onConnect(session)
+    await pending
+
+    expect(order).toEqual(['route:conn-1', 'spy:conn-1'])
+  })
+
+  it('still notifies the spy when the route hook fails, and rethrows', async () => {
+    const { spy, withSpy } = createSSESessionSpy<TestSession>()
+    const boom = new Error('route hook exploded')
+    const syncRouteOptions = withSpy({
+      onConnect: () => {
+        throw boom
+      },
+    })
+    const asyncRouteOptions = withSpy({
+      onConnect: () => Promise.reject(boom),
+    })
+
+    expect(() => syncRouteOptions.onConnect(fakeSession('sync'))).toThrow(boom)
+    await expect(asyncRouteOptions.onConnect(fakeSession('async'))).rejects.toThrow(boom)
+
+    expect(spy.isConnected('sync')).toBe(true)
+    expect(spy.isConnected('async')).toBe(true)
+  })
+
+  it('passes non-hook options through untouched', () => {
+    const { withSpy } = createSSESessionSpy<TestSession>()
+
+    const routeOptions = withSpy({ heartbeat: false, serializer: JSON.stringify })
+
+    expect(routeOptions.heartbeat).toBe(false)
+    expect(routeOptions.serializer).toBe(JSON.stringify)
+    expect(routeOptions.onConnect).toBeTypeOf('function')
+    expect(routeOptions.onClose).toBeTypeOf('function')
+  })
+
   it('produces route options accepted by this package own SSE route options', () => {
     // Type-level check: the escape hatch for `buildFastifyRoute`-built routes.
-    const { routeOptions } = createSSESessionSpy<SSESession>()
+    const { routeOptions, withSpy } = createSSESessionSpy<SSESession>()
     const sseRouteOptions: FastifySSERouteOptions = { ...routeOptions }
+    const composedRouteOptions: FastifySSERouteOptions = withSpy({
+      heartbeat: false,
+      onConnect: (connection) => void connection.id,
+    })
 
     expect(sseRouteOptions.onConnect).toBeDefined()
     expect(sseRouteOptions.onClose).toBeDefined()
+    expect(composedRouteOptions.heartbeat).toBe(false)
   })
 })

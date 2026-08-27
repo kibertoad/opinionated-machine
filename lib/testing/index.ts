@@ -11,6 +11,7 @@ export { injectPayloadSSE, injectSSE } from './sseInjectHelpers.js'
 export {
   type CreateSSESessionSpyResult,
   createSSESessionSpy,
+  type SSESessionSpyHooks,
   type SSESessionSpyRouteOptions,
 } from './sseSessionSpyFactory.js'
 export { SSETestServer } from './sseTestServer.js'

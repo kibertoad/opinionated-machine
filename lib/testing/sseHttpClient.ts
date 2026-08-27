@@ -219,7 +219,14 @@ export class SSEHttpClient {
       signal: abortController.signal,
     })
 
-    const client = new SSEHttpClient(response, abortController)
+    let client: SSEHttpClient
+    try {
+      client = new SSEHttpClient(response, abortController)
+    } catch (error) {
+      // Nothing owns the response yet, so abort it here rather than leaking it.
+      abortController.abort()
+      throw error
+    }
 
     // If awaitServerConnection is specified, wait for server-side registration
     if (options && 'awaitServerConnection' in options && options.awaitServerConnection) {
@@ -228,13 +235,22 @@ export class SSEHttpClient {
         timeout: awaitOptions.timeout ?? 5000,
         predicate: (conn: SpiedSSESession) => conn.request.url === pathWithQuery,
       }
-      // Both branches call the same method; the spy is invariant in its session
-      // type, so they cannot be collapsed into one reference.
-      const serverConnection =
-        'spy' in awaitOptions
-          ? await awaitOptions.spy.waitForConnection(waitOptions)
-          : await awaitOptions.controller.connectionSpy.waitForConnection(waitOptions)
-      return { client, serverConnection }
+      try {
+        // Both branches call the same method; the spy is invariant in its session
+        // type, so they cannot be collapsed into one reference.
+        const serverConnection =
+          'spy' in awaitOptions
+            ? await awaitOptions.spy.waitForConnection(waitOptions)
+            : await awaitOptions.controller.connectionSpy.waitForConnection(waitOptions)
+        return { client, serverConnection }
+      } catch (error) {
+        // The HTTP connection is already established and the caller never gets a
+        // handle to it, so close it here. Left open, a keep-alive route keeps the
+        // socket streaming and the test's `app.close()` hangs, hiding this error
+        // behind a suite-level timeout.
+        client.close()
+        throw error
+      }
     }
 
     return client
