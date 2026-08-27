@@ -476,7 +476,10 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
     routeOptions.preHandler = options.preHandler
   }
 
-  return attachRouteStreamingMode(routeOptions, 'dual')
+  // Carry the fallback branch into the manifest: a gateway splitting this
+  // route needs to know where a request with no (or a wildcard) Accept header
+  // goes, or it applies request-shaped timeouts to an SSE response.
+  return attachRouteStreamingMode(routeOptions, 'dual', defaultMode)
 }
 
 /**

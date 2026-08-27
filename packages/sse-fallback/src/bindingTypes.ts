@@ -161,7 +161,51 @@ export type BackoffConfig = {
   maxMs: number
 }
 
+/**
+ * A hard ceiling on how long a subscription may keep working before it gives
+ * up. Unset by default: a live-state subscription is supposed to run for as
+ * long as the surface is open.
+ *
+ * Set it for pending-completion subscriptions. Every individual wait in this
+ * package is bounded, but the subscription as a whole is not: a backend stuck
+ * in a pending state deadman-polls forever (backing off to
+ * `deadmanIdleBackoff.maxMs`, never giving up), so a permanently pending
+ * operation polls until the tab closes. With a budget the subscription stops
+ * with a `'budget-exhausted'` reason, which is what a UI needs to show an
+ * actionable error and offer a manual retry.
+ */
+export type SubscriptionBudget = {
+  /** Wall-clock ceiling, measured from subscription creation. */
+  maxDurationMs?: number
+  /** Ceiling on snapshot polls attempted, successful or not. */
+  maxPolls?: number
+}
+
 export type FallbackPolicy = {
+  /**
+   * Which channels the subscription uses:
+   * - `'dual'` (default): SSE as the low-latency channel, polls as the
+   *   correctness backbone, degrading to polling after repeated connect
+   *   failures.
+   * - `'poll-only'`: never open a stream at all. The subscription starts in
+   *   `'polling'` and runs the degraded cadence
+   *   (`degradedPollIntervalMs`) from the first tick.
+   *
+   * `'poll-only'` exists so a backend can adopt this package BEFORE it has an
+   * SSE endpoint: the binding, the version gate, the reconciler and the state
+   * machine are the same ones the streaming rollout will use, so turning the
+   * stream on later is a config change on an already-integrated subscription
+   * rather than a second migration. Without it, poll-only delivery is only
+   * reachable after `degradedAfterFailures` connect failures against an
+   * endpoint that must already exist.
+   * @default 'dual'
+   */
+  mode: 'dual' | 'poll-only'
+  /**
+   * Overall ceiling for the subscription — see {@link SubscriptionBudget}.
+   * Unset by default.
+   */
+  subscriptionBudget?: SubscriptionBudget
   /**
    * Initial snapshot poll behavior:
    * - `'eager'` (default): fetch a snapshot as soon as the stream opens
@@ -232,9 +276,24 @@ export type FallbackPolicy = {
    * of retrying (auth/authz/not-found are not transient).
    */
   unretryableStatuses: ReadonlyArray<number>
+  /**
+   * Statuses that are offered to `onAuthChallenge` before the subscription
+   * gives up on them. Only meaningful for statuses that are also in
+   * {@link unretryableStatuses}.
+   *
+   * In a SPA a 401 is usually an expired token rather than a genuinely
+   * unauthorized caller, and this package exists to recover without a page
+   * reload. With an `onAuthChallenge` hook configured, the first auth refusal
+   * on either channel is handed to the application, which refreshes
+   * credentials and lets the request run once more; a second refusal without
+   * an intervening success stops the subscription.
+   * @default [401]
+   */
+  authChallengeStatuses: ReadonlyArray<number>
 }
 
 export const DEFAULT_POLICY: FallbackPolicy = {
+  mode: 'dual',
   initialPoll: 'eager',
   deadmanDelayMs: 10_000,
   deadmanIdleBackoff: { factor: 1.5, maxMs: 60_000 },
@@ -250,9 +309,15 @@ export const DEFAULT_POLICY: FallbackPolicy = {
   degradedSseRetryMaxMs: 60_000,
   hydrationBufferLimit: 1_000,
   unretryableStatuses: [401, 403, 404],
+  authChallengeStatuses: [401],
 }
 
-/** Preset for use case A — await async completion. */
+/**
+ * Preset for use case A — await async completion.
+ *
+ * Set `subscriptionBudget` on top of this for operations that must not poll
+ * forever if the backend never leaves its pending state.
+ */
 export const COMPLETION_POLICY: FallbackPolicy = DEFAULT_POLICY
 
 /** Preset for use case B — initial state load + live hydration. */
@@ -261,6 +326,16 @@ export const LIVE_STATE_POLICY: FallbackPolicy = {
   deadmanDelayMs: 120_000,
   deadmanIdleBackoff: { factor: 1.5, maxMs: 300_000 },
   degradedPollIntervalMs: 60_000,
+}
+
+/**
+ * Preset for adopters with no SSE endpoint yet: same binding, version gate and
+ * state machine as the dual-mode presets, polling only. Flip `mode` back to
+ * `'dual'` once the stream exists.
+ */
+export const POLL_ONLY_POLICY: FallbackPolicy = {
+  ...DEFAULT_POLICY,
+  mode: 'poll-only',
 }
 
 // ============================================================================

@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { fixtureManifest } from './__fixtures__/manifest.fixture.ts'
 import { renderEnvoyConfig } from './render.ts'
 
+const findRoute = (json: ReturnType<typeof renderEnvoyConfig>['json'], name: string) => {
+  const typedConfig = json.static_resources.listeners[0]?.filter_chains[0]?.filters[0]
+    ?.typed_config as {
+    route_config: { virtual_hosts: Array<{ routes: Array<Record<string, unknown>> }> }
+  }
+  return typedConfig.route_config.virtual_hosts[0]?.routes.find((r) => r.name === name)
+}
+
 describe('renderEnvoyConfig', () => {
   const options = {
     listenPort: 8080,
@@ -65,14 +73,6 @@ describe('renderEnvoyConfig', () => {
   })
 
   describe('streaming routes', () => {
-    const findRoute = (json: ReturnType<typeof renderEnvoyConfig>['json'], name: string) => {
-      const typedConfig = json.static_resources.listeners[0]?.filter_chains[0]?.filters[0]
-        ?.typed_config as {
-        route_config: { virtual_hosts: Array<{ routes: Array<Record<string, unknown>> }> }
-      }
-      return typedConfig.route_config.virtual_hosts[0]?.routes.find((r) => r.name === name)
-    }
-
     it('disables route timeout and idle timeout for streaming routes without declared timeouts', () => {
       const { json } = renderEnvoyConfig(fixtureManifest, options)
       // Envoy defaults (15s route timeout, 5m stream idle) would reset streams.
@@ -80,6 +80,9 @@ describe('renderEnvoyConfig', () => {
         cluster: 'users-service',
         timeout: '0s',
         idle_timeout: '0s',
+        // Both liveness bounds are off, so the lifetime ceiling is what keeps
+        // the connection (and the authorization it was opened with) finite.
+        max_stream_duration: { max_stream_duration: '1800s' },
       })
     })
 
@@ -91,6 +94,7 @@ describe('renderEnvoyConfig', () => {
         cluster: 'users-service',
         timeout: '0s',
         idle_timeout: '600s',
+        max_stream_duration: { max_stream_duration: '1800s' },
       })
     })
 
@@ -100,11 +104,15 @@ describe('renderEnvoyConfig', () => {
       const streamBranch = findRoute(json, 'jobsController.status__sse')
       const jsonBranch = findRoute(json, 'jobsController.status')
 
-      // The stream branch is selected by the same predicate the server uses.
+      // The stream branch is selected by the same predicate the server uses:
+      // the client asks for the stream, and does not refuse it with q=0.
       expect((streamBranch?.match as { headers: unknown[] }).headers).toContainEqual({
         name: 'accept',
         string_match: { contains: 'text/event-stream' },
       })
+      expect((streamBranch?.match as { headers: unknown[] }).headers).toContainEqual(
+        expect.objectContaining({ name: 'accept', invert_match: true }),
+      )
       // The JSON branch carries no Accept matcher, and none of the stream's
       // timeouts: it is an ordinary request under Envoy's own defaults.
       expect((jsonBranch?.match as { headers: unknown[] }).headers).not.toContainEqual({
@@ -153,6 +161,7 @@ describe('renderEnvoyConfig', () => {
         cluster: 'users-service',
         timeout: '0s',
         idle_timeout: '600s',
+        max_stream_duration: { max_stream_duration: '1800s' },
       })
     })
 
@@ -221,5 +230,175 @@ describe('renderEnvoyConfig', () => {
         ?.typed_config as Record<string, unknown>
       expect(typedConfig.stream_idle_timeout).toBe('600s')
     })
+  })
+})
+
+describe('renderEnvoyConfig — Accept negotiation on dual routes', () => {
+  const options = {
+    listenPort: 8080,
+    clusters: { 'users-service': { hosts: ['users:3000'] } },
+  }
+
+  function dualManifest(overrides?: Record<string, unknown>) {
+    const dualRoute = fixtureManifest.routes.find(
+      (r) => r.id === 'jobsController.status',
+    ) as (typeof fixtureManifest.routes)[number]
+    return {
+      ...fixtureManifest,
+      routes: [{ ...dualRoute, metadata: { upstream: 'users-service' }, ...overrides }],
+    }
+  }
+
+  /** Apply the emitted Accept matchers to a header value, the way Envoy would. */
+  function matchesBranch(route: Record<string, unknown> | undefined, accept?: string): boolean {
+    const headers = (route?.match as { headers?: Array<Record<string, unknown>> }).headers ?? []
+    return headers
+      .filter((h) => h.name === 'accept')
+      .every((h) => {
+        const stringMatch = h.string_match as { contains?: string; safe_regex?: { regex: string } }
+        const value = accept ?? ''
+        const matched =
+          stringMatch.contains !== undefined
+            ? value.includes(stringMatch.contains)
+            : new RegExp(`^${(stringMatch.safe_regex as { regex: string }).regex}$`).test(value)
+        return h.invert_match === true ? !matched : matched
+      })
+  }
+
+  it('does not route an Accept that refuses the stream with q=0 to the stream branch', () => {
+    const { json } = renderEnvoyConfig(dualManifest(), options)
+    const streamBranch = findRoute(json, 'jobsController.status__sse')
+
+    expect(matchesBranch(streamBranch, 'text/event-stream;q=0')).toBe(false)
+    expect(matchesBranch(streamBranch, 'application/json, text/event-stream;q=0')).toBe(false)
+    expect(matchesBranch(streamBranch, 'text/event-stream; q=0.0')).toBe(false)
+  })
+
+  it('still routes a deprioritized but accepted stream to the stream branch', () => {
+    const { json } = renderEnvoyConfig(dualManifest(), options)
+    const streamBranch = findRoute(json, 'jobsController.status__sse')
+
+    expect(matchesBranch(streamBranch, 'text/event-stream')).toBe(true)
+    expect(matchesBranch(streamBranch, 'text/event-stream;q=0.5')).toBe(true)
+    expect(matchesBranch(streamBranch, 'application/json;q=0.9, text/event-stream;q=0.1')).toBe(
+      true,
+    )
+  })
+
+  it.each([
+    ['a missing Accept header', undefined],
+    ['a wildcard Accept header', '*/*'],
+    ['an explicit application/json Accept header', 'application/json'],
+  ])('sends %s to the plain branch with defaultMode json', (_label, accept) => {
+    const { json } = renderEnvoyConfig(dualManifest(), options)
+
+    expect(matchesBranch(findRoute(json, 'jobsController.status__sse'), accept)).toBe(false)
+    // The catch-all carries no Accept matcher, so it takes everything else.
+    expect(matchesBranch(findRoute(json, 'jobsController.status'), accept)).toBe(true)
+  })
+
+  it('makes the stream the catch-all when the route declares defaultMode sse', () => {
+    const { json, warnings } = renderEnvoyConfig(
+      dualManifest({ streamingDefaultMode: 'sse' }),
+      options,
+    )
+    const jsonBranch = findRoute(json, 'jobsController.status__json')
+    const streamBranch = findRoute(json, 'jobsController.status__sse')
+
+    // A missing or wildcard Accept header streams on the server, so it must
+    // reach the stream-shaped branch here rather than the request timeout.
+    expect(matchesBranch(jsonBranch, undefined)).toBe(false)
+    expect(matchesBranch(jsonBranch, '*/*')).toBe(false)
+    expect(matchesBranch(jsonBranch, 'application/json')).toBe(true)
+    expect(streamBranch?.route).toMatchObject({ timeout: '0s' })
+    expect(warnings.some((w) => w.includes('defaultMode "sse"'))).toBe(true)
+  })
+
+  it('orders the json branch before the stream catch-all with defaultMode sse', () => {
+    const { json } = renderEnvoyConfig(dualManifest({ streamingDefaultMode: 'sse' }), options)
+    const typedConfig = json.static_resources.listeners[0]?.filter_chains[0]?.filters[0]
+      ?.typed_config as {
+      route_config: { virtual_hosts: Array<{ routes: Array<Record<string, unknown>> }> }
+    }
+    const names = typedConfig.route_config.virtual_hosts[0]?.routes.map((r) => r.name) ?? []
+
+    expect(names.indexOf('jobsController.status__json')).toBeLessThan(
+      names.indexOf('jobsController.status__sse'),
+    )
+  })
+})
+
+describe('renderEnvoyConfig — bounded stream lifetime', () => {
+  const options = {
+    listenPort: 8080,
+    clusters: { 'users-service': { hosts: ['users:3000'] } },
+  }
+
+  it('honours EnvoyOptions.maxStreamDuration', () => {
+    const { json } = renderEnvoyConfig(fixtureManifest, { ...options, maxStreamDuration: '10m' })
+
+    expect(findRoute(json, 'notificationsController.stream')?.route).toMatchObject({
+      max_stream_duration: { max_stream_duration: '600s' },
+    })
+  })
+
+  it('lets a route override the ceiling with timeouts.maxDuration', () => {
+    const manifest = {
+      ...fixtureManifest,
+      routes: [
+        {
+          ...(fixtureManifest.routes.find(
+            (r) => r.id === 'notificationsController.stream',
+          ) as (typeof fixtureManifest.routes)[number]),
+          metadata: { upstream: 'users-service', timeouts: { maxDuration: '2h' } },
+        },
+      ],
+    }
+    const { json } = renderEnvoyConfig(manifest, options)
+
+    expect(findRoute(json, 'notificationsController.stream')?.route).toMatchObject({
+      max_stream_duration: { max_stream_duration: '7200s' },
+    })
+  })
+
+  it.each([
+    ['the global opt-out', { maxStreamDuration: 'off' as const }],
+    ['a zero global value', { maxStreamDuration: '0s' }],
+  ])('emits no ceiling for %s', (_label, overrides) => {
+    const { json } = renderEnvoyConfig(fixtureManifest, { ...options, ...overrides })
+    const route = findRoute(json, 'notificationsController.stream')?.route as Record<
+      string,
+      unknown
+    >
+
+    expect(route.max_stream_duration).toBeUndefined()
+  })
+
+  it('emits no ceiling for a route that opts out with maxDuration 0s', () => {
+    const manifest = {
+      ...fixtureManifest,
+      routes: [
+        {
+          ...(fixtureManifest.routes.find(
+            (r) => r.id === 'notificationsController.stream',
+          ) as (typeof fixtureManifest.routes)[number]),
+          metadata: { upstream: 'users-service', timeouts: { maxDuration: '0s' } },
+        },
+      ],
+    }
+    const { json } = renderEnvoyConfig(manifest, options)
+    const route = findRoute(json, 'notificationsController.stream')?.route as Record<
+      string,
+      unknown
+    >
+
+    expect(route.max_stream_duration).toBeUndefined()
+  })
+
+  it('does not bound plain routes', () => {
+    const { json } = renderEnvoyConfig(fixtureManifest, options)
+    const plain = findRoute(json, 'jobsController.status')?.route as Record<string, unknown>
+
+    expect(plain.max_stream_duration).toBeUndefined()
   })
 })

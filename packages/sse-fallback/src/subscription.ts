@@ -1,16 +1,68 @@
 import type { FallbackBinding, FallbackRequestParams } from './binding.ts'
 import type { EventPayloadMap, FallbackEvent, FallbackPolicy, Version } from './bindingTypes.ts'
 import { DEFAULT_POLICY } from './bindingTypes.ts'
+import type { PollGate } from './pollGate.ts'
 import { Reconciler } from './reconciler.ts'
 import { backoffDelay, ResettableTimer, sleep } from './scheduler.ts'
 import { parseSSEBuffer } from './sseParser.ts'
-import type { FallbackTransport } from './transport.ts'
+import type { FallbackTransport, ParsedSseFrame, StreamResponse } from './transport.ts'
+import { isParsedStreamResponse } from './transport.ts'
 
 // ============================================================================
 // Public types
 // ============================================================================
 
 export type SubscriptionStatus = 'connecting' | 'live' | 'reconnecting' | 'polling' | 'stopped'
+
+/**
+ * Why a subscription reached `'stopped'`.
+ *
+ * `'stopped'` alone cannot be acted on: a completed job, an auth failure and a
+ * caller's own `stop()` all land there. The reason is what lets a UI tell
+ * success from give-up, and give-up from "the user navigated away".
+ *
+ * - `'terminal-event'` — a terminal event was delivered. Success.
+ * - `'unretryable-status'` — the stream or a poll was refused with a status in
+ *   `unretryableStatuses` (and `onAuthChallenge`, if any, did not recover).
+ *   `status` carries which one.
+ * - `'budget-exhausted'` — `subscriptionBudget` ran out. `limit` says which
+ *   half. Show an actionable error and offer a manual retry.
+ * - `'manual'` — the caller called `stop()`, or the `signal` passed at
+ *   creation aborted.
+ */
+export type StopReason = 'terminal-event' | 'unretryable-status' | 'budget-exhausted' | 'manual'
+
+/** The reason a subscription stopped, plus whatever detail that reason carries. */
+export type SubscriptionStopDetail = {
+  reason: StopReason
+  /** The refusing HTTP status, for `'unretryable-status'`. */
+  status?: number
+  /** Which half of the budget ran out, for `'budget-exhausted'`. */
+  limit?: 'maxDurationMs' | 'maxPolls'
+  /** Which channel hit the refusal, for `'unretryable-status'`. */
+  channel?: 'poll' | 'stream'
+}
+
+/**
+ * Rejection thrown by `waitFor` / `waitForTerminal` when the subscription
+ * stops before the awaited event arrives. Carries the stop reason so the
+ * caller can branch without inspecting the message.
+ */
+export class SubscriptionStoppedError extends Error {
+  readonly reason: StopReason
+  readonly status: number | undefined
+  readonly limit: 'maxDurationMs' | 'maxPolls' | undefined
+  readonly channel: 'poll' | 'stream' | undefined
+
+  constructor(detail: SubscriptionStopDetail) {
+    super(`Subscription stopped (${detail.reason}) before the awaited event arrived`)
+    this.name = 'SubscriptionStoppedError'
+    this.reason = detail.reason
+    this.status = detail.status
+    this.limit = detail.limit
+    this.channel = detail.channel
+  }
+}
 
 /**
  * Observability hooks — all optional, all no-ops by default. None of these
@@ -23,6 +75,15 @@ export type FallbackDiagnostics = {
   onStaleSnapshot?: () => void
   onPollError?: (error: unknown) => void
   onStreamError?: (error: unknown) => void
+  /**
+   * A gap suspended the state layer: `getState()` is frozen at its pre-gap
+   * value until a snapshot repairs it, even though events keep flowing.
+   */
+  onStateSuspended?: (gap: { from: Version; to: Version }) => void
+  /** A snapshot lifted the suspension and re-initialized state. */
+  onStateRepaired?: () => void
+  /** A listener passed to `onEvent` / `onStateChange` / `onStatusChange` threw. */
+  onListenerError?: (error: unknown) => void
 }
 
 export type CreateResilientSubscriptionOptions = {
@@ -31,6 +92,27 @@ export type CreateResilientSubscriptionOptions = {
   policy?: Partial<FallbackPolicy>
   diagnostics?: FallbackDiagnostics
   signal?: AbortSignal
+  /**
+   * Shared cap and stagger for reconciliation polls across subscriptions —
+   * see `createPollGate`. Without one, a fleet-wide reconnect fires every
+   * subscription's reconciliation poll on the same tick.
+   */
+  pollGate?: PollGate
+  /**
+   * Called when a poll or stream connect is refused with a status in
+   * `policy.authChallengeStatuses` (default `[401]`). Refresh credentials
+   * here — the transport builds every request fresh, so a token stored on the
+   * transport is picked up by the retry.
+   *
+   * Resolve `true` to run the refused request once more; resolve `false`, or
+   * throw, to stop the subscription with `'unretryable-status'`. The retry is
+   * granted once per auth failure streak: a second refusal with no successful
+   * request in between stops the subscription.
+   */
+  onAuthChallenge?: (challenge: {
+    status: number
+    channel: 'poll' | 'stream'
+  }) => boolean | Promise<boolean>
   /**
    * Decode an SSE `data:` payload into the value handed to the reconciler.
    * Defaults to `JSON.parse`, matching the framework's default serializer.
@@ -55,7 +137,24 @@ export type ResilientSubscription<
   getState(): State | undefined
   onStateChange(listener: (state: State) => void): () => void
   readonly status: SubscriptionStatus
-  onStatusChange(listener: (status: SubscriptionStatus) => void): () => void
+  /**
+   * Observe status transitions. `detail` is present exactly when `status` is
+   * `'stopped'`, and says why — see {@link StopReason}.
+   */
+  onStatusChange(
+    listener: (status: SubscriptionStatus, detail?: SubscriptionStopDetail) => void,
+  ): () => void
+  /**
+   * Why the subscription stopped, or `undefined` while it is still running.
+   * Also delivered to `onStop` and `onStatusChange` at the moment it stops.
+   */
+  readonly result: SubscriptionStopDetail | undefined
+  /**
+   * Run a listener when the subscription stops. Registering after it has
+   * already stopped calls the listener immediately, so there is no race
+   * between subscribing and a terminal event that arrived first.
+   */
+  onStop(listener: (detail: SubscriptionStopDetail) => void): () => void
   /** Force an immediate reconciliation poll + connection check. */
   nudge(): void
   /** Stop the subscription: cancel timers, abort in-flight requests. */
@@ -64,6 +163,9 @@ export type ResilientSubscription<
    * Await the first delivery of a specific event (use case: await async
    * completion). Resolves identically whether the event traveled over SSE,
    * replay, or a fallback poll.
+   *
+   * Rejects with {@link SubscriptionStoppedError} if the subscription stops
+   * first, so the caller can tell an auth failure from an exhausted budget.
    */
   waitFor<K extends keyof Events & string>(
     event: K,
@@ -91,12 +193,17 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   private readonly random: () => number
   private readonly parseEventData: (raw: string) => unknown
   private readonly reconciler: Reconciler<Snapshot, Events, State>
+  private readonly pollGate: PollGate | undefined
+  private readonly onAuthChallenge:
+    | ((challenge: { status: number; channel: 'poll' | 'stream' }) => boolean | Promise<boolean>)
+    | undefined
 
   private readonly abortController = new AbortController()
   private currentStreamAbort: AbortController | undefined
 
   private statusValue: SubscriptionStatus = 'connecting'
   private stopped = false
+  private stopDetail: SubscriptionStopDetail | undefined
   private streamConnected = false
   private lastEventId: string | undefined
   private serverRetryHintMs: number | undefined
@@ -109,13 +216,23 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   private pollQueued = false
   private pollFailures = 0
   private idlePolls = 0
+  /** Polls attempted, for `subscriptionBudget.maxPolls`. */
+  private pollsAttempted = 0
+  /** Whether the one auth retry has been spent since the last successful request. */
+  private authRetrySpent = false
 
   private readonly deadman = new ResettableTimer(() => this.schedulePoll())
   private readonly staleConnection = new ResettableTimer(() => this.onStaleConnection())
+  private readonly budgetTimer = new ResettableTimer(() =>
+    this.stopWith({ reason: 'budget-exhausted', limit: 'maxDurationMs' }),
+  )
 
   private readonly eventListeners = new Set<(event: FallbackEvent<Events>) => void>()
   private readonly stateListeners = new Set<(state: State) => void>()
-  private readonly statusListeners = new Set<(status: SubscriptionStatus) => void>()
+  private readonly statusListeners = new Set<
+    (status: SubscriptionStatus, detail?: SubscriptionStopDetail) => void
+  >()
+  private readonly stopListeners = new Set<(detail: SubscriptionStopDetail) => void>()
   private readonly iteratorFeeds = new Set<IteratorFeed<Events>>()
 
   constructor(
@@ -129,6 +246,8 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     this.diagnostics = options.diagnostics ?? {}
     this.random = options.random ?? Math.random
     this.parseEventData = options.parseEventData ?? JSON.parse
+    this.pollGate = options.pollGate
+    this.onAuthChallenge = options.onAuthChallenge
     this.reconciler = new Reconciler(binding.config, {
       hydrationBufferLimit: this.policy.hydrationBufferLimit,
     })
@@ -139,6 +258,24 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         return
       }
       options.signal.addEventListener('abort', () => this.stop(), { once: true })
+    }
+
+    const maxDurationMs = this.policy.subscriptionBudget?.maxDurationMs
+    if (maxDurationMs !== undefined) {
+      this.budgetTimer.arm(maxDurationMs)
+    }
+
+    if (this.policy.mode === 'poll-only') {
+      // No stream is ever opened, so the machine starts where a dual-mode
+      // subscription only lands after repeated connect failures.
+      this.degraded = true
+      this.setStatus('polling')
+      if (this.policy.initialPoll === 'eager') {
+        this.schedulePoll()
+      } else {
+        this.armDeadman()
+      }
+      return
     }
 
     void this.runStreamLoop()
@@ -156,6 +293,10 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     return this.statusValue
   }
 
+  get result(): SubscriptionStopDetail | undefined {
+    return this.stopDetail
+  }
+
   getState(): State | undefined {
     return this.reconciler.getState()
   }
@@ -170,9 +311,20 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     return () => this.stateListeners.delete(listener)
   }
 
-  onStatusChange(listener: (status: SubscriptionStatus) => void): () => void {
+  onStatusChange(
+    listener: (status: SubscriptionStatus, detail?: SubscriptionStopDetail) => void,
+  ): () => void {
     this.statusListeners.add(listener)
     return () => this.statusListeners.delete(listener)
+  }
+
+  onStop(listener: (detail: SubscriptionStopDetail) => void): () => void {
+    if (this.stopDetail !== undefined) {
+      this.runListener(listener, this.stopDetail)
+      return () => {}
+    }
+    this.stopListeners.add(listener)
+    return () => this.stopListeners.delete(listener)
   }
 
   events(): AsyncIterable<FallbackEvent<Events>> {
@@ -245,13 +397,21 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   }
 
   stop(): void {
+    this.stopWith({ reason: 'manual' })
+  }
+
+  private stopWith(detail: SubscriptionStopDetail): void {
     if (this.stopped) return
     this.stopped = true
+    this.stopDetail = detail
     this.deadman.clear()
     this.staleConnection.clear()
+    this.budgetTimer.clear()
     this.currentStreamAbort?.abort()
     this.abortController.abort()
-    this.setStatus('stopped')
+    this.setStatus('stopped', detail)
+    for (const listener of this.stopListeners) this.runListener(listener, detail)
+    this.stopListeners.clear()
     for (const feed of this.iteratorFeeds) feed.finish()
     this.iteratorFeeds.clear()
   }
@@ -300,8 +460,20 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
             new Error(`SSE connect failed with status ${response.status}`),
           )
           if (this.policy.unretryableStatuses.includes(response.status)) {
-            this.stop()
-            return
+            // An expired token is the common case behind a 401 in a SPA, and
+            // recovering without a page reload is the point of this package.
+            // Give the application one chance to refresh credentials; the
+            // reconnect below then retries with them.
+            const recovered = await this.tryAuthChallenge(response.status, 'stream')
+            if (this.stopped) return
+            if (!recovered) {
+              this.stopWith({
+                reason: 'unretryable-status',
+                status: response.status,
+                channel: 'stream',
+              })
+              return
+            }
           }
         } else {
           this.serverRetryHintMs = undefined
@@ -330,7 +502,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
           firstConnect = false
 
           this.armStaleConnection()
-          await this.consumeStream(response.chunks)
+          await this.consumeStream(response)
           connectTimeout.clear()
           if (this.stopped || this.reconciler.isTerminated) return
           // Stream ended (server close, stale-abort, or network) — fall
@@ -382,40 +554,73 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     }
   }
 
-  private async consumeStream(chunks: AsyncIterable<string>): Promise<void> {
+  private consumeStream(response: StreamResponse): Promise<void> {
     this.streamConnected = true
+    return isParsedStreamResponse(response)
+      ? this.consumeFrames(response.events)
+      : this.consumeChunks(response.chunks)
+  }
+
+  /** Whether the loop should stop pulling from the stream. */
+  private get streamLoopDone(): boolean {
+    return this.stopped || this.reconciler.isTerminated
+  }
+
+  /**
+   * Consume a transport that already framed the stream. Comment/heartbeat
+   * frames were consumed before they reached us, so liveness here is
+   * event-level, not byte-level — see `ParsedStreamResponse` for what that
+   * costs.
+   */
+  private async consumeFrames(frames: AsyncIterable<ParsedSseFrame>): Promise<void> {
+    for await (const frame of frames) {
+      if (this.streamLoopDone) return
+      this.onStreamActivity()
+      this.handleParsedEvent(frame)
+      if (this.streamLoopDone) return
+    }
+  }
+
+  /** Consume raw text and do the SSE framing here. */
+  private async consumeChunks(chunks: AsyncIterable<string>): Promise<void> {
     let buffer = ''
     for await (const chunk of chunks) {
-      if (this.stopped || this.reconciler.isTerminated) return
+      if (this.streamLoopDone) return
       // ANY bytes (heartbeat comments included) prove transport liveness.
-      this.armStaleConnection()
-      if (!this.streamProducedBytes) {
-        this.streamProducedBytes = true
-        // The stream is demonstrably working — clear the failure history and
-        // leave degraded mode. Doing this here rather than at connect keeps a
-        // connect-then-close loop counted as the failure it is.
-        this.consecutiveConnectFailures = 0
-        if (this.degraded) {
-          this.degraded = false
-          this.setStatus('live')
-        }
-      }
+      this.onStreamActivity()
       buffer += chunk
       const parsed = parseSSEBuffer(buffer)
       buffer = parsed.remaining
       for (const event of parsed.events) {
         this.handleParsedEvent(event)
-        if (this.stopped || this.reconciler.isTerminated) return
+        if (this.streamLoopDone) return
       }
     }
   }
 
-  private handleParsedEvent(parsed: {
-    id?: string
-    event?: string
-    data: string
-    retry?: number
-  }): void {
+  /** Called for every unit of stream activity — a raw chunk or a parsed frame. */
+  private onStreamActivity(): void {
+    this.armStaleConnection()
+    if (this.streamProducedBytes) return
+    this.streamProducedBytes = true
+    // The stream is demonstrably working — clear the failure history and
+    // leave degraded mode. Doing this here rather than at connect keeps a
+    // connect-then-close loop counted as the failure it is.
+    this.consecutiveConnectFailures = 0
+    this.authRetrySpent = false
+    this.degraded = false
+    // Bytes on the wire are the only evidence that delivery works, so they are
+    // what promotes the subscription to 'live' — from degraded polling, and
+    // equally from the 'connecting' a byte-less stream is parked in after
+    // hydration was abandoned. Hydration itself still owns the status until it
+    // finishes, so a busy stream cannot announce 'live' before the snapshot
+    // it is buffering behind has landed.
+    if (!this.reconciler.isHydrating) {
+      this.setStatus('live')
+    }
+  }
+
+  private handleParsedEvent(parsed: ParsedSseFrame): void {
     if (parsed.retry !== undefined && Number.isFinite(parsed.retry)) {
       const { minMs, maxMs } = this.policy.serverRetryHintBounds
       this.serverRetryHintMs = Math.min(Math.max(parsed.retry, minMs), maxMs)
@@ -461,12 +666,17 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     }
     if (outcome.gap) {
       this.diagnostics.onGap?.(outcome.gap)
+      if (outcome.stateSuspended) {
+        // getState() is frozen at its pre-gap value from here until a snapshot
+        // repairs it, while events keep flowing to listeners.
+        this.diagnostics.onStateSuspended?.(outcome.gap)
+      }
       // A gap is a loss, not a reorder — polling is the only repair.
       this.schedulePoll()
     }
     this.deliver(outcome.deliveries, outcome.state)
     if (outcome.terminated) {
-      this.stop()
+      this.stopWith({ reason: 'terminal-event' })
     }
   }
 
@@ -497,6 +707,12 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: poll execution coordinates gating, status transitions, failure backoff, and coalescing in one place
   private async executePoll(): Promise<void> {
+    const maxPolls = this.policy.subscriptionBudget?.maxPolls
+    if (maxPolls !== undefined && this.pollsAttempted >= maxPolls) {
+      this.stopWith({ reason: 'budget-exhausted', limit: 'maxPolls' })
+      return
+    }
+    this.pollsAttempted += 1
     this.pollInFlight = true
     // Polling is the correctness backbone, so a poll that never settles is
     // the worst failure this machine has: it would hold the in-flight latch
@@ -509,7 +725,15 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     if (this.policy.pollTimeoutMs !== 'off') {
       pollTimeout.arm(this.policy.pollTimeoutMs)
     }
+    // A shared gate caps and staggers reconciliation polls across every
+    // subscription in the tab, so one server blip does not turn into a
+    // simultaneous burst of one poll per subscription.
+    let releaseGate: (() => void) | undefined
     try {
+      if (this.pollGate) {
+        releaseGate = await this.pollGate.acquire({ signal: pollAbort.signal })
+        if (this.stopped || this.reconciler.isTerminated) return
+      }
       const response = await this.transport.fetchSnapshot(
         this.binding.buildSnapshotRequest(this.params),
         { signal: pollAbort.signal },
@@ -521,7 +745,19 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
           new Error(`Snapshot poll failed with status ${response.status}`),
         )
         if (this.policy.unretryableStatuses.includes(response.status)) {
-          this.stop()
+          const recovered = await this.tryAuthChallenge(response.status, 'poll')
+          if (this.stopped || this.reconciler.isTerminated) return
+          if (!recovered) {
+            this.stopWith({
+              reason: 'unretryable-status',
+              status: response.status,
+              channel: 'poll',
+            })
+            return
+          }
+          // Credentials were refreshed — run the refused poll once more. The
+          // finally block below releases the latch and starts it.
+          this.pollQueued = true
           return
         }
         this.onPollFailed()
@@ -529,18 +765,22 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       }
 
       this.pollFailures = 0
+      this.authRetrySpent = false
       const outcome = this.reconciler.handleSnapshot(response.body as Snapshot)
       if (outcome.stale) {
         this.diagnostics.onStaleSnapshot?.()
+      }
+      if (outcome.stateRepaired) {
+        this.diagnostics.onStateRepaired?.()
       }
       this.deliver(outcome.deliveries, outcome.state)
       if (outcome.hydrationCompleted && !this.stopped) {
         // Hydration can complete while 'connecting' (normal startup) or
         // 'polling' (first successful connect after starting degraded).
-        this.setStatus(this.streamConnected ? 'live' : 'reconnecting')
+        this.setStatus(this.streamConnected ? 'live' : this.degraded ? 'polling' : 'reconnecting')
       }
       if (outcome.terminated) {
-        this.stop()
+        this.stopWith({ reason: 'terminal-event' })
         return
       }
 
@@ -555,6 +795,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       this.diagnostics.onPollError?.(error)
       this.onPollFailed()
     } finally {
+      releaseGate?.()
       pollTimeout.clear()
       this.abortController.signal.removeEventListener('abort', onMasterAbort)
       this.pollInFlight = false
@@ -562,6 +803,28 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         this.pollQueued = false
         void this.executePoll()
       }
+    }
+  }
+
+  /**
+   * Offer an auth refusal to the application once, so an expired token can be
+   * refreshed instead of killing the subscription.
+   *
+   * Returns `true` when the caller refreshed credentials and the refused
+   * request should run again. The retry is spent until a request succeeds, so
+   * a hook that keeps returning `true` against a genuinely unauthorized caller
+   * cannot spin.
+   */
+  private async tryAuthChallenge(status: number, channel: 'poll' | 'stream'): Promise<boolean> {
+    if (!this.onAuthChallenge) return false
+    if (!this.policy.authChallengeStatuses.includes(status)) return false
+    if (this.authRetrySpent) return false
+    this.authRetrySpent = true
+    try {
+      return (await this.onAuthChallenge({ status, channel })) === true
+    } catch (error) {
+      this.diagnostics.onListenerError?.(error)
+      return false
     }
   }
 
@@ -580,9 +843,24 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     ) {
       const outcome = this.reconciler.abandonHydration()
       this.deliver(outcome.deliveries, outcome.state)
-      this.setStatus(this.streamConnected ? 'live' : this.degraded ? 'polling' : 'reconnecting')
-      if (outcome.terminated) this.stop()
+      this.setStatus(this.statusAfterAbandonedHydration())
+      if (outcome.terminated) this.stopWith({ reason: 'terminal-event' })
     }
+  }
+
+  /**
+   * Status to report once subscribe-first hydration is abandoned.
+   *
+   * `streamConnected` is set before the first chunk arrives, so it cannot
+   * stand in for "delivery is healthy": hydration is abandoned precisely
+   * because polls kept failing, and if the stream has been silent too then
+   * nothing has been delivered at all. Only actual bytes earn `'live'` —
+   * which is the same rule the byte-based recovery in `onStreamActivity` uses.
+   */
+  private statusAfterAbandonedHydration(): SubscriptionStatus {
+    if (this.streamProducedBytes) return 'live'
+    if (this.degraded) return 'polling'
+    return this.streamConnected ? 'connecting' : 'reconnecting'
   }
 
   private armDeadman(): void {
@@ -605,18 +883,42 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     state: { value: unknown } | undefined,
   ): void {
     for (const event of deliveries) {
-      for (const listener of this.eventListeners) listener(event)
+      for (const listener of this.eventListeners) this.runListener(listener, event)
       for (const feed of this.iteratorFeeds) feed.push(event)
     }
     if (state !== undefined) {
-      for (const listener of this.stateListeners) listener(state.value as State)
+      for (const listener of this.stateListeners) this.runListener(listener, state.value as State)
     }
   }
 
-  private setStatus(status: SubscriptionStatus): void {
+  /**
+   * Call one application listener in isolation.
+   *
+   * A throwing listener used to take down the whole delivery: the remaining
+   * event listeners, every `events()` iterator and the state listeners were
+   * skipped, and the exception unwound into the stream or poll loop, where it
+   * was recorded as a transport failure. An application bug then degraded the
+   * connection it had nothing to do with. Listener faults are reported through
+   * `diagnostics.onListenerError` and go no further.
+   */
+  private runListener<T>(listener: (value: T) => void, value: T): void {
+    try {
+      listener(value)
+    } catch (error) {
+      try {
+        this.diagnostics.onListenerError?.(error)
+      } catch {
+        // A diagnostics hook that throws too is not allowed to escape either.
+      }
+    }
+  }
+
+  private setStatus(status: SubscriptionStatus, detail?: SubscriptionStopDetail): void {
     if (this.statusValue === status) return
     this.statusValue = status
-    for (const listener of this.statusListeners) listener(status)
+    for (const listener of this.statusListeners) {
+      this.runListener(() => listener(status, detail), undefined)
+    }
   }
 
   private waitMatching(
@@ -625,14 +927,14 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   ): Promise<FallbackEvent<Events>> {
     return new Promise((resolve, reject) => {
       if (this.stopped) {
-        reject(new Error('Subscription is stopped'))
+        reject(new SubscriptionStoppedError(this.stopDetail ?? { reason: 'manual' }))
         return
       }
       let timer: ReturnType<typeof setTimeout> | undefined
-      const offStatus = this.onStatusChange((status) => {
+      const offStatus = this.onStatusChange((status, detail) => {
         if (status === 'stopped') {
           cleanup()
-          reject(new Error('Subscription stopped before the awaited event arrived'))
+          reject(new SubscriptionStoppedError(detail ?? { reason: 'manual' }))
         }
       })
       const offEvent = this.onEvent((event) => {
@@ -679,6 +981,10 @@ export function createResilientSubscription<
       return impl.status
     },
     onStatusChange: (listener) => impl.onStatusChange(listener),
+    get result() {
+      return impl.result
+    },
+    onStop: (listener) => impl.onStop(listener),
     nudge: () => impl.nudge(),
     stop: () => impl.stop(),
     waitFor: (event, opts) => impl.waitFor(event, opts),

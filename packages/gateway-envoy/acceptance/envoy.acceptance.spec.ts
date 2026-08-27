@@ -94,8 +94,24 @@ describe('envoy acceptance', () => {
       // Envoy resets the stream during the 3s gap. Depending on timing the
       // reset surfaces as a truncated body or a network error.
       const res = await fetchGateway('/sse-unmarked?gapMs=3000')
+      // Assert the request actually reached the SSE upstream first: a 404 or a
+      // 503 also contains no 'event: second', so without this the test would
+      // pass on broken route matching or a misconfigured cluster.
+      expect(res.status).toBe(200)
       const body = await res.text().catch(() => '')
       expect(body).not.toContain('event: second')
+    })
+
+    it('routes an Accept that refuses the stream with q=0 to the JSON branch', async () => {
+      // `contains: 'text/event-stream'` alone would match this header and send
+      // a client that explicitly refused the stream to the stream branch.
+      const res = await fetchGateway('/dual?ms=0', {
+        headers: { accept: 'application/json, text/event-stream;q=0' },
+      })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('application/json')
+      const body = (await res.json()) as { branch: string }
+      expect(body.branch).toBe('json')
     })
   })
 })

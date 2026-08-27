@@ -371,12 +371,31 @@ describe('sse-fallback integration (real server, real HTTP)', () => {
 // Browser-safety guard for the sse-fallback package sources
 // ---------------------------------------------------------------------------
 
+/** Every non-spec `.ts` under `dir`, as paths relative to it. */
+function sourceFilesUnder(dir: string, prefix = ''): string[] {
+  const found: string[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+    if (entry.isDirectory()) {
+      found.push(...sourceFilesUnder(join(dir, entry.name), relative))
+      continue
+    }
+    if (!entry.name.endsWith('.ts') || entry.name.endsWith('.spec.ts')) continue
+    found.push(relative)
+  }
+  return found
+}
+
 describe('sse-fallback browser safety', () => {
   it('has no node:/fastify/server-only imports in its source tree', () => {
     const srcDir = join(__dirname, '..', '..', 'packages', 'sse-fallback', 'src')
+    // Walk the tree rather than the top level: a flat scan would miss anything
+    // added under a new subdirectory, which is exactly when this check matters.
+    const files = sourceFilesUnder(srcDir)
+    expect(files.length).toBeGreaterThan(0)
+
     const offenders: string[] = []
-    for (const file of readdirSync(srcDir)) {
-      if (!file.endsWith('.ts') || file.endsWith('.spec.ts')) continue
+    for (const file of files) {
       const content = readFileSync(join(srcDir, file), 'utf8')
       for (const forbidden of ["from 'node:", "from 'fastify", "from 'awilix", 'require(']) {
         if (content.includes(forbidden)) {

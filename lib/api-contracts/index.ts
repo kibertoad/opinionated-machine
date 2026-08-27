@@ -14,5 +14,7 @@ export {
   ApiSseConnectionRegistry,
   getApiSseConnectionRegistry,
   getSessionRooms,
+  type SSERoomsOptions,
+  withSessionRooms,
 } from './apiSseConnectionRegistry.ts'
 export { asApiControllerClass } from './asApiControllerClass.ts'

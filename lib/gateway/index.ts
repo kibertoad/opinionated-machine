@@ -31,8 +31,11 @@ export {
 export { normalizePath } from './manifest/pathNormalize.ts'
 export {
   attachRouteStreamingMode,
+  ROUTE_STREAMING_DEFAULT_MODE_SYMBOL,
   ROUTE_STREAMING_SYMBOL,
+  type RouteStreamingDefaultMode,
   type RouteStreamingMode,
+  readRouteStreamingDefaultMode,
   readRouteStreamingMode,
 } from './routeStreaming.ts'
 export { readGatewayMetadata, withGatewayMetadata } from './withGatewayMetadata.ts'

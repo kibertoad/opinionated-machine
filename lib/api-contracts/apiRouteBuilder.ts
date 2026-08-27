@@ -15,7 +15,7 @@ import type { GatewayMetadata } from '../gateway/gatewayTypes.ts'
 import { attachRouteStreamingMode, type RouteStreamingMode } from '../gateway/routeStreaming.ts'
 import { attachGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
 import type { SSERoomBroadcaster } from '../sse/rooms/SSERoomBroadcaster.ts'
-import { withSessionRooms } from './apiSseConnectionRegistry.ts'
+import { type SSERoomsOptions, withSessionRooms } from './apiSseConnectionRegistry.ts'
 
 /**
  * Options for configuring an ApiContract route.
@@ -71,6 +71,11 @@ export type ApiRouteOptions<Contract extends ApiContract> = FastifyApiRouteOptio
    * Without this option `getSessionRooms()` returns no-ops and the session
    * receives no room broadcasts.
    *
+   * Pass an {@link SSERoomsOptions} object instead of the bare broadcaster to
+   * declare an `authorizeJoin` scope check (so a room name built from a path
+   * param cannot leak across tenants) and a `maxSessionLifetimeMs` bound (so
+   * authorization checked at connect cannot stay in force forever).
+   *
    * @example
    * ```ts
    * buildApiRoute(contracts.watchProject, this.watch, { sseRooms: this.roomBroadcaster })
@@ -78,8 +83,20 @@ export type ApiRouteOptions<Contract extends ApiContract> = FastifyApiRouteOptio
    * const session = sse.start('keepAlive')
    * getSessionRooms(session).join(`project:${request.params.projectId}`)
    * ```
+   *
+   * @example
+   * ```ts
+   * buildApiRoute(contracts.watchProject, this.watch, {
+   *   sseRooms: {
+   *     broadcaster: this.roomBroadcaster,
+   *     authorizeJoin: (session, room) =>
+   *       this.membership.canRead(session.request.user, room),
+   *     maxSessionLifetimeMs: 30 * 60 * 1000,
+   *   },
+   * })
+   * ```
    */
-  sseRooms?: SSERoomBroadcaster
+  sseRooms?: SSERoomBroadcaster | SSERoomsOptions
 }
 
 /**

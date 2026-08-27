@@ -3302,14 +3302,34 @@ stamped with a streaming mode, and the manifest carries it as
   HCM `stream_idle_timeout` for everything else. Declaring `timeouts.request`
   on an SSE-only route warns — it bounds the stream's total lifetime.
 
+  With both of those timeouts off, a streaming route would otherwise have an
+  **unbounded** lifetime, and the authorization checked when the stream opened
+  would stay in force for as long as the connection lives — a principal removed
+  from a scope keeps receiving events until they close the tab. Streaming
+  routes therefore emit a route-level `max_stream_duration`, defaulting to
+  30 minutes. Configure it with `EnvoyOptions.maxStreamDuration` (`'off'` for
+  the old unbounded behaviour) or per route with `timeouts.maxDuration`
+  (`'0s'` to opt out). The ceiling is invisible to users when the client
+  treats a server close as a routine reconnect, which
+  `@opinionated-machine/sse-fallback` does.
+
   A **dual-mode** route is emitted as *two* Envoy routes, because one route
   cannot be both: `<id>__sse`, matched on `Accept: text/event-stream`, and
   `<id>`, the catch-all. The declared timeouts are split between them rather
   than applied to both — `timeouts.idle` goes to the stream branch,
   `timeouts.request` to the JSON branch, which is the fallback poll path and
-  the one that most needs a bound. Note the split keys off the `Accept` header,
-  the same predicate `determineMode()` uses server-side: a client that wants
-  the stream has to ask for `text/event-stream` explicitly.
+  the one that most needs a bound. The split keys off the `Accept` header, the
+  same predicate `determineMode()` uses server-side, quality values included:
+  `text/event-stream;q=0` is a refusal, so it takes the JSON branch.
+
+  A route declaring `defaultMode: 'sse'` inverts the split, because there the
+  server streams for a missing or wildcard `Accept` header. The manifest
+  carries the fallback branch as `streamingDefaultMode`, and Envoy makes the
+  stream the catch-all with `<id>__json` as the narrow branch, so an
+  unspecific request cannot land on the JSON branch's request timeout while the
+  server is streaming. A request listing both media types resolves to JSON on
+  the server but takes the stream branch at the gateway; the renderer warns
+  about that residual ambiguity.
 - **Kong** — streaming routes emit `response_buffering: false` (Kong ≥ 2.3);
   `timeouts.idle` joins the loosest-wins service `read_timeout`. Streaming
   routes without a declared idle warn: heartbeats must arrive within the
@@ -3412,6 +3432,52 @@ await this.sseRoomBroadcaster.broadcastToRoom(`job:${jobId}`, doneEvent, { resul
 })
 ```
 
+### SSE Rooms Authorization
+
+Room membership decides who receives a broadcast, so it is an authorization
+boundary. The handler above names the room from a path param; nothing in that
+line checks that the authenticated principal belongs to the job's scope. Pass
+an options object instead of the bare broadcaster to declare the check once
+per route:
+
+```ts
+{
+  sseRooms: {
+    broadcaster: this.sseRoomBroadcaster,
+    // Refused joins are logged and dropped; the stream itself stays open.
+    authorizeJoin: (session, room) => this.membership.canRead(session.request.user, room),
+    // Close the session after 30 minutes, forcing a re-authorized reconnect.
+    maxSessionLifetimeMs: 30 * 60_000,
+  },
+}
+```
+
+A synchronous verdict is applied before `join()` returns; an async one is
+applied when it resolves, so the session joins a moment later and the client's
+reconciliation poll covers anything broadcast in between.
+
+Authorization checked at connect goes stale, so revocation needs a termination
+path of its own:
+
+```ts
+const registry = getApiSseConnectionRegistry(this.sseRoomBroadcaster)
+
+registry.evict(connectionId)                  // end one stream
+registry.evictFromRoom(room, connectionId)    // drop one scope, keep the stream
+registry.closeRoom(`project:${projectId}`)    // end every stream in a scope
+```
+
+Only connections on the current node are closed, so a revocation event has to
+reach every node. A client that reconnects (as
+`@opinionated-machine/sse-fallback` does) comes back through the route's own
+authorization, so evicting a still-authorized principal costs a reconnect
+rather than a broken surface — which is also why `maxSessionLifetimeMs` is
+cheap: it doubles as the token-refresh mechanism and the backstop for a
+revocation that never reached `evict()`.
+
+`test/api-contracts/api.rooms.security.e2e.spec.ts` is the pattern to copy per
+endpoint: a negative cross-tenant join test, and a mid-stream revocation test.
+
 ### Monotonic Event IDs
 
 `Last-Event-ID` replay, client-side ordering, and the fallback version gate
@@ -3430,6 +3496,31 @@ await broadcaster.broadcastToRoom(room, statusEvent, data, { id: seq.next() })
 compareEventIds('e1-000000000001', 'e1-000000000002') // -1
 ```
 
+**Prefer a domain version** (`job.version`, a revision column) over a generated
+sequence whenever the resource has one: it is per-scope and writer-independent
+for free, and the snapshot body has to carry it anyway for the client's version
+gate.
+
+`createEventIdSequence()` is in-memory and per-process, which makes it safe
+only for a **single-writer** ordering scope. Its epoch defaults to the process
+start time, and the client's default extractor orders by epoch first. If two
+pods of the same service broadcast into the same room, each with its own
+sequence, their epochs differ: the events interleave, the client's watermark
+lands on the newer epoch, and every subsequent event from the older-epoch pod
+compares as stale and is **silently dropped**. The failure only shows up under
+horizontal scale, so it reaches production.
+
+For a multi-writer scope use a domain version, a fixed shared `epoch` with a
+`start` handed out from shared storage, or the Redis-backed sequence:
+
+```ts
+import { createRedisEventIdSequence } from '@opinionated-machine/sse-rooms-redis'
+
+// One counter per ordering scope, shared by every pod — one INCR per id.
+const seq = createRedisEventIdSequence({ client: redis, key: `sse:seq:job:${jobId}` })
+await broadcaster.broadcastToRoom(room, statusEvent, data, { id: await seq.next() })
+```
+
 ### Server-Side Guarantees Checklist
 
 For a resource to participate in the fallback pattern:
@@ -3439,7 +3530,10 @@ For a resource to participate in the fallback pattern:
    reflects every event ≤ *v* (publish events after commit; read committed
    state in the poll handler). Snapshots must **subsume** prior events.
 2. **Recommended** — stamp the SSE `id:` with that version; the client's
-   default version extraction and `Last-Event-ID` replay then compose free.
+   default version extraction (bare integers and `createEventIdSequence()`
+   ids alike) and `Last-Event-ID` replay then compose free. Make sure the id
+   source is safe for the number of writers the scope has — see
+   [Monotonic Event IDs](#monotonic-event-ids).
 3. **Recommended** — a short heartbeat interval (~15s, configured once via
    `app.register(fastifySSE, { heartbeatInterval })`) so clients detect
    silently dead connections fast; correctness holds without heartbeats
@@ -3450,3 +3544,10 @@ For a resource to participate in the fallback pattern:
 5. Gateway — declare `timeouts.idle` on streaming routes (or rely on the
    streaming-route defaults) so proxies don't reset quiet streams; see
    [Streaming Routes](#streaming-routes).
+6. Authorization — room membership decides who receives a broadcast, so it is
+   an authorization boundary. Declare the scope check once per route with
+   `sseRooms.authorizeJoin` rather than trusting every handler body, give
+   sessions a `maxSessionLifetimeMs` so a check made at connect cannot stay in
+   force forever, and call `getApiSseConnectionRegistry(broadcaster).evict()` /
+   `.closeRoom()` when access is revoked mid-stream. See
+   [SSE Rooms Authorization](#sse-rooms-authorization).

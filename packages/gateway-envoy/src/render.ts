@@ -41,6 +41,23 @@ export type EnvoyOptions = {
    */
   streamIdleTimeout?: string
   /**
+   * Ceiling on the total lifetime of a streaming (SSE/dual) connection,
+   * emitted as route-level `max_stream_duration`. Defaults to `'30m'`;
+   * `'off'` restores unbounded streams. A route can override it with
+   * `metadata.timeouts.maxDuration`.
+   *
+   * Streaming routes disable both the route timeout and the idle timeout
+   * (heartbeats are the liveness bound), which without this leaves an
+   * undeclared streaming route with an unbounded lifetime. That matters
+   * because authorization is checked once, at connect, and then goes stale:
+   * a user removed from a project keeps receiving events for as long as the
+   * connection lives. A finite lifetime is invisible to users — a client such
+   * as `@opinionated-machine/sse-fallback` treats a server close as a routine
+   * reconnect (fresh token, `Last-Event-ID`, reconciliation poll) — and gives
+   * the platform its re-auth and revocation backstop.
+   */
+  maxStreamDuration?: string | 'off'
+  /**
    * Optional admin listener config. Off by default. When set, Envoy exposes
    * its admin interface (/ready, /stats, /clusters, /config_dump) on the
    * given port — usually 9901 in production deployments.
@@ -67,7 +84,9 @@ export function renderEnvoyConfig(
 ): RenderEnvoyResult {
   const warnings: string[] = []
   const usedClusters = new Set<string>()
-  const envoyRoutes = manifest.routes.flatMap((route) => buildRoutes(route, warnings, usedClusters))
+  const envoyRoutes = manifest.routes.flatMap((route) =>
+    buildRoutes(route, warnings, usedClusters, options),
+  )
 
   // Validate that every referenced cluster has hosts configured. An empty
   // hosts array would render a cluster with no endpoints, making every
@@ -257,6 +276,7 @@ function buildRouteAction(
   upstream: string,
   branch: 'streaming' | 'plain',
   warnings: string[],
+  options: EnvoyOptions,
 ): EnvoyRouteAction {
   const meta = route.metadata
   const isSplit = route.streaming === 'dual'
@@ -264,8 +284,45 @@ function buildRouteAction(
   return {
     cluster: upstream,
     ...buildBranchTimeouts(route, branch, isSplit, warnings),
+    ...buildMaxStreamDuration(route, branch, options),
     ...(meta.retry ? { retry_policy: buildRetryPolicy(meta.retry) } : {}),
   }
+}
+
+const DEFAULT_MAX_STREAM_DURATION = '30m'
+
+/**
+ * Bound the total lifetime of a streaming connection.
+ *
+ * The streaming branch disables both the route timeout and the idle timeout,
+ * because heartbeats are its liveness bound. Left there, an undeclared
+ * streaming route would have an UNBOUNDED lifetime, and the authorization
+ * checked when it connected would stay in force for as long as the process
+ * lives. `max_stream_duration` is the ceiling that forces a reconnect, and a
+ * reconnect is where a fresh token and a fresh authorization check happen.
+ *
+ * A generous finite default is safe here precisely because the reconnect is
+ * invisible: a client such as `@opinionated-machine/sse-fallback` handles a
+ * server close as a routine reconnect with `Last-Event-ID` and a
+ * reconciliation poll. Opt out per route with `timeouts.maxDuration: '0s'`,
+ * or globally with `EnvoyOptions.maxStreamDuration: 'off'`.
+ */
+function buildMaxStreamDuration(
+  route: GatewayManifestRoute,
+  branch: 'streaming' | 'plain',
+  options: EnvoyOptions,
+): { max_stream_duration?: { max_stream_duration: string } } {
+  if (branch !== 'streaming') return {}
+
+  const declared = route.metadata.timeouts?.maxDuration
+  const configured = declared ?? options.maxStreamDuration ?? DEFAULT_MAX_STREAM_DURATION
+  if (configured === 'off') return {}
+
+  const rendered = toEnvoyDuration(configured)
+  // Envoy reads 0s as "no limit", so an explicit zero is the opt-out.
+  if (rendered === '0s') return {}
+
+  return { max_stream_duration: { max_stream_duration: rendered } }
 }
 
 function buildBranchTimeouts(
@@ -341,6 +398,44 @@ const SSE_ACCEPT_MATCHER: EnvoyHeaderMatcher = {
 }
 
 /**
+ * `text/event-stream` listed with `q=0` — the client naming the type only to
+ * REFUSE it. `contains` alone matches that string, so the stream branch would
+ * capture a request `determineMode()` routes to JSON.
+ *
+ * Paired with `invert_match`, this excludes exactly the refusal. Envoy's
+ * `safe_regex` uses RE2 (no lookahead) and matches the full header value,
+ * hence the leading `.*` and the trailing alternation. `q=0.5` and friends do
+ * not match, so a merely deprioritized stream still takes this branch — the
+ * same thing `determineMode()` does when nothing outranks it.
+ */
+const SSE_ACCEPT_NOT_REFUSED_MATCHER: EnvoyHeaderMatcher = {
+  name: 'accept',
+  string_match: {
+    safe_regex: {
+      regex: '.*text/event-stream[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?',
+    },
+  },
+  invert_match: true,
+}
+
+/** The Accept matchers that select the SSE branch of a dual-mode route. */
+const SSE_BRANCH_MATCHERS: EnvoyHeaderMatcher[] = [
+  SSE_ACCEPT_MATCHER,
+  SSE_ACCEPT_NOT_REFUSED_MATCHER,
+]
+
+/**
+ * Accept matchers selecting the JSON branch of a dual-mode route that
+ * declares `defaultMode: 'sse'`. There the STREAM is the catch-all, so the
+ * JSON branch has to be the narrow one: the client asks for JSON and does not
+ * ask for the stream.
+ */
+const JSON_BRANCH_MATCHERS: EnvoyHeaderMatcher[] = [
+  { name: 'accept', string_match: { contains: 'application/json' } },
+  { name: 'accept', string_match: { contains: 'text/event-stream' }, invert_match: true },
+]
+
+/**
  * Emit the Envoy routes for one manifest route.
  *
  * SSE-only and plain routes map one-to-one. A **dual-mode** route maps to
@@ -354,6 +449,7 @@ function buildRoutes(
   route: GatewayManifestRoute,
   warnings: string[],
   usedClusters: Set<string>,
+  options: EnvoyOptions,
 ): EnvoyRoute[] {
   const meta = route.metadata
   if (!meta.upstream) {
@@ -370,6 +466,33 @@ function buildRoutes(
       buildRoute(route, meta.upstream, {
         branch: route.streaming === 'sse' ? 'streaming' : 'plain',
         warnings,
+        options,
+      }),
+    ]
+  }
+
+  // Which branch the catch-all is depends on the route's own fallback. With
+  // `defaultMode: 'json'` (the default) an unspecific Accept header gets JSON,
+  // so the stream is the narrow branch. With `defaultMode: 'sse'` the server
+  // streams for a missing or wildcard Accept header, and routing those through
+  // the plain branch would put a request timeout on a live stream.
+  if (route.streamingDefaultMode === 'sse') {
+    warnings.push(
+      `Route "${route.id}": defaultMode "sse" makes the STREAM the catch-all branch, so only an explicit application/json Accept (without text/event-stream) takes the JSON branch. A request listing both types resolves to JSON on the server but takes the stream branch here, and so runs without the JSON branch's request timeout.`,
+    )
+    return [
+      buildRoute(route, meta.upstream, {
+        branch: 'plain',
+        name: `${route.id}__json`,
+        extraHeaderMatchers: JSON_BRANCH_MATCHERS,
+        warnings,
+        options,
+      }),
+      buildRoute(route, meta.upstream, {
+        branch: 'streaming',
+        name: `${route.id}__sse`,
+        warnings,
+        options,
       }),
     ]
   }
@@ -380,10 +503,11 @@ function buildRoutes(
     buildRoute(route, meta.upstream, {
       branch: 'streaming',
       name: `${route.id}__sse`,
-      extraHeaderMatchers: [SSE_ACCEPT_MATCHER],
+      extraHeaderMatchers: SSE_BRANCH_MATCHERS,
       warnings,
+      options,
     }),
-    buildRoute(route, meta.upstream, { branch: 'plain', warnings }),
+    buildRoute(route, meta.upstream, { branch: 'plain', warnings, options }),
   ]
 }
 
@@ -395,6 +519,7 @@ function buildRoute(
     name?: string
     extraHeaderMatchers?: EnvoyHeaderMatcher[]
     warnings: string[]
+    options: EnvoyOptions
   },
 ): EnvoyRoute {
   const meta = route.metadata
@@ -411,7 +536,7 @@ function buildRoute(
       ...(headerMatchers.length > 0 ? { headers: headerMatchers } : {}),
       ...(queryMatchers.length > 0 ? { query_parameters: queryMatchers } : {}),
     },
-    route: buildRouteAction(route, upstream, opts.branch, opts.warnings),
+    route: buildRouteAction(route, upstream, opts.branch, opts.warnings, opts.options),
     ...buildRouteHeaderRules(meta),
   }
 
@@ -527,7 +652,12 @@ type EnvoyStringMatch =
   | { contains: string }
   | { safe_regex: { regex: string } }
 
-type EnvoyHeaderMatcher = { name: string; string_match: EnvoyStringMatch }
+type EnvoyHeaderMatcher = {
+  name: string
+  string_match: EnvoyStringMatch
+  /** Negate the match, so the route requires the header NOT to match. */
+  invert_match?: boolean
+}
 type EnvoyQueryMatcher = { name: string; string_match: EnvoyStringMatch }
 
 type EnvoyHeaderAddition = { header: { key: string; value: string } }
@@ -542,6 +672,7 @@ type EnvoyRouteAction = {
   cluster: string
   timeout?: string
   idle_timeout?: string
+  max_stream_duration?: { max_stream_duration: string }
   prefix_rewrite?: string
   retry_policy?: EnvoyRetryPolicy
 }

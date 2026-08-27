@@ -7,6 +7,33 @@ import { createServer } from 'node:http'
 
 const PORT = Number(process.env.PORT ?? 8081)
 
+/**
+ * Accept negotiation matching the server's `determineMode()`: quality values
+ * are honoured, so `text/event-stream;q=0` is a refusal rather than a request.
+ */
+function wantsStream(accept) {
+  if (!accept) return false
+  const ranges = accept
+    .split(',')
+    .map((part) => {
+      const [mediaType, ...params] = part.trim().split(';')
+      let quality = 1
+      for (const param of params) {
+        const [key, value] = param.trim().split('=')
+        if (key === 'q' && value) quality = Number.parseFloat(value)
+      }
+      return { mediaType: (mediaType ?? '').trim().toLowerCase(), quality }
+    })
+    .filter((entry) => entry.quality > 0)
+    .sort((a, b) => b.quality - a.quality)
+
+  for (const { mediaType } of ranges) {
+    if (mediaType === 'text/event-stream') return true
+    if (mediaType === 'application/json') return false
+  }
+  return false
+}
+
 createServer((req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
 
@@ -23,7 +50,7 @@ createServer((req, res) => {
   // The SSE branch behaves like /sse; the JSON branch is deliberately slow so
   // the route timeout on the plain branch of the split has something to catch.
   if (url.pathname === '/dual') {
-    if ((req.headers.accept ?? '').includes('text/event-stream')) {
+    if (wantsStream(req.headers.accept)) {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
       res.write('event: first\ndata: {"n":1}\n\n')
       const gap = Number(url.searchParams.get('gapMs') ?? '3000')

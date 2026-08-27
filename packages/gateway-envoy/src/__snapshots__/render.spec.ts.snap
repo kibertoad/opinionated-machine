@@ -183,6 +183,9 @@ exports[`renderEnvoyConfig > matches the JSON snapshot for the fixture manifest 
                             "route": {
                               "cluster": "users-service",
                               "idle_timeout": "0s",
+                              "max_stream_duration": {
+                                "max_stream_duration": "1800s",
+                              },
                               "timeout": "0s",
                             },
                           },
@@ -201,6 +204,15 @@ exports[`renderEnvoyConfig > matches the JSON snapshot for the fixture manifest 
                                     "contains": "text/event-stream",
                                   },
                                 },
+                                {
+                                  "invert_match": true,
+                                  "name": "accept",
+                                  "string_match": {
+                                    "safe_regex": {
+                                      "regex": ".*text/event-stream[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?",
+                                    },
+                                  },
+                                },
                               ],
                               "safe_regex": {
                                 "regex": "/jobs/[^/]+/status",
@@ -210,6 +222,9 @@ exports[`renderEnvoyConfig > matches the JSON snapshot for the fixture manifest 
                             "route": {
                               "cluster": "users-service",
                               "idle_timeout": "600s",
+                              "max_stream_duration": {
+                                "max_stream_duration": "1800s",
+                              },
                               "timeout": "0s",
                             },
                           },
@@ -340,6 +355,8 @@ exports[`renderEnvoyConfig > matches the YAML snapshot for the fixture manifest 
                             cluster: users-service
                             timeout: 0s
                             idle_timeout: 0s
+                            max_stream_duration:
+                              max_stream_duration: 1800s
                         - name: jobsController.status__sse
                           match:
                             safe_regex:
@@ -351,10 +368,17 @@ exports[`renderEnvoyConfig > matches the YAML snapshot for the fixture manifest 
                               - name: accept
                                 string_match:
                                   contains: text/event-stream
+                              - name: accept
+                                string_match:
+                                  safe_regex:
+                                    regex: .*text/event-stream[^,]*;[ \\t]*q[ \\t]*=[ \\t]*0(\\.0+)?[ \\t]*([,;].*)?
+                                invert_match: true
                           route:
                             cluster: users-service
                             timeout: 0s
                             idle_timeout: 600s
+                            max_stream_duration:
+                              max_stream_duration: 1800s
                         - name: jobsController.status
                           match:
                             safe_regex:

@@ -6,7 +6,7 @@ import type { AbstractDualModeController } from '../../dualmode/AbstractDualMode
 import { buildFastifyRoute } from '../../routes/fastifyRouteBuilder.ts'
 import type { AbstractSSEController } from '../../sse/AbstractSSEController.ts'
 import type { GatewayMetadataValue } from '../gatewayMetadata.ts'
-import { readRouteStreamingMode } from '../routeStreaming.ts'
+import { readRouteStreamingDefaultMode, readRouteStreamingMode } from '../routeStreaming.ts'
 import { readGatewayMetadata } from '../withGatewayMetadata.ts'
 import {
   type GatewayManifest,
@@ -108,6 +108,23 @@ function collectRouteEntries(
 }
 
 /**
+ * The manifest's streaming fields for one Fastify route, read back from the
+ * markers the route builders stamped.
+ */
+function readStreamingFields(
+  route: object,
+): Pick<GatewayManifestRoute, 'streaming' | 'streamingDefaultMode'> {
+  const streaming = readRouteStreamingMode(route)
+  if (streaming === undefined) return {}
+  const defaultMode = readRouteStreamingDefaultMode(route)
+  // Only a dual route negotiates, so a fallback branch is meaningless on an
+  // SSE-only one.
+  return streaming === 'dual' && defaultMode !== undefined
+    ? { streaming, streamingDefaultMode: defaultMode }
+    : { streaming }
+}
+
+/**
  * Pure manifest builder. Takes already-resolved controllers; performs no DI.
  *
  * Used by `DIContext.buildGatewayManifest()` after it resolves controllers from
@@ -147,14 +164,13 @@ export function buildGatewayManifestFrom(
       }
       idOrigin.set(id, origin)
 
-      const streaming = readRouteStreamingMode(route)
       routes.push({
         id,
         method,
         path,
         controller: collected.name,
         routeKey,
-        ...(streaming !== undefined ? { streaming } : {}),
+        ...readStreamingFields(route),
         metadata: merged,
       })
     }

@@ -26,6 +26,16 @@ export const gatewayManifestRouteSchema = z
      * gateway packages' peerDependency floor tracks this).
      */
     streaming: z.enum(['sse', 'dual']).optional(),
+    /**
+     * For `streaming: 'dual'` routes, which branch serves a request whose
+     * `Accept` header names neither type (absent, or a wildcard). Mirrors the
+     * route's `defaultMode` option. Absent means `'json'`.
+     *
+     * A generator that splits a dual route into a stream branch and a
+     * catch-all needs this: with `'sse'` the catch-all is the STREAM, and
+     * routing it as JSON would put a request timeout on a long-lived stream.
+     */
+    streamingDefaultMode: z.enum(['json', 'sse']).optional(),
     /** Already-merged metadata: service defaults → controller defaults → route. */
     metadata: gatewayMetadataSchema,
   })

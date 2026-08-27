@@ -4,6 +4,7 @@ import { z } from 'zod/v4'
 import {
   bindFallbackContracts,
   defineFallbackBinding,
+  FALLBACK_BINDING_SYMBOL,
   fromLegacyDualModeContract,
   readFallbackBinding,
 } from './binding.ts'
@@ -166,11 +167,24 @@ describe('defineFallbackBinding', () => {
       version: { ofSnapshot: (s) => s.version },
     })
     expect(readFallbackBinding(uploadStatusContract)).toBe(binding)
-    // Non-enumerable: never serialized, never seen by Fastify.
-    expect(Object.keys(uploadStatusContract)).not.toContain('binding')
-    expect(
-      JSON.parse(JSON.stringify({ ...uploadStatusContract, pathResolver: undefined })),
-    ).toBeDefined()
+
+    // Non-enumerable: never serialized, never seen by Fastify. Assert the
+    // descriptor itself — `Object.keys` and `JSON.stringify` both skip symbol
+    // keys unconditionally, so checking through them passes for an enumerable
+    // property too and tests nothing.
+    const descriptor = Object.getOwnPropertyDescriptor(
+      uploadStatusContract,
+      FALLBACK_BINDING_SYMBOL,
+    )
+    expect(descriptor).toMatchObject({
+      value: binding,
+      enumerable: false,
+      configurable: true,
+    })
+    expect(Object.getOwnPropertySymbols(uploadStatusContract)).toContain(FALLBACK_BINDING_SYMBOL)
+    // A spread copies enumerable own properties only, so the stamp does not
+    // come along — which is the observable consequence of it being hidden.
+    expect(readFallbackBinding({ ...uploadStatusContract })).toBeUndefined()
   })
 
   it('serializes query params and passes headers/body through', () => {

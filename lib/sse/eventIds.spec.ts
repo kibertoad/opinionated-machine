@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareEventIds, createEventIdSequence } from './eventIds.ts'
+import { compareEventIds, createEventIdSequence, MAX_EVENT_ID_COUNTER } from './eventIds.ts'
 
 describe('createEventIdSequence', () => {
   it('produces monotonically increasing ids within an epoch', () => {
@@ -30,6 +30,29 @@ describe('createEventIdSequence', () => {
   it('defaults the epoch to a timestamp so restarts start a new epoch', () => {
     const seq = createEventIdSequence()
     expect(seq.next()).toMatch(/^\d+-\d{12}$/)
+  })
+
+  it.each([
+    ['non-finite', Number.POSITIVE_INFINITY],
+    ['NaN', Number.NaN],
+    ['fractional', 1.5],
+    ['negative', -1],
+    ['at the width limit', MAX_EVENT_ID_COUNTER],
+    ['beyond the width limit', MAX_EVENT_ID_COUNTER + 1],
+  ])('rejects a %s start value', (_label, start) => {
+    expect(() => createEventIdSequence({ epoch: 'e1', start })).toThrow(TypeError)
+  })
+
+  it('rejects an empty epoch, which would produce unparseable ids', () => {
+    expect(() => createEventIdSequence({ epoch: '' })).toThrow(TypeError)
+  })
+
+  it('refuses to widen the counter past the padded width', () => {
+    const seq = createEventIdSequence({ epoch: 'e1', start: MAX_EVENT_ID_COUNTER - 2 })
+
+    expect(seq.next()).toBe('e1-999999999998')
+    expect(seq.next()).toBe('e1-999999999999')
+    expect(() => seq.next()).toThrow(RangeError)
   })
 })
 

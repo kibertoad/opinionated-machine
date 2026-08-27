@@ -32,10 +32,13 @@ export {
 } from './AbstractSSEController.js'
 export { defineEvent, type SSEEventDefinition } from './defineEvent.js'
 export {
+  type AsyncEventIdSequence,
   type CreateEventIdSequenceOptions,
   compareEventIds,
   createEventIdSequence,
   type EventIdSequence,
+  formatEventId,
+  MAX_EVENT_ID_COUNTER,
 } from './eventIds.js'
 // Re-export room types and classes
 export {

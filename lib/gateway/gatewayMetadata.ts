@@ -45,6 +45,17 @@ const timeoutsSchema = z
     request: durationSchema.optional(),
     idle: durationSchema.optional(),
     connect: durationSchema.optional(),
+    /**
+     * Hard ceiling on the total lifetime of one connection, for streaming
+     * routes where `request` is unusable (it would cut a healthy stream) and
+     * `idle` is disabled (heartbeats are the liveness bound).
+     *
+     * Authorization is checked when a stream opens and then goes stale: a user
+     * removed from a project keeps receiving events for as long as the stream
+     * lives. A finite lifetime forces a reconnect, which re-authorizes with a
+     * fresh token, so this is the revocation backstop. `'0s'` opts out.
+     */
+    maxDuration: durationSchema.optional(),
   })
   .strict()
 

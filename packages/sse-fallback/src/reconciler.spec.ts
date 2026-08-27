@@ -236,6 +236,44 @@ describe('Reconciler — state layer', () => {
     expect(reconciler.getState()).toEqual({ revision: 4, items: ['a', 'b', 'c', 'd'] })
   })
 
+  it('reports the suspension so the caller can surface known-stale state', () => {
+    const reconciler = stateReconciler()
+    reconciler.handleSnapshot({ revision: 1, items: ['a'] })
+
+    const gapped = reconciler.handleEvent({ event: 'itemAdded', data: { revision: 3, item: 'c' } })
+    expect(gapped.stateSuspended).toBe(true)
+    expect(reconciler.isStateSuspended).toBe(true)
+
+    const repair = reconciler.handleSnapshot({ revision: 3, items: ['a', 'b', 'c'] })
+    expect(repair.stateRepaired).toBe(true)
+    expect(repair.stateSuspended).toBe(false)
+    expect(reconciler.isStateSuspended).toBe(false)
+  })
+
+  it('lifts the suspension on a repair snapshot below the watermark', () => {
+    const reconciler = stateReconciler()
+    reconciler.handleSnapshot({ revision: 1, items: ['a'] })
+
+    // Gap at revision 3 suspends state and moves the watermark to 3...
+    reconciler.handleEvent({ event: 'itemAdded', data: { revision: 3, item: 'c' } })
+    // ...and live events keep arriving while the repair poll is in flight, so
+    // the watermark is at 5 by the time the snapshot for revision 4 lands.
+    reconciler.handleEvent({ event: 'itemAdded', data: { revision: 4, item: 'd' } })
+    reconciler.handleEvent({ event: 'itemAdded', data: { revision: 5, item: 'e' } })
+    expect(reconciler.getState()).toEqual({ revision: 1, items: ['a'] })
+
+    const repair = reconciler.handleSnapshot({ revision: 4, items: ['a', 'b', 'c', 'd'] })
+
+    expect(repair.stale).toBe(true)
+    expect(repair.stateRepaired).toBe(true)
+    expect(reconciler.isStateSuspended).toBe(false)
+    expect(reconciler.getState()).toEqual({ revision: 4, items: ['a', 'b', 'c', 'd'] })
+
+    // apply is live again, and the watermark was not rewound.
+    reconciler.handleEvent({ event: 'itemAdded', data: { revision: 6, item: 'f' } })
+    expect(reconciler.getState()).toEqual({ revision: 6, items: ['a', 'b', 'c', 'd', 'f'] })
+  })
+
   it('does not double-apply snapshot-synthesized events to state', () => {
     type SnapEvents = { stateChanged: CounterSnapshot }
     const reconciler = new Reconciler<CounterSnapshot, SnapEvents, CounterState>(
@@ -419,5 +457,59 @@ describe('defaultCompareVersions — sequence ids', () => {
   it('orders a newer epoch above an older one regardless of counter', () => {
     expect(defaultCompareVersions('100-000000000900', '200-000000000001')).toBe(-1)
     expect(defaultCompareVersions('200-000000000001', '100-000000000900')).toBe(1)
+  })
+})
+
+describe('Reconciler — terminal events from a snapshot', () => {
+  type MultiSnapshot = { version: number }
+  type MultiEvents = { progress: { step: number }; done: { ok: true } }
+
+  it('delivers nothing after the terminal event in the same snapshot', () => {
+    const reconciler = new Reconciler<MultiSnapshot, MultiEvents, undefined>(
+      {
+        snapshotToEvents: () => [
+          { event: 'progress', data: { step: 1 } },
+          { event: 'done', data: { ok: true } },
+          { event: 'progress', data: { step: 2 } },
+        ],
+        version: { ofSnapshot: (s) => s.version },
+        terminalEvents: ['done'],
+      },
+      { hydrationBufferLimit: 10 },
+    )
+
+    const outcome = reconciler.handleSnapshot({ version: 1 })
+
+    expect(outcome.terminated).toBe(true)
+    expect(outcome.deliveries.map((d) => d.event)).toEqual(['progress', 'done'])
+  })
+})
+
+describe('defaultCompareVersions — integers beyond MAX_SAFE_INTEGER', () => {
+  it('orders adjacent unsafe integer strings instead of collapsing them', () => {
+    // Both coerce to the same double, so a numeric comparison would call the
+    // second one a duplicate of the first.
+    expect(Number('9007199254740992')).toBe(Number('9007199254740993'))
+
+    expect(defaultCompareVersions('9007199254740992', '9007199254740993')).toBe(-1)
+    expect(defaultCompareVersions('9007199254740993', '9007199254740992')).toBe(1)
+    expect(defaultCompareVersions('9007199254740993', '9007199254740993')).toBe(0)
+  })
+
+  it('does not drop an unsafe-integer event as a duplicate of its predecessor', () => {
+    const reconciler = new Reconciler<
+      { version: string },
+      { tick: Record<string, never> },
+      undefined
+    >(
+      { snapshotToEvents: () => [], version: { ofSnapshot: (s) => s.version } },
+      { hydrationBufferLimit: 10 },
+    )
+
+    reconciler.handleEvent({ event: 'tick', data: {}, id: '9007199254740992' })
+    const next = reconciler.handleEvent({ event: 'tick', data: {}, id: '9007199254740993' })
+
+    expect(next.duplicate).toBe(false)
+    expect(next.deliveries).toHaveLength(1)
   })
 })

@@ -39,6 +39,13 @@ export type EventOutcome<Events extends EventPayloadMap> = {
   terminated: boolean
   /** New state value when the state layer applied the event. */
   state?: { value: unknown }
+  /**
+   * Whether the state layer is gap-suspended after this event. While
+   * suspended `apply` is skipped, so `getState()` keeps returning the
+   * pre-gap value even though events are still delivered — the caller must
+   * poll for a repair snapshot and can surface the staleness meanwhile.
+   */
+  stateSuspended: boolean
 }
 
 export type SnapshotOutcome<Events extends EventPayloadMap> = {
@@ -51,6 +58,10 @@ export type SnapshotOutcome<Events extends EventPayloadMap> = {
   hydrationCompleted: boolean
   terminated: boolean
   state?: { value: unknown }
+  /** Whether the state layer is still gap-suspended after this snapshot. */
+  stateSuspended: boolean
+  /** This snapshot lifted a gap suspension and re-initialized state. */
+  stateRepaired: boolean
 }
 
 export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
@@ -90,6 +101,15 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
     return this.hydrationBuffer !== null
   }
 
+  /**
+   * Whether the state layer is suspended after a detected gap. `apply` stays
+   * disabled until a snapshot repairs state, so `getState()` is known-stale
+   * while this is true.
+   */
+  get isStateSuspended(): boolean {
+    return this.stateSuspended
+  }
+
   getState(): State | undefined {
     return this.stateValue
   }
@@ -115,6 +135,8 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
       advanced: false,
       hydrationCompleted: false,
       terminated: false,
+      stateSuspended: this.stateSuspended,
+      stateRepaired: false,
     }
     if (this.hydrationBuffer === null) return outcome
     this.finishHydration(null, outcome)
@@ -128,6 +150,7 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
       buffered: false,
       bufferOverflow: false,
       terminated: false,
+      stateSuspended: this.stateSuspended,
     }
     if (this.terminated) return outcome
 
@@ -146,6 +169,7 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
     }
 
     this.gateAndDeliver(incoming, 'sse', outcome)
+    outcome.stateSuspended = this.stateSuspended
     return outcome
   }
 
@@ -156,6 +180,8 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
       advanced: false,
       hydrationCompleted: false,
       terminated: false,
+      stateSuspended: this.stateSuspended,
+      stateRepaired: false,
     }
     if (this.terminated) return outcome
 
@@ -173,22 +199,27 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
       // The stale-poll race: everything this snapshot describes has already
       // been delivered (or superseded) through the stream.
       outcome.stale = true
-      // One exception: while the state layer is gap-suspended, a snapshot AT
-      // the watermark is exactly the repair we polled for — the gapped event
-      // advanced the watermark to its own version, so the repair snapshot
-      // legitimately arrives with an equal version. Re-initialize state and
-      // lift the suspension (events stay dropped — nothing new to deliver).
-      if (
-        this.stateSuspended &&
-        this.config.state &&
-        this.compare(snapshotVersion, this.highWatermark) === 0
-      ) {
+      // One exception: a gap-suspended state layer is repaired by ANY
+      // snapshot, not only one whose version matches the watermark exactly.
+      // Live events keep advancing the watermark after a gap, so the repair
+      // snapshot this branch was polled for usually arrives strictly below it;
+      // requiring equality left `apply` disabled forever and froze
+      // `getState()` at its pre-gap value while events kept flowing.
+      //
+      // Re-initializing from a below-watermark snapshot can miss the effect of
+      // events delivered between the snapshot and the watermark, but the gap
+      // already lost events, and a stale-but-advancing state beats a state
+      // that never updates again. The watermark is NOT rewound, so nothing is
+      // re-delivered.
+      if (this.stateSuspended && this.config.state) {
         this.stateValue = this.config.state.init(snapshot)
         this.stateInitialized = true
         this.stateSuspended = false
         outcome.state = { value: this.stateValue }
+        outcome.stateRepaired = true
       }
       this.finishHydration(snapshotVersion, outcome)
+      outcome.stateSuspended = this.stateSuspended
       return outcome
     }
 
@@ -212,6 +243,9 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
       if (this.terminalSet.has(event.event)) {
         this.terminated = true
         outcome.terminated = true
+        // Nothing is delivered after the terminal event — `finishHydration`
+        // and `handleEvent` apply the same rule.
+        break
       }
     }
 
@@ -223,6 +257,7 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
     outcome.advanced = true
 
     this.finishHydration(snapshotVersion, outcome)
+    outcome.stateSuspended = this.stateSuspended
     return outcome
   }
 
@@ -242,6 +277,7 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
         buffered: false,
         bufferOverflow: false,
         terminated: false,
+        stateSuspended: this.stateSuspended,
       }
       this.gateAndDeliver(incoming, 'sse', eventOutcome)
       outcome.deliveries.push(...eventOutcome.deliveries)
@@ -344,10 +380,24 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
   }
 }
 
+const INTEGER_STRING_PATTERN = /^-?\d+$/
+
+/**
+ * The numeric value of a version, or `undefined` when comparing it as a
+ * number would lose information.
+ *
+ * Integer strings beyond `Number.MAX_SAFE_INTEGER` are rejected here on
+ * purpose: `Number('9007199254740992')` and `Number('9007199254740993')`
+ * are the same double, so a numeric comparison would report the second event
+ * as a duplicate of the first and drop it. Rejecting them hands the pair to
+ * {@link compareSequence}, which compares the digits as `bigint`.
+ */
 function toNumeric(version: Version): number | undefined {
   if (typeof version === 'number') return version
   const numeric = Number(version)
-  return Number.isNaN(numeric) ? undefined : numeric
+  if (Number.isNaN(numeric)) return undefined
+  if (INTEGER_STRING_PATTERN.test(version) && !Number.isSafeInteger(numeric)) return undefined
+  return numeric
 }
 
 /**

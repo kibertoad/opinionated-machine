@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FallbackBinding } from './binding.ts'
 import type { FallbackBindingConfig, FallbackEvent, FallbackPolicy } from './bindingTypes.ts'
-import { createResilientSubscription } from './subscription.ts'
+import { createPollGate } from './pollGate.ts'
+import {
+  createResilientSubscription,
+  type SubscriptionStopDetail,
+  SubscriptionStoppedError,
+} from './subscription.ts'
 import { type TestSnapshotCall, type TestStreamHandle, TestTransport } from './transport.ts'
 
 type Snap = { status: 'pending' | 'completed'; result?: string; version: number }
@@ -553,6 +558,10 @@ describe('createResilientSubscription — liveness and failure bounds', () => {
     // ...and the watermark for replay did not move past the event we never read.
     streams[0]?.fail()
     await vi.advanceTimersByTimeAsync(200)
+    // Assert the reconnect happened first: without this, a regression that
+    // stops reconnecting leaves streams[1] undefined and the check below
+    // passes vacuously.
+    expect(streams).toHaveLength(2)
     expect(streams[1]?.lastEventIdReceived).toBeUndefined()
   })
 
@@ -573,5 +582,543 @@ describe('createResilientSubscription — liveness and failure bounds', () => {
     await flush()
 
     await expect(completion).resolves.toEqual({ result: 'plain-text-payload' })
+  })
+})
+
+describe('createResilientSubscription — stop reasons', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('reports a terminal event as success, not as a bare stop', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    const stops: SubscriptionStopDetail[] = []
+    sub.onStop((detail) => stops.push(detail))
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    streams[0]?.pushEvent('done', { result: 'ok' }, { id: '1' })
+    await flush()
+
+    expect(sub.result).toEqual({ reason: 'terminal-event' })
+    expect(stops).toEqual([{ reason: 'terminal-event' }])
+  })
+
+  it('distinguishes an auth failure from a completed subscription', async () => {
+    const { transport, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    const completion = sub.waitFor('done').catch((error: unknown) => error)
+    await flush()
+    snapshots[0]?.respond({}, 401)
+    await flush()
+
+    const error = await completion
+    expect(error).toBeInstanceOf(SubscriptionStoppedError)
+    expect(error).toMatchObject({
+      reason: 'unretryable-status',
+      status: 401,
+      channel: 'poll',
+    })
+    expect(sub.result?.reason).toBe('unretryable-status')
+  })
+
+  it('reports a caller stop() as manual', async () => {
+    const { transport } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    await flush()
+    sub.stop()
+
+    expect(sub.result).toEqual({ reason: 'manual' })
+  })
+
+  it('delivers the reason to onStatusChange and to a late onStop listener', async () => {
+    const { transport } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    const seen: Array<[string, SubscriptionStopDetail | undefined]> = []
+    sub.onStatusChange((status, detail) => seen.push([status, detail]))
+    await flush()
+    sub.stop()
+
+    expect(seen.at(-1)).toEqual(['stopped', { reason: 'manual' }])
+
+    const late: SubscriptionStopDetail[] = []
+    sub.onStop((detail) => late.push(detail))
+    expect(late).toEqual([{ reason: 'manual' }])
+  })
+})
+
+describe('createResilientSubscription — subscription budget', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('gives up on a permanently pending backend after maxDurationMs', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, subscriptionBudget: { maxDurationMs: 5_000 } },
+      random: () => 1,
+    })
+    const completion = sub.waitFor('done').catch((error: unknown) => error)
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+    expect(streams).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(sub.result).toEqual({ reason: 'budget-exhausted', limit: 'maxDurationMs' })
+    expect(await completion).toMatchObject({ reason: 'budget-exhausted' })
+
+    // The machinery is fully shut down: no deadman poll behind the budget.
+    const pollsAtStop = transport.snapshotCalls.length
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(transport.snapshotCalls).toHaveLength(pollsAtStop)
+  })
+
+  it('gives up after maxPolls instead of deadman-polling forever', async () => {
+    const { transport, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, subscriptionBudget: { maxPolls: 3 } },
+      random: () => 1,
+    })
+    await flush()
+
+    for (let i = 0; i < 5; i++) {
+      snapshots[i]?.respond({ status: 'pending', version: 0 })
+      await vi.advanceTimersByTimeAsync(1_000)
+    }
+
+    expect(transport.snapshotCalls).toHaveLength(3)
+    expect(sub.result).toEqual({ reason: 'budget-exhausted', limit: 'maxPolls' })
+  })
+
+  it('runs unbounded by default, so live-state surfaces keep their semantics', async () => {
+    const { transport, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(transport.snapshotCalls.length).toBeGreaterThan(3)
+    expect(sub.result).toBeUndefined()
+  })
+})
+
+describe('createResilientSubscription — auth challenge', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('refreshes credentials and retries the refused poll once', async () => {
+    const { transport, snapshots } = makeHarness()
+    const challenges: Array<{ status: number; channel: string }> = []
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      onAuthChallenge: (challenge) => {
+        challenges.push(challenge)
+        return true
+      },
+    })
+    await flush()
+
+    snapshots[0]?.respond({}, 401)
+    await flush()
+
+    expect(challenges).toEqual([{ status: 401, channel: 'poll' }])
+    expect(snapshots).toHaveLength(2)
+    expect(sub.status).not.toBe('stopped')
+
+    snapshots[1]?.respond({ status: 'pending', version: 0 })
+    await flush()
+    expect(sub.result).toBeUndefined()
+  })
+
+  it('stops on a second auth refusal with no success in between', async () => {
+    const { transport, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      onAuthChallenge: () => true,
+    })
+    await flush()
+
+    snapshots[0]?.respond({}, 401)
+    await flush()
+    snapshots[1]?.respond({}, 401)
+    await flush()
+
+    expect(sub.result).toEqual({ reason: 'unretryable-status', status: 401, channel: 'poll' })
+  })
+
+  it('stops immediately when the hook declines to refresh', async () => {
+    const { transport, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      onAuthChallenge: () => false,
+    })
+    await flush()
+
+    snapshots[0]?.respond({}, 401)
+    await flush()
+
+    expect(snapshots).toHaveLength(1)
+    expect(sub.result?.reason).toBe('unretryable-status')
+  })
+
+  it('does not offer non-auth unretryable statuses to the hook', async () => {
+    const { transport, snapshots } = makeHarness()
+    let called = false
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      onAuthChallenge: () => {
+        called = true
+        return true
+      },
+    })
+    await flush()
+
+    snapshots[0]?.respond({}, 404)
+    await flush()
+
+    expect(called).toBe(false)
+    expect(sub.result).toEqual({ reason: 'unretryable-status', status: 404, channel: 'poll' })
+  })
+
+  it('recovers a stream connect refused with 401', async () => {
+    const { transport, snapshots } = makeHarness()
+    transport.denyNextStreamConnect({ status: 401 })
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, initialPoll: 'delayed' },
+      random: () => 1,
+      onAuthChallenge: () => true,
+    })
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(transport.streamConnects.length).toBeGreaterThan(1)
+    expect(sub.result).toBeUndefined()
+    expect(snapshots.length).toBeGreaterThan(0)
+  })
+})
+
+describe('createResilientSubscription — poll-only mode', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('never opens a stream and polls on the degraded cadence', async () => {
+    const { transport, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, mode: 'poll-only' },
+      random: () => 1,
+    })
+    await flush()
+
+    expect(transport.streamConnects).toHaveLength(0)
+    expect(sub.status).toBe('polling')
+    expect(snapshots).toHaveLength(1)
+
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await vi.advanceTimersByTimeAsync(2_000)
+
+    expect(transport.streamConnects).toHaveLength(0)
+    expect(transport.snapshotCalls).toHaveLength(2)
+  })
+
+  it('delivers poll-synthesized events and terminates on the terminal event', async () => {
+    const { transport, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, mode: 'poll-only' },
+      random: () => 1,
+    })
+    const completion = sub.waitFor('done')
+    await flush()
+
+    snapshots[0]?.respond({ status: 'completed', result: 'ok', version: 1 })
+    await flush()
+
+    await expect(completion).resolves.toEqual({ result: 'ok' })
+    expect(sub.result).toEqual({ reason: 'terminal-event' })
+    expect(transport.streamConnects).toHaveLength(0)
+  })
+})
+
+describe('createResilientSubscription — parsed-event transports', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('delivers events from a transport that only exposes parsed frames', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    transport.streamMode = 'parsed'
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    const completion = sub.waitFor('done')
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    streams[0]?.pushEvent('done', { result: 'ok' }, { id: '1' })
+    await flush()
+
+    await expect(completion).resolves.toEqual({ result: 'ok' })
+  })
+
+  it('degrades liveness to event level, so heartbeat comments cannot hold it open', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    transport.streamMode = 'parsed'
+    createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, initialPoll: 'delayed', staleConnectionTimeoutMs: 5_000 },
+      random: () => 1,
+    })
+    await flush()
+    expect(streams).toHaveLength(1)
+
+    // A comment frame never reaches a parsed transport's consumer, so it
+    // cannot reset the watchdog the way a raw chunk does.
+    streams[0]?.pushHeartbeat()
+    await vi.advanceTimersByTimeAsync(5_000)
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(streams.length).toBeGreaterThan(1)
+    expect(snapshots.length).toBeGreaterThan(0)
+  })
+})
+
+describe('createResilientSubscription — listener isolation', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('keeps delivering to the other listeners when one throws', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const errors: unknown[] = []
+    const streamErrors: unknown[] = []
+    const seen: string[] = []
+    const sub = createResilientSubscription(makeBinding({ terminalEvents: [] }), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      diagnostics: {
+        onListenerError: (error) => errors.push(error),
+        onStreamError: (error) => streamErrors.push(error),
+      },
+    })
+    sub.onEvent(() => {
+      throw new Error('listener bug')
+    })
+    sub.onEvent((event) => seen.push(event.event))
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    streams[0]?.pushEvent('progress', { percent: 10 }, { id: '1' })
+    await flush()
+
+    expect(seen).toEqual(['progress'])
+    expect(errors).toHaveLength(1)
+    // The application bug did not surface as a transport failure.
+    expect(streamErrors).toEqual([])
+    expect(sub.status).toBe('live')
+  })
+
+  it('does not let a throwing listener stall the events() iterator', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding({ terminalEvents: [] }), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      diagnostics: { onListenerError: () => {} },
+    })
+    sub.onEvent(() => {
+      throw new Error('listener bug')
+    })
+    const iterator = sub.events()[Symbol.asyncIterator]()
+    const first = iterator.next()
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    streams[0]?.pushEvent('progress', { percent: 10 }, { id: '1' })
+    await flush()
+
+    await expect(first).resolves.toMatchObject({ done: false, value: { event: 'progress' } })
+  })
+})
+
+describe('createResilientSubscription — abandoned hydration status', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('does not report a silent stream as live', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, hydrationAbandonAfterFailures: 2 },
+      random: () => 1,
+    })
+    await flush()
+    expect(streams).toHaveLength(1)
+
+    // The stream is accepted but produces nothing, and hydration polls fail.
+    snapshots[0]?.fail()
+    await vi.advanceTimersByTimeAsync(200)
+    snapshots[1]?.fail()
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(sub.status).toBe('connecting')
+
+    // The first real bytes are what earn 'live'.
+    streams[0]?.pushHeartbeat()
+    await flush()
+    expect(sub.status).toBe('live')
+  })
+})
+
+describe('createResilientSubscription — shared poll gate', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('caps reconciliation polls across subscriptions after a fleet-wide reconnect', async () => {
+    const { transport, snapshots } = makeHarness()
+    const gate = createPollGate({ maxConcurrent: 1 })
+    const subs = [0, 1, 2].map(() =>
+      createResilientSubscription(makeBinding(), {
+        transport,
+        policy: TEST_POLICY,
+        random: () => 1,
+        pollGate: gate,
+      }),
+    )
+    await flush()
+
+    // Without the gate all three hydration polls would be in flight at once.
+    expect(snapshots).toHaveLength(1)
+
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+    expect(snapshots).toHaveLength(2)
+
+    snapshots[1]?.respond({ status: 'pending', version: 0 })
+    await flush()
+    expect(snapshots).toHaveLength(3)
+
+    for (const sub of subs) sub.stop()
+  })
+
+  it('releases the slot when a gated poll fails', async () => {
+    const { transport, snapshots } = makeHarness()
+    const gate = createPollGate({ maxConcurrent: 1 })
+    const first = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      pollGate: gate,
+    })
+    const second = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      pollGate: gate,
+    })
+    await flush()
+
+    snapshots[0]?.fail()
+    await flush()
+
+    expect(snapshots).toHaveLength(2)
+    first.stop()
+    second.stop()
+  })
+
+  it('does not hold a slot for a subscription that stops while queued', async () => {
+    const { transport, snapshots } = makeHarness()
+    const gate = createPollGate({ maxConcurrent: 1 })
+    const holder = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      pollGate: gate,
+    })
+    const queued = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      pollGate: gate,
+    })
+    await flush()
+    expect(snapshots).toHaveLength(1)
+
+    queued.stop()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    // The stopped subscription never took the freed slot.
+    expect(snapshots).toHaveLength(1)
+    holder.stop()
   })
 })

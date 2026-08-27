@@ -22,10 +22,13 @@ export {
   type InferLegacyEvents,
   type InferLegacySnapshot,
   LIVE_STATE_POLICY,
+  POLL_ONLY_POLICY,
+  type SubscriptionBudget,
   type SyntheticEvent,
   type Version,
   type VersionConfig,
 } from './bindingTypes.ts'
+export { createPollGate, type PollGate, type PollGateConfig } from './pollGate.ts'
 export {
   defaultCompareVersions,
   type EventOutcome,
@@ -44,10 +47,17 @@ export {
   createResilientSubscription,
   type FallbackDiagnostics,
   type ResilientSubscription,
+  type StopReason,
   type SubscriptionStatus,
+  type SubscriptionStopDetail,
+  SubscriptionStoppedError,
 } from './subscription.ts'
 export {
   type FallbackTransport,
+  isParsedStreamResponse,
+  type ParsedSseFrame,
+  type ParsedStreamResponse,
+  type RawStreamResponse,
   type SnapshotResponse,
   type StreamResponse,
   type TestSnapshotCall,

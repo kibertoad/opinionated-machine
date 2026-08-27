@@ -24,13 +24,35 @@ export const ROUTE_STREAMING_SYMBOL = Symbol.for('opinionated-machine.route.stre
 export type RouteStreamingMode = 'sse' | 'dual'
 
 /**
+ * Which branch a dual-mode route serves when the client does not ask for one
+ * specifically (no `Accept` header, or `Accept: *\/*`). Mirrors the
+ * `defaultMode` route option that `determineMode()` falls back to.
+ *
+ * A gateway that splits a dual route into two must know this, or it applies
+ * request-shaped timeouts to a response that is actually a stream.
+ */
+export type RouteStreamingDefaultMode = 'json' | 'sse'
+
+/**
+ * Symbol carrying the dual-mode fallback branch, stamped alongside
+ * {@link ROUTE_STREAMING_SYMBOL}.
+ */
+export const ROUTE_STREAMING_DEFAULT_MODE_SYMBOL = Symbol.for(
+  'opinionated-machine.route.streaming.defaultMode',
+)
+
+/**
  * Stamp the streaming mode onto a route via the non-enumerable
  * `ROUTE_STREAMING_SYMBOL` property. Fastify never sees it; the gateway
  * manifest builder reads it back. Returns the same route reference.
+ *
+ * For `'dual'` routes pass `defaultMode` as well, so the manifest can tell a
+ * generator which branch an unspecific `Accept` header lands on.
  */
 export function attachRouteStreamingMode<Route extends object>(
   route: Route,
   mode: RouteStreamingMode,
+  defaultMode?: RouteStreamingDefaultMode,
 ): Route {
   Object.defineProperty(route, ROUTE_STREAMING_SYMBOL, {
     value: mode,
@@ -38,6 +60,14 @@ export function attachRouteStreamingMode<Route extends object>(
     configurable: true,
     writable: true,
   })
+  if (defaultMode !== undefined) {
+    Object.defineProperty(route, ROUTE_STREAMING_DEFAULT_MODE_SYMBOL, {
+      value: defaultMode,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    })
+  }
   return route
 }
 
@@ -47,4 +77,16 @@ export function attachRouteStreamingMode<Route extends object>(
  */
 export function readRouteStreamingMode(route: object): RouteStreamingMode | undefined {
   return (route as Record<symbol, RouteStreamingMode | undefined>)[ROUTE_STREAMING_SYMBOL]
+}
+
+/**
+ * Read the dual-mode fallback branch previously stamped on a route, or
+ * `undefined` when the route did not declare one.
+ */
+export function readRouteStreamingDefaultMode(
+  route: object,
+): RouteStreamingDefaultMode | undefined {
+  return (route as Record<symbol, RouteStreamingDefaultMode | undefined>)[
+    ROUTE_STREAMING_DEFAULT_MODE_SYMBOL
+  ]
 }

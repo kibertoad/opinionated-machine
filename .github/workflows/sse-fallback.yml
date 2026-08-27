@@ -44,6 +44,18 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: .
 
+      # The README promises this package is browser-safe. The root test suite
+      # asserts it too, but that suite does not run in this workflow, so make
+      # the guarantee explicit here as well: no server-only import may reach
+      # the published sources.
+      - name: Check browser safety of the source tree
+        run: |
+          if grep -rnE "from '(node:|fastify|awilix)|require\(" src --include='*.ts' \
+            --exclude='*.spec.ts'; then
+            echo "::error::server-only import found in a browser-safe package"
+            exit 1
+          fi
+
       - name: Run Tests
         run: pnpm test
 
