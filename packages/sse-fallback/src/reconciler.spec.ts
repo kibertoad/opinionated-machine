@@ -299,3 +299,125 @@ describe('defaultCompareVersions', () => {
     expect(defaultCompareVersions('a', 'a')).toBe(0)
   })
 })
+
+describe('Reconciler — default event versions from SSE ids', () => {
+  it('orders createEventIdSequence ids, so dedup and the stale-poll guard work', () => {
+    const reconciler = jobReconciler()
+
+    const first = reconciler.handleEvent({
+      event: 'progress',
+      data: { percent: 10 },
+      id: '1754838000000-000000000002',
+    })
+    const replayed = reconciler.handleEvent({
+      event: 'progress',
+      data: { percent: 10 },
+      id: '1754838000000-000000000002',
+    })
+    const next = reconciler.handleEvent({
+      event: 'progress',
+      data: { percent: 20 },
+      id: '1754838000000-000000000003',
+    })
+
+    expect(first.deliveries).toHaveLength(1)
+    expect(replayed.duplicate).toBe(true)
+    expect(replayed.deliveries).toHaveLength(0)
+    expect(next.deliveries).toHaveLength(1)
+  })
+
+  it('treats a new epoch as newer, so a restarted counter is not read as duplicates', () => {
+    const reconciler = jobReconciler()
+    reconciler.handleEvent({
+      event: 'progress',
+      data: { percent: 90 },
+      id: '1754838000000-000000000500',
+    })
+    const afterRestart = reconciler.handleEvent({
+      event: 'progress',
+      data: { percent: 5 },
+      id: '1754839000000-000000000001',
+    })
+
+    expect(afterRestart.duplicate).toBe(false)
+    expect(afterRestart.deliveries).toHaveLength(1)
+  })
+
+  it('carries no version for ids in other shapes (UUIDs are unique, not ordered)', () => {
+    const reconciler = jobReconciler()
+    reconciler.handleSnapshot({ status: 'pending', version: 5 })
+
+    // With no extractable version the event is delivered rather than compared
+    // against the watermark — at-least-once, never a silent random drop.
+    const delivered = reconciler.handleEvent({
+      event: 'progress',
+      data: { percent: 10 },
+      id: '123e4567-e89b-12d3-a456-426614174000',
+    })
+    expect(delivered.duplicate).toBe(false)
+    expect(delivered.deliveries).toHaveLength(1)
+
+    // ...and the watermark did not move, so a later snapshot still applies.
+    const snapshot = reconciler.handleSnapshot({ status: 'completed', result: 'ok', version: 6 })
+    expect(snapshot.stale).toBe(false)
+  })
+
+  it('detects gaps in sequence ids and ignores the counter restart across epochs', () => {
+    const dense = jobReconciler({ version: { ofSnapshot: (s) => s.version, dense: true } })
+    dense.handleEvent({ event: 'progress', data: { percent: 10 }, id: '100-000000000001' })
+
+    const gapped = dense.handleEvent({
+      event: 'progress',
+      data: { percent: 30 },
+      id: '100-000000000003',
+    })
+    expect(gapped.gap).toEqual({ from: '100-000000000001', to: '100-000000000003' })
+
+    const newEpoch = dense.handleEvent({
+      event: 'progress',
+      data: { percent: 40 },
+      id: '200-000000000001',
+    })
+    expect(newEpoch.gap).toBeUndefined()
+    expect(newEpoch.deliveries).toHaveLength(1)
+  })
+})
+
+describe('Reconciler — abandoning hydration', () => {
+  it('flushes the buffered events instead of discarding them', () => {
+    const reconciler = jobReconciler()
+    reconciler.beginHydration()
+
+    const buffered = reconciler.handleEvent({ event: 'progress', data: { percent: 10 }, id: '1' })
+    expect(buffered.buffered).toBe(true)
+    expect(buffered.deliveries).toHaveLength(0)
+
+    const flushed = reconciler.abandonHydration()
+    expect(flushed.deliveries).toEqual([
+      { event: 'progress', data: { percent: 10 }, id: '1', origin: 'sse' },
+    ])
+    expect(reconciler.isHydrating).toBe(false)
+
+    // Direct delivery resumes.
+    const live = reconciler.handleEvent({ event: 'progress', data: { percent: 20 }, id: '2' })
+    expect(live.deliveries).toHaveLength(1)
+  })
+
+  it('is a no-op when hydration is not in progress', () => {
+    const reconciler = jobReconciler()
+    expect(reconciler.abandonHydration().deliveries).toHaveLength(0)
+  })
+})
+
+describe('defaultCompareVersions — sequence ids', () => {
+  it('orders by counter within an epoch, beyond the zero padding width', () => {
+    expect(defaultCompareVersions('100-000000000002', '100-000000000010')).toBe(-1)
+    expect(defaultCompareVersions('100-9999999999999', '100-000000000010')).toBe(1)
+    expect(defaultCompareVersions('100-000000000007', '100-000000000007')).toBe(0)
+  })
+
+  it('orders a newer epoch above an older one regardless of counter', () => {
+    expect(defaultCompareVersions('100-000000000900', '200-000000000001')).toBe(-1)
+    expect(defaultCompareVersions('200-000000000001', '100-000000000900')).toBe(1)
+  })
+})

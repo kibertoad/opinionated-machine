@@ -103,13 +103,24 @@ export class TestTransport implements FallbackTransport {
   /** Called for every stream connect attempt after it is accepted. */
   onStreamConnect?: (stream: TestStreamHandle) => void
   /** Statuses (or an Error) to reject/deny the next N stream connects with. */
-  private readonly connectDenials: Array<{ status?: number; error?: Error }> = []
+  private readonly connectDenials: Array<{ status?: number; error?: Error; hold?: true }> = []
   readonly snapshotCalls: TransportRequest[] = []
   readonly streamConnects: TransportRequest[] = []
+  /** Whether each denied connect's request was aborted by the core. */
+  readonly deniedConnectAborts: boolean[] = []
 
   /** Queue a denial for the next stream connect (non-200 status or network error). */
   denyNextStreamConnect(denial: { status?: number; error?: Error }): void {
     this.connectDenials.push(denial)
+  }
+
+  /**
+   * Queue a stream connect that never produces response headers, settling only
+   * when the core aborts it. Models an upstream that accepts the TCP
+   * connection and then goes quiet.
+   */
+  holdNextStreamConnect(): void {
+    this.connectDenials.push({ hold: true })
   }
 
   fetchSnapshot(
@@ -143,10 +154,27 @@ export class TestTransport implements FallbackTransport {
     this.streamConnects.push(request)
 
     const denial = this.connectDenials.shift()
+    if (denial?.hold) {
+      return new Promise<StreamResponse>((_resolve, reject) => {
+        if (opts.signal.aborted) {
+          reject(new Error('aborted'))
+          return
+        }
+        opts.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+      })
+    }
     if (denial?.error) {
       return Promise.reject(denial.error)
     }
     if (denial?.status !== undefined) {
+      const index = this.deniedConnectAborts.push(false) - 1
+      opts.signal.addEventListener(
+        'abort',
+        () => {
+          this.deniedConnectAborts[index] = true
+        },
+        { once: true },
+      )
       return Promise.resolve({
         status: denial.status,
         headers: {},

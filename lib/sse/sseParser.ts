@@ -31,12 +31,19 @@
 /**
  * Parse a single SSE line and update the event state.
  * Returns true if a complete event was found (empty line with data).
+ *
+ * The caller splits on `\n` only, so a CRLF-framed stream leaves a trailing
+ * `\r` on every line — including the blank line that terminates an event.
+ * The spec allows CR, LF and CRLF as line terminators, so strip it here:
+ * without that, consecutive events on a CRLF stream never terminate and merge
+ * into one event with the wrong id and concatenated data.
  */
 function parseSSELine(
-  line: string,
+  rawLine: string,
   currentEvent: Partial<ParsedSSEEvent>,
   dataLines: string[],
 ): boolean {
+  const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine
   if (line.startsWith('id:')) {
     currentEvent.id = line.slice(3).trim()
   } else if (line.startsWith('event:')) {

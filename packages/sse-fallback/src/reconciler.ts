@@ -100,9 +100,25 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
     this.hydrationBuffer = []
   }
 
-  /** Abandon hydration buffering (e.g. hydration poll failed terminally). */
-  abandonHydration(): void {
-    this.hydrationBuffer = null
+  /**
+   * Give up on subscribe-first hydration and resume direct delivery.
+   *
+   * The buffered events are FLUSHED, not discarded: hydration never completed,
+   * so no snapshot subsumes them and dropping them would lose exactly the
+   * events the buffer existed to protect. They pass through the version gate
+   * in arrival order, so a later snapshot still wins on version.
+   */
+  abandonHydration(): SnapshotOutcome<Events> {
+    const outcome: SnapshotOutcome<Events> = {
+      deliveries: [],
+      stale: false,
+      advanced: false,
+      hydrationCompleted: false,
+      terminated: false,
+    }
+    if (this.hydrationBuffer === null) return outcome
+    this.finishHydration(null, outcome)
+    return outcome
   }
 
   handleEvent(incoming: IncomingEvent): EventOutcome<Events> {
@@ -299,10 +315,10 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
         origin: 'sse',
       } as FallbackEvent<Events>)
     }
-    // Default: numeric SSE id (pair with server-side monotonic id stamping).
+    // Default: the SSE id, when it is a shape this package can order —
+    // a bare integer, or a `createEventIdSequence()` id.
     if (incoming.id === undefined || incoming.id === '') return undefined
-    const numeric = Number(incoming.id)
-    return Number.isNaN(numeric) ? undefined : numeric
+    return parseDefaultVersion(incoming.id)
   }
 
   private compare(a: Version, b: Version): number {
@@ -316,10 +332,15 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
   private detectGap(watermark: Version, next: Version): { from: Version; to: Version } | undefined {
     const versionConfig = this.config.version
     if (versionConfig === 'none' || !versionConfig.dense) return undefined
-    const watermarkNumber = toNumeric(watermark)
-    const nextNumber = toNumeric(next)
-    if (watermarkNumber === undefined || nextNumber === undefined) return undefined
-    return nextNumber > watermarkNumber + 1 ? { from: watermark, to: next } : undefined
+    const watermarkCounter = toCounter(watermark)
+    const nextCounter = toCounter(next)
+    if (watermarkCounter === undefined || nextCounter === undefined) return undefined
+    // Counters restart with a new epoch, so a cross-epoch step is a
+    // resynchronization point, not a measurable gap.
+    if (watermarkCounter.epoch !== nextCounter.epoch) return undefined
+    return nextCounter.counter > watermarkCounter.counter + 1n
+      ? { from: watermark, to: next }
+      : undefined
   }
 }
 
@@ -329,14 +350,81 @@ function toNumeric(version: Version): number | undefined {
   return Number.isNaN(numeric) ? undefined : numeric
 }
 
-/** Numeric when both sides are numeric; lexicographic otherwise. */
+/**
+ * Ids produced by the server-side `createEventIdSequence()`:
+ * `"<numeric epoch>-<zero-padded counter>"`.
+ *
+ * The epoch is required to be numeric (it defaults to `Date.now()`) so that
+ * ids in unrelated shapes are NOT mistaken for versions. A UUID, for example,
+ * has several dashes and hex digits and cannot match — which matters, because
+ * treating one as a version would order events at random and silently drop
+ * them as duplicates. Deployments using a non-numeric epoch, or any other id
+ * scheme, declare `version.ofEvent` explicitly.
+ */
+const SEQUENCE_ID_PATTERN = /^(\d+)-(\d+)$/
+
+type SequenceParts = { epoch: bigint; counter: bigint }
+
+function toCounter(version: Version): SequenceParts | undefined {
+  if (typeof version === 'number') {
+    return Number.isInteger(version) ? { epoch: 0n, counter: BigInt(version) } : undefined
+  }
+  const parsed = SEQUENCE_ID_PATTERN.exec(version)
+  if (parsed) {
+    return { epoch: BigInt(parsed[1] as string), counter: BigInt(parsed[2] as string) }
+  }
+  return /^\d+$/.test(version) ? { epoch: 0n, counter: BigInt(version) } : undefined
+}
+
+/**
+ * The version a bare SSE `id:` carries under the default extractor: a bare
+ * integer becomes a number, a `createEventIdSequence()` id stays a string
+ * (ordered by {@link defaultCompareVersions}), anything else carries no
+ * version at all.
+ */
+export function parseDefaultVersion(id: string): Version | undefined {
+  if (/^\d+$/.test(id)) {
+    const numeric = Number(id)
+    return Number.isSafeInteger(numeric) ? numeric : id
+  }
+  return SEQUENCE_ID_PATTERN.test(id) ? id : undefined
+}
+
+/**
+ * Numeric when both sides are numeric, epoch-then-counter when both are
+ * `createEventIdSequence()` ids, lexicographic otherwise.
+ *
+ * Comparing sequence ids by their parsed parts rather than lexicographically
+ * keeps ordering correct when the counter outgrows its zero padding, and
+ * makes a new epoch (a process restart) sort above the old one, so the
+ * restarted counter does not read as a flood of duplicates.
+ */
 export function defaultCompareVersions(a: Version, b: Version): number {
+  const numeric = compareNumeric(a, b)
+  if (numeric !== undefined) return numeric
+
+  const sequence = compareSequence(a, b)
+  if (sequence !== undefined) return sequence
+
+  return compareLexicographic(String(a), String(b))
+}
+
+function compareNumeric(a: Version, b: Version): number | undefined {
   const aNumber = toNumeric(a)
   const bNumber = toNumeric(b)
-  if (aNumber !== undefined && bNumber !== undefined) {
-    return aNumber === bNumber ? 0 : aNumber < bNumber ? -1 : 1
-  }
-  const aString = String(a)
-  const bString = String(b)
-  return aString === bString ? 0 : aString < bString ? -1 : 1
+  if (aNumber === undefined || bNumber === undefined) return undefined
+  return aNumber === bNumber ? 0 : aNumber < bNumber ? -1 : 1
+}
+
+function compareSequence(a: Version, b: Version): number | undefined {
+  const aParts = toCounter(a)
+  const bParts = toCounter(b)
+  if (!aParts || !bParts) return undefined
+  if (aParts.epoch !== bParts.epoch) return aParts.epoch < bParts.epoch ? -1 : 1
+  if (aParts.counter === bParts.counter) return 0
+  return aParts.counter < bParts.counter ? -1 : 1
+}
+
+function compareLexicographic(a: string, b: string): number {
+  return a === b ? 0 : a < b ? -1 : 1
 }

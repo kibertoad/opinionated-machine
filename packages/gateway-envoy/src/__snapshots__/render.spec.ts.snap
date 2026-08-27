@@ -195,6 +195,33 @@ exports[`renderEnvoyConfig > matches the JSON snapshot for the fixture manifest 
                                     "exact": "GET",
                                   },
                                 },
+                                {
+                                  "name": "accept",
+                                  "string_match": {
+                                    "contains": "text/event-stream",
+                                  },
+                                },
+                              ],
+                              "safe_regex": {
+                                "regex": "/jobs/[^/]+/status",
+                              },
+                            },
+                            "name": "jobsController.status__sse",
+                            "route": {
+                              "cluster": "users-service",
+                              "idle_timeout": "600s",
+                              "timeout": "0s",
+                            },
+                          },
+                          {
+                            "match": {
+                              "headers": [
+                                {
+                                  "name": ":method",
+                                  "string_match": {
+                                    "exact": "GET",
+                                  },
+                                },
                               ],
                               "safe_regex": {
                                 "regex": "/jobs/[^/]+/status",
@@ -203,8 +230,6 @@ exports[`renderEnvoyConfig > matches the JSON snapshot for the fixture manifest 
                             "name": "jobsController.status",
                             "route": {
                               "cluster": "users-service",
-                              "idle_timeout": "600s",
-                              "timeout": "0s",
                             },
                           },
                         ],
@@ -315,6 +340,21 @@ exports[`renderEnvoyConfig > matches the YAML snapshot for the fixture manifest 
                             cluster: users-service
                             timeout: 0s
                             idle_timeout: 0s
+                        - name: jobsController.status__sse
+                          match:
+                            safe_regex:
+                              regex: /jobs/[^/]+/status
+                            headers:
+                              - name: :method
+                                string_match:
+                                  exact: GET
+                              - name: accept
+                                string_match:
+                                  contains: text/event-stream
+                          route:
+                            cluster: users-service
+                            timeout: 0s
+                            idle_timeout: 600s
                         - name: jobsController.status
                           match:
                             safe_regex:
@@ -325,8 +365,6 @@ exports[`renderEnvoyConfig > matches the YAML snapshot for the fixture manifest 
                                   exact: GET
                           route:
                             cluster: users-service
-                            timeout: 0s
-                            idle_timeout: 600s
                 http_filters:
                   - name: envoy.filters.http.router
                     typed_config:

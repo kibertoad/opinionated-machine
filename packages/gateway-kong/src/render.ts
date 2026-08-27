@@ -107,7 +107,7 @@ function buildService(
   // fires between successive reads, so it is effectively the idle bound for
   // streaming routes.
   const readTimeout = pickLoosestTimeout(routes)
-  collectTimeoutWarnings(routes, readTimeout, warnings)
+  collectTimeoutWarnings(name, routes, readTimeout, warnings)
 
   return {
     name,
@@ -123,28 +123,84 @@ function buildService(
   }
 }
 
+/** Kong's own default `read_timeout`, applied when we emit none. */
+const KONG_DEFAULT_READ_TIMEOUT_MS = 60_000
+
 /**
- * Warn about timeout situations Kong cannot express per route: declared
- * timeouts tighter than the loosest-wins service read_timeout, and streaming
- * routes without a declared idle window (server heartbeats must arrive
- * within the effective read_timeout — Kong default 60s — or Kong resets
- * quiet streams).
+ * Warn about timeout situations Kong CE cannot express per route. Its
+ * `read_timeout` is service-level, so one loosest-wins value has to serve
+ * every route on the upstream — which cuts both ways, and each direction gets
+ * its own check below.
  */
 function collectTimeoutWarnings(
+  serviceName: string,
   routes: GatewayManifest['routes'],
   readTimeout: number | undefined,
   warnings: string[],
 ): void {
+  warnTighterThanService(routes, readTimeout, warnings)
+  warnInheritedStreamingTimeout(serviceName, routes, readTimeout, warnings)
+  warnStreamingWithoutIdle(routes, readTimeout, warnings)
+}
+
+/** A route asked for less than the service-wide value it actually gets. */
+function warnTighterThanService(
+  routes: GatewayManifest['routes'],
+  readTimeout: number | undefined,
+  warnings: string[],
+): void {
+  if (readTimeout === undefined) return
   for (const route of routes) {
     const declared = route.metadata.timeouts?.request
     if (!declared) continue
-    const declaredMs = toMilliseconds(declared)
-    if (readTimeout !== undefined && declaredMs < readTimeout) {
-      warnings.push(
-        `Route "${route.id}": metadata.timeouts.request (${declared}) is tighter than the service-level read_timeout (${readTimeout}ms) — Kong CE has no per-route timeout override; enforce this at the upstream or via a Lua plugin.`,
-      )
-    }
+    if (toMilliseconds(declared) >= readTimeout) continue
+    warnings.push(
+      `Route "${route.id}": metadata.timeouts.request (${declared}) is tighter than the service-level read_timeout (${readTimeout}ms) — Kong CE has no per-route timeout override; enforce this at the upstream or via a Lua plugin.`,
+    )
   }
+}
+
+/**
+ * A route asked for nothing (or for less) and is loosened anyway, because a
+ * streaming route on the same service raised the service-wide read_timeout: a
+ * 10-minute SSE idle window silently becomes a 10-minute bound on every plain
+ * JSON route beside it.
+ */
+function warnInheritedStreamingTimeout(
+  serviceName: string,
+  routes: GatewayManifest['routes'],
+  readTimeout: number | undefined,
+  warnings: string[],
+): void {
+  if (readTimeout === undefined || readTimeout <= KONG_DEFAULT_READ_TIMEOUT_MS) return
+
+  const raisedBy = routes.find((route) => {
+    const idle = route.metadata.timeouts?.idle
+    return (
+      route.streaming !== undefined && idle !== undefined && toMilliseconds(idle) === readTimeout
+    )
+  })
+  if (!raisedBy) return
+
+  for (const route of routes) {
+    if (route.streaming !== undefined) continue
+    const declared = route.metadata.timeouts?.request ?? route.metadata.timeouts?.idle
+    if (declared && toMilliseconds(declared) >= readTimeout) continue
+    warnings.push(
+      `Route "${route.id}": inherits read_timeout ${readTimeout}ms from streaming route "${raisedBy.id}" on service "${serviceName}" — Kong CE's read_timeout is service-level, so this non-streaming route is bound far more loosely than Kong's ${KONG_DEFAULT_READ_TIMEOUT_MS}ms default. Give the streaming routes their own metadata.upstream to keep the two services' timeouts independent.`,
+    )
+  }
+}
+
+/**
+ * A streaming route with no declared idle window: server heartbeats have to
+ * arrive within the effective read_timeout or Kong resets the quiet stream.
+ */
+function warnStreamingWithoutIdle(
+  routes: GatewayManifest['routes'],
+  readTimeout: number | undefined,
+  warnings: string[],
+): void {
   for (const route of routes) {
     if (route.streaming === undefined || route.metadata.timeouts?.idle !== undefined) continue
     const effective = readTimeout !== undefined ? `${readTimeout}ms` : "Kong's default 60s"

@@ -31,6 +31,14 @@ export type CreateResilientSubscriptionOptions = {
   policy?: Partial<FallbackPolicy>
   diagnostics?: FallbackDiagnostics
   signal?: AbortSignal
+  /**
+   * Decode an SSE `data:` payload into the value handed to the reconciler.
+   * Defaults to `JSON.parse`, matching the framework's default serializer.
+   * Routes that configure a custom `serializer` (or send raw strings) declare
+   * the matching decoder here — otherwise their frames cannot be read, and a
+   * frame that cannot be read is a lost event, repaired by a poll.
+   */
+  parseEventData?: (raw: string) => unknown
   /** Injectable randomness for deterministic backoff in tests. */
   random?: () => number
 }
@@ -81,6 +89,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   private readonly policy: FallbackPolicy
   private readonly diagnostics: FallbackDiagnostics
   private readonly random: () => number
+  private readonly parseEventData: (raw: string) => unknown
   private readonly reconciler: Reconciler<Snapshot, Events, State>
 
   private readonly abortController = new AbortController()
@@ -93,6 +102,8 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   private serverRetryHintMs: number | undefined
   private consecutiveConnectFailures = 0
   private degraded = false
+  /** Whether the current stream has produced any bytes at all. */
+  private streamProducedBytes = false
 
   private pollInFlight = false
   private pollQueued = false
@@ -117,6 +128,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     this.policy = { ...DEFAULT_POLICY, ...binding.config.policy, ...options.policy }
     this.diagnostics = options.diagnostics ?? {}
     this.random = options.random ?? Math.random
+    this.parseEventData = options.parseEventData ?? JSON.parse
     this.reconciler = new Reconciler(binding.config, {
       hydrationBufferLimit: this.policy.hydrationBufferLimit,
     })
@@ -258,11 +270,20 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       this.abortController.signal.addEventListener('abort', onMasterAbort, { once: true })
 
       let connectFailed = false
+      this.streamProducedBytes = false
+      // A connect that never produces headers must not park the subscription:
+      // bound it here so it fails like any other connect failure (backoff,
+      // degradation, fallback polling) instead of hanging forever.
+      const connectTimeout = new ResettableTimer(() => streamAbort.abort())
+      if (this.policy.connectTimeoutMs !== 'off') {
+        connectTimeout.arm(this.policy.connectTimeoutMs)
+      }
       try {
         const response = await this.transport.openStream(
           this.binding.buildStreamRequest(this.params),
           { signal: streamAbort.signal, lastEventId: this.lastEventId },
         )
+        connectTimeout.clear()
         if (this.stopped) return
 
         const contentType = response.headers['content-type'] ?? ''
@@ -271,6 +292,10 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
           (contentType && !contentType.includes('text/event-stream'))
         ) {
           connectFailed = true
+          // Abort the request so the rejected response body is released — the
+          // chunks of a refused connect are never consumed, and without this
+          // every retry would leak a socket.
+          streamAbort.abort()
           this.diagnostics.onStreamError?.(
             new Error(`SSE connect failed with status ${response.status}`),
           )
@@ -279,9 +304,6 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
             return
           }
         } else {
-          // Connected.
-          this.consecutiveConnectFailures = 0
-          this.degraded = false
           this.serverRetryHintMs = undefined
 
           if (firstConnect) {
@@ -294,7 +316,11 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
               this.setStatus('live')
             }
           } else {
-            this.setStatus('live')
+            // While degraded, an accepted connect is not evidence of anything:
+            // only bytes downgrade the status back out of 'polling'.
+            if (!this.degraded) {
+              this.setStatus('live')
+            }
             if ((this.binding.config.replay ?? 'untrusted') === 'untrusted') {
               // Events during the outage are lost unless the server replays
               // them completely — reconcile via a poll.
@@ -305,6 +331,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
 
           this.armStaleConnection()
           await this.consumeStream(response.chunks)
+          connectTimeout.clear()
           if (this.stopped || this.reconciler.isTerminated) return
           // Stream ended (server close, stale-abort, or network) — fall
           // through to the reconnect path.
@@ -314,6 +341,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         connectFailed = !this.streamConnected
         this.diagnostics.onStreamError?.(error)
       } finally {
+        connectTimeout.clear()
         this.staleConnection.clear()
         this.streamConnected = false
         this.abortController.signal.removeEventListener('abort', onMasterAbort)
@@ -321,7 +349,11 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
 
       if (this.stopped || this.reconciler.isTerminated) return
 
-      if (connectFailed) {
+      // A connection only counts as successful once it has actually carried
+      // bytes. A stream that is accepted and then closes immediately would
+      // otherwise reset the backoff on every attempt and never degrade,
+      // turning a broken upstream into a reconnect-and-poll storm.
+      if (connectFailed || !this.streamProducedBytes) {
         this.consecutiveConnectFailures += 1
       }
       if (this.consecutiveConnectFailures >= this.policy.degradedAfterFailures) {
@@ -357,6 +389,17 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       if (this.stopped || this.reconciler.isTerminated) return
       // ANY bytes (heartbeat comments included) prove transport liveness.
       this.armStaleConnection()
+      if (!this.streamProducedBytes) {
+        this.streamProducedBytes = true
+        // The stream is demonstrably working — clear the failure history and
+        // leave degraded mode. Doing this here rather than at connect keeps a
+        // connect-then-close loop counted as the failure it is.
+        this.consecutiveConnectFailures = 0
+        if (this.degraded) {
+          this.degraded = false
+          this.setStatus('live')
+        }
+      }
       buffer += chunk
       const parsed = parseSSEBuffer(buffer)
       buffer = parsed.remaining
@@ -373,24 +416,36 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     data: string
     retry?: number
   }): void {
-    if (parsed.retry !== undefined && !Number.isNaN(parsed.retry)) {
-      this.serverRetryHintMs = parsed.retry
-    }
-    if (parsed.id !== undefined && parsed.id !== '') {
-      this.lastEventId = parsed.id
+    if (parsed.retry !== undefined && Number.isFinite(parsed.retry)) {
+      const { minMs, maxMs } = this.policy.serverRetryHintBounds
+      this.serverRetryHintMs = Math.min(Math.max(parsed.retry, minMs), maxMs)
     }
 
     let data: unknown
     try {
-      data = JSON.parse(parsed.data)
+      data = this.parseEventData(parsed.data)
     } catch (error) {
+      // The frame is unreadable, so the event it carried is lost. Poll to
+      // repair it, and leave `lastEventId` where it was — advancing past an
+      // event that was never delivered would make a Last-Event-ID replay skip
+      // it for good.
       this.diagnostics.onStreamError?.(error)
+      this.schedulePoll()
       return
     }
 
-    // A data event (not a heartbeat) — reset the deadman.
-    this.idlePolls = 0
-    this.armDeadman()
+    if (parsed.id !== undefined && parsed.id !== '') {
+      this.lastEventId = parsed.id
+    }
+
+    // A data event (not a heartbeat) — reset the deadman. Not while
+    // hydrating: there the deadman is the retry timer for the snapshot the
+    // buffered events are waiting on, and a busy stream would push it out
+    // indefinitely.
+    if (!this.reconciler.isHydrating) {
+      this.idlePolls = 0
+      this.armDeadman()
+    }
 
     const outcome = this.reconciler.handleEvent({
       event: parsed.event ?? 'message',
@@ -443,10 +498,21 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: poll execution coordinates gating, status transitions, failure backoff, and coalescing in one place
   private async executePoll(): Promise<void> {
     this.pollInFlight = true
+    // Polling is the correctness backbone, so a poll that never settles is
+    // the worst failure this machine has: it would hold the in-flight latch
+    // and leave the deadman unarmed, silently disabling every future poll.
+    // Bound it, and let the timeout land in the failure path below.
+    const pollAbort = new AbortController()
+    const onMasterAbort = () => pollAbort.abort()
+    this.abortController.signal.addEventListener('abort', onMasterAbort, { once: true })
+    const pollTimeout = new ResettableTimer(() => pollAbort.abort())
+    if (this.policy.pollTimeoutMs !== 'off') {
+      pollTimeout.arm(this.policy.pollTimeoutMs)
+    }
     try {
       const response = await this.transport.fetchSnapshot(
         this.binding.buildSnapshotRequest(this.params),
-        { signal: this.abortController.signal },
+        { signal: pollAbort.signal },
       )
       if (this.stopped || this.reconciler.isTerminated) return
 
@@ -458,10 +524,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
           this.stop()
           return
         }
-        this.pollFailures += 1
-        this.deadman.arm(
-          backoffDelay(this.policy.pollFailureBackoff, this.pollFailures, this.random),
-        )
+        this.onPollFailed()
         return
       }
 
@@ -490,14 +553,35 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     } catch (error) {
       if (this.stopped) return
       this.diagnostics.onPollError?.(error)
-      this.pollFailures += 1
-      this.deadman.arm(backoffDelay(this.policy.pollFailureBackoff, this.pollFailures, this.random))
+      this.onPollFailed()
     } finally {
+      pollTimeout.clear()
+      this.abortController.signal.removeEventListener('abort', onMasterAbort)
       this.pollInFlight = false
       if (this.pollQueued && !this.stopped && !this.reconciler.isTerminated) {
         this.pollQueued = false
         void this.executePoll()
       }
+    }
+  }
+
+  /**
+   * Common tail for a failed poll: back off, and stop holding back live
+   * events once the snapshot endpoint has failed often enough that waiting
+   * for it is worse than delivering what the stream already gave us.
+   */
+  private onPollFailed(): void {
+    this.pollFailures += 1
+    this.deadman.arm(backoffDelay(this.policy.pollFailureBackoff, this.pollFailures, this.random))
+
+    if (
+      this.reconciler.isHydrating &&
+      this.pollFailures >= this.policy.hydrationAbandonAfterFailures
+    ) {
+      const outcome = this.reconciler.abandonHydration()
+      this.deliver(outcome.deliveries, outcome.state)
+      this.setStatus(this.streamConnected ? 'live' : this.degraded ? 'polling' : 'reconnecting')
+      if (outcome.terminated) this.stop()
     }
   }
 

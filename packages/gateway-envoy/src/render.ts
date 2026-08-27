@@ -67,7 +67,7 @@ export function renderEnvoyConfig(
 ): RenderEnvoyResult {
   const warnings: string[] = []
   const usedClusters = new Set<string>()
-  const envoyRoutes = manifest.routes.map((route) => buildRoute(route, warnings, usedClusters))
+  const envoyRoutes = manifest.routes.flatMap((route) => buildRoutes(route, warnings, usedClusters))
 
   // Validate that every referenced cluster has hosts configured. An empty
   // hosts array would render a cluster with no endpoints, making every
@@ -240,45 +240,69 @@ function collectUnsupportedWarnings(
   }
 }
 
+/**
+ * Build the route action for one BRANCH of a manifest route.
+ *
+ * `branch` is what this Envoy route actually carries, not what the contract
+ * can produce: a dual-mode contract is emitted as two Envoy routes (see
+ * {@link buildRoutes}), and the declared timeouts are split between them
+ * rather than applied to both. `timeouts.idle` is a stream concern and lands
+ * on the stream branch; `timeouts.request` bounds a request/response exchange
+ * and lands on the plain branch — applying it to the stream would cap the
+ * stream's total lifetime, which is what it does on an SSE-only route (there
+ * being no other branch to put it on) and why that case warns.
+ */
 function buildRouteAction(
   route: GatewayManifestRoute,
   upstream: string,
+  branch: 'streaming' | 'plain',
   warnings: string[],
 ): EnvoyRouteAction {
   const meta = route.metadata
-  const streaming = route.streaming !== undefined
+  const isSplit = route.streaming === 'dual'
 
-  let timeout: string | undefined
-  if (meta.timeouts?.request !== undefined) {
-    timeout = toEnvoyDuration(meta.timeouts.request)
-    if (streaming) {
+  return {
+    cluster: upstream,
+    ...buildBranchTimeouts(route, branch, isSplit, warnings),
+    ...(meta.retry ? { retry_policy: buildRetryPolicy(meta.retry) } : {}),
+  }
+}
+
+function buildBranchTimeouts(
+  route: GatewayManifestRoute,
+  branch: 'streaming' | 'plain',
+  isSplit: boolean,
+  warnings: string[],
+): { timeout?: string; idle_timeout?: string } {
+  const timeouts = route.metadata.timeouts
+
+  if (branch === 'streaming') {
+    if (timeouts?.request !== undefined && !isSplit) {
       warnings.push(
         `Route "${route.id}": timeouts.request bounds the TOTAL lifetime of a streaming (${route.streaming}) response — long-lived SSE streams are reset when it elapses. Prefer timeouts.idle for streaming routes.`,
       )
     }
-  } else if (streaming) {
-    // Envoy's default route timeout (15s) would reset any stream longer than
-    // that. Disable it for streaming routes; liveness is bounded by
-    // idle_timeout + server heartbeats instead.
-    timeout = '0s'
-  }
-
-  let idleTimeout: string | undefined
-  if (meta.timeouts?.idle !== undefined) {
-    idleTimeout = toEnvoyDuration(meta.timeouts.idle)
-  } else if (streaming) {
-    // Route-level idle_timeout overrides the HCM stream_idle_timeout
-    // (Envoy default: 5m), which would otherwise reset quiet streams.
-    // With no declared timeouts.idle we disable it — heartbeats are the
-    // intended liveness bound; declare timeouts.idle to reinstate one.
-    idleTimeout = '0s'
+    return {
+      // Envoy's default route timeout (15s) would reset any stream longer
+      // than that. On a split route timeouts.request belongs to the plain
+      // branch, so the stream is never bounded by it either.
+      timeout:
+        isSplit || timeouts?.request === undefined ? '0s' : toEnvoyDuration(timeouts.request),
+      // Route-level idle_timeout overrides the HCM stream_idle_timeout
+      // (Envoy default: 5m), which would otherwise reset quiet streams.
+      // With no declared timeouts.idle we disable it — heartbeats are the
+      // intended liveness bound; declare timeouts.idle to reinstate one.
+      idle_timeout: timeouts?.idle !== undefined ? toEnvoyDuration(timeouts.idle) : '0s',
+    }
   }
 
   return {
-    cluster: upstream,
-    ...(timeout !== undefined ? { timeout } : {}),
-    ...(idleTimeout !== undefined ? { idle_timeout: idleTimeout } : {}),
-    ...(meta.retry ? { retry_policy: buildRetryPolicy(meta.retry) } : {}),
+    ...(timeouts?.request !== undefined ? { timeout: toEnvoyDuration(timeouts.request) } : {}),
+    // On a split route the declared idle window describes the stream; the
+    // plain branch is an ordinary request and keeps the listener default.
+    ...(timeouts?.idle !== undefined && !isSplit
+      ? { idle_timeout: toEnvoyDuration(timeouts.idle) }
+      : {}),
   }
 }
 
@@ -302,11 +326,35 @@ function buildRouteHeaderRules(meta: GatewayMetadataValue): {
   }
 }
 
-function buildRoute(
+/**
+ * Header matcher selecting the SSE branch of a dual-mode route.
+ *
+ * `determineMode()` on the server picks the stream exactly when the client
+ * accepts `text/event-stream`, so the same predicate splits the two branches
+ * at the gateway. A client that does not ask for the stream explicitly (an
+ * `Accept: *\/*` request against a route configured with `defaultMode: 'sse'`)
+ * takes the plain branch and its request timeout.
+ */
+const SSE_ACCEPT_MATCHER: EnvoyHeaderMatcher = {
+  name: 'accept',
+  string_match: { contains: 'text/event-stream' },
+}
+
+/**
+ * Emit the Envoy routes for one manifest route.
+ *
+ * SSE-only and plain routes map one-to-one. A **dual-mode** route maps to
+ * TWO: one matching an `Accept: text/event-stream` request with stream-shaped
+ * timeouts, and one catch-all keeping ordinary request/response bounds.
+ * A single route cannot do both — disabling the route and idle timeouts is
+ * required for the stream and strips every bound from the JSON poll branch
+ * that the fallback client leans on, which is the branch most in need of one.
+ */
+function buildRoutes(
   route: GatewayManifestRoute,
   warnings: string[],
   usedClusters: Set<string>,
-): EnvoyRoute {
+): EnvoyRoute[] {
   const meta = route.metadata
   if (!meta.upstream) {
     throw new Error(
@@ -317,17 +365,53 @@ function buildRoute(
 
   collectUnsupportedWarnings(route.id, meta, warnings)
 
-  const headerMatchers = collectHeaderMatchers(route.method, meta)
+  if (route.streaming !== 'dual') {
+    return [
+      buildRoute(route, meta.upstream, {
+        branch: route.streaming === 'sse' ? 'streaming' : 'plain',
+        warnings,
+      }),
+    ]
+  }
+
+  // Order matters: Envoy takes the first matching route, so the narrower
+  // Accept-matched stream branch must precede the catch-all.
+  return [
+    buildRoute(route, meta.upstream, {
+      branch: 'streaming',
+      name: `${route.id}__sse`,
+      extraHeaderMatchers: [SSE_ACCEPT_MATCHER],
+      warnings,
+    }),
+    buildRoute(route, meta.upstream, { branch: 'plain', warnings }),
+  ]
+}
+
+function buildRoute(
+  route: GatewayManifestRoute,
+  upstream: string,
+  opts: {
+    branch: 'streaming' | 'plain'
+    name?: string
+    extraHeaderMatchers?: EnvoyHeaderMatcher[]
+    warnings: string[]
+  },
+): EnvoyRoute {
+  const meta = route.metadata
+  const headerMatchers = [
+    ...collectHeaderMatchers(route.method, meta),
+    ...(opts.extraHeaderMatchers ?? []),
+  ]
   const queryMatchers = collectQueryMatchers(meta)
 
   const r: EnvoyRoute = {
-    name: route.id,
+    name: opts.name ?? route.id,
     match: {
       safe_regex: { regex: openApiPathToEnvoyRegex(route.path) },
       ...(headerMatchers.length > 0 ? { headers: headerMatchers } : {}),
       ...(queryMatchers.length > 0 ? { query_parameters: queryMatchers } : {}),
     },
-    route: buildRouteAction(route, meta.upstream, warnings),
+    route: buildRouteAction(route, upstream, opts.branch, opts.warnings),
     ...buildRouteHeaderRules(meta),
   }
 
@@ -437,7 +521,11 @@ function collectHeaderAdditions(add: Record<string, string> | undefined): EnvoyH
 // purpose — we don't try to model all of envoy.config.v3, only what we render.
 // ============================================================================
 
-type EnvoyStringMatch = { exact: string } | { prefix: string } | { safe_regex: { regex: string } }
+type EnvoyStringMatch =
+  | { exact: string }
+  | { prefix: string }
+  | { contains: string }
+  | { safe_regex: { regex: string } }
 
 type EnvoyHeaderMatcher = { name: string; string_match: EnvoyStringMatch }
 type EnvoyQueryMatcher = { name: string; string_match: EnvoyStringMatch }

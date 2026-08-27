@@ -394,3 +394,184 @@ describe('createResilientSubscription', () => {
     expect(transport.streamConnects).toHaveLength(1)
   })
 })
+
+describe('createResilientSubscription — liveness and failure bounds', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('bounds a hung stream connect so polling still happens', async () => {
+    const { transport, snapshots } = makeHarness()
+    transport.holdNextStreamConnect()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, connectTimeoutMs: 3_000 },
+      random: () => 1,
+    })
+    await flush()
+
+    // Headers never arrive: nothing has been polled and nothing is armed yet.
+    expect(snapshots).toHaveLength(0)
+
+    await vi.advanceTimersByTimeAsync(3_000)
+    // The connect was abandoned, counted as a failure, and repaired by a poll.
+    expect(snapshots.length).toBeGreaterThanOrEqual(1)
+    expect(sub.status).not.toBe('live')
+
+    snapshots[0]?.respond({ status: 'completed', result: 'via poll', version: 1 })
+    await flush()
+    expect(sub.status).toBe('stopped')
+  })
+
+  it('counts a connect that closes without bytes as a failure and degrades', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    // Every reconnect is accepted and then closed immediately, delivering
+    // nothing. Without byte-gated success this loops forever at attempt 0.
+    for (let i = 0; i < 4; i++) {
+      streams[streams.length - 1]?.close()
+      await vi.advanceTimersByTimeAsync(200)
+    }
+
+    expect(sub.status).toBe('polling')
+  })
+
+  it('releases the response of a refused connect instead of leaking it', async () => {
+    const { transport, snapshots } = makeHarness()
+    transport.denyNextStreamConnect({ status: 502 })
+    createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    await flush()
+
+    expect(transport.deniedConnectAborts).toEqual([true])
+    expect(snapshots.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('clamps a server retry hint instead of using it verbatim', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, serverRetryHintBounds: { minMs: 500, maxMs: 2_000 } },
+      random: () => 1,
+    })
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    // `retry: 0` would otherwise spin a zero-delay reconnect loop.
+    streams[0]?.pushEvent('progress', { percent: 10 }, { id: '1', retry: 0 })
+    await flush()
+    streams[0]?.close()
+    await flush()
+
+    expect(transport.streamConnects).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(499)
+    expect(transport.streamConnects).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(transport.streamConnects).toHaveLength(2)
+  })
+
+  it('bounds a poll that never settles so the deadman keeps polling', async () => {
+    const { transport, snapshots } = makeHarness()
+    createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, pollTimeoutMs: 2_000 },
+      random: () => 1,
+    })
+    await flush()
+    expect(snapshots).toHaveLength(1) // hydration poll — never answered
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    // The abandoned poll released the in-flight latch and re-armed the deadman.
+    await vi.advanceTimersByTimeAsync(100)
+    expect(snapshots.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('abandons hydration after repeated poll failures so the stream is not silenced', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, hydrationAbandonAfterFailures: 2 },
+      random: () => 1,
+    })
+    const delivered: Array<FallbackEvent<Events>> = []
+    sub.onEvent((event) => delivered.push(event))
+    await flush()
+
+    // The snapshot endpoint is down; the stream is perfectly healthy.
+    snapshots[0]?.fail()
+    await flush()
+    streams[0]?.pushEvent('progress', { percent: 50 }, { id: '1' })
+    await flush()
+    expect(delivered).toHaveLength(0) // buffered by hydration
+
+    await vi.advanceTimersByTimeAsync(100)
+    snapshots[1]?.fail()
+    await flush()
+
+    // Hydration gave up: the buffered event reaches the application.
+    expect(delivered.map((event) => event.event)).toEqual(['progress'])
+
+    streams[0]?.pushEvent('progress', { percent: 80 }, { id: '2' })
+    await flush()
+    expect(delivered).toHaveLength(2)
+  })
+
+  it('repairs an undecodable frame by polling and does not skip it on replay', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    streams[0]?.pushRaw('id: 7\ndata: not-json\n\n')
+    await flush()
+
+    // The lost event is repaired by a poll...
+    expect(snapshots).toHaveLength(2)
+    snapshots[1]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    // ...and the watermark for replay did not move past the event we never read.
+    streams[0]?.fail()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(streams[1]?.lastEventIdReceived).toBeUndefined()
+  })
+
+  it('decodes non-JSON payloads through a custom parseEventData', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+      parseEventData: (raw) => ({ result: raw }),
+    })
+    const completion = sub.waitFor('done')
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    streams[0]?.pushRaw('id: 1\nevent: done\ndata: plain-text-payload\n\n')
+    await flush()
+
+    await expect(completion).resolves.toEqual({ result: 'plain-text-payload' })
+  })
+})

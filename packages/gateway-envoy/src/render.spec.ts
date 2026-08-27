@@ -85,11 +85,96 @@ describe('renderEnvoyConfig', () => {
 
     it('maps timeouts.idle to route idle_timeout while still disabling the route timeout', () => {
       const { json } = renderEnvoyConfig(fixtureManifest, options)
-      expect(findRoute(json, 'jobsController.status')?.route).toEqual({
+      // 'jobsController.status' is dual-mode, so its stream branch is the
+      // Accept-matched route (see the dual-mode split tests below).
+      expect(findRoute(json, 'jobsController.status__sse')?.route).toEqual({
         cluster: 'users-service',
         timeout: '0s',
         idle_timeout: '600s',
       })
+    })
+
+    it('splits a dual-mode route so the JSON poll branch keeps a route timeout', () => {
+      const { json } = renderEnvoyConfig(fixtureManifest, options)
+
+      const streamBranch = findRoute(json, 'jobsController.status__sse')
+      const jsonBranch = findRoute(json, 'jobsController.status')
+
+      // The stream branch is selected by the same predicate the server uses.
+      expect((streamBranch?.match as { headers: unknown[] }).headers).toContainEqual({
+        name: 'accept',
+        string_match: { contains: 'text/event-stream' },
+      })
+      // The JSON branch carries no Accept matcher, and none of the stream's
+      // timeouts: it is an ordinary request under Envoy's own defaults.
+      expect((jsonBranch?.match as { headers: unknown[] }).headers).not.toContainEqual({
+        name: 'accept',
+        string_match: { contains: 'text/event-stream' },
+      })
+      expect(jsonBranch?.route).toEqual({ cluster: 'users-service' })
+    })
+
+    it('orders the dual-mode stream branch before the catch-all branch', () => {
+      const { json } = renderEnvoyConfig(fixtureManifest, options)
+      const typedConfig = json.static_resources.listeners[0]?.filter_chains[0]?.filters[0]
+        ?.typed_config as {
+        route_config: { virtual_hosts: Array<{ routes: Array<Record<string, unknown>> }> }
+      }
+      const names = typedConfig.route_config.virtual_hosts[0]?.routes.map((r) => r.name) ?? []
+
+      // Envoy takes the first match, so the narrower branch has to come first.
+      expect(names.indexOf('jobsController.status__sse')).toBeLessThan(
+        names.indexOf('jobsController.status'),
+      )
+    })
+
+    it('bounds the JSON branch of a dual-mode route with timeouts.request', () => {
+      const manifest = {
+        ...fixtureManifest,
+        routes: [
+          {
+            ...(fixtureManifest.routes.find(
+              (r) => r.id === 'jobsController.status',
+            ) as (typeof fixtureManifest.routes)[number]),
+            metadata: { upstream: 'users-service', timeouts: { request: '5s', idle: '10m' } },
+          },
+        ],
+      }
+      const { json } = renderEnvoyConfig(manifest, options)
+
+      // The request timeout lands on the JSON branch only...
+      expect(findRoute(json, 'jobsController.status')?.route).toEqual({
+        cluster: 'users-service',
+        timeout: '5s',
+      })
+      // ...and the idle window on the stream branch only, so neither bound
+      // leaks onto the exchange it was not written for.
+      expect(findRoute(json, 'jobsController.status__sse')?.route).toEqual({
+        cluster: 'users-service',
+        timeout: '0s',
+        idle_timeout: '600s',
+      })
+    })
+
+    it('does not warn about timeouts.request on a dual route (it bounds the JSON branch)', () => {
+      const manifest = {
+        ...fixtureManifest,
+        routes: [
+          {
+            ...(fixtureManifest.routes.find(
+              (r) => r.id === 'jobsController.status',
+            ) as (typeof fixtureManifest.routes)[number]),
+            metadata: { upstream: 'users-service', timeouts: { request: '5s', idle: '10m' } },
+          },
+        ],
+      }
+      const { warnings } = renderEnvoyConfig(manifest, options)
+      expect(warnings.some((w) => w.includes('TOTAL lifetime'))).toBe(false)
+    })
+
+    it('does not split SSE-only routes', () => {
+      const { json } = renderEnvoyConfig(fixtureManifest, options)
+      expect(findRoute(json, 'notificationsController.stream__sse')).toBeUndefined()
     })
 
     it('maps timeouts.idle on non-streaming routes too', () => {

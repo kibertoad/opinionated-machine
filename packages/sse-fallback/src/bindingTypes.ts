@@ -27,11 +27,12 @@ export type VersionConfig<Snapshot, Event> =
       /** Extract the version from a poll snapshot body. */
       ofSnapshot: (snapshot: Snapshot) => Version
       /**
-       * Extract the version from a delivered event. Defaults to
-       * `Number(event.id)` when the SSE id is numeric — pair with the
-       * server-side `createEventIdSequence` or stamp ids explicitly.
-       * Return `undefined` for events that carry no version — they are
-       * delivered without advancing the watermark (at-least-once).
+       * Extract the version from a delivered event. The default reads the SSE
+       * `id:`, accepting a bare integer (`"42"`) or the
+       * `"<numeric epoch>-<counter>"` shape produced by the server-side
+       * `createEventIdSequence()`; ids in any other shape (e.g. UUIDs) carry
+       * no version. Return `undefined` for events that carry no version —
+       * they are delivered without advancing the watermark (at-least-once).
        */
       ofEvent?: (event: Event) => Version | undefined
       /** Custom comparator. Defaults to numeric, falling back to lexicographic. */
@@ -185,10 +186,39 @@ export type FallbackPolicy = {
    * `'off'` disables byte-level liveness (rely on the deadman alone).
    */
   staleConnectionTimeoutMs: number | 'off'
+  /**
+   * Abort a stream connect that has not produced response headers within this
+   * window, so a hung connect is counted as a connect failure (backoff,
+   * degradation) instead of stalling the subscription indefinitely.
+   * `'off'` waits forever — only safe with a transport that times out itself.
+   */
+  connectTimeoutMs: number | 'off'
+  /**
+   * Abort a snapshot poll that has not settled within this window. Without a
+   * bound, one never-settling poll would hold the in-flight latch and leave
+   * the deadman unarmed — disabling the correctness backbone entirely.
+   * `'off'` waits forever — only safe with a transport that times out itself.
+   */
+  pollTimeoutMs: number | 'off'
   /** Backoff (full jitter) for failed polls. */
   pollFailureBackoff: BackoffConfig
   /** Backoff (full jitter) for SSE reconnect attempts; `retry:` hints override the base. */
   sseRetryBackoff: BackoffConfig
+  /**
+   * Bounds applied to a server-sent `retry:` reconnection hint. The hint is
+   * attacker- or bug-reachable input: `retry: 0` would spin a zero-delay
+   * reconnect loop and a very large value would park reconnection for hours,
+   * so it is clamped into this range rather than used verbatim.
+   */
+  serverRetryHintBounds: { minMs: number; maxMs: number }
+  /**
+   * Consecutive snapshot-poll failures after which subscribe-first hydration
+   * is abandoned: the buffered live events are flushed to the application and
+   * the stream resumes delivering directly. Without this, an endpoint that
+   * keeps failing its snapshot poll would hold the hydration buffer open and
+   * a perfectly healthy stream would deliver nothing.
+   */
+  hydrationAbandonAfterFailures: number
   /** Consecutive SSE connect failures before degrading to POLLING_ONLY. */
   degradedAfterFailures: number
   /** Poll cadence while degraded (SSE unavailable). */
@@ -209,8 +239,12 @@ export const DEFAULT_POLICY: FallbackPolicy = {
   deadmanDelayMs: 10_000,
   deadmanIdleBackoff: { factor: 1.5, maxMs: 60_000 },
   staleConnectionTimeoutMs: 60_000,
+  connectTimeoutMs: 15_000,
+  pollTimeoutMs: 10_000,
   pollFailureBackoff: { baseMs: 1_000, factor: 2, maxMs: 30_000 },
   sseRetryBackoff: { baseMs: 1_000, factor: 2, maxMs: 30_000 },
+  serverRetryHintBounds: { minMs: 250, maxMs: 60_000 },
+  hydrationAbandonAfterFailures: 3,
   degradedAfterFailures: 3,
   degradedPollIntervalMs: 15_000,
   degradedSseRetryMaxMs: 60_000,

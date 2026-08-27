@@ -154,11 +154,33 @@ heartbeat comments count without any transport logic. A scripted
 | `deadmanDelayMs` | 10 000 | `LIVE_STATE_POLICY` preset: 120 000 |
 | `deadmanIdleBackoff` | ×1.5 up to 60 s | quiet subscriptions poll less |
 | `staleConnectionTimeoutMs` | 60 000 | `'off'` to disable byte-level liveness |
+| `connectTimeoutMs` | 15 000 | a connect that never sends headers is a failure, not a stall |
+| `pollTimeoutMs` | 10 000 | a poll that never settles would disable the backbone |
 | `pollFailureBackoff` / `sseRetryBackoff` | 1 s ×2 up to 30 s, full jitter | |
+| `serverRetryHintBounds` | 250 ms – 60 s | clamps the server's `retry:` hint |
 | `degradedAfterFailures` | 3 | then `POLLING_ONLY` |
 | `degradedPollIntervalMs` | 15 000 | the "old polling world", kept humane |
 | `hydrationBufferLimit` | 1 000 | overflow → drop buffer + refetch |
+| `hydrationAbandonAfterFailures` | 3 | flush the buffer rather than silence a healthy stream |
 | `unretryableStatuses` | 401, 403, 404 | stop instead of retrying |
+
+Every wait in the machine is bounded, because an unbounded one turns the
+fallback into no fallback at all: a hung connect or a poll that never settles
+would leave nothing armed, which is precisely the silent-failure class this
+package exists to catch.
+
+## Event ids and the version gate
+
+The default version extractor reads the SSE `id:` and accepts two shapes: a
+bare integer (`"42"`), and the `"<epoch>-<counter>"` ids produced by the
+server-side `createEventIdSequence()`. Sequence ids order by epoch first and
+then counter, so a process restart — a new, larger epoch with the counter back
+at 1 — reads as *newer*, not as a flood of duplicates.
+
+Ids in any other shape (a UUID, say) carry **no** version: they are unique but
+not orderable, so events are delivered at-least-once and the watermark does not
+move. Declare `version.ofEvent` explicitly for any other id scheme rather than
+letting an unorderable id masquerade as a version.
 
 ## Known limitations (v1)
 

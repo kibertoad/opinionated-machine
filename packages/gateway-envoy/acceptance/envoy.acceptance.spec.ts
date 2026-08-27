@@ -63,6 +63,32 @@ describe('envoy acceptance', () => {
       expect(body).toContain('event: second')
     })
 
+    it('dual-mode stream branch survives the same gap', async () => {
+      // The Accept-matched branch of the split carries the stream timeouts.
+      const res = await fetchGateway('/dual?gapMs=3000', {
+        headers: { accept: 'text/event-stream' },
+      })
+      expect(res.status).toBe(200)
+      const body = await res.text()
+      expect(body).toContain('event: first')
+      expect(body).toContain('event: second')
+    })
+
+    it('dual-mode JSON branch keeps its route timeout', async () => {
+      // Same path, no Accept for the stream: the catch-all branch applies, and
+      // with it the 200ms request timeout the manifest declared. Before the
+      // split this branch inherited the stream's `timeout: 0s` and hung.
+      const res = await fetchGateway('/dual?ms=2000', { headers: { accept: 'application/json' } })
+      expect(res.status).toBe(504)
+    })
+
+    it('dual-mode JSON branch still answers a fast request', async () => {
+      const res = await fetchGateway('/dual', { headers: { accept: 'application/json' } })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { branch: string }
+      expect(body.branch).toBe('json')
+    })
+
     it('unmarked route stream is reset at the listener idle timeout', async () => {
       // Same upstream behavior, but the route carries no streaming marker —
       // Envoy resets the stream during the 3s gap. Depending on timing the

@@ -3300,11 +3300,26 @@ stamped with a streaming mode, and the manifest carries it as
   (declare `timeouts.idle` to reinstate a liveness bound; heartbeats are the
   intended keep-alive). `EnvoyOptions.streamIdleTimeout` sets the listener-wide
   HCM `stream_idle_timeout` for everything else. Declaring `timeouts.request`
-  on a streaming route warns — it bounds the stream's total lifetime.
+  on an SSE-only route warns — it bounds the stream's total lifetime.
+
+  A **dual-mode** route is emitted as *two* Envoy routes, because one route
+  cannot be both: `<id>__sse`, matched on `Accept: text/event-stream`, and
+  `<id>`, the catch-all. The declared timeouts are split between them rather
+  than applied to both — `timeouts.idle` goes to the stream branch,
+  `timeouts.request` to the JSON branch, which is the fallback poll path and
+  the one that most needs a bound. Note the split keys off the `Accept` header,
+  the same predicate `determineMode()` uses server-side: a client that wants
+  the stream has to ask for `text/event-stream` explicitly.
 - **Kong** — streaming routes emit `response_buffering: false` (Kong ≥ 2.3);
   `timeouts.idle` joins the loosest-wins service `read_timeout`. Streaming
   routes without a declared idle warn: heartbeats must arrive within the
   effective `read_timeout` (Kong default 60s) or the stream is reset.
+
+  Kong CE's `read_timeout` is **service-level**, so a long streaming idle
+  window loosens every route sharing that upstream. Each co-located
+  non-streaming route that inherits a raised timeout is warned about by name;
+  give streaming routes their own `metadata.upstream` when the plain routes
+  beside them need to stay tightly bounded.
 - **KrakenD** — the endpoint `timeout` uses the looser of `timeouts.request` /
   `timeouts.idle`; streaming routes with neither warn about KrakenD's 2s
   default endpoint timeout.

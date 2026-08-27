@@ -157,6 +157,35 @@ describe('renderKongConfig — streaming routes', () => {
     expect(json.services[0]?.read_timeout).toBe(600000)
   })
 
+  it('warns every co-located non-streaming route that inherits the raised read_timeout', () => {
+    const { warnings } = renderKongConfig(fixtureManifest, options)
+
+    // The 10m idle window of the dual streaming route becomes the service-wide
+    // read_timeout, so plain JSON routes beside it are bound 10x more loosely
+    // than Kong's default — including one that declared nothing at all.
+    const subjects = warnings
+      .filter((w) => w.includes('inherits read_timeout 600000ms'))
+      .map((w) => /^Route "([^"]+)"/.exec(w)?.[1])
+
+    expect(subjects).toContain('usersController.createItem')
+    expect(subjects).toContain('usersController.getItem')
+    // Streaming routes are the ones that asked for it — no warning for them.
+    expect(subjects).not.toContain('jobsController.status')
+    expect(subjects).not.toContain('notificationsController.stream')
+    const inherited = warnings.filter((w) => w.includes('inherits read_timeout 600000ms'))
+    // The warning names the remedy: a separate upstream for streaming routes.
+    expect(inherited[0]).toContain('metadata.upstream')
+  })
+
+  it('does not warn about inheritance when no streaming route raised the timeout', () => {
+    const manifest = {
+      ...fixtureManifest,
+      routes: fixtureManifest.routes.filter((route) => route.streaming === undefined),
+    }
+    const { warnings } = renderKongConfig(manifest, options)
+    expect(warnings.some((w) => w.includes('inherits read_timeout'))).toBe(false)
+  })
+
   it('warns for streaming routes without timeouts.idle (heartbeats must beat read_timeout)', () => {
     const { warnings } = renderKongConfig(fixtureManifest, options)
     expect(

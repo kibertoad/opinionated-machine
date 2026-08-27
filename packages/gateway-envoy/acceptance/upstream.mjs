@@ -19,6 +19,29 @@ createServer((req, res) => {
     return
   }
 
+  // Dual-mode stub: negotiates on Accept exactly like determineMode() does.
+  // The SSE branch behaves like /sse; the JSON branch is deliberately slow so
+  // the route timeout on the plain branch of the split has something to catch.
+  if (url.pathname === '/dual') {
+    if ((req.headers.accept ?? '').includes('text/event-stream')) {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+      res.write('event: first\ndata: {"n":1}\n\n')
+      const gap = Number(url.searchParams.get('gapMs') ?? '3000')
+      const timer = setTimeout(() => {
+        res.write('event: second\ndata: {"n":2}\n\n')
+        res.end()
+      }, gap)
+      res.on('close', () => clearTimeout(timer))
+      return
+    }
+    const delay = Number(url.searchParams.get('ms') ?? '0')
+    setTimeout(() => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ path: url.pathname, branch: 'json', delayedMs: delay }))
+    }, delay)
+    return
+  }
+
   // SSE stub: first event immediately, second after ?gapMs (default 3000),
   // then the stream ends. The idle gap between the two events is what the
   // streaming-route acceptance tests use to trip (or survive) idle timeouts.

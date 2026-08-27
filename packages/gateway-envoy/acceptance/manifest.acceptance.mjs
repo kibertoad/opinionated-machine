@@ -43,6 +43,18 @@ export const acceptanceManifest = {
       metadata: { upstream: 'upstream' },
     },
     {
+      id: 'sse.dual',
+      method: 'GET',
+      path: '/dual',
+      controller: 'sse',
+      routeKey: 'dual',
+      // Marked dual: the generator emits TWO Envoy routes — an Accept-matched
+      // stream branch with the timeouts disabled, and a catch-all JSON branch
+      // that keeps this request timeout. One route could only do one of those.
+      streaming: 'dual',
+      metadata: { upstream: 'upstream', timeouts: { request: '200ms' } },
+    },
+    {
       id: 'sse.unmarked',
       method: 'GET',
       path: '/sse-unmarked',
