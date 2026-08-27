@@ -1,8 +1,4 @@
-export {
-  type FastifyOpenApiDocsPluginOptions,
-  fastifyOpenApiDocsPlugin,
-  type OpenApiDocumentRouteOptions,
-} from './fastifyOpenApiDocsPlugin.ts'
+export { DEFAULT_INTERNAL_MARKER_KEY } from './internalMarker.ts'
 export {
   type ChainedOpenApiTransform,
   type OpenApiAudience,

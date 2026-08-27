@@ -88,6 +88,9 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [How It Works](#how-it-works)
   - [Two Documents, Two Registrations](#two-documents-two-registrations)
   - [Serving Both Documents](#serving-both-documents)
+    - [`@fastify/swagger-ui`](#fastifyswagger-ui)
+    - [`@scalar/fastify-api-reference`](#scalarfastify-api-reference)
+    - [Just the JSON](#just-the-json)
   - [One Document, Both Audiences](#one-document-both-audiences)
   - [Marking Routes Built Elsewhere](#marking-routes-built-elsewhere)
 - [Gateway Configuration](#gateway-configuration)
@@ -2982,8 +2985,9 @@ audience:
 | No contract (plain Fastify route) | documented | documented |
 | `schema.hide: true`, no contract | hidden | documented, marked `x-internal: true` |
 | `tags: ['X-HIDDEN']` | hidden | hidden |
+| matched by `exclude` | hidden | hidden |
 
-The last two rows are the ones worth remembering:
+The last three rows are the ones worth remembering:
 
 - Routes built directly by `@lokalise/fastify-api-contracts` (`buildFastifyRoute`,
   `buildFastifyNoPayloadRoute`, …) carry `hide` but no visibility marker. The transform treats an
@@ -2991,6 +2995,9 @@ The last two rows are the ones worth remembering:
   `treatHiddenAsInternal: false` if `hide: true` means "never document this" in your service.
 - `X-HIDDEN` (`@fastify/swagger`'s `hiddenTag`) is the audience-independent escape hatch. The
   transform never touches tags, so an `X-HIDDEN` route stays out of *both* documents.
+- `exclude` is the same escape hatch for routes whose schema you do not own — the asset routes a
+  documentation UI registers for itself, most of all. See
+  [Serving Both Documents](#serving-both-documents).
 
 ### Two Documents, Two Registrations
 
@@ -3031,37 +3038,95 @@ The two documents can differ in more than their operation set: give each registr
 
 ### Serving Both Documents
 
-`fastifyOpenApiDocsPlugin` wires each registration's decorator to a path. Both routes are opt-in, so
-adding the plugin can never expose an internal spec by accident, and the document routes themselves
-stay out of every document:
+This package intentionally ships no documentation-serving plugin. `@fastify/swagger-ui` and
+`@scalar/fastify-api-reference` can both already be pointed at a second document, and each does far
+more than a JSON route (asset serving, CSP headers, theming, deep linking) — so the recipe is to
+register your UI of choice twice, once per audience.
+
+Every route those plugins register carries `schema: { hide: true }`, which is also what
+`treatHiddenAsInternal` reads as "internal endpoint". Exclude them, or the internal document ends up
+documenting the documentation:
 
 ```ts
-import { fastifyOpenApiDocsPlugin } from 'opinionated-machine'
+const isDocumentationRoute = ({ url }: { url: string }) =>
+  url.startsWith('/documentation') || url.startsWith('/reference')
 
-await app.register(fastifyOpenApiDocsPlugin, {
-  publicRoute: '/documentation/json',
-  internalRoute: '/documentation/internal/json',
-  // The internal document lists endpoints deliberately kept out of the public
-  // spec — guard it unless the path is unreachable from outside the cluster.
-  internalRouteOptions: { onRequest: requireInternalNetwork },
+const audienceTransform = (audience: 'public' | 'internal') =>
+  openApiVisibilityTransform({
+    audience,
+    exclude: isDocumentationRoute,
+    transform: jsonSchemaTransform,
+  })
+```
+
+`exclude` is the audience-independent opt-out for routes whose schema you do not own — the
+equivalent of tagging them `X-HIDDEN`. Excluded routes are hidden in every document and never
+marked internal, so nothing derives them back either.
+
+#### `@fastify/swagger-ui`
+
+`@fastify/swagger-ui` always reads the default `swagger` decorator, so the internal instance gets its
+document through `transformSpecification`. Two things to know:
+
+- It decorates the instance it is registered on with `swaggerCSP`, so a second top-level
+  registration fails with `FST_ERR_DEC_ALREADY_PRESENT`. Wrap each registration in its own
+  encapsulated scope.
+- With `transformSpecificationClone` left at its default it deep-clones the public document before
+  handing it to your function — wasted work when you are replacing it wholesale. Set it to `false`.
+
+```ts
+import fastifySwaggerUi from '@fastify/swagger-ui'
+
+// Public UI -> /documentation
+await app.register(async (scope) => {
+  await scope.register(fastifySwaggerUi, { routePrefix: '/documentation' })
+})
+
+// Internal UI -> /documentation/internal
+await app.register(async (scope) => {
+  await scope.register(fastifySwaggerUi, {
+    routePrefix: '/documentation/internal',
+    transformSpecification: () => scope.internalSwagger(),
+    transformSpecificationClone: false,
+    // The internal document lists endpoints deliberately kept out of the
+    // public spec — guard it unless the path is unreachable from outside.
+    uiHooks: { onRequest: requireInternalNetwork },
+  })
 })
 ```
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `publicDecorator` | `'swagger'` | Decorator holding the public document generator |
-| `internalDecorator` | `'internalSwagger'` | Decorator holding the internal document generator |
-| `publicRoute` | — | Path serving the public document; omit to register nothing |
-| `internalRoute` | — | Path serving the internal document; omit to register nothing |
-| `publicRouteOptions` / `internalRouteOptions` | — | `onRequest` / `preHandler` / `config` / `schema` for that route |
-| `hiddenTag` | `'X-HIDDEN'` | Tag keeping the document routes out of every document |
+Each instance serves its document at `${routePrefix}/json` and `${routePrefix}/yaml`.
 
-A missing decorator fails at boot rather than on the first request.
+#### `@scalar/fastify-api-reference`
 
-Prefer a query parameter over separate paths? One route over both decorators does it:
+Scalar takes the document as configuration, so it needs no scope of its own — pass a function and it
+is called per request, which keeps the reference in step with `app.internalSwagger()`:
 
 ```ts
-app.get('/documentation/json', { schema: { hide: true, tags: ['X-HIDDEN'] } }, async (request) => {
+import scalarApiReference from '@scalar/fastify-api-reference'
+
+// Public reference -> /reference (falls back to app.swagger())
+await app.register(scalarApiReference, { routePrefix: '/reference' })
+
+// Internal reference -> /reference/internal
+await app.register(scalarApiReference, {
+  routePrefix: '/reference/internal',
+  configuration: { content: () => app.internalSwagger() },
+  hooks: { onRequest: requireInternalNetwork },
+})
+```
+
+Each instance serves its document at `${routePrefix}/openapi.json` and `${routePrefix}/openapi.yaml`.
+
+Both recipes are covered end to end in `test/openapi/openapi.docsUi.e2e.spec.ts`.
+
+#### Just the JSON
+
+If all you need is the raw document, a route is enough — no plugin required. One route over both
+decorators also covers the "same path, `?audience=` query parameter" shape:
+
+```ts
+app.get('/openapi.json', { schema: { hide: true, tags: ['X-HIDDEN'] } }, async (request) => {
   const wantsInternal = (request.query as { audience?: string }).audience === 'internal'
   if (wantsInternal && !isInternalCaller(request)) throw new Error('forbidden')
   return wantsInternal ? app.internalSwagger() : app.swagger()
@@ -3070,12 +3135,12 @@ app.get('/documentation/json', { schema: { hide: true, tags: ['X-HIDDEN'] } }, a
 
 ### One Document, Both Audiences
 
-When the swagger instance is already wired to something else (`@fastify/swagger-ui`, a static export
-step) and registering the plugin twice is awkward, generate the internal document only and derive the
+When the swagger instance is already wired to something that cannot be registered twice, or the
+document is produced by a static export step, generate the internal document only and derive the
 public one from it. `stripInternalOperations` drops every operation the transform marked
-`x-internal`, prunes the path items left empty, and prunes the `components.schemas` entries and tags
-nothing public references any more — internal request/response shapes reaching `components` is
-exactly the leak it exists to prevent:
+`x-internal`, prunes the path items left empty, and prunes the `components` entries and tags nothing
+public references any more — internal request/response shapes reaching `components` is exactly the
+leak it exists to prevent:
 
 ```ts
 import { stripInternalOperations } from 'opinionated-machine'
@@ -3084,9 +3149,21 @@ const internalDocument = app.swagger() // registered with audience: 'internal'
 const publicDocument = stripInternalOperations(internalDocument)
 ```
 
+Pruning follows `$ref`s transitively across the whole `components` object, not just
+`components.schemas`, so a schema reachable only through a shared `components.responses` entry
+survives with it and no dangling reference is left behind. `components.securitySchemes` is never
+pruned: security schemes are referenced by name from `security` requirements rather than by `$ref`.
+Pass `{ prune: false }` if the document intentionally publishes components no operation references.
+
 The input document is never mutated — `app.swagger()` hands back a cached object that has to stay
-intact for the internal document. Pass `{ prune: false }` if the document intentionally publishes
-schemas no operation references.
+intact for the internal document.
+
+The `x-internal` marker is the entire contract this rests on, which is why `internalMarkerKey` must
+start with `x-`: `@fastify/swagger` copies only `x-`-prefixed schema keys into the generated
+operation and silently drops the rest, so any other key would leave `stripInternalOperations`
+matching nothing and publishing every internal operation. Both
+`openApiVisibilityTransform` and `stripInternalOperations` reject such a key outright rather than
+let that happen at runtime.
 
 ### Marking Routes Built Elsewhere
 

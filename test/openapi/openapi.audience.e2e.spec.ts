@@ -8,12 +8,8 @@ import {
 } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
-import {
-  buildApiRoute,
-  fastifyOpenApiDocsPlugin,
-  openApiVisibilityTransform,
-  stripInternalOperations,
-} from '../../index.js'
+import { buildApiRoute, openApiVisibilityTransform, stripInternalOperations } from '../../index.js'
+import type { TestOpenApiDocument } from './testOpenApiDocument.ts'
 
 const userSchema = z.object({ id: z.string(), name: z.string() })
 const reindexReportSchema = z.object({ reindexedDocuments: z.number() })
@@ -38,17 +34,6 @@ const reindexContract = defineApiContract({
   responsesByStatusCode: { 200: reindexReportSchema },
 })
 
-type OpenApiDocument = {
-  paths?: Record<string, Record<string, { summary?: string; 'x-internal'?: boolean }>>
-  components?: { schemas?: Record<string, unknown> }
-}
-
-declare module 'fastify' {
-  interface FastifyInstance {
-    internalSwagger: () => OpenApiDocument
-  }
-}
-
 async function buildApp(): Promise<FastifyInstance> {
   const app = fastify()
   app.setValidatorCompiler(validatorCompiler)
@@ -65,11 +50,6 @@ async function buildApp(): Promise<FastifyInstance> {
     decorator: 'internalSwagger',
     openapi: { info: { title: 'Users API (internal)', version: '1.0.0' } },
     transform: openApiVisibilityTransform({ audience: 'internal', transform: jsonSchemaTransform }),
-  })
-
-  await app.register(fastifyOpenApiDocsPlugin, {
-    publicRoute: '/documentation/json',
-    internalRoute: '/documentation/internal/json',
   })
 
   app.route(
@@ -127,38 +107,38 @@ describe('OpenAPI documents per audience', () => {
 
   describe('public document', () => {
     it('documents public contract routes', () => {
-      const document = app.swagger() as OpenApiDocument
+      const document = app.swagger() as TestOpenApiDocument
 
       expect(document.paths?.['/api/users/{userId}']?.get?.summary).toBe('Get user')
     })
 
     it('omits internal contract routes', () => {
-      const document = app.swagger() as OpenApiDocument
+      const document = app.swagger() as TestOpenApiDocument
 
       expect(document.paths?.['/api/ops/reindex']).toBeUndefined()
     })
 
     it('keeps routes that carry no visibility marker', () => {
-      const document = app.swagger() as OpenApiDocument
+      const document = app.swagger() as TestOpenApiDocument
 
       expect(document.paths?.['/health']?.get).toBeDefined()
     })
 
     it('leaves explicitly hidden routes hidden', () => {
-      const document = app.swagger() as OpenApiDocument
+      const document = app.swagger() as TestOpenApiDocument
 
       expect(document.paths?.['/metrics']).toBeUndefined()
       expect(document.paths?.['/debug/heap']).toBeUndefined()
     })
 
     it('does not leak schemas only internal routes use', () => {
-      const document = app.swagger() as OpenApiDocument
+      const document = app.swagger() as TestOpenApiDocument
 
       expect(JSON.stringify(document)).not.toContain('reindexedDocuments')
     })
 
     it('does not leak the visibility marker', () => {
-      const document = app.swagger() as OpenApiDocument
+      const document = app.swagger() as TestOpenApiDocument
 
       expect(JSON.stringify(document)).not.toContain('visibility')
     })
@@ -211,33 +191,10 @@ describe('OpenAPI documents per audience', () => {
     })
   })
 
-  describe('document routes', () => {
-    it('serves the public document under its own path', async () => {
-      const response = await app.inject({ method: 'GET', url: '/documentation/json' })
-
-      expect(response.statusCode).toBe(200)
-      expect(JSON.parse(response.body).paths).not.toHaveProperty('/api/ops/reindex')
-    })
-
-    it('serves the internal document under its own path', async () => {
-      const response = await app.inject({ method: 'GET', url: '/documentation/internal/json' })
-
-      expect(response.statusCode).toBe(200)
-      expect(JSON.parse(response.body).paths).toHaveProperty('/api/ops/reindex')
-    })
-
-    it('keeps the document routes out of the documents', () => {
-      const document = app.internalSwagger()
-
-      expect(document.paths?.['/documentation/json']).toBeUndefined()
-      expect(document.paths?.['/documentation/internal/json']).toBeUndefined()
-    })
-  })
-
   describe('deriving the public document from the internal one', () => {
     it('produces the same operation set as a dedicated public registration', () => {
       const derived = stripInternalOperations(app.internalSwagger())
-      const generated = app.swagger() as OpenApiDocument
+      const generated = app.swagger() as TestOpenApiDocument
 
       // /metrics is hidden by `hide: true` rather than by a contract, so it is
       // only in the internal document via `treatHiddenAsInternal` — the marker
@@ -260,57 +217,5 @@ describe('OpenAPI documents per audience', () => {
 
       expect(JSON.stringify(app.internalSwagger())).toBe(before)
     })
-  })
-})
-
-describe('fastifyOpenApiDocsPlugin', () => {
-  it('fails at boot when the configured decorator is missing', async () => {
-    const app = fastify()
-    await app.register(fastifyOpenApiDocsPlugin, { internalRoute: '/internal/json' })
-
-    await expect(app.ready()).rejects.toThrow(/no "internalSwagger" decorator/)
-    await app.close()
-  })
-
-  it('registers nothing when no path is configured', async () => {
-    const app = fastify()
-    await app.register(fastifyOpenApiDocsPlugin, {})
-    await app.ready()
-
-    const response = await app.inject({ method: 'GET', url: '/documentation/json' })
-
-    expect(response.statusCode).toBe(404)
-    await app.close()
-  })
-
-  it('applies guard hooks to the internal route', async () => {
-    const app = fastify()
-    app.decorate('internalSwagger', () => ({ paths: {} }))
-    await app.register(fastifyOpenApiDocsPlugin, {
-      internalRoute: '/internal/json',
-      internalRouteOptions: {
-        onRequest: (request, reply, done) => {
-          if (request.headers['x-internal-token'] !== 'secret') {
-            reply.code(403).send({ message: 'forbidden' })
-            return
-          }
-          done()
-        },
-      },
-    })
-    await app.ready()
-
-    expect((await app.inject({ method: 'GET', url: '/internal/json' })).statusCode).toBe(403)
-    expect(
-      (
-        await app.inject({
-          method: 'GET',
-          url: '/internal/json',
-          headers: { 'x-internal-token': 'secret' },
-        })
-      ).statusCode,
-    ).toBe(200)
-
-    await app.close()
   })
 })

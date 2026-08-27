@@ -71,15 +71,22 @@ describe('openApiVisibilityTransform', () => {
       expect(result.schema).toEqual({ hide: false, 'x-audience-internal': true })
     })
 
-    it('can leave internal operations unmarked', () => {
-      const unmarked = openApiVisibilityTransform({
-        audience: 'internal',
-        markInternalOperations: false,
-      })
+    it('rejects a marker key @fastify/swagger would drop', () => {
+      // Without the `x-` prefix the marker never reaches the document, so
+      // `stripInternalOperations` would match nothing and publish every
+      // internal operation. There is no later point at which that is visible.
+      expect(() =>
+        openApiVisibilityTransform({ audience: 'internal', internalMarkerKey: 'internal' }),
+      ).toThrow(/must be an OpenAPI extension key starting with "x-"/)
+      expect(() =>
+        openApiVisibilityTransform({ audience: 'internal', internalMarkerKey: 'x-' }),
+      ).toThrow(/must be an OpenAPI extension key starting with "x-"/)
+    })
 
-      const result = unmarked(transformInput({ hide: true, visibility: 'internal' }))
-
-      expect(result.schema).toEqual({ hide: false })
+    it('rejects the marker key for the public audience too, so the pair cannot drift', () => {
+      expect(() =>
+        openApiVisibilityTransform({ audience: 'public', internalMarkerKey: 'internal' }),
+      ).toThrow(/must be an OpenAPI extension key starting with "x-"/)
     })
   })
 
@@ -117,6 +124,63 @@ describe('openApiVisibilityTransform', () => {
       const transform = openApiVisibilityTransform({ audience: 'internal' })
 
       expect(transform(transformInput(undefined)).schema).toBeUndefined()
+    })
+  })
+
+  describe('exclude', () => {
+    const excludeDocs = { exclude: ({ url }: { url: string }) => url.startsWith('/documentation') }
+
+    it('hides a matching route in every audience', () => {
+      for (const audience of ['public', 'internal'] as const) {
+        const transform = openApiVisibilityTransform({ audience, ...excludeDocs })
+
+        const result = transform(transformInput({ hide: true }, '/documentation/json'))
+
+        expect(result.schema).toEqual({ hide: true })
+      }
+    })
+
+    it('hides a matching route even when its contract is public', () => {
+      const transform = openApiVisibilityTransform({ audience: 'public', ...excludeDocs })
+
+      const result = transform(
+        transformInput({ hide: false, visibility: 'public' }, '/documentation/json'),
+      )
+
+      expect(result.schema).toEqual({ hide: true })
+    })
+
+    it('never marks an excluded route, so nothing derives it back', () => {
+      const transform = openApiVisibilityTransform({ audience: 'internal', ...excludeDocs })
+
+      const result = transform(transformInput({ hide: true }, '/documentation/json'))
+
+      expect(result.schema).not.toHaveProperty('x-internal')
+    })
+
+    it('hides a matching route that has no schema at all', () => {
+      const transform = openApiVisibilityTransform({ audience: 'internal', ...excludeDocs })
+
+      const result = transform(transformInput(undefined, '/documentation/json'))
+
+      expect(result.schema).toEqual({ hide: true })
+    })
+
+    it('leaves routes it does not match to the audience rules', () => {
+      const transform = openApiVisibilityTransform({ audience: 'internal', ...excludeDocs })
+
+      const result = transform(transformInput({ hide: true, visibility: 'internal' }, '/api/items'))
+
+      expect(result.schema).toEqual({ hide: false, 'x-internal': true })
+    })
+
+    it('does not mutate the excluded route schema', () => {
+      const schema: OpenApiRouteSchema = { hide: false, visibility: 'public' }
+      const transform = openApiVisibilityTransform({ audience: 'internal', ...excludeDocs })
+
+      transform(transformInput(schema, '/documentation/json'))
+
+      expect(schema).toEqual({ hide: false, visibility: 'public' })
     })
   })
 

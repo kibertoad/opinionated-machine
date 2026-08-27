@@ -1,3 +1,4 @@
+import { assertInternalMarkerKey, DEFAULT_INTERNAL_MARKER_KEY } from './internalMarker.ts'
 import type { OpenApiRouteSchema, RouteVisibility } from './visibility.ts'
 import { VISIBILITY_SCHEMA_KEY } from './visibility.ts'
 
@@ -36,7 +37,7 @@ export type OpenApiVisibilityTransformOptions = {
   /**
    * `'public'` produces the customer-facing document: every route whose
    * contract is not public is hidden. `'internal'` produces the internal
-   * document: those same routes are un-hidden and (by default) marked with
+   * document: those same routes are un-hidden and marked with
    * `x-internal: true`.
    */
   audience: OpenApiAudience
@@ -72,18 +73,37 @@ export type OpenApiVisibilityTransformOptions = {
   treatHiddenAsInternal?: boolean
 
   /**
-   * Mark internal operations in the internal document with `x-internal: true`,
-   * so readers (and {@link stripInternalOperations}) can tell them apart from
-   * public ones.
+   * Routes to keep out of every document, whatever the audience.
    *
-   * @default true
+   * `hide: true` is also how documentation UIs and other plumbing keep their
+   * own routes out of the spec — `@fastify/swagger-ui` and
+   * `@scalar/fastify-api-reference` both set it on every asset route they
+   * register. `treatHiddenAsInternal` cannot tell that apart from a
+   * contract-derived hide, so without an exclusion those routes surface in the
+   * internal document. Match them here, usually by `url` prefix.
+   *
+   * Excluded routes are hidden and never marked internal, so nothing derives
+   * them back into the public document either.
+   *
+   * @example
+   * ```ts
+   * exclude: ({ url }) => url.startsWith('/documentation') || url.startsWith('/reference')
+   * ```
    */
-  markInternalOperations?: boolean
+  exclude?: (input: OpenApiTransformInput) => boolean
 
   /**
-   * Key used for the marker described above. Must start with `x-`:
-   * `@fastify/swagger` only copies `x-`-prefixed schema keys into the
-   * generated operation, and drops everything else.
+   * Key marking internal operations in the internal document, so readers (and
+   * {@link stripInternalOperations}) can tell them apart from public ones.
+   *
+   * Must start with `x-`, and is rejected otherwise: `@fastify/swagger` copies
+   * only `x-`-prefixed schema keys into the generated operation and silently
+   * drops the rest, which would leave `stripInternalOperations` nothing to
+   * match on and publish every internal operation as the public spec.
+   *
+   * Marking is not optional. It is the only record of the audience decision
+   * that survives into the document, and the entire contract the derived
+   * public document rests on.
    *
    * @default 'x-internal'
    */
@@ -100,7 +120,6 @@ export type OpenApiVisibilityTransformOptions = {
 }
 
 const DEFAULT_PUBLIC_VISIBILITIES: readonly RouteVisibility[] = ['public']
-const DEFAULT_INTERNAL_MARKER_KEY = 'x-internal'
 
 type AudienceDecision = {
   isInternal: boolean
@@ -140,6 +159,22 @@ function resolveAudienceSchema(
   }
 
   return { isInternal, schema }
+}
+
+/**
+ * The audience-independent opt-out: hidden everywhere, marked nowhere.
+ *
+ * Equivalent to `@fastify/swagger`'s `X-HIDDEN` tag, but usable against routes
+ * whose schema the service does not own — which is the case for every route a
+ * documentation UI registers on its own behalf.
+ */
+function excludedSchema(originalSchema: OpenApiRouteSchema | undefined): AudienceDecision {
+  // A schema-less route is documented by default, so exclusion has to supply
+  // the `hide` it would otherwise have nothing to set.
+  const schema: OpenApiRouteSchema = { ...originalSchema, hide: true }
+  delete schema[VISIBILITY_SCHEMA_KEY]
+
+  return { isInternal: false, schema }
 }
 
 /**
@@ -191,24 +226,31 @@ export function openApiVisibilityTransform(
     audience,
     publicVisibilities = DEFAULT_PUBLIC_VISIBILITIES,
     treatHiddenAsInternal = true,
-    markInternalOperations = true,
+    exclude,
     internalMarkerKey = DEFAULT_INTERNAL_MARKER_KEY,
     transform: innerTransform,
   } = options
 
+  // Fail here rather than at document-generation time: a marker key the
+  // plugin drops produces a perfectly valid-looking internal document whose
+  // derived public version leaks every internal operation.
+  assertInternalMarkerKey(internalMarkerKey, 'openApiVisibilityTransform: `internalMarkerKey`')
+
   return (input: OpenApiTransformInput): OpenApiTransformResult => {
-    const { isInternal, schema } = resolveAudienceSchema(
-      input.schema as OpenApiRouteSchema | undefined,
-      audience,
-      publicVisibilities,
-      treatHiddenAsInternal,
-    )
+    const { isInternal, schema } = exclude?.(input)
+      ? excludedSchema(input.schema as OpenApiRouteSchema | undefined)
+      : resolveAudienceSchema(
+          input.schema as OpenApiRouteSchema | undefined,
+          audience,
+          publicVisibilities,
+          treatHiddenAsInternal,
+        )
 
     const result: OpenApiTransformResult = innerTransform
       ? innerTransform({ ...input, schema })
       : { schema: schema as OpenApiRouteSchema, url: input.url }
 
-    if (isInternal && audience === 'internal' && markInternalOperations && result.schema) {
+    if (isInternal && audience === 'internal' && result.schema) {
       result.schema = { ...result.schema, [internalMarkerKey]: true }
     }
 

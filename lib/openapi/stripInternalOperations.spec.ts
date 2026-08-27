@@ -1,6 +1,33 @@
 import { describe, expect, it } from 'vitest'
 import { type OpenApiDocumentLike, stripInternalOperations } from './stripInternalOperations.ts'
 
+/** Every `$ref` in `document` that no longer resolves to anything. */
+function danglingRefs(document: unknown): string[] {
+  const refs: string[] = []
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item)
+      return
+    }
+    if (typeof value !== 'object' || value === null) return
+    for (const [key, nested] of Object.entries(value)) {
+      if (key === '$ref' && typeof nested === 'string') refs.push(nested)
+      else walk(nested)
+    }
+  }
+  walk(document)
+
+  return refs.filter((candidate) => {
+    const segments = candidate.replace(/^#\//, '').split('/')
+    let cursor: unknown = document
+    for (const segment of segments) {
+      if (typeof cursor !== 'object' || cursor === null) return true
+      cursor = (cursor as Record<string, unknown>)[segment]
+    }
+    return cursor === undefined
+  })
+}
+
 function internalDocument(): OpenApiDocumentLike {
   return {
     openapi: '3.1.0',
@@ -8,7 +35,13 @@ function internalDocument(): OpenApiDocumentLike {
     tags: [{ name: 'users' }, { name: 'ops', description: 'internal tooling' }],
     paths: {
       '/users/{userId}': {
-        get: { tags: ['users'], responses: { 200: { $ref: '#/components/schemas/User' } } },
+        get: {
+          tags: ['users'],
+          responses: {
+            200: { $ref: '#/components/schemas/User' },
+            404: { $ref: '#/components/responses/NotFound' },
+          },
+        },
         delete: { tags: ['ops'], 'x-internal': true, responses: { 204: {} } },
       },
       '/ops/reindex': {
@@ -24,6 +57,16 @@ function internalDocument(): OpenApiDocumentLike {
         User: { type: 'object', properties: { team: { $ref: '#/components/schemas/Team' } } },
         Team: { type: 'object' },
         ReindexReport: { type: 'object' },
+        // Reachable only through the shared `NotFound` response below.
+        Problem: { type: 'object', properties: { detail: { type: 'string' } } },
+      },
+      responses: {
+        NotFound: {
+          description: 'Not found',
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/Problem' } },
+          },
+        },
       },
       securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
     },
@@ -35,7 +78,13 @@ describe('stripInternalOperations', () => {
     const result = stripInternalOperations(internalDocument())
 
     expect(result.paths?.['/users/{userId}']).toEqual({
-      get: { tags: ['users'], responses: { 200: { $ref: '#/components/schemas/User' } } },
+      get: {
+        tags: ['users'],
+        responses: {
+          200: { $ref: '#/components/schemas/User' },
+          404: { $ref: '#/components/responses/NotFound' },
+        },
+      },
     })
   })
 
@@ -83,7 +132,7 @@ describe('stripInternalOperations', () => {
     it('drops component schemas only internal operations referenced', () => {
       const result = stripInternalOperations(internalDocument())
 
-      expect(Object.keys(result.components?.schemas ?? {})).toEqual(['User', 'Team'])
+      expect(Object.keys(result.components?.schemas ?? {})).not.toContain('ReindexReport')
     })
 
     it('keeps schemas reachable only transitively', () => {
@@ -124,9 +173,99 @@ describe('stripInternalOperations', () => {
         'User',
         'Team',
         'ReindexReport',
+        'Problem',
       ])
       expect(result.tags).toHaveLength(2)
     })
+
+    it('keeps schemas reachable only through a shared response component', () => {
+      // `Problem` is referenced from `components.responses.NotFound`, which a
+      // surviving operation still uses. Collecting roots from the paths alone
+      // would drop `Problem` and leave that `$ref` dangling.
+      const result = stripInternalOperations(internalDocument())
+
+      expect(result.components?.responses).toHaveProperty('NotFound')
+      expect(result.components?.schemas).toHaveProperty('Problem')
+    })
+
+    it('leaves no dangling $ref behind', () => {
+      const result = stripInternalOperations(internalDocument())
+
+      expect(danglingRefs(result)).toEqual([])
+    })
+
+    it('prunes non-schema component sections nothing references', () => {
+      const document: OpenApiDocumentLike = {
+        paths: {
+          '/ops': {
+            get: {
+              'x-internal': true,
+              responses: { 404: { $ref: '#/components/responses/NotFound' } },
+            },
+          },
+        },
+        components: {
+          responses: { NotFound: { description: 'Not found' } },
+          securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
+        },
+      }
+
+      const result = stripInternalOperations(document)
+
+      expect(result.components).toEqual({
+        securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
+      })
+    })
+
+    it('keeps schemas a discriminator mapping points at', () => {
+      const document: OpenApiDocumentLike = {
+        paths: {
+          '/pets': { get: { responses: { 200: { $ref: '#/components/schemas/Pet' } } } },
+        },
+        components: {
+          schemas: {
+            Pet: {
+              oneOf: [{ $ref: '#/components/schemas/Cat' }],
+              discriminator: {
+                propertyName: 'kind',
+                mapping: { cat: '#/components/schemas/Cat', dog: 'Dog' },
+              },
+            },
+            Cat: { type: 'object' },
+            Dog: { type: 'object' },
+          },
+        },
+      }
+
+      const result = stripInternalOperations(document)
+
+      // `Dog` is named only by the mapping, in the shorthand form.
+      expect(Object.keys(result.components?.schemas ?? {}).sort()).toEqual(['Cat', 'Dog', 'Pet'])
+    })
+
+    it('does not mistake a property named discriminator for a discriminator object', () => {
+      const document: OpenApiDocumentLike = {
+        paths: {
+          '/things': { get: { responses: { 200: { $ref: '#/components/schemas/Thing' } } } },
+        },
+        components: {
+          schemas: {
+            Thing: { type: 'object', properties: { discriminator: { type: 'string' } } },
+            Unused: { type: 'object' },
+          },
+        },
+      }
+
+      const result = stripInternalOperations(document)
+
+      expect(Object.keys(result.components?.schemas ?? {})).toEqual(['Thing'])
+    })
+  })
+
+  it('rejects a marker key @fastify/swagger could never have written', () => {
+    expect(() => stripInternalOperations({}, { markerKey: 'internal' })).toThrow(
+      /must be an OpenAPI extension key starting with "x-"/,
+    )
   })
 
   it('handles documents without paths or components', () => {

@@ -18,14 +18,28 @@ out of the customer-facing spec but also out of any document internal teams coul
   `hide`, so the audience decision has to run first. Routes with no visibility marker but
   `hide: true` (those built directly by `@lokalise/fastify-api-contracts`) are treated as internal by
   default; `treatHiddenAsInternal: false` opts out, and the `X-HIDDEN` tag stays the
-  audience-independent way to hide a route from both documents.
+  audience-independent way to hide a route from both documents. `exclude` is that same escape hatch
+  for routes whose schema the service does not own — most importantly the asset routes a
+  documentation UI registers for itself, which are hidden with `schema.hide` and would otherwise
+  surface in the internal document.
 - New `stripInternalOperations(document)` derives the public document from an internal one for
   services that cannot register `@fastify/swagger` twice. It removes marked operations, drops path
-  items left empty, and prunes `components.schemas` entries and tags nothing public references any
-  more, without mutating the input.
-- New optional `fastifyOpenApiDocsPlugin` serves each document under its own path. Both routes are
-  opt-in, the internal one takes guard hooks, and the document routes stay out of every document.
+  items left empty, and prunes `components` entries and tags nothing public references any more,
+  without mutating the input. Reachability is resolved transitively across the whole `components`
+  object, so a schema reachable only through a shared `components.responses` (or `parameters`,
+  `requestBodies`, …) entry survives with it instead of being pruned out from under a live `$ref`.
+  `components.securitySchemes` is never pruned, since security schemes are referenced by name rather
+  than by `$ref`.
+- Both `openApiVisibilityTransform` and `stripInternalOperations` reject an internal marker key that
+  does not start with `x-`. `@fastify/swagger` copies only `x-`-prefixed schema keys into the
+  generated operation, so any other key would silently never reach the document, leaving
+  `stripInternalOperations` nothing to match on and publishing every internal operation as the
+  public spec.
 - New `attachRouteVisibility` / `readRouteVisibility` for stamping routes built outside this package.
+
+No documentation-serving plugin ships with this: `@fastify/swagger-ui` and
+`@scalar/fastify-api-reference` can each be registered twice, one instance per audience, and the
+README documents both recipes.
 
 Defaults are unchanged: a service that does not add a transform keeps hiding internal endpoints
 exactly as before.
