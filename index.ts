@@ -31,6 +31,8 @@ export * from './lib/dualmode/index.js'
 export { isErrorLike } from './lib/errorUtils.js'
 // Gateway metadata & manifest
 export * from './lib/gateway/index.js'
+// OpenAPI document generation (public / internal audiences)
+export * from './lib/openapi/index.js'
 export * from './lib/resolverFunctions.js'
 // Routes (unified route builder)
 export * from './lib/routes/index.js'

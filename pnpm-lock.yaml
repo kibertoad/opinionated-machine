@@ -27,6 +27,9 @@ importers:
       '@changesets/cli':
         specifier: ^3.0.0
         version: 3.0.1
+      '@fastify/swagger':
+        specifier: ^9.8.1
+        version: 9.8.1
       '@lokalise/api-contracts':
         specifier: ^8.0.0
         version: 8.0.0(zod@4.4.3)

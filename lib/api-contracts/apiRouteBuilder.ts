@@ -7,6 +7,7 @@ import {
 import type { RouteOptions } from 'fastify'
 import type { GatewayMetadata } from '../gateway/gatewayTypes.ts'
 import { attachGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
+import { attachRouteVisibility } from '../openapi/visibility.ts'
 
 /**
  * Options for configuring an ApiContract route.
@@ -68,6 +69,12 @@ export type ApiRouteOptions<Contract extends ApiContract> = FastifyApiRouteOptio
  * contract; equivalent to wrapping the result with `withGatewayMetadata`.
  * See `ApiRouteOptions` for full details.
  *
+ * It also stamps the contract's `visibility` onto the route schema. The
+ * package already derives `schema.hide` from it, which fails closed for the
+ * customer-facing document but loses the reason a route is hidden; keeping the
+ * visibility lets `openApiVisibilityTransform` build an internal document that
+ * includes those routes.
+ *
  * @returns Fastify `RouteOptions` ready to pass to `app.route()`
  */
 export function buildApiRoute<Contract extends ApiContract>(
@@ -77,6 +84,9 @@ export function buildApiRoute<Contract extends ApiContract>(
 ): RouteOptions {
   // Gateway metadata is stamped via Symbol, not spread into Fastify options.
   const { gatewayMetadata, ...fastifyOptions } = options ?? {}
-  const route = buildFastifyApiRoute(contract, handler, fastifyOptions)
+  const route = attachRouteVisibility(
+    buildFastifyApiRoute(contract, handler, fastifyOptions),
+    contract.visibility,
+  )
   return gatewayMetadata !== undefined ? attachGatewayMetadata(route, gatewayMetadata) : route
 }

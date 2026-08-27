@@ -267,6 +267,23 @@ describe('buildFastifyRoute', () => {
       expect(routeOptions.schema).toMatchObject({ hide: true })
     })
 
+    it('records contract visibility on the schema so the internal document can un-hide it', () => {
+      const internalContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
+        requestPathParamsSchema: z.object({ testGetParam: z.string() }),
+        serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
+        visibility: 'internal',
+      })
+      const handler = buildHandler(internalContract, {
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true, visibility: 'internal' })
+    })
+
     it('should not hide route from OpenAPI docs when contract visibility is public', () => {
       const publicContract = buildSseContract({
         method: 'get',
@@ -543,6 +560,25 @@ describe('buildFastifyRoute', () => {
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
       expect(routeOptions.schema).toMatchObject({ hide: true })
+    })
+
+    it('records contract visibility on the schema so the internal document can un-hide it', () => {
+      const internalContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
+        requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { messageDualGet: z.object({ text: z.string() }) },
+        visibility: 'internal',
+      })
+      const handler = buildHandler(internalContract, {
+        sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true, visibility: 'internal' })
     })
 
     it('should not hide route from OpenAPI docs when contract visibility is public', () => {

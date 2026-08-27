@@ -84,6 +84,12 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Registering Dual-Mode Controllers](#registering-dual-mode-controllers)
   - [Accept Header Routing](#accept-header-routing)
   - [Testing Dual-Mode Controllers](#testing-dual-mode-controllers)
+- [OpenAPI Documents (Public & Internal)](#openapi-documents-public--internal)
+  - [How It Works](#how-it-works)
+  - [Two Documents, Two Registrations](#two-documents-two-registrations)
+  - [Serving Both Documents](#serving-both-documents)
+  - [One Document, Both Audiences](#one-document-both-audiences)
+  - [Marking Routes Built Elsewhere](#marking-routes-built-elsewhere)
 - [Gateway Configuration](#gateway-configuration)
   - [Quick Start](#quick-start)
   - [Annotating Routes](#annotating-routes)
@@ -2948,6 +2954,160 @@ describe('DashboardDualModeController', () => {
     sseClient.close()
   })
 })
+
+## OpenAPI Documents (Public & Internal)
+
+Contract `visibility` (mandatory since `@lokalise/api-contracts` v8) decides whether a route reaches
+the generated OpenAPI document: every route builder sets `schema.hide: true` for anything that is not
+`visibility: 'public'`. That is the right default for a customer-facing spec — and the wrong one for
+the teams that consume the service internally, who need the internal endpoints documented too.
+
+This package lets both documents be generated from the same route table, so nothing has to be
+registered twice or documented by hand.
+
+### How It Works
+
+`buildApiRoute` and `buildFastifyRoute` record the contract's `visibility` on the route schema
+alongside `hide`. `hide: true` on its own is lossy — it cannot say *why* a route is hidden — and the
+extra key never reaches a generated document (`@fastify/swagger` only copies `x-`-prefixed schema
+keys, and the transform below strips it anyway).
+
+`openApiVisibilityTransform` is a `@fastify/swagger` `transform` that re-derives `hide` for a given
+audience:
+
+| Route | `audience: 'public'` | `audience: 'internal'` |
+| --- | --- | --- |
+| `visibility: 'public'` contract | documented | documented |
+| `visibility: 'internal'` contract | hidden | documented, marked `x-internal: true` |
+| No contract (plain Fastify route) | documented | documented |
+| `schema.hide: true`, no contract | hidden | documented, marked `x-internal: true` |
+| `tags: ['X-HIDDEN']` | hidden | hidden |
+
+The last two rows are the ones worth remembering:
+
+- Routes built directly by `@lokalise/fastify-api-contracts` (`buildFastifyRoute`,
+  `buildFastifyNoPayloadRoute`, …) carry `hide` but no visibility marker. The transform treats an
+  unmarked hidden route as internal, so those routes still show up in the internal document. Pass
+  `treatHiddenAsInternal: false` if `hide: true` means "never document this" in your service.
+- `X-HIDDEN` (`@fastify/swagger`'s `hiddenTag`) is the audience-independent escape hatch. The
+  transform never touches tags, so an `X-HIDDEN` route stays out of *both* documents.
+
+### Two Documents, Two Registrations
+
+`@fastify/swagger` supports multiple registrations with different `decorator` names — one per
+audience:
+
+```ts
+import fastifySwagger from '@fastify/swagger'
+import { jsonSchemaTransform } from 'fastify-type-provider-zod'
+import { openApiVisibilityTransform } from 'opinionated-machine'
+
+// Customer-facing document -> app.swagger()
+await app.register(fastifySwagger, {
+  openapi: { info: { title: 'Users API', version: '1.0.0' } },
+  transform: openApiVisibilityTransform({
+    audience: 'public',
+    transform: jsonSchemaTransform,
+  }),
+})
+
+// Internal document -> app.internalSwagger()
+await app.register(fastifySwagger, {
+  decorator: 'internalSwagger',
+  openapi: { info: { title: 'Users API (internal)', version: '1.0.0' } },
+  transform: openApiVisibilityTransform({
+    audience: 'internal',
+    transform: jsonSchemaTransform,
+  }),
+})
+```
+
+Chaining matters: `jsonSchemaTransform` short-circuits on `hide: true` and throws away the Zod
+schemas, so the audience decision has to happen first. Passing it as `transform` guarantees that
+ordering — do not register it as the plugin's own `transform` alongside this one.
+
+The two documents can differ in more than their operation set: give each registration its own
+`info`, `servers`, or `security`.
+
+### Serving Both Documents
+
+`fastifyOpenApiDocsPlugin` wires each registration's decorator to a path. Both routes are opt-in, so
+adding the plugin can never expose an internal spec by accident, and the document routes themselves
+stay out of every document:
+
+```ts
+import { fastifyOpenApiDocsPlugin } from 'opinionated-machine'
+
+await app.register(fastifyOpenApiDocsPlugin, {
+  publicRoute: '/documentation/json',
+  internalRoute: '/documentation/internal/json',
+  // The internal document lists endpoints deliberately kept out of the public
+  // spec — guard it unless the path is unreachable from outside the cluster.
+  internalRouteOptions: { onRequest: requireInternalNetwork },
+})
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `publicDecorator` | `'swagger'` | Decorator holding the public document generator |
+| `internalDecorator` | `'internalSwagger'` | Decorator holding the internal document generator |
+| `publicRoute` | — | Path serving the public document; omit to register nothing |
+| `internalRoute` | — | Path serving the internal document; omit to register nothing |
+| `publicRouteOptions` / `internalRouteOptions` | — | `onRequest` / `preHandler` / `config` / `schema` for that route |
+| `hiddenTag` | `'X-HIDDEN'` | Tag keeping the document routes out of every document |
+
+A missing decorator fails at boot rather than on the first request.
+
+Prefer a query parameter over separate paths? One route over both decorators does it:
+
+```ts
+app.get('/documentation/json', { schema: { hide: true, tags: ['X-HIDDEN'] } }, async (request) => {
+  const wantsInternal = (request.query as { audience?: string }).audience === 'internal'
+  if (wantsInternal && !isInternalCaller(request)) throw new Error('forbidden')
+  return wantsInternal ? app.internalSwagger() : app.swagger()
+})
+```
+
+### One Document, Both Audiences
+
+When the swagger instance is already wired to something else (`@fastify/swagger-ui`, a static export
+step) and registering the plugin twice is awkward, generate the internal document only and derive the
+public one from it. `stripInternalOperations` drops every operation the transform marked
+`x-internal`, prunes the path items left empty, and prunes the `components.schemas` entries and tags
+nothing public references any more — internal request/response shapes reaching `components` is
+exactly the leak it exists to prevent:
+
+```ts
+import { stripInternalOperations } from 'opinionated-machine'
+
+const internalDocument = app.swagger() // registered with audience: 'internal'
+const publicDocument = stripInternalOperations(internalDocument)
+```
+
+The input document is never mutated — `app.swagger()` hands back a cached object that has to stay
+intact for the internal document. Pass `{ prune: false }` if the document intentionally publishes
+schemas no operation references.
+
+### Marking Routes Built Elsewhere
+
+Routes this package does not build can be stamped by hand, which is more precise than relying on the
+`hide`-means-internal fallback (and is what makes a custom `publicVisibilities` set work):
+
+```ts
+import { attachRouteVisibility } from 'opinionated-machine'
+
+const route = attachRouteVisibility(
+  buildFastifyNoPayloadRoute(getUserContract, handler),
+  getUserContract.visibility,
+)
+```
+
+`publicVisibilities` widens what counts as public — useful once contracts carry audiences beyond
+`'public'` and `'internal'`:
+
+```ts
+openApiVisibilityTransform({ audience: 'public', publicVisibilities: ['public', 'partner'] })
+```
 
 ## Gateway Configuration
 

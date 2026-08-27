@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod/v4'
 import { GATEWAY_METADATA_SYMBOL } from '../gateway/gatewaySymbol.ts'
 import { readGatewayMetadata, withGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
+import { readRouteVisibility } from '../openapi/visibility.ts'
 import { buildApiRoute } from './apiRouteBuilder.ts'
 
 // ============================================================================
@@ -78,6 +79,48 @@ describe('buildApiRoute — delegation', () => {
       sse.start('keepAlive')
     })
     expect((routeOptions as { sse?: unknown }).sse).toBeDefined()
+  })
+})
+
+describe('buildApiRoute — OpenAPI visibility', () => {
+  const internalContract = defineApiContract({
+    visibility: 'internal',
+    method: 'post',
+    summary: 'Reindex',
+    pathResolver: () => '/ops/reindex',
+    requestBodySchema: z.object({ full: z.boolean() }),
+    responsesByStatusCode: { 200: z.object({ reindexedDocuments: z.number() }) },
+  })
+
+  it('records the contract visibility alongside the hide flag', () => {
+    const routeOptions = buildApiRoute(internalContract, async () => ({
+      status: 200,
+      body: { reindexedDocuments: 1 },
+    }))
+
+    expect(routeOptions.schema).toMatchObject({ hide: true, visibility: 'internal' })
+    expect(readRouteVisibility(routeOptions)).toBe('internal')
+  })
+
+  it('records public visibility too, so transforms can widen the public audience', () => {
+    const routeOptions = buildApiRoute(getUserContract, async () => ({
+      status: 200,
+      body: { id: '1', name: 'Alice' },
+    }))
+
+    expect(readRouteVisibility(routeOptions)).toBe('public')
+  })
+
+  it('leaves routes untouched when the contract has no visibility at runtime', () => {
+    const legacyContract = { ...getUserContract }
+    delete (legacyContract as { visibility?: unknown }).visibility
+
+    const routeOptions = buildApiRoute(legacyContract, async () => ({
+      status: 200,
+      body: { id: '1', name: 'Alice' },
+    }))
+
+    expect(readRouteVisibility(routeOptions)).toBeUndefined()
   })
 })
 

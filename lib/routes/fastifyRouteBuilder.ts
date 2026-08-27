@@ -11,6 +11,7 @@ import type { z } from 'zod'
 import { ZodObject } from 'zod'
 import type { AbstractDualModeController } from '../dualmode/AbstractDualModeController.ts'
 import { isErrorLike } from '../errorUtils.ts'
+import type { RouteVisibility } from '../openapi/visibility.ts'
 import type { AbstractSSEController } from '../sse/AbstractSSEController.ts'
 import type {
   DualModeRouteHandler,
@@ -31,6 +32,19 @@ import { buildSseResponseSchemas } from './sseResponseSchema.ts'
 
 // Re-export for convenience
 export { extractPathTemplate }
+
+/**
+ * Route schema as the OpenAPI toolchain sees it: the swagger-aware fields from
+ * `@lokalise/fastify-api-contracts` plus the contract's `visibility`.
+ *
+ * `hide` alone is lossy — it cannot say *why* a route is hidden — so the
+ * visibility is stamped alongside it, letting `openApiVisibilityTransform`
+ * un-hide internal routes for the internal document while leaving routes hidden
+ * for any other reason alone. `@fastify/swagger` ignores the extra key (only
+ * `x-`-prefixed ones reach the generated operation), and the transform strips
+ * it before the document is built.
+ */
+type DocumentedRouteSchema = ExtendedFastifySchema & { visibility?: RouteVisibility }
 
 /** Shape of the `sse` route option handed to `@fastify/sse`. */
 type SSERouteConfig = {
@@ -433,7 +447,7 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
     })
   }
 
-  const schema: ExtendedFastifySchema = {
+  const schema: DocumentedRouteSchema = {
     params: contract.requestPathParamsSchema,
     querystring: contract.requestQuerySchema,
     headers: contract.requestHeaderSchema,
@@ -441,6 +455,7 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
     summary: contract.summary,
     tags: contract.tags,
     hide: contract.visibility !== 'public',
+    visibility: contract.visibility,
     ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
     // 200 describes both branches: the JSON sync body and the SSE event stream.
     // `isEmptyResponseExpected` contracts have no sync body to describe, so they get the
@@ -503,7 +518,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
   }
   const url = extractPathTemplate(contract.pathResolver, contract.requestPathParamsSchema)
 
-  const schema: ExtendedFastifySchema = {
+  const schema: DocumentedRouteSchema = {
     params: contract.requestPathParamsSchema,
     querystring: contract.requestQuerySchema,
     headers: contract.requestHeaderSchema,
@@ -511,6 +526,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
     summary: contract.summary,
     tags: contract.tags,
     hide: contract.visibility !== 'public',
+    visibility: contract.visibility,
     ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
     response: buildSseResponseSchemas(
       contract.serverSentEventSchemas,
