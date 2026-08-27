@@ -1,3 +1,11 @@
+export { injectApiSSE } from './apiSseInjectHelpers.js'
+export type {
+  ApiDeclaredResponseBody,
+  ApiDeclaredResponseStatus,
+  ApiSSEEvent,
+  InjectApiSSEParams,
+  InjectApiSSEResult,
+} from './apiSseTestTypes.js'
 export {
   type HasSessionSpy,
   SSEHttpClient,

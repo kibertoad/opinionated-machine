@@ -260,6 +260,66 @@ expect(response.statusCode).toBe(200)
 expect(JSON.parse(response.body)).toEqual({ id: '123', name: 'Alice' })
 ```
 
+### Testing SSE routes with the contract (`injectApiSSE`)
+
+`injectApiSSE` is the `defineApiContract` counterpart of `injectSSE` / `injectPayloadSSE` (which are typed against the legacy `SSEContractDefinition`). One function covers every method — the HTTP verb comes from the contract — and `params` is the same shape `injectByApiContract` takes, so a body is required exactly when the contract declares `requestBodySchema`:
+
+```ts
+import { injectApiSSE } from 'opinionated-machine'
+
+const lqaSegmentContract = defineApiContract({
+  visibility: 'internal',
+  method: 'post',
+  summary: 'Perform LQA on a text segment',
+  pathResolver: () => '/v1/content/actions/lqa-text-segment',
+  requestBodySchema: z.object({ segment: z.string() }),
+  responsesByStatusCode: {
+    200: sseResponse({ review: z.object({ score: z.number() }) }),
+    400: z.object({ message: z.string() }),
+  },
+})
+
+const { closed, events, bodyForStatus } = injectApiSSE(app, lqaSegmentContract, {
+  body: { segment: 'hello' },
+})
+```
+
+It returns three accessors:
+
+- `closed` — resolves with `{ statusCode, headers, body }` once the response completes, exactly as with `injectSSE`.
+- `events()` — parses the SSE body and validates each event against the contract's `sseResponse` / `sseBody` schemas, returning a union discriminated on `event`:
+
+  ```ts
+  for (const event of await events()) {
+    if (event.event === 'review') {
+      expect(event.data.score).toBeGreaterThan(0) // `data` typed by the `review` schema
+    }
+  }
+  ```
+
+  It throws if the response isn't an SSE stream, if an event name isn't declared by the contract, or if a payload fails its schema.
+
+- `bodyForStatus(status)` — asserts the status, JSON-parses the body, and validates it against the JSON schema `responsesByStatusCode` declares for that status. Intended for the documented error responses a handler emits (as `{ status, body }`) before streaming starts:
+
+  ```ts
+  const error = await injectApiSSE(app, lqaSegmentContract, {
+    body: { segment: '' },
+  }).bodyForStatus(400)
+  expect(error.message).toBe('segment must not be empty')
+  ```
+
+  `status` is constrained at the type level to the statuses the contract declares a JSON body for; range keys (`'4xx'`) and `'default'` expand to the concrete statuses they serve, following the same exact → range → `'default'` precedence the contract client uses. An SSE-only status isn't callable.
+
+Query params, path params, headers (a plain object or a sync/async factory) and `pathPrefix` all come from the contract-derived params:
+
+```ts
+const events = await injectApiSSE(app, tickStreamContract, {
+  pathParams: { channelId: 'c-1' },
+  queryParams: { count: 2 },
+  headers: async () => ({ authorization: await issueToken() }),
+}).events()
+```
+
 ### Testing SSE routes (autoClose)
 
 Use `SSEInjectClient` — no real HTTP server needed:

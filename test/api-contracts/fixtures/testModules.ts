@@ -1,6 +1,10 @@
 import { AbstractModule, type MandatoryNameAndRegistrationPair } from '../../../index.js'
 import { asApiControllerClass } from '../../../lib/api-contracts/asApiControllerClass.ts'
-import { TestApiController, TestApiErrorController } from './testControllers.ts'
+import {
+  TestApiController,
+  TestApiErrorController,
+  TestApiInjectSSEController,
+} from './testControllers.ts'
 
 // ============================================================================
 // Non-SSE + dual-mode module
@@ -34,6 +38,26 @@ export class TestApiErrorModule extends AbstractModule<object> {
   override resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {
       testApiErrorController: asApiControllerClass(TestApiErrorController),
+    }
+  }
+}
+
+// ============================================================================
+// injectApiSSE module
+// ============================================================================
+
+export type TestApiInjectSSEModuleControllers = {
+  testApiInjectSSEController: TestApiInjectSSEController
+}
+
+export class TestApiInjectSSEModule extends AbstractModule<object> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<object> {
+    return {}
+  }
+
+  override resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
+    return {
+      testApiInjectSSEController: asApiControllerClass(TestApiInjectSSEController),
     }
   }
 }
