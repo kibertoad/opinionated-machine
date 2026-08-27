@@ -45,7 +45,10 @@ out of the customer-facing spec but also out of any document internal teams coul
   their Models panel straight from `components.schemas`, so this is what keeps an internal model
   from being visible to anyone browsing the public reference. Pruning keeps only the direction of
   each `Foo` / `FooInput` pair that is actually used, and is cycle-safe for self-referential
-  schemas.
+  schemas. Where a document deliberately publishes models no operation references, per-audience Zod
+  registries (`createJsonSchemaTransform` / `createJsonSchemaTransformObject` both take a
+  `schemaRegistry`) give explicit per-document model sets instead; the README covers both and when
+  to pick which.
 - `stripInternalOperations` and `pruneUnreachableComponents` take an unconstrained document type
   parameter. `openapi-types`' `Document` interfaces have no index signatures, so a structural
   constraint rejected `app.swagger()` — the one argument that matters.

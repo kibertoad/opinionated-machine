@@ -93,6 +93,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [Just the JSON](#just-the-json)
   - [With fastify-type-provider-zod](#with-fastify-type-provider-zod)
     - [Models in the UI](#models-in-the-ui)
+    - [Per-audience model sets](#per-audience-model-sets)
   - [One Document, Both Audiences](#one-document-both-audiences)
   - [Marking Routes Built Elsewhere](#marking-routes-built-elsewhere)
 - [Gateway Configuration](#gateway-configuration)
@@ -3224,9 +3225,9 @@ Three details worth knowing, all pinned in `test/openapi/openapi.zodModels.e2e.s
   with nothing internal in it.
 - **Self-referential models survive.** The walk is cycle-safe, so a recursive schema (the Zod 4
   getter pattern) keeps its own reference.
-- **A catalogue is the case to skip pruning for.** If the document deliberately publishes models
-  beyond what its operations reference — a shared type library, say — pruning is exactly what you do
-  not want. Leave the `transformObject` unchained there and hide internal models some other way.
+- **A catalogue needs the other approach.** Pruning derives the model set from what the operations
+  reference, so it cannot keep a model nothing references. If the document deliberately publishes
+  models beyond its operations, use per-audience registries instead — see below.
 
 To drop the panel altogether rather than curate it:
 
@@ -3246,6 +3247,52 @@ await app.register(scalarApiReference, {
 
 That is a display setting only: the schemas stay in the document either way, so it hides nothing
 from anyone reading the JSON. Prune for the leak; hide for the noise.
+
+#### Per-audience model sets
+
+Pruning derives each document's models from its own operations, which is exact and needs no
+bookkeeping. What it cannot do is keep a model no operation references. When you want explicit
+control over the model set — a published type catalogue, or models grouped by audience rather than
+by reachability — give each audience its own Zod registry. Both provider factories take one:
+
+```ts
+import { createJsonSchemaTransform, createJsonSchemaTransformObject } from 'fastify-type-provider-zod'
+
+const publicRegistry = z.registry<{ id?: string }>()
+publicRegistry.add(userSchema, { id: 'User' })
+publicRegistry.add(catalogueSchema, { id: 'Catalogue' }) // referenced by nothing, published anyway
+
+const internalRegistry = z.registry<{ id?: string }>()
+internalRegistry.add(userSchema, { id: 'User' })
+internalRegistry.add(reportSchema, { id: 'Report' })
+
+await app.register(fastifySwagger, {
+  openapi: { info: { title: 'Users API', version: '1.0.0' } },
+  transform: openApiVisibilityTransform({
+    audience: 'public',
+    exclude: isDocumentationRoute,
+    transform: createJsonSchemaTransform({ schemaRegistry: publicRegistry }),
+  }),
+  transformObject: createJsonSchemaTransformObject({ schemaRegistry: publicRegistry }),
+})
+// …and the same pair with internalRegistry for the internal registration.
+```
+
+A schema can sit in both registries — shared models still resolve through `$ref` in each document,
+and each document carries only its own registry's models.
+
+Choosing between them:
+
+| | `pruneUnreachableComponents` | per-audience registries |
+| --- | --- | --- |
+| Bookkeeping | none — one registry, models follow operations | every model filed by hand, per audience |
+| Unreferenced models | dropped | kept, per audience |
+| Getting it wrong | fails closed: an unreferenced internal model is pruned either way | fails open: a model mis-filed into the public registry is published |
+| Best for | most services | a deliberately published catalogue |
+
+Reach for pruning first: it is the one that cannot leak a model you forgot to think about. Both are
+covered end to end — `test/openapi/openapi.zodModels.e2e.spec.ts` and
+`test/openapi/openapi.zodAudienceRegistries.e2e.spec.ts`.
 
 ### One Document, Both Audiences
 
