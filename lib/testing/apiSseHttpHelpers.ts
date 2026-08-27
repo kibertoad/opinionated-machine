@@ -4,7 +4,10 @@ import {
   describeSendFailures,
   openSSEDiagnosticsScope,
   type SSEDiagnosticsScope,
+  type SSESendFailure,
+  unhandledSendFailures,
 } from '../sse/sseSendDiagnostics.ts'
+import { assertSSEResponse, mediaTypeOf, SSE_CONTENT_TYPE } from './apiSseEventValidation.ts'
 import type { ApiSSEEvent, InjectApiSSEParams } from './apiSseTestTypes.ts'
 import { SSEHttpClient, type SSEHttpConnectOptions, type SSEHttpMethod } from './sseHttpClient.ts'
 
@@ -72,6 +75,10 @@ export class ApiSSEHttpClient<Contract extends ApiContract> {
   /**
    * Yield the contract's events as they arrive, typed and validated per event name.
    *
+   * Throws — before yielding anything — if the endpoint answered with something other than an
+   * event stream (an error raised before `sse.start()`, say), naming its status and body
+   * instead of reporting an empty stream.
+   *
    * @param signal - Optional `AbortSignal` to stop the generator early
    *
    * @example
@@ -83,12 +90,15 @@ export class ApiSSEHttpClient<Contract extends ApiContract> {
    * ```
    */
   async *events(signal?: AbortSignal): AsyncGenerator<ApiSSEEvent<Contract>, void, unknown> {
+    await this.assertStreamResponse('events()')
+
     yield* this.raw.apiEvents(this.contract, signal)
 
     if (!signal?.aborted) {
       // The server ended the stream: anything the handler failed to send is known now, and
       // is why an expected event never arrived.
       this.assertNoSendFailures('events()')
+      this.releaseScopeIfClosed()
     }
   }
 
@@ -101,19 +111,38 @@ export class ApiSSEHttpClient<Contract extends ApiContract> {
    * the thrown error names the event and its validation issues instead of leaving the test to
    * report a missing event with no reason.
    *
+   * Throws straight away if the endpoint answered with something other than an event stream,
+   * rather than waiting out the timeout on a stream that was never going to arrive.
+   *
    * @param countOrPredicate - Number of events to collect, or a predicate that ends collection
-   *   (the matching event is included)
+   *   (the matching event is included). The predicate is invoked exactly once per event.
    * @param timeout - Maximum time to wait in milliseconds (default: 5000)
    */
   async collectEvents(
     countOrPredicate: number | ((event: ApiSSEEvent<Contract>) => boolean),
     timeout?: number,
   ): Promise<ApiSSEEvent<Contract>[]> {
+    await this.assertStreamResponse('collectEvents()')
+
+    // Whether the caller's predicate matched is remembered as it runs, so satisfaction can be
+    // decided afterwards without invoking it a second time on the events it already saw.
+    let matched = false
+    const target =
+      typeof countOrPredicate === 'number'
+        ? countOrPredicate
+        : (event: ApiSSEEvent<Contract>) => {
+            matched = countOrPredicate(event) || matched
+            return matched
+          }
+
     let collected: ApiSSEEvent<Contract>[]
     try {
-      collected = await this.raw.collectApiEvents(this.contract, countOrPredicate, timeout)
+      collected = await this.raw.collectApiEvents(this.contract, target, timeout)
     } catch (err) {
+      // The collection failed outright: every recorded failure is context worth reporting,
+      // including the ones the route recovered from.
       const failures = this.scope.failures()
+      this.releaseScopeIfClosed()
       if (failures.length === 0) {
         throw err
       }
@@ -125,21 +154,58 @@ export class ApiSSEHttpClient<Contract extends ApiContract> {
     // `collectEvents` also returns short when the server closed the stream before the target
     // was met, which is exactly what a failed send looks like from here.
     const satisfied =
-      typeof countOrPredicate === 'number'
-        ? collected.length >= countOrPredicate
-        : collected.some(countOrPredicate)
+      typeof countOrPredicate === 'number' ? collected.length >= countOrPredicate : matched
     if (!satisfied) {
       this.assertNoSendFailures('collectEvents()')
     }
+    this.releaseScopeIfClosed()
 
     return collected
   }
 
-  /** Throw what the handler failed to send, if anything was recorded for this connection. */
+  /**
+   * Throw what the handler failed to send and did not recover from, if anything was recorded
+   * for this connection.
+   *
+   * A failure the route caught and streamed around left the response it meant to produce, so
+   * it is reported through {@link ApiSSEHttpClient.sendFailures} instead of failing the read.
+   */
   private assertNoSendFailures(reader: string): void {
-    const failures = this.scope.failures()
+    const failures = unhandledSendFailures(this.scope.failures())
     if (failures.length > 0) {
       throw new Error(`${reader} — ${describeSendFailures(failures)}`)
+    }
+  }
+
+  /**
+   * Reject a response that is not an event stream, with its status and body.
+   *
+   * Without this a `401` (or any other pre-stream error response) reads as a stream that
+   * never produced an event: `collectEvents` waits out its full timeout and reports "got 0",
+   * with the actual status nowhere in the failure.
+   */
+  private async assertStreamResponse(reader: string): Promise<void> {
+    const { response } = this.raw
+    const contentType = response.headers.get('content-type') ?? undefined
+    let body: string | undefined
+    if (mediaTypeOf(contentType) !== SSE_CONTENT_TYPE) {
+      // Only read the body once the response is known not to be a stream, and never from the
+      // live response, whose body the client still needs.
+      body = await readBodySnapshot(response)
+      this.scope.dispose()
+    }
+    assertSSEResponse(response.status, contentType, reader, body)
+  }
+
+  /**
+   * Unregister the diagnostics scope once the stream is over, keeping what it recorded.
+   *
+   * `close()` is the usual trigger; a test that reads a stream to its end and never closes the
+   * client would otherwise leave the scope registered for the rest of the process.
+   */
+  private releaseScopeIfClosed(): void {
+    if (this.raw.isClosed) {
+      this.scope.dispose()
     }
   }
 
@@ -147,9 +213,12 @@ export class ApiSSEHttpClient<Contract extends ApiContract> {
    * The sends the handler could not make on this connection — a payload that failed the
    * contract's schema for its event, say — recorded instead of being left in the server log.
    *
+   * Includes the failures the route recovered from (`handled: true`), which the readers pass
+   * over precisely because the response was still the one the route meant to produce.
+   *
    * Only routes built with this package's `buildApiRoute` report them.
    */
-  sendFailures() {
+  sendFailures(): SSESendFailure[] {
     return this.scope.failures()
   }
 
@@ -157,6 +226,16 @@ export class ApiSSEHttpClient<Contract extends ApiContract> {
   close(): void {
     this.scope.dispose()
     this.raw.close()
+  }
+}
+
+/** The body of a non-stream response, for an error message; never worth failing over. */
+async function readBodySnapshot(response: Response): Promise<string | undefined> {
+  try {
+    return await response.clone().text()
+  } catch {
+    // Already consumed, or aborted mid-read: the status and content-type still say enough.
+    return undefined
   }
 }
 
@@ -247,12 +326,14 @@ export async function connectApiSSE<
     ...(requestParams.body !== undefined && { body: requestParams.body }),
   }
 
-  if (!options) {
-    const raw = await SSEHttpClient.connect(baseUrl, path, connectOptions)
-    return new ApiSSEHttpClient(raw, contract, scope)
-  }
-
+  // A connection that never happened has no reader to dispose its scope later, and a scope
+  // left registered outlives the test that opened it.
   try {
+    if (!options) {
+      const raw = await SSEHttpClient.connect(baseUrl, path, connectOptions)
+      return new ApiSSEHttpClient(raw, contract, scope)
+    }
+
     const { client: raw, serverConnection } = await SSEHttpClient.connect<TSession>(baseUrl, path, {
       ...connectOptions,
       awaitServerConnection: options.awaitServerConnection,

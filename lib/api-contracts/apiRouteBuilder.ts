@@ -1,4 +1,8 @@
-import { type ApiContract, getSseSchemaByEventName } from '@lokalise/api-contracts'
+import {
+  type ApiContract,
+  getSseSchemaByEventName,
+  type SSEEventSchemas,
+} from '@lokalise/api-contracts'
 import {
   buildFastifyApiRoute,
   type ApiRouteOptions as FastifyApiRouteOptions,
@@ -7,7 +11,7 @@ import {
 import type { RouteOptions } from 'fastify'
 import type { GatewayMetadata } from '../gateway/gatewayTypes.ts'
 import { attachGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
-import { attachSSESendDiagnostics } from '../sse/sseSendDiagnostics.ts'
+import { attachSSESendDiagnostics, reportSSEHandlerOutcome } from '../sse/sseSendDiagnostics.ts'
 
 /**
  * Options for configuring an ApiContract route.
@@ -78,11 +82,18 @@ export function buildApiRoute<Contract extends ApiContract>(
 ): RouteOptions {
   // Gateway metadata is stamped via Symbol, not spread into Fastify options.
   const { gatewayMetadata, ...fastifyOptions } = options ?? {}
-  const route = buildFastifyApiRoute(
+  const schemaByEventName = getSseSchemaByEventName(contract)
+  const built = buildFastifyApiRoute(
     contract,
     handler,
-    withSendDiagnostics(contract, fastifyOptions),
+    schemaByEventName ? withSendDiagnostics(fastifyOptions, schemaByEventName) : fastifyOptions,
   )
+  // Recording a failed send is only half of the diagnostic: whether the route recovered from
+  // it decides whether a test reading the stream should fail on it. That is what the handler's
+  // own outcome says, so it is observed here — for scoped requests only.
+  const route = schemaByEventName
+    ? { ...built, handler: reportSSEHandlerOutcome(built.handler) }
+    : built
   return gatewayMetadata !== undefined ? attachGatewayMetadata(route, gatewayMetadata) : route
 }
 
@@ -100,15 +111,10 @@ export function buildApiRoute<Contract extends ApiContract>(
  * events, and it does nothing unless the request names a diagnostics scope open in this
  * process — something only those helpers produce.
  */
-function withSendDiagnostics<Contract extends ApiContract>(
-  contract: Contract,
-  options: Omit<ApiRouteOptions<Contract>, 'gatewayMetadata'>,
+function withSendDiagnostics(
+  options: FastifyApiRouteOptions,
+  schemaByEventName: SSEEventSchemas,
 ): FastifyApiRouteOptions {
-  const schemaByEventName = getSseSchemaByEventName(contract)
-  if (!schemaByEventName) {
-    return options
-  }
-
   const { onConnect } = options
   return {
     ...options,

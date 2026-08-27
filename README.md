@@ -2556,7 +2556,8 @@ client.close()
 await server.close()
 ```
 
-- `client.events(signal?)` and `client.collectEvents(countOrPredicate, timeout?)` mirror `SSEHttpClient`'s readers, with each event validated against the contract's SSE schemas and typed as a union on `event` — the predicate sees the narrowed type too.
+- `client.events(signal?)` and `client.collectEvents(countOrPredicate, timeout?)` mirror `SSEHttpClient`'s readers, with each event validated against the contract's SSE schemas and typed as a union on `event` — the predicate sees the narrowed type too, and is invoked exactly once per event.
+- Both readers reject a response that isn't an event stream (a documented `400`/`401` raised before `sse.start()`, say) with its status and body, rather than reporting a stream that produced no events. `client.response` is still readable afterwards, so the JSON body can be asserted.
 - `client.response` is the fetch `Response`, available before any event is consumed.
 - `client.raw` is the underlying `SSEHttpClient`, for anything this wrapper doesn't cover.
 - Pass `{ awaitServerConnection: { spy } }` as a fourth argument (with a spy from `createSSESessionSpy()`) to also wait for the server-side session of a `keepAlive` route; the call then resolves to `{ client, serverConnection }`.
@@ -2567,14 +2568,24 @@ On a connection you already have, the same typing is available per read: `client
 
 `session.send(name, payload)` validates the payload against the contract's schema for that event and throws when it doesn't match. The throw happens inside the handler: the event never reaches the wire, the stream ends early with HTTP 200, and the reason only lands in the server log — leaving the test to explain an event that is simply missing.
 
-Routes built with `buildApiRoute` report those failures to whichever helper is reading the stream. `events()`, `stream()` and the `connectApiSSE` readers throw with the offending event name, its Zod issues and the rejected payload:
+Routes built with `buildApiRoute` report those failures to whichever helper is reading the stream. When the failure is what cut the stream short — nothing caught it — `events()`, `stream()` and the `connectApiSSE` readers throw with the offending event name, its Zod issues and the rejected payload:
 
 ```
-events() — 1 SSE event was never sent because the send threw:
-  - event "issue": severity: Invalid option: expected one of "neutral"|"minor"|"major"|"critical"; payload: {"severity":"min"}
+events() — 1 SSE send failure recorded for this request:
+  - event "issue" was never sent: severity: Invalid option: expected one of "neutral"|"minor"|"major"|"critical"; payload: {"severity":"min"}
 ```
 
-`connectApiSSE(...).sendFailures()` returns the same records (`{ eventName, data, message, issues, error }`) for assertions the message doesn't cover.
+A failure the route *recovered* from does not fail the read. A handler that catches its own best-effort send and streams a fallback instead produced exactly the response it meant to, so the readers deliver it and record the failure as context; the same goes for a `sendStream()` source that throws while producing its next message, which is reported as the source failing rather than blamed on the last event that did reach the client.
+
+Both `injectApiSSE(...).sendFailures()` and `connectApiSSE(...).sendFailures()` return every record (`{ eventName?, data?, message, issues?, error, handled }`) — including the recovered ones — for assertions the thrown message doesn't cover:
+
+```ts
+const { closed, events, sendFailures } = injectApiSSE(app, lqaSegmentContract, { body })
+await closed
+
+expect(await events()).toHaveLength(2) // the fallback stream is intact
+expect(sendFailures()).toMatchObject([{ eventName: 'issue', handled: true }])
+```
 
 This is test-only and costs production traffic nothing: the helpers tag their requests with an `x-om-sse-diagnostics-id` header, and a session is instrumented only when that header names a diagnostics scope open in the same process — something only those helpers create. A stale or forged header matches nothing.
 

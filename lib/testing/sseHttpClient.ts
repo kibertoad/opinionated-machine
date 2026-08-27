@@ -258,6 +258,14 @@ export class SSEHttpClient {
   }
 
   /**
+   * Whether the stream is over — the server ended it, or {@link SSEHttpClient.close} was
+   * called. A client that reports `true` will yield no further events.
+   */
+  get isClosed(): boolean {
+    return this.closed
+  }
+
+  /**
    * Lazily acquire the stream reader, locking the response body on first use.
    *
    * A missing body is reported here rather than from the constructor, so a
@@ -635,8 +643,19 @@ export class SSEHttpClient {
     timeout?: number,
   ): Promise<ApiSSEEvent<Contract>[]> {
     const schemaByEventName = resolveApiSseSchemas(contract, 'collectApiEvents()')
-    const validate = (event: ParsedSSEEvent) =>
-      validateApiSseEvent<Contract>(schemaByEventName, event, 'collectApiEvents()')
+    // A predicate sees every event as it arrives, and the collected ones are returned typed:
+    // memoizing keeps each event validated once instead of twice, and — more importantly —
+    // hands the caller the very object its predicate inspected.
+    const validated = new Map<ParsedSSEEvent, ApiSSEEvent<Contract>>()
+    const validate = (event: ParsedSSEEvent): ApiSSEEvent<Contract> => {
+      const cached = validated.get(event)
+      if (cached) {
+        return cached
+      }
+      const parsed = validateApiSseEvent<Contract>(schemaByEventName, event, 'collectApiEvents()')
+      validated.set(event, parsed)
+      return parsed
+    }
 
     const collected = await this.collectEvents(
       typeof countOrPredicate === 'number'

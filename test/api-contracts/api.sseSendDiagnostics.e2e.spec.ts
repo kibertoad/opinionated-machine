@@ -43,7 +43,7 @@ describe('SSE send failures reach the test process', () => {
     })
 
     await expect(events()).rejects.toThrow(
-      /events\(\) — 1 SSE event was never sent because the send threw:\n {2}- event "issue": severity: Invalid option: expected one of "neutral"\|"minor"\|"major"\|"critical"; payload: \{"severity":"min"\}/,
+      /events\(\) — 1 SSE send failure recorded for this request:\n {2}- event "issue" was never sent: severity: Invalid option: expected one of "neutral"\|"minor"\|"major"\|"critical"; payload: \{"severity":"min"\}/,
     )
   })
 
@@ -59,7 +59,7 @@ describe('SSE send failures reach the test process', () => {
       for await (const event of stream()) {
         received.push(event.event)
       }
-    }).rejects.toThrow(/stream\(\) — 1 SSE event was never sent/)
+    }).rejects.toThrow(/stream\(\) — 1 SSE send failure recorded/)
 
     // The events that did make it are still delivered — only the tail is missing.
     expect(received).toEqual(['issue'])
@@ -76,7 +76,7 @@ describe('SSE send failures reach the test process', () => {
       // The `review` event never arrives, because the `issue` before it was never sent, so
       // the collection ends short — and says why.
       await expect(client.collectEvents((event) => event.event === 'review', 300)).rejects.toThrow(
-        /collectEvents\(\) — 1 SSE event was never sent because the send threw:\n {2}- event "issue": severity: Invalid option/,
+        /collectEvents\(\) — 1 SSE send failure recorded for this request:\n {2}- event "issue" was never sent: severity: Invalid option/,
       )
       expect(client.sendFailures()).toMatchObject([
         { eventName: 'issue', data: { severity: 'min' } },
@@ -99,7 +99,7 @@ describe('SSE send failures reach the test process', () => {
         for await (const event of client.events()) {
           received.push(event.event)
         }
-      }).rejects.toThrow(/events\(\) — 1 SSE event was never sent/)
+      }).rejects.toThrow(/events\(\) — 1 SSE send failure recorded/)
 
       expect(received).toEqual(['issue'])
     } finally {
@@ -125,7 +125,7 @@ describe('SSE send failures reach the test process', () => {
       body: { segment: 'hello' },
     })
 
-    await expect(events()).rejects.toThrow(/event "issue": severity: Invalid option/)
+    await expect(events()).rejects.toThrow(/event "issue" was never sent: severity: Invalid option/)
   })
 
   it('leaves a healthy stream alone', async () => {
@@ -153,6 +153,99 @@ describe('SSE send failures reach the test process', () => {
       { event: 'review', data: { score: 1 } },
     ])
     expect(await events()).toEqual(streamed)
+  })
+
+  describe('a failure the route recovered from', () => {
+    /**
+     * A handler whose first send is best-effort: it fails the contract's schema, the handler
+     * catches it and streams a documented `issue` instead. The response is the one the route
+     * meant to produce, so reading it must succeed.
+     */
+    const registerRecoveringRoute = () =>
+      startSSEStreamTestApp((app) => {
+        app.route(
+          buildApiRoute(apiLqaIssueStreamContract, async (_request, _reply, { sse }) => {
+            const session = sse.start('autoClose')
+            try {
+              await session.send('issue', { severity: 'min' as 'minor' })
+            } catch {
+              await session.send('issue', { severity: 'minor' })
+            }
+            await session.send('review', { score: 1 })
+          }),
+        )
+      })
+
+    it('leaves events() and stream() alone, and reports it on sendFailures()', async () => {
+      server = await registerRecoveringRoute()
+
+      const { events, stream, sendFailures, closed } = injectApiSSE(
+        server.app,
+        apiLqaIssueStreamContract,
+        { body: { segment: 'hello' } },
+      )
+
+      const streamed = []
+      for await (const event of stream()) {
+        streamed.push(event)
+      }
+
+      expect(streamed).toEqual([
+        { event: 'issue', data: { severity: 'minor' } },
+        { event: 'review', data: { score: 1 } },
+      ])
+      expect(await events()).toEqual(streamed)
+
+      await closed
+      expect(sendFailures()).toMatchObject([
+        { eventName: 'issue', data: { severity: 'min' }, handled: true },
+      ])
+    })
+
+    it('leaves the real-HTTP readers alone too', async () => {
+      server = await registerRecoveringRoute()
+
+      const client = await connectApiSSE(server.baseUrl, apiLqaIssueStreamContract, {
+        body: { segment: 'hello' },
+      })
+
+      try {
+        const collected = await client.collectEvents((event) => event.event === 'review')
+        expect(collected).toEqual([
+          { event: 'issue', data: { severity: 'minor' } },
+          { event: 'review', data: { score: 1 } },
+        ])
+        expect(client.sendFailures()).toMatchObject([{ eventName: 'issue', handled: true }])
+      } finally {
+        client.close()
+      }
+    })
+  })
+
+  it('blames the source, not the last delivered event, when a stream source throws', async () => {
+    server = await startSSEStreamTestApp((app) => {
+      app.route(
+        buildApiRoute(apiLqaIssueStreamContract, async (_request, _reply, { sse }) => {
+          const session = sse.start('autoClose')
+          // biome-ignore lint/suspicious/useAwait: async generator required for AsyncIterable
+          async function* issues() {
+            yield { event: 'issue' as const, data: { severity: 'minor' as const } }
+            throw new Error('upstream LLM died')
+          }
+          await session.sendStream(issues())
+        }),
+      )
+    })
+
+    const { events } = injectApiSSE(server.app, apiLqaIssueStreamContract, {
+      body: { segment: 'hello' },
+    })
+
+    // The `issue` event is on the wire; naming it as "never sent" would send the test after
+    // the one event it can actually see.
+    await expect(events()).rejects.toThrow(
+      /the sendStream\(\) source threw before the next event: upstream LLM died/,
+    )
   })
 
   it('does not instrument requests that carry no diagnostics scope', async () => {

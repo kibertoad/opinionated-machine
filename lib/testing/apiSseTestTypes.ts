@@ -11,6 +11,7 @@ import type {
 } from '@lokalise/api-contracts'
 import type { InjectByApiContractParams } from '@lokalise/fastify-api-contracts'
 import type { z } from 'zod'
+import type { SSESendFailure } from '../sse/sseSendDiagnostics.ts'
 import type { SSEResponse, SSEResponseHead } from './sseTestTypes.ts'
 
 /**
@@ -251,6 +252,29 @@ export type InjectApiSSEResult<Contract extends ApiContract> = {
   head: Promise<SSEResponseHead>
 
   /**
+   * The sends the route could not make while serving this request — a payload that failed the
+   * contract's schema for its event, say — recorded instead of being left in the server log.
+   *
+   * `events()` and `stream()` already fail on the failures that truncated the response, so
+   * this is for the ones they deliberately let pass: a handler that catches its own failed
+   * send and streams a fallback produced the response it meant to, and a test asserting on
+   * that response should not fail — but may still want to assert the send was attempted, and
+   * rejected, exactly once.
+   *
+   * Only meaningful once the response completed (`await closed`), and only for routes built
+   * with this package's `buildApiRoute`; anything else records nothing.
+   *
+   * @example
+   * ```typescript
+   * const { closed, events, sendFailures } = injectApiSSE(app, contract, { body })
+   * await closed
+   * expect(await events()).toHaveLength(2)          // the fallback stream is intact
+   * expect(sendFailures()).toMatchObject([{ eventName: 'issue', handled: true }])
+   * ```
+   */
+  sendFailures(): SSESendFailure[]
+
+  /**
    * Awaits the response, asserts the status code matches, parses the body against the
    * contract's JSON schema for that status, and returns the parsed object. Useful for
    * asserting on the documented error responses a handler emits before streaming starts.
@@ -284,8 +308,9 @@ export type InjectApiSSEResult<Contract extends ApiContract> = {
    * statuses yields the union of both.
    *
    * Throws if the response isn't an SSE stream (use `bodyForStatus` for the documented
-   * error statuses), if an event name isn't declared by the contract, or if an event payload
-   * doesn't match its schema.
+   * error statuses), if an event name isn't declared by the contract, if an event payload
+   * doesn't match its schema, or if a send the route could not make — and did not recover
+   * from — ended the stream early (see `sendFailures()`).
    *
    * A contract that declares no SSE response at all types this as `never`, so calling it is
    * a compile error rather than a guaranteed throw — reach for `injectByApiContract` there.
@@ -314,10 +339,11 @@ export type InjectApiSSEResult<Contract extends ApiContract> = {
    * start.
    *
    * Throws — before yielding anything — if the response isn't an SSE stream, and rethrows
-   * the same event-level validation errors `events()` does. If the handler failed to send an
-   * event at all (a payload that didn't match the contract's schema for it), the generator
-   * ends by throwing an error naming that event and its Zod issues, instead of leaving the
-   * test to explain a missing event on its own.
+   * the same event-level validation errors `events()` does. If the stream was cut short by a
+   * send the route could not make (a payload that didn't match the contract's schema for its
+   * event, and that nothing caught), the generator ends by throwing an error naming that
+   * event and its Zod issues, instead of leaving the test to explain a missing event on its
+   * own. A failure the route did catch and recovered from is left to `sendFailures()`.
    *
    * A contract that declares no SSE response types this as `never`, exactly as `events()`.
    *

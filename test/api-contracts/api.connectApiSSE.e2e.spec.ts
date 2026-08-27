@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, expectTypeOf, it } from 'vitest'
 import { buildApiRoute, connectApiSSE, createSSESessionSpy, SSEHttpClient } from '../../index.js'
+import { countOpenSSEDiagnosticsScopes } from '../../lib/sse/sseSendDiagnostics.ts'
 import type { SSETestServerWithResources } from '../sseTestServerFactory.ts'
 import { createHandlerGate, startSSEStreamTestApp } from './fixtures/sseStreamTestApp.ts'
 import { apiChannelFeedContract, apiLqaIssueStreamContract } from './fixtures/testContracts.ts'
@@ -189,6 +190,122 @@ describe('connectApiSSE', () => {
     } finally {
       client.close()
     }
+  })
+
+  it('reports a response that is not a stream instead of waiting out the timeout', async () => {
+    server = await startSSEStreamTestApp((app) => {
+      app.route(
+        buildApiRoute(apiLqaIssueStreamContract, (request) =>
+          request.body.segment.length === 0
+            ? { status: 400, body: { message: 'segment must not be empty' } }
+            : { status: 400, body: { message: 'unreachable' } },
+        ),
+      )
+    })
+
+    const client = await connectApiSSE(server.baseUrl, apiLqaIssueStreamContract, {
+      body: { segment: '' },
+    })
+
+    try {
+      expect(client.response.status).toBe(400)
+
+      // Without the check this is a five-second wait ending in "got 0 events", with the
+      // status and the message the route actually sent nowhere in the failure.
+      await expect(client.collectEvents(1, 5000)).rejects.toThrow(
+        /collectEvents\(\) — response is not an SSE stream \(status 400, content-type application\/json\).*segment must not be empty/s,
+      )
+      await expect(async () => {
+        for await (const event of client.events()) {
+          expect(event).toBeUndefined()
+        }
+      }).rejects.toThrow(/events\(\) — response is not an SSE stream \(status 400/)
+
+      // The body is still the caller's to read: the check works off a clone.
+      expect(await client.response.json()).toEqual({ message: 'segment must not be empty' })
+    } finally {
+      client.close()
+    }
+  })
+
+  it('invokes a collectEvents predicate exactly once per event', async () => {
+    server = await startSSEStreamTestApp((app) => {
+      app.route(
+        buildApiRoute(apiLqaIssueStreamContract, async (_request, _reply, { sse }) => {
+          const session = sse.start('autoClose')
+          await session.send('issue', { severity: 'minor' })
+          await session.send('issue', { severity: 'major' })
+          await session.send('review', { score: 3 })
+        }),
+      )
+    })
+
+    const client = await connectApiSSE(server.baseUrl, apiLqaIssueStreamContract, {
+      body: { segment: 'hello' },
+    })
+
+    try {
+      // A predicate is caller code: it may count, log or capture. Running it twice per event
+      // would double every one of those.
+      const seen: string[] = []
+      const events = await client.collectEvents((event) => {
+        seen.push(event.event)
+        return event.event === 'review'
+      })
+
+      expect(events).toHaveLength(3)
+      expect(seen).toEqual(['issue', 'issue', 'review'])
+    } finally {
+      client.close()
+    }
+  })
+
+  describe('diagnostics scope lifetime', () => {
+    it('unregisters the scope when the connection could not be made', async () => {
+      server = await startSSEStreamTestApp((app) => {
+        app.route(
+          buildApiRoute(apiLqaIssueStreamContract, (_request, _reply, { sse }) => {
+            sse.start('autoClose')
+          }),
+        )
+      })
+      const { baseUrl } = server
+      await server.close()
+      server = undefined
+
+      const openScopes = countOpenSSEDiagnosticsScopes()
+      await expect(
+        connectApiSSE(baseUrl, apiLqaIssueStreamContract, { body: { segment: 'hello' } }),
+      ).rejects.toThrow()
+
+      // A scope with no client to close it would stay registered for the rest of the process.
+      expect(countOpenSSEDiagnosticsScopes()).toBe(openScopes)
+    })
+
+    it('unregisters the scope of a stream read to its end without close()', async () => {
+      server = await startSSEStreamTestApp((app) => {
+        app.route(
+          buildApiRoute(apiLqaIssueStreamContract, async (_request, _reply, { sse }) => {
+            const session = sse.start('autoClose')
+            await session.send('review', { score: 4 })
+          }),
+        )
+      })
+
+      const openScopes = countOpenSSEDiagnosticsScopes()
+      const client = await connectApiSSE(server.baseUrl, apiLqaIssueStreamContract, {
+        body: { segment: 'hello' },
+      })
+
+      const collected = []
+      for await (const event of client.events()) {
+        collected.push(event)
+      }
+
+      expect(collected).toEqual([{ event: 'review', data: { score: 4 } }])
+      // Deliberately no `client.close()`: the stream is over, so the scope has to go anyway.
+      expect(countOpenSSEDiagnosticsScopes()).toBe(openScopes)
+    })
   })
 
   it('reads an already-open SSEHttpClient connection through a contract', async () => {

@@ -67,3 +67,37 @@ export function validateApiSseEvent<Contract extends ApiContract>(
     data: parsed.data,
   } as ApiSSEEvent<Contract>
 }
+
+/** Media type an SSE response must carry. */
+export const SSE_CONTENT_TYPE = 'text/event-stream'
+
+/** Strip `; charset=…` style parameters from a media type. */
+export function mediaTypeOf(contentType: string | undefined): string | undefined {
+  return contentType?.split(';')[0]?.trim().toLowerCase()
+}
+
+/**
+ * Reject a response that is not an event stream, naming the reader that asked for one.
+ *
+ * Shared by both read paths so an endpoint answering with a JSON error (a 401 before
+ * `sse.start()`, say) fails with its status and body on either — rather than as zero events,
+ * which reads as a timeout on the HTTP path and an empty array on the inject one.
+ *
+ * @param reader - Name of the calling reader (`events()`, `stream()`, …), used as the error prefix
+ * @param body - Response body, when the caller can produce it without consuming a live stream
+ */
+export function assertSSEResponse(
+  statusCode: number,
+  contentType: string | undefined,
+  reader: string,
+  body?: string,
+): void {
+  const mediaType = mediaTypeOf(contentType)
+  if (mediaType === SSE_CONTENT_TYPE) {
+    return
+  }
+  const bodySuffix = body === undefined || body === '' ? '' : ` Body: ${truncateBody(body)}`
+  throw new Error(
+    `${reader} — response is not an SSE stream (status ${statusCode}, content-type ${mediaType ?? 'absent'}); use bodyForStatus(${statusCode}) for declared error responses.${bodySuffix}`,
+  )
+}

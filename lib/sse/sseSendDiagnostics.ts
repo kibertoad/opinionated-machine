@@ -1,5 +1,7 @@
+import type { IncomingHttpHeaders } from 'node:http'
 import type { SSEEventSchemas } from '@lokalise/api-contracts'
 import type { SSESession } from '@lokalise/fastify-api-contracts'
+import type { RouteHandlerMethod } from 'fastify'
 import type { z } from 'zod'
 
 /**
@@ -21,10 +23,15 @@ export const SSE_DIAGNOSTICS_HEADER = 'x-om-sse-diagnostics-id'
  * asserts on is missing while the reason lives in the server log.
  */
 export type SSESendFailure = {
-  /** Name of the event the handler tried to send. */
-  eventName: string
-  /** Payload the handler passed, as-is. */
-  data: unknown
+  /**
+   * Name of the event the handler tried to send.
+   *
+   * Absent when the failure came from the message source of `sendStream()` rather than from
+   * a send: the source threw while producing the next message, so no event was in flight.
+   */
+  eventName?: string
+  /** Payload the handler passed, as-is. Absent together with {@link eventName}. */
+  data?: unknown
   /** Message of the thrown error. */
   message: string
   /**
@@ -35,6 +42,18 @@ export type SSESendFailure = {
   issues?: z.core.$ZodIssue[]
   /** The thrown error itself, for assertions the fields above don't cover. */
   error: unknown
+  /**
+   * Whether the route recovered from this failure.
+   *
+   * `true` when the handler caught the error and went on to complete the response — the
+   * stream the test read is the one the route meant to produce, so the failure is context,
+   * not a verdict. `false` when the error escaped the handler (or was raised after it
+   * returned, on a `keepAlive` session): nothing recovered, and the stream ended where the
+   * send failed.
+   *
+   * Only final once the response completed; the test helpers only read it then.
+   */
+  handled: boolean
 }
 
 /**
@@ -64,7 +83,71 @@ export type SSEDiagnosticsScope = {
 /** Cap per scope, so a handler failing in a loop can't grow the registry without bound. */
 const MAX_FAILURES_PER_SCOPE = 50
 
-const openScopes = new Map<string, SSESendFailure[]>()
+/** How far to walk an error's `cause` chain when matching it to a recorded failure. */
+const MAX_CAUSE_DEPTH = 10
+
+/**
+ * The failures of one observed request, plus whether the route recovered from them.
+ *
+ * Split from {@link SSEDiagnosticsScope} because the two ends see different things: the scope
+ * is the reader's handle (it can only snapshot and unregister), while the recorder is what the
+ * instrumented route writes to.
+ */
+class SSEDiagnosticsRecorder {
+  readonly failures: SSESendFailure[] = []
+  private settled = false
+
+  /** Record a send that threw, and the Zod issues behind it when the payload explains it. */
+  recordSendFailure(
+    schemaByEventName: SSEEventSchemas,
+    eventName: string,
+    data: unknown,
+    error: unknown,
+  ): void {
+    if (this.failures.length >= MAX_FAILURES_PER_SCOPE) {
+      return
+    }
+    const issues = issuesFor(schemaByEventName, eventName, data)
+    this.failures.push({
+      eventName,
+      data,
+      message: messageOf(error),
+      ...(issues && { issues }),
+      error,
+      handled: false,
+    })
+  }
+
+  /** Record a `sendStream()` source that threw while producing its next message. */
+  recordSourceFailure(error: unknown): void {
+    if (this.failures.length >= MAX_FAILURES_PER_SCOPE) {
+      return
+    }
+    this.failures.push({ message: messageOf(error), error, handled: false })
+  }
+
+  /**
+   * The route handler settled: everything recorded so far that did not escape it was caught
+   * by the route, which went on to produce the rest of the response.
+   *
+   * Called once per request, before the response ends, so the helpers reading the stream see
+   * final `handled` flags. Failures recorded afterwards — a send on a `keepAlive` session the
+   * handler already returned from — stay unhandled: nothing observably recovered from them.
+   *
+   * @param escaped - The error the handler threw, if it threw
+   */
+  settle(escaped?: unknown): void {
+    if (this.settled) {
+      return
+    }
+    this.settled = true
+    for (const failure of this.failures) {
+      failure.handled = !causedBy(escaped, failure.error)
+    }
+  }
+}
+
+const openScopes = new Map<string, SSEDiagnosticsRecorder>()
 let nextScopeId = 0
 
 /**
@@ -75,30 +158,41 @@ let nextScopeId = 0
  */
 export function openSSEDiagnosticsScope(): SSEDiagnosticsScope {
   const id = `sse-diag-${++nextScopeId}`
-  openScopes.set(id, [])
+  openScopes.set(id, new SSEDiagnosticsRecorder())
 
   let snapshot: SSESendFailure[] | undefined
 
   return {
     id,
     headers: { [SSE_DIAGNOSTICS_HEADER]: id },
-    failures: () => snapshot ?? [...(openScopes.get(id) ?? [])],
+    failures: () => snapshot ?? [...(openScopes.get(id)?.failures ?? [])],
     dispose: () => {
       if (!snapshot) {
-        snapshot = [...(openScopes.get(id) ?? [])]
+        snapshot = [...(openScopes.get(id)?.failures ?? [])]
         openScopes.delete(id)
       }
     },
   }
 }
 
-/** The scope a request belongs to, or `undefined` when it belongs to none. */
-function resolveScope(session: SSESession): SSESendFailure[] | undefined {
+/**
+ * How many diagnostics scopes are registered right now.
+ *
+ * @internal Exists so the helpers' own specs can prove that every path out of a request
+ * unregisters its scope: a leaked one keeps its records alive for the rest of the process and
+ * costs every later request the fast path below.
+ */
+export function countOpenSSEDiagnosticsScopes(): number {
+  return openScopes.size
+}
+
+/** The recorder a request writes to, or `undefined` when it belongs to no open scope. */
+function resolveRecorder(headers: IncomingHttpHeaders): SSEDiagnosticsRecorder | undefined {
   // Fast path for production traffic: with no scope open the header can't match anything.
   if (openScopes.size === 0) {
     return undefined
   }
-  const header = session.request.headers[SSE_DIAGNOSTICS_HEADER]
+  const header = headers[SSE_DIAGNOSTICS_HEADER]
   const id = Array.isArray(header) ? header[0] : header
   return id === undefined ? undefined : openScopes.get(id)
 }
@@ -117,24 +211,30 @@ function issuesFor(
   return result.success ? undefined : result.error.issues
 }
 
-function recordFailure(
-  failures: SSESendFailure[],
-  schemaByEventName: SSEEventSchemas,
-  eventName: string,
-  data: unknown,
-  error: unknown,
-): void {
-  if (failures.length >= MAX_FAILURES_PER_SCOPE) {
-    return
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Whether `error` is `candidate`, or was thrown wrapping it as a `cause`.
+ *
+ * A handler that rethrows the send error as-is is the common case; one that wraps it in its
+ * own error still did not recover from it, so the chain is walked (to a bounded depth, since
+ * a `cause` chain can be cyclic).
+ */
+function causedBy(error: unknown, candidate: unknown): boolean {
+  let current = error
+  for (
+    let depth = 0;
+    depth < MAX_CAUSE_DEPTH && current !== undefined && current !== null;
+    depth++
+  ) {
+    if (current === candidate) {
+      return true
+    }
+    current = current instanceof Error ? current.cause : undefined
   }
-  const issues = issuesFor(schemaByEventName, eventName, data)
-  failures.push({
-    eventName,
-    data,
-    message: error instanceof Error ? error.message : String(error),
-    ...(issues && { issues }),
-    error,
-  })
+  return false
 }
 
 /**
@@ -154,8 +254,8 @@ export function attachSSESendDiagnostics(
   session: SSESession,
   schemaByEventName: SSEEventSchemas,
 ): void {
-  const failures = resolveScope(session)
-  if (!failures) {
+  const recorder = resolveRecorder(session.request.headers)
+  if (!recorder) {
     return
   }
 
@@ -164,7 +264,7 @@ export function attachSSESendDiagnostics(
     try {
       return await originalSend(eventName, data, options)
     } catch (error) {
-      recordFailure(failures, schemaByEventName, eventName, data, error)
+      recorder.recordSendFailure(schemaByEventName, eventName, data, error)
       throw error
     }
   }
@@ -172,24 +272,85 @@ export function attachSSESendDiagnostics(
   const originalSendStream = session.sendStream.bind(session)
   session.sendStream = async (messages) => {
     // The send that throws happens inside `sendStream`, which reports neither the event name
-    // nor the payload — track the last message pulled from the source so the failure can.
-    let lastMessage: { event: string; data: unknown } | undefined
+    // nor the payload. Wrapping the source names it: `pending` holds the message handed to
+    // the sender, and is cleared when the sender comes back for the next one — which only
+    // happens once the previous send resolved. So a rejection with `pending` set is a failed
+    // send of that message, and one without is the source itself throwing.
+    let pending: { event: string; data: unknown } | undefined
     async function* tracked() {
       for await (const message of messages) {
-        lastMessage = message
+        pending = message
         yield message
+        pending = undefined
       }
     }
 
     try {
       await originalSendStream(tracked())
     } catch (error) {
-      if (lastMessage) {
-        recordFailure(failures, schemaByEventName, lastMessage.event, lastMessage.data, error)
+      if (pending) {
+        recorder.recordSendFailure(schemaByEventName, pending.event, pending.data, error)
+      } else {
+        recorder.recordSourceFailure(error)
       }
       throw error
     }
   }
+}
+
+/**
+ * Wrap a route handler so the diagnostics scope learns whether the route recovered from the
+ * sends it could not make.
+ *
+ * A send that throws is only a reason for a test to fail when nothing caught it: a handler
+ * that catches its own failed send and streams a fallback instead produced exactly the
+ * response it meant to. Observing how the handler settled is what tells the two apart —
+ * {@link SSESendFailure.handled}.
+ *
+ * A no-op for requests that name no open diagnostics scope: outside a test run this is one
+ * `Map.size` check per request on SSE routes.
+ *
+ * @internal Applied by `buildApiRoute` to SSE-capable routes.
+ */
+export function reportSSEHandlerOutcome(handler: RouteHandlerMethod): RouteHandlerMethod {
+  const instrumented: RouteHandlerMethod = function instrumentedHandler(request, reply) {
+    const recorder = resolveRecorder(request.headers)
+    if (!recorder) {
+      return handler.call(this, request, reply)
+    }
+
+    let result: unknown
+    try {
+      result = handler.call(this, request, reply)
+    } catch (error) {
+      // A handler that throws before returning a promise never opened a stream to recover in.
+      recorder.settle(error)
+      throw error
+    }
+
+    return Promise.resolve(result).then(
+      (value) => {
+        recorder.settle()
+        // Whatever the wrapped handler resolves to is what Fastify sends: pass it through.
+        return value
+      },
+      (error: unknown) => {
+        recorder.settle(error)
+        throw error
+      },
+    )
+  }
+  return instrumented
+}
+
+/**
+ * The failures the route did not recover from — the ones that truncated the response, and so
+ * explain an event a test waited for and never saw.
+ *
+ * @internal
+ */
+export function unhandledSendFailures(failures: SSESendFailure[]): SSESendFailure[] {
+  return failures.filter((failure) => !failure.handled)
 }
 
 /**
@@ -198,17 +359,23 @@ export function attachSSESendDiagnostics(
  * @internal
  */
 export function describeSendFailures(failures: SSESendFailure[]): string {
-  const lines = failures.map((failure) => {
-    const detail = failure.issues
-      ? failure.issues
-          .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
-          .join('; ')
-      : failure.message
-    return `  - event "${failure.eventName}": ${detail}; payload: ${safeStringify(failure.data)}`
-  })
+  const lines = failures.map((failure) => `  - ${describeSendFailure(failure)}`)
+  const subject = failures.length === 1 ? 'failure' : 'failures'
+  return `${failures.length} SSE send ${subject} recorded for this request:\n${lines.join('\n')}`
+}
 
-  const subject = failures.length === 1 ? 'event was' : 'events were'
-  return `${failures.length} SSE ${subject} never sent because the send threw:\n${lines.join('\n')}`
+function describeSendFailure(failure: SSESendFailure): string {
+  const recovered = failure.handled ? ' (caught by the route, which completed the response)' : ''
+  if (failure.eventName === undefined) {
+    return `the sendStream() source threw before the next event: ${failure.message}${recovered}`
+  }
+
+  const detail = failure.issues
+    ? failure.issues
+        .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
+        .join('; ')
+    : failure.message
+  return `event "${failure.eventName}" was never sent: ${detail}; payload: ${safeStringify(failure.data)}${recovered}`
 }
 
 /** JSON for an error message, degrading to `String()` for anything JSON can't take. */

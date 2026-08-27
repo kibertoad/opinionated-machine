@@ -13,9 +13,17 @@ import {
   describeSendFailures,
   openSSEDiagnosticsScope,
   type SSEDiagnosticsScope,
+  type SSESendFailure,
+  unhandledSendFailures,
 } from '../sse/sseSendDiagnostics.ts'
 import type { AnyFastifyInstance } from './AnyFastifyInstance.ts'
-import { resolveApiSseSchemas, validateApiSseEvent } from './apiSseEventValidation.ts'
+import {
+  assertSSEResponse,
+  mediaTypeOf,
+  resolveApiSseSchemas,
+  SSE_CONTENT_TYPE,
+  validateApiSseEvent,
+} from './apiSseEventValidation.ts'
 import type {
   ApiDeclaredResponseBody,
   ApiDeclaredResponseStatus,
@@ -27,19 +35,17 @@ import type {
 import { truncateBody } from './sseInjectShared.ts'
 import type { SSEInjectMethod, SSEResponse, SSEResponseHead } from './sseTestTypes.ts'
 
-const SSE_CONTENT_TYPE = 'text/event-stream'
-
-/** Methods whose contracts can declare a request body. */
+/**
+ * Methods whose contracts can declare a request body.
+ *
+ * Exactly the methods of `PayloadApiContract`; `GetApiContract` and `DeleteApiContract` type
+ * `requestBodySchema` as `never`, so no contract can declare a body for any other verb.
+ */
 const METHODS_WITH_BODY = new Set(['POST', 'PUT', 'PATCH'])
 
 /** Read a response header that light-my-request may expose as an array. */
 function readHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
-}
-
-/** Strip `; charset=…` style parameters from a media type. */
-function mediaTypeOf(contentType: string | undefined): string | undefined {
-  return contentType?.split(';')[0]?.trim().toLowerCase()
 }
 
 const STATUS_RANGE_KEYS: readonly HttpStatusCodeRange[] = ['1xx', '2xx', '3xx', '4xx', '5xx']
@@ -157,15 +163,8 @@ export function bindApiBodyForStatus<Contract extends ApiContract>(
 }
 
 /** Reject a response that is not an event stream, naming the reader that asked for one. */
-function assertSSEResponse(head: SSEResponseHead, reader: string, body?: string): void {
-  const contentType = mediaTypeOf(readHeader(head.headers['content-type']))
-  if (contentType === SSE_CONTENT_TYPE) {
-    return
-  }
-  const bodySuffix = body === undefined ? '' : ` Body: ${truncateBody(body)}`
-  throw new Error(
-    `${reader} — response is not an SSE stream (status ${head.statusCode}, content-type ${contentType ?? 'absent'}); use bodyForStatus(${head.statusCode}) for declared error responses.${bodySuffix}`,
-  )
+function assertSSEHead(head: SSEResponseHead, reader: string, body?: string): void {
+  assertSSEResponse(head.statusCode, readHeader(head.headers['content-type']), reader, body)
 }
 
 /**
@@ -182,7 +181,7 @@ export function bindApiEvents<Contract extends ApiContract>(
     const res = await closed
     // Merges the SSE schemas of every declared status, not just the successful ones.
     const schemaByEventName = resolveApiSseSchemas(contract, 'events()')
-    assertSSEResponse(res, 'events()', res.body)
+    assertSSEHead(res, 'events()', res.body)
     return parseSSEEvents(res.body).map((event) =>
       validateApiSseEvent<Contract>(schemaByEventName, event, 'events()'),
     )
@@ -330,7 +329,8 @@ class InjectedSSEStream {
 }
 
 /**
- * Throw the failures the handler's own sends produced, if any were recorded for this request.
+ * Throw the sends the route could not make and did not recover from, if any were recorded for
+ * this request.
  *
  * A payload that fails the contract's schema for its event makes `session.send()` throw
  * inside the handler; the event never reaches the wire and the reason only reaches the server
@@ -338,7 +338,10 @@ class InjectedSSEStream {
  * on the event that was never sent rather than on the next one it did receive.
  */
 function assertNoSendFailures(scope: SSEDiagnosticsScope, reader: string): void {
-  const failures = scope.failures()
+  // A failure the route caught and streamed around is context, not a verdict: the response
+  // the test read is the one the route meant to produce. Only the failures that truncated it
+  // explain a missing event, so only those fail the read — the rest stay on `sendFailures()`.
+  const failures = unhandledSendFailures(scope.failures())
   if (failures.length > 0) {
     throw new Error(`${reader} — ${describeSendFailures(failures)}`)
   }
@@ -461,7 +464,7 @@ export function injectApiSSE<const Contract extends ApiContract>(
 
   const stream: ApiSSEStreamReader<Contract> = async function* (signal?: AbortSignal) {
     const schemaByEventName = resolveApiSseSchemas(contract, 'stream()')
-    assertSSEResponse(await head, 'stream()')
+    assertSSEHead(await head, 'stream()')
 
     for await (const event of pump.events(signal)) {
       yield validateApiSseEvent<Contract>(schemaByEventName, event, 'stream()')
@@ -477,6 +480,7 @@ export function injectApiSSE<const Contract extends ApiContract>(
   return {
     closed,
     head,
+    sendFailures: (): SSESendFailure[] => scope.failures(),
     bodyForStatus: bindApiBodyForStatus(contract, closed),
     // `events` / `stream` are typed `never` for contracts that declare no SSE response, which
     // no concrete function satisfies — the callable forms are narrowed here.

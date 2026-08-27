@@ -438,14 +438,24 @@ await server.stop()
 
 `session.send(name, payload)` validates the payload against the contract's schema for that event and throws when it doesn't match. That throw happens inside the handler: the event never reaches the wire, the stream just ends early with HTTP 200, and the ZodError only shows up in the server log — so the test sees an unrelated event missing.
 
-Routes built with `buildApiRoute` report those failures back to the test that is reading the stream. `events()`, `stream()` and the `connectApiSSE` readers throw with the offending event name, its Zod issues and the payload that was rejected:
+Routes built with `buildApiRoute` report those failures back to the test that is reading the stream. When the failure is what ended the stream early — nothing in the route caught it — `events()`, `stream()` and the `connectApiSSE` readers throw with the offending event name, its Zod issues and the payload that was rejected:
 
 ```
-events() — 1 SSE event was never sent because the send threw:
-  - event "issue": severity: Invalid option: expected one of "neutral"|"minor"|"major"|"critical"; payload: {"severity":"min"}
+events() — 1 SSE send failure recorded for this request:
+  - event "issue" was never sent: severity: Invalid option: expected one of "neutral"|"minor"|"major"|"critical"; payload: {"severity":"min"}
 ```
 
-`connectApiSSE(...).sendFailures()` exposes the same records (`{ eventName, data, message, issues, error }`) for assertions the message doesn't cover.
+A failure the route recovered from is reported, not raised: a handler that catches its own failed send and streams a fallback produced the response it meant to, and the readers deliver it unchanged. A `sendStream()` source that throws while producing its next message is likewise reported as the source failing, rather than blamed on the last event that did reach the client.
+
+`injectApiSSE(...).sendFailures()` and `connectApiSSE(...).sendFailures()` expose every record (`{ eventName?, data?, message, issues?, error, handled }`), recovered ones included, for assertions the thrown message doesn't cover:
+
+```ts
+const { closed, events, sendFailures } = injectApiSSE(app, lqaSegmentContract, { body })
+await closed
+
+expect(await events()).toHaveLength(2) // the fallback stream is intact
+expect(sendFailures()).toMatchObject([{ eventName: 'issue', handled: true }])
+```
 
 This is test-only, and costs production traffic nothing: the helpers tag their requests with an `x-om-sse-diagnostics-id` header, and a session is only instrumented when that header names a diagnostics scope open in the same process — something only the helpers create. A stale or forged header matches nothing.
 
