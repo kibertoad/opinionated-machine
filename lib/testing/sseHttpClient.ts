@@ -1,6 +1,6 @@
 import { stringify } from 'fast-querystring'
 import type { SSESession } from '../routes/fastifyRouteTypes.ts'
-import type { SSESessionSpy } from '../sse/SSESessionSpy.ts'
+import type { SpiedSSESession, SSESessionSpy } from '../sse/SSESessionSpy.ts'
 import { type ParsedSSEEvent, parseSSEBuffer } from '../sse/sseParser.ts'
 
 /**
@@ -19,7 +19,8 @@ export type SSEHttpConnectOptions = {
 }
 
 /**
- * Options for connecting with automatic server-side connection waiting.
+ * Options for connecting with automatic server-side connection waiting,
+ * driven by a controller's built-in `connectionSpy`.
  */
 export type SSEHttpConnectWithSpyOptions = SSEHttpConnectOptions & {
   /**
@@ -36,11 +37,33 @@ export type SSEHttpConnectWithSpyOptions = SSEHttpConnectOptions & {
 }
 
 /**
+ * Options for connecting with automatic server-side connection waiting,
+ * driven by a standalone spy from `createSSESessionSpy()`.
+ *
+ * Use this for routes built with `buildApiRoute`, which have no controller to
+ * read a `connectionSpy` off of.
+ */
+export type SSEHttpConnectWithSessionSpyOptions<TSession extends SpiedSSESession> =
+  SSEHttpConnectOptions & {
+    /**
+     * Wait for server-side connection registration after HTTP headers are received.
+     * This eliminates the race condition between `connect()` returning and the
+     * server-side handler completing connection registration.
+     */
+    awaitServerConnection: {
+      /** A standalone spy, wired to the route via `createSSESessionSpy()`'s `routeOptions` */
+      spy: SSESessionSpy<TSession>
+      /** Timeout in milliseconds (default: 5000) */
+      timeout?: number
+    }
+  }
+
+/**
  * Result when connecting with awaitServerConnection option.
  */
-export type SSEHttpConnectResult = {
+export type SSEHttpConnectResult<TSession extends SpiedSSESession = SSESession> = {
   client: SSEHttpClient
-  serverConnection: SSESession
+  serverConnection: TSession
 }
 
 /**
@@ -142,6 +165,16 @@ export class SSEHttpClient {
    * )
    * // serverConnection is ready to use immediately
    * await controller.sendEvent(serverConnection.id, { event: 'test', data: {} })
+   *
+   * // Same, for a `buildApiRoute` route with no controller: wire a standalone
+   * // spy into the route's hooks with createSSESessionSpy()
+   * const { spy, routeOptions } = createSSESessionSpy()
+   * const { client, serverConnection } = await SSEHttpClient.connect(
+   *   'http://localhost:3000',
+   *   '/api/stream',
+   *   { awaitServerConnection: { spy } }
+   * )
+   * await serverConnection.send('test', {})
    * ```
    */
   static async connect(
@@ -149,6 +182,11 @@ export class SSEHttpClient {
     path: string,
     options: SSEHttpConnectWithSpyOptions,
   ): Promise<SSEHttpConnectResult>
+  static async connect<TSession extends SpiedSSESession>(
+    baseUrl: string,
+    path: string,
+    options: SSEHttpConnectWithSessionSpyOptions<TSession>,
+  ): Promise<SSEHttpConnectResult<TSession>>
   static async connect(
     baseUrl: string,
     path: string,
@@ -157,8 +195,11 @@ export class SSEHttpClient {
   static async connect(
     baseUrl: string,
     path: string,
-    options?: SSEHttpConnectOptions | SSEHttpConnectWithSpyOptions,
-  ): Promise<SSEHttpClient | SSEHttpConnectResult> {
+    options?:
+      | SSEHttpConnectOptions
+      | SSEHttpConnectWithSpyOptions
+      | SSEHttpConnectWithSessionSpyOptions<SpiedSSESession>,
+  ): Promise<SSEHttpClient | SSEHttpConnectResult<SpiedSSESession>> {
     // Build path with query string
     let pathWithQuery = path
     if (options?.query) {
@@ -182,11 +223,17 @@ export class SSEHttpClient {
 
     // If awaitServerConnection is specified, wait for server-side registration
     if (options && 'awaitServerConnection' in options && options.awaitServerConnection) {
-      const { controller, timeout } = options.awaitServerConnection
-      const serverConnection = await controller.connectionSpy.waitForConnection({
-        timeout: timeout ?? 5000,
-        predicate: (conn) => conn.request.url === pathWithQuery,
-      })
+      const awaitOptions = options.awaitServerConnection
+      const waitOptions = {
+        timeout: awaitOptions.timeout ?? 5000,
+        predicate: (conn: SpiedSSESession) => conn.request.url === pathWithQuery,
+      }
+      // Both branches call the same method; the spy is invariant in its session
+      // type, so they cannot be collapsed into one reference.
+      const serverConnection =
+        'spy' in awaitOptions
+          ? await awaitOptions.spy.waitForConnection(waitOptions)
+          : await awaitOptions.controller.connectionSpy.waitForConnection(waitOptions)
       return { client, serverConnection }
     }
 

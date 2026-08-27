@@ -1642,6 +1642,29 @@ controller.connectionSpy.clear()
 
 **Note**: `waitForConnection` tracks "claimed" sessions internally. Each call returns a unique unclaimed session, allowing sequential waits for the same URL path without returning the same session twice. This is used internally by `SSEHttpClient.connect()` with `awaitServerConnection`.
 
+#### Standalone spy for `buildApiRoute` routes
+
+`connectionSpy` only exists on `AbstractSSEController`. Services built on `AbstractApiController` + `buildApiRoute` get the same capability from `createSSESessionSpy()`, which returns a spy plus the `onConnect` / `onClose` route hooks that drive it:
+
+```ts
+import { createSSESessionSpy, SSEHttpClient } from 'opinionated-machine'
+
+const { spy, routeOptions } = createSSESessionSpy()
+
+// in the app under test — `routeOptions` is just `{ onConnect, onClose }`
+app.route(buildApiRoute(streamContract, handler, { ...routeOptions }))
+
+// in the test — same race-free connect as with a controller
+const { client, serverConnection } = await SSEHttpClient.connect(baseUrl, '/api/stream', {
+  awaitServerConnection: { spy },
+})
+await serverConnection.send('ping', { seq: 1 })
+```
+
+`awaitServerConnection` accepts either `{ controller }` or `{ spy }`; both wait for the server-side handler to finish registering the session before `connect()` resolves.
+
+The spy is typed for the `SSESession` of `@lokalise/fastify-api-contracts`, which is what `buildApiRoute` passes to its hooks. To wire the same spy into a `buildFastifyRoute`-built route, parameterize it with this package's session type: `createSSESessionSpy<SSESession>()`.
+
 ### Session Monitoring
 
 Controllers have access to utility methods for monitoring sessions:
@@ -2240,6 +2263,8 @@ Omit `awaitServerConnection` only in these cases:
 - Testing against external SSE endpoints (not your own controller)
 - When `isTestMode: false` (connectionSpy not available)
 - Simple smoke tests that only verify response headers/status without sending server events
+
+For routes built with `buildApiRoute` (no controller, so no `connectionSpy`), pass a standalone spy instead of dropping the option: `awaitServerConnection: { spy }`, with the spy from [`createSSESessionSpy()`](#standalone-spy-for-buildapiroute-routes).
 
 **Consequence**: Without `awaitServerConnection`, `connect()` resolves as soon as HTTP headers are received. Server-side connection registration may not have completed yet, so you cannot reliably send events from the server immediately after `connect()` returns.
 

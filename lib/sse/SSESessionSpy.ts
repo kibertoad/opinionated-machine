@@ -1,10 +1,22 @@
 import type { SSESession } from './AbstractSSEController.ts'
 
-type ConnectionWaiter = {
-  resolve: (connection: SSESession) => void
+/**
+ * Minimal shape of an SSE session the spy needs in order to track it.
+ *
+ * Both the `SSESession` produced by this package's own SSE routes and the one
+ * produced by `@lokalise/fastify-api-contracts` (used by `buildApiRoute`)
+ * satisfy it, which lets a single spy be attached to either route style.
+ */
+export type SpiedSSESession = {
+  id: string
+  request: { url: string }
+}
+
+type ConnectionWaiter<TSession extends SpiedSSESession> = {
+  resolve: (connection: TSession) => void
   reject: (error: Error) => void
   timeoutId: ReturnType<typeof setTimeout>
-  predicate?: (connection: SSESession) => boolean
+  predicate?: (connection: TSession) => boolean
 }
 
 type DisconnectionWaiter = {
@@ -14,25 +26,30 @@ type DisconnectionWaiter = {
   timeoutId: ReturnType<typeof setTimeout>
 }
 
-export type SSESessionEvent = {
+export type SSESessionEvent<TSession extends SpiedSSESession = SSESession> = {
   type: 'connect' | 'disconnect'
   connectionId: string
-  connection?: SSESession
+  connection?: TSession
 }
 
 /**
  * Connection spy for testing SSE controllers.
  * Tracks connection and disconnection events separately.
+ *
+ * @template TSession - The session type the spy observes. Defaults to this
+ *   package's `SSESession`, which is what `AbstractSSEController` reports.
+ *   Tests wiring the spy to `buildApiRoute` routes get it parameterized with
+ *   the contracts package session type via `createSSESessionSpy()`.
  */
-export class SSESessionSpy {
-  private events: SSESessionEvent[] = []
+export class SSESessionSpy<TSession extends SpiedSSESession = SSESession> {
+  private events: SSESessionEvent<TSession>[] = []
   private activeConnections: Set<string> = new Set()
   private claimedConnections: Set<string> = new Set()
-  private connectionWaiters: ConnectionWaiter[] = []
+  private connectionWaiters: ConnectionWaiter<TSession>[] = []
   private disconnectionWaiters: DisconnectionWaiter[] = []
 
   /** @internal Called when a connection is established */
-  addConnection(connection: SSESession): void {
+  addConnection(connection: TSession): void {
     this.events.push({ type: 'connect', connectionId: connection.id, connection })
     this.activeConnections.add(connection.id)
 
@@ -88,8 +105,8 @@ export class SSESessionSpy {
    */
   waitForConnection(options?: {
     timeout?: number
-    predicate?: (connection: SSESession) => boolean
-  }): Promise<SSESession> {
+    predicate?: (connection: TSession) => boolean
+  }): Promise<TSession> {
     const timeout = options?.timeout ?? 5000
     const predicate = options?.predicate
 
@@ -108,7 +125,7 @@ export class SSESessionSpy {
     }
 
     // No matching connection yet, create a waiter
-    return new Promise<SSESession>((resolve, reject) => {
+    return new Promise<TSession>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         const index = this.connectionWaiters.findIndex((w) => w.resolve === resolve)
         if (index !== -1) {
@@ -158,7 +175,7 @@ export class SSESessionSpy {
   }
 
   /** Get all connection events in order, optionally filtered by connectionId */
-  getEvents(connectionId?: string): SSESessionEvent[] {
+  getEvents(connectionId?: string): SSESessionEvent<TSession>[] {
     if (connectionId === undefined) {
       return [...this.events]
     }
