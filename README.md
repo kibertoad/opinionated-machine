@@ -1579,6 +1579,8 @@ it('streams chat completions', async () => {
 })
 ```
 
+If the route answers with an error status before streaming starts, the response carries a JSON body instead of events - read it with `conn.getBody()` or `conn.json()` (see [SSEInjectClient](#sseinjectclient)).
+
 #### Asserting documented error responses with `bodyForStatus`
 
 When a contract declares `responseBodySchemasByStatusCode` for non-2xx responses (the shape the handler emits via `sse.respond(status, body)` before streaming starts), `injectSSE` / `injectPayloadSSE` expose a typed `bodyForStatus(status)` accessor:
@@ -2462,6 +2464,25 @@ expect(conn.getStatusCode()).toBe(200)
 const events = conn.getReceivedEvents()
 const chunks = events.filter(e => e.event === 'chunk')
 ```
+
+When the route answers with a status code *before* streaming starts (auth failure,
+validation error, integration unavailable), it sends a JSON body rather than events.
+`getBody()` returns that body raw and `json()` parses it, mirroring Fastify's own
+inject response:
+
+```ts
+const conn = await client.connect('/api/export/progress')
+
+expect(conn.getStatusCode()).toBe(503)
+expect(conn.json<{ errorCode: string }>()).toMatchObject({
+  errorCode: 'INTEGRATION_NOT_AVAILABLE',
+})
+```
+
+`json()` throws if the body is empty or isn't valid JSON, so it only makes sense for
+these pre-stream responses - a `text/event-stream` body is not JSON. For contract-typed
+tests, `injectSSE`/`injectPayloadSSE`/`injectApiSSE` offer `bodyForStatus(status)`, which
+also validates the body against the contract's schema for that status.
 
 #### Contract-Aware Inject Helpers
 

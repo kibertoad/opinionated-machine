@@ -1,11 +1,13 @@
 import { createContainer } from 'awilix'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest'
 import { DIContext, SSEInjectClient } from '../../index.js'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
-import { chatCompletionContract } from './fixtures/testContracts.js'
+import { bodyForStatusGetContract, chatCompletionContract } from './fixtures/testContracts.js'
 import {
   TestAuthSSEModule,
+  TestBodyForStatusModule,
+  type TestBodyForStatusModuleDependencies,
   TestChannelSSEModule,
   TestPostSSEModule,
 } from './fixtures/testModules.js'
@@ -267,6 +269,75 @@ describe('SSEInjectClient E2E', () => {
 
       expect(events1).not.toBe(events2)
       expect(events1).toEqual(events2)
+    })
+  })
+
+  describe('response body access', () => {
+    let server: SSETestServerWithResources<{
+      context: DIContext<TestBodyForStatusModuleDependencies, object>
+    }>
+    let client: SSEInjectClient
+
+    beforeEach(async () => {
+      const container = createContainer<TestBodyForStatusModuleDependencies>({
+        injectionMode: 'PROXY',
+      })
+      const context = new DIContext<TestBodyForStatusModuleDependencies, object>(
+        container,
+        { isTestMode: true },
+        {},
+      )
+      context.registerDependencies({ modules: [new TestBodyForStatusModule()] }, undefined)
+
+      server = await createSSETestServer(
+        (app) => {
+          context.registerSSERoutes(app)
+        },
+        {
+          configureApp: (app) => {
+            app.setValidatorCompiler(validatorCompiler)
+            app.setSerializerCompiler(serializerCompiler)
+          },
+          setup: () => ({ context }),
+        },
+      )
+
+      client = new SSEInjectClient(server.app)
+    })
+
+    afterEach(async () => {
+      await server.resources.context.destroy()
+      await server.close()
+    })
+
+    it('exposes the JSON body of a pre-stream error response', async () => {
+      const conn = await client.connect(
+        `${bodyForStatusGetContract.pathResolver({})}?mode=unauthorized`,
+      )
+
+      expect(conn.getStatusCode()).toBe(401)
+      expect(conn.getReceivedEvents()).toHaveLength(0)
+      expect(conn.getBody()).toBe(JSON.stringify({ message: 'Unauthorized' }))
+      expect(conn.json()).toMatchObject({ message: 'Unauthorized' })
+    })
+
+    it('types the parsed body via the json() type parameter', async () => {
+      const conn = await client.connect(`${bodyForStatusGetContract.pathResolver({})}?mode=missing`)
+
+      expect(conn.getStatusCode()).toBe(404)
+
+      const body = conn.json<{ resourceId: string }>()
+      expectTypeOf(body).toEqualTypeOf<{ resourceId: string }>()
+      expect(body.resourceId).toBe('item-42')
+    })
+
+    it('exposes the raw stream body for a streaming response', async () => {
+      const conn = await client.connect(bodyForStatusGetContract.pathResolver({}))
+
+      expect(conn.getStatusCode()).toBe(200)
+      expect(conn.getBody()).toContain('event: message')
+      // A text/event-stream body is not JSON
+      expect(() => conn.json()).toThrow('json() — body is not valid JSON')
     })
   })
 
