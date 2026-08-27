@@ -73,7 +73,12 @@ export class ApiSseConnectionRegistry {
    * broadcaster's dedup cache for the connection.
    */
   unregister(connectionId: string): void {
+    // Drop the map entry too: a verdict that never resolves would otherwise
+    // keep the id and its tokens alive after the session is gone. Cancellation
+    // lives on the token object the join closure captured, so a late verdict
+    // still settles as cancelled without the map.
     this.cancelPendingJoins(connectionId)
+    this.pendingJoins.delete(connectionId)
     this.connections.delete(connectionId)
     this.broadcaster.roomManager.leaveAll(connectionId)
     this.broadcaster.cleanupConnection(connectionId)
@@ -150,7 +155,9 @@ export class ApiSseConnectionRegistry {
     // Leave rooms first: a broadcast racing the close must not reach a
     // connection that is being revoked. An async join still awaiting its
     // verdict has to go too, or it rejoins a room after the eviction.
+    // Deleting the map entry is safe for the same reason as in `unregister`.
     this.cancelPendingJoins(connectionId)
+    this.pendingJoins.delete(connectionId)
     this.broadcaster.roomManager.leaveAll(connectionId)
     this.connections.delete(connectionId)
     this.broadcaster.cleanupConnection(connectionId)

@@ -2,6 +2,7 @@ import type { SSESession } from '@lokalise/fastify-api-contracts'
 import { describe, expect, it } from 'vitest'
 import { SSERoomBroadcaster } from '../sse/rooms/SSERoomBroadcaster.ts'
 import { SSERoomManager } from '../sse/rooms/SSERoomManager.ts'
+import type { ApiSseConnectionRegistry, PendingJoin } from './apiSseConnectionRegistry.ts'
 import {
   getApiSseConnectionRegistry,
   getSessionRooms,
@@ -135,5 +136,63 @@ describe('withSessionRooms — pending async joins', () => {
     await Promise.resolve()
 
     expect(broadcaster.getConnectionCountInRoom('room:acme')).toBe(1)
+  })
+})
+
+/**
+ * A verdict that never settles never runs `settlePendingJoin`, which is the
+ * only place the map entry is removed on the happy path. Teardown has to drop
+ * the entry itself, or every such connection leaks its id and its tokens.
+ */
+describe('ApiSseConnectionRegistry — pending join bookkeeping', () => {
+  function pendingJoinsOf(registry: ApiSseConnectionRegistry): Map<string, PendingJoin[]> {
+    return (registry as unknown as { pendingJoins: Map<string, PendingJoin[]> }).pendingJoins
+  }
+
+  it('forgets a never-settling join when the connection unregisters', async () => {
+    const broadcaster = new SSERoomBroadcaster({ sseRoomManager: new SSERoomManager() })
+    const registry = getApiSseConnectionRegistry(broadcaster)
+    const session = startSession(broadcaster, 'conn-1', new Promise<boolean>(() => {}))
+
+    getSessionRooms(session).join('room:acme')
+    expect(pendingJoinsOf(registry).size).toBe(1)
+
+    registry.unregister('conn-1')
+
+    expect(pendingJoinsOf(registry).size).toBe(0)
+    await Promise.resolve()
+    expect(broadcaster.getConnectionCountInRoom('room:acme')).toBe(0)
+  })
+
+  it('forgets a never-settling join when the connection is evicted', async () => {
+    const broadcaster = new SSERoomBroadcaster({ sseRoomManager: new SSERoomManager() })
+    const registry = getApiSseConnectionRegistry(broadcaster)
+    const session = startSession(broadcaster, 'conn-1', new Promise<boolean>(() => {}))
+
+    getSessionRooms(session).join('room:acme')
+    expect(registry.evict('conn-1')).toBe(true)
+
+    expect(pendingJoinsOf(registry).size).toBe(0)
+    await Promise.resolve()
+    expect(broadcaster.getConnectionCountInRoom('room:acme')).toBe(0)
+  })
+
+  it('still drops a verdict that lands after the entry was forgotten', async () => {
+    const broadcaster = new SSERoomBroadcaster({ sseRoomManager: new SSERoomManager() })
+    const registry = getApiSseConnectionRegistry(broadcaster)
+    const verdict = deferredVerdict()
+    const session = startSession(broadcaster, 'conn-1', verdict.promise)
+
+    getSessionRooms(session).join('room:acme')
+    registry.unregister('conn-1')
+
+    verdict.allow()
+    await verdict.promise
+    await Promise.resolve()
+
+    // Cancellation rides on the token the join closure captured, so dropping
+    // the map entry does not resurrect the revoked join.
+    expect(broadcaster.getConnectionCountInRoom('room:acme')).toBe(0)
+    expect(pendingJoinsOf(registry).size).toBe(0)
   })
 })
