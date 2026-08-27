@@ -91,6 +91,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [`@fastify/swagger-ui`](#fastifyswagger-ui)
     - [`@scalar/fastify-api-reference`](#scalarfastify-api-reference)
     - [Just the JSON](#just-the-json)
+  - [With fastify-type-provider-zod](#with-fastify-type-provider-zod)
   - [One Document, Both Audiences](#one-document-both-audiences)
   - [Marking Routes Built Elsewhere](#marking-routes-built-elsewhere)
 - [Gateway Configuration](#gateway-configuration)
@@ -3132,6 +3133,69 @@ app.get('/openapi.json', { schema: { hide: true, tags: ['X-HIDDEN'] } }, async (
   return wantsInternal ? app.internalSwagger() : app.swagger()
 })
 ```
+
+### With fastify-type-provider-zod
+
+`fastify-type-provider-zod` supplies two transforms, and they sit at different levels — both compose
+with this package, but the second one needs a step added.
+
+**`jsonSchemaTransform` (route level).** Pass it as this transform's `transform` option rather than
+registering it as the plugin's own, as every example above does. It short-circuits on `hide: true`
+and throws the Zod schemas away, so the audience decision has to run first:
+
+```ts
+transform: openApiVisibilityTransform({ audience: 'public', transform: jsonSchemaTransform })
+```
+
+`createJsonSchemaTransform({ skipList })` chains identically. Note that its `skipList` is a separate
+mechanism from `exclude`: it matches route URLs *exactly* (its defaults cover `/documentation/json`
+and friends, but not the individual asset routes `@fastify/swagger-ui` registers), and it forces
+`hide` from underneath. `exclude` is the audience-level decision and is what the recipes above use.
+
+**`jsonSchemaTransformObject` (document level).** Needed as soon as schemas reach `components`
+instead of being inlined — that is, whenever your Zod schemas carry `.meta({ id })`. It has one
+property that matters here: it writes the **entire** Zod registry into `components.schemas` in a
+single pass over the finished document. It never sees which operations the audience transform hid,
+so an internal-only request or response shape lands in the customer-facing document even though no
+public operation references it. The operations are correctly hidden; the schemas behind them are
+not.
+
+`pruneUnreachableComponents` closes that gap by bringing `components` back in line with the
+document's own operation set:
+
+```ts
+import { jsonSchemaTransform, jsonSchemaTransformObject } from 'fastify-type-provider-zod'
+import { openApiVisibilityTransform, pruneUnreachableComponents } from 'opinionated-machine'
+
+await app.register(fastifySwagger, {
+  openapi: { info: { title: 'Users API', version: '1.0.0' } },
+  transform: openApiVisibilityTransform({
+    audience: 'public',
+    exclude: isDocumentationRoute,
+    transform: jsonSchemaTransform,
+  }),
+  transformObject: (input) => pruneUnreachableComponents(jsonSchemaTransformObject(input)),
+})
+```
+
+Apply it to the internal registration too — there it only removes genuinely unreferenced registry
+entries (the unused `…Input` variants, mostly), and it keeps the two documents consistent.
+
+| | operations | `components.schemas` |
+| --- | --- | --- |
+| `openApiVisibilityTransform` alone | filtered per audience | whole registry, internal shapes included |
+| \+ `pruneUnreachableComponents` | filtered per audience | only what the kept operations reference |
+
+Reachability follows `$ref`s transitively, so a schema referenced only by another kept schema
+survives; `components.securitySchemes` is never pruned, since security schemes are referenced by
+name from `security` requirements rather than by `$ref`. Skip the prune step if the document
+deliberately publishes a schema catalogue beyond what its operations reference.
+
+If you derive the public document with `stripInternalOperations` instead of registering twice, you
+do not need this: it prunes as part of the same pass.
+
+Covered end to end in `test/openapi/openapi.zodRegistry.e2e.spec.ts`, including the un-pruned case,
+so the leak stays pinned.
 
 ### One Document, Both Audiences
 

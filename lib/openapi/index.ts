@@ -1,3 +1,7 @@
+export {
+  type OpenApiDocumentLike,
+  pruneUnreachableComponents,
+} from './componentReachability.ts'
 export { DEFAULT_INTERNAL_MARKER_KEY } from './internalMarker.ts'
 export {
   type ChainedOpenApiTransform,
@@ -9,7 +13,6 @@ export {
   openApiVisibilityTransform,
 } from './openApiVisibilityTransform.ts'
 export {
-  type OpenApiDocumentLike,
   type StripInternalOperationsOptions,
   stripInternalOperations,
 } from './stripInternalOperations.ts'

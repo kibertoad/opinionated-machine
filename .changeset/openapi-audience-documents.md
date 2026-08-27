@@ -35,6 +35,16 @@ out of the customer-facing spec but also out of any document internal teams coul
   generated operation, so any other key would silently never reach the document, leaving
   `stripInternalOperations` nothing to match on and publishing every internal operation as the
   public spec.
+- New `pruneUnreachableComponents(document)` drops every `components` entry a document no longer
+  references. Needed alongside `fastify-type-provider-zod`'s `jsonSchemaTransformObject`, which
+  writes the whole Zod registry into `components.schemas` in one pass over the finished document and
+  never sees which operations the audience transform hid — so without it the customer-facing
+  document carries internal request and response shapes even though its operations are correctly
+  filtered. Chain it as `transformObject: (input) => pruneUnreachableComponents(jsonSchemaTransformObject(input))`.
+  `stripInternalOperations` already prunes as part of its own pass.
+- `stripInternalOperations` and `pruneUnreachableComponents` take an unconstrained document type
+  parameter. `openapi-types`' `Document` interfaces have no index signatures, so a structural
+  constraint rejected `app.swagger()` — the one argument that matters.
 - New `attachRouteVisibility` / `readRouteVisibility` for stamping routes built outside this package.
 
 No documentation-serving plugin ships with this: `@fastify/swagger-ui` and
