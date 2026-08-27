@@ -3,7 +3,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod/v4'
 import { defineEvent, SSEHttpClient, SSERoomBroadcaster, SSERoomManager } from '../../index.js'
-import { buildApiRoute } from '../../lib/api-contracts/index.ts'
+import { buildApiRoute, getSessionRooms } from '../../lib/api-contracts/index.ts'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 
 /**
@@ -12,12 +12,13 @@ import { createSSETestServer, type SSETestServerWithResources } from '../sseTest
  * The flagship dual-mode pattern for the polling-fallback feature: the SSE
  * branch of a dual-mode route joins a room and receives broadcasts pushed by
  * a domain service, while the sync branch of the SAME route answers JSON
- * polls. Previously session.rooms was a silent no-op stub in this path.
+ * polls. Without `sseRooms`, room membership in this path is inert.
  */
 
 const messageEvent = defineEvent('message', z.object({ from: z.string(), text: z.string() }))
 
 const roomStreamContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Dual-mode room stream',
   pathResolver: ({ roomId }) => `/api/rooms-modern/${roomId}/stream`,
@@ -47,15 +48,17 @@ describe('buildApiRoute rooms E2E (dual-mode + keepAlive + sseRooms)', () => {
         app.route(
           buildApiRoute(
             roomStreamContract,
-            {
-              nonSse: async (request) => ({
-                status: 200,
-                body: { roomId: request.params.roomId, source: 'poll' },
-              }),
-              sse: (request, sse) => {
+            (request, _reply, { expectedContentType, sse }) => {
+              if (expectedContentType === 'text/event-stream') {
                 const session = sse.start('keepAlive')
-                session.rooms.join(`room:${request.params.roomId}`)
-              },
+                getSessionRooms(session).join(`room:${request.params.roomId}`)
+                return
+              }
+              return {
+                status: 200,
+                contentType: 'application/json',
+                body: { roomId: request.params.roomId, source: 'poll' },
+              }
             },
             { sseRooms: broadcaster },
           ),

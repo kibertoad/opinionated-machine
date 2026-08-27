@@ -1,8 +1,10 @@
+import type { SSERouteKind } from '@fastify/sse'
 import type {
   AnyDualModeContractDefinition,
   AnySSEContractDefinition,
   HttpStatusCode,
 } from '@lokalise/api-contracts'
+import type { ExtendedFastifySchema } from '@lokalise/fastify-api-contracts'
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply, RouteOptions } from 'fastify'
 import type { z } from 'zod'
@@ -14,7 +16,9 @@ import type { AbstractSSEController } from '../sse/AbstractSSEController.ts'
 import type {
   DualModeRouteHandler,
   FastifyDualModeHandlerConfig,
+  FastifyDualModeRouteOptions,
   FastifySSEHandlerConfig,
+  FastifySSERouteOptions,
   SSERouteHandler,
 } from './fastifyRouteTypes.ts'
 import {
@@ -24,10 +28,78 @@ import {
   handleSSEError,
   hasHttpStatusCode,
 } from './fastifyRouteUtils.ts'
-import { buildSSERouteField } from './sseRouteConfig.ts'
+import { buildSseResponseSchemas } from './sseResponseSchema.ts'
 
 // Re-export for convenience
 export { extractPathTemplate }
+
+/** Shape of the `sse` route option handed to `@fastify/sse`. */
+type SSERouteConfig = {
+  kind: SSERouteKind
+  serializer?: (data: unknown) => string
+  /**
+   * Whether the plugin's keep-alive heartbeat runs for this route.
+   *
+   * A boolean is all `@fastify/sse` reads per route; the interval itself comes from
+   * `app.register(fastifySSE, { heartbeatInterval })` and is shared by every route.
+   */
+  heartbeat?: boolean
+}
+
+/**
+ * Default `@fastify/sse` route kind used by both SSE-only and dual-mode routes.
+ *
+ * `'manual'` disables the plugin's `Accept` header negotiation entirely: `reply.sse` is
+ * always attached and the route handler decides at runtime whether to stream or to send a
+ * regular HTTP response. That matches what the handlers this builder produces already do,
+ * and it is the only kind that is safe for every shape of route:
+ *
+ * - SSE-only handlers have a single code path that calls `sse.start()`. Under the plugin's
+ *   `sse: true` default (`kind: 'legacy'`) a client that does not send an explicit
+ *   `text/event-stream` token - a wildcard `Accept` header, `Accept: application/json`, or
+ *   no `Accept` header at all, which is what most non-browser clients and OpenAPI-generated
+ *   clients send - leaves `reply.sse` undefined while still running the handler, so the
+ *   first `sse.start()` throws and the request 500s.
+ * - Dual-mode handlers negotiate themselves via `determineMode()`, which honours
+ *   `defaultMode`. Under a plugin-side gate, `defaultMode: 'sse'` combined with a
+ *   non-specific `Accept` header hits the same 500.
+ * - `sse.respond()` (an early HTTP response before streaming starts) stays reachable for
+ *   every client. `kind: 'only'` would cut that off for JSON clients: its gate admits a
+ *   missing `Accept` header plus the `*\/*` and `text/*` wildcards, but answers `406` to
+ *   every other concrete media type, `application/json` included.
+ *
+ * Override per route with the `kind` route option when different semantics are wanted -
+ * `'only'` on an SSE-only route for `406 Not Acceptable` content negotiation, or `'dual'`
+ * on a dual-mode route to let the plugin gate before the handler runs.
+ */
+const DEFAULT_SSE_ROUTE_KIND: SSERouteKind = 'manual'
+
+/**
+ * Build the SSE config object for route options.
+ *
+ * Always returns the object form with an explicit `kind`: omitting it (or passing
+ * `sse: true`) makes `@fastify/sse` fall back to its `'legacy'` kind, which applies a
+ * strict `Accept` gate and leaves `reply.sse` undefined for clients that do not ask
+ * for `text/event-stream` explicitly.
+ *
+ * `heartbeat` is a boolean: the plugin only supports turning the heartbeat on or off per
+ * route, while the interval is set once for all routes at plugin registration.
+ */
+function buildSSEConfig(
+  options: FastifySSERouteOptions | FastifyDualModeRouteOptions | undefined,
+): SSERouteConfig {
+  const sseConfig: SSERouteConfig = { kind: options?.kind ?? DEFAULT_SSE_ROUTE_KIND }
+
+  if (options?.serializer) {
+    sseConfig.serializer = options.serializer
+  }
+
+  if (options?.heartbeat !== undefined) {
+    sseConfig.heartbeat = options.heartbeat
+  }
+
+  return sseConfig
+}
 
 /**
  * Validate response body against the successResponseBodySchema (for 2xx success responses).
@@ -73,6 +145,7 @@ function validateSyncResponseBody(
  * ```typescript
  * // In a contract definition:
  * const contract = buildContract({
+ *   visibility: 'public',
  *   responseBodySchemasByStatusCode: {
  *     400: z.object({ error: z.string(), details: z.array(z.string()) }),
  *     404: z.object({ error: z.string(), resourceId: z.string() }),
@@ -303,11 +376,13 @@ async function handleSSEMode<Contract extends AnyDualModeContractDefinition>(
     // Respect httpStatusCode from errors like PublicNonRecoverableError
     const statusCode = hasHttpStatusCode(err) ? err.httpStatusCode : 500
     const statusText = statusCode >= 500 ? 'Internal Server Error' : 'Error'
-    reply.code(statusCode).type('application/json').send({
-      statusCode,
-      error: statusText,
-      message,
-    })
+    // Sent pre-serialized: Fastify skips the response serializer for string payloads, so this
+    // envelope reaches the client intact even when the contract declares a different body for
+    // `statusCode`. Serializing it against that schema would drop `message`.
+    reply
+      .code(statusCode)
+      .type('application/json')
+      .send(JSON.stringify({ statusCode, error: statusText, message }))
   }
 }
 
@@ -339,20 +414,51 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
   }
   const url = extractPathTemplate(contract.pathResolver, contract.requestPathParamsSchema)
 
+  // `kind: 'dual'` hands Accept negotiation to @fastify/sse, which admits SSE only for an
+  // explicit `text/event-stream` token. `determineMode()` then negotiates a second time
+  // inside the handler and falls back to `defaultMode` for anything non-specific, so with
+  // `defaultMode: 'sse'` a wildcard or absent Accept header takes the SSE branch after the
+  // plugin already declined to attach `reply.sse` - a guaranteed 500 on every such request.
+  // The two negotiators only agree when the fallback is JSON, so reject the combination at
+  // route-build time rather than letting it fail per request. `kind: 'manual'` (the default)
+  // performs no plugin-side gating and supports `defaultMode: 'sse'` fine.
+  if (options?.kind === 'dual' && defaultMode === 'sse') {
+    throw new InternalError({
+      message:
+        `Dual-mode route ${contract.method.toUpperCase()} ${url} cannot combine kind: "dual" ` +
+        'with defaultMode: "sse": @fastify/sse would decline to attach reply.sse for ' +
+        'wildcard or absent Accept headers while the handler still selects SSE mode. ' +
+        'Use kind: "manual" (the default) instead.',
+      errorCode: 'INVALID_SSE_ROUTE_KIND',
+      details: { url, method: contract.method, defaultMode, kind: options.kind },
+    })
+  }
+
+  const schema: ExtendedFastifySchema = {
+    params: contract.requestPathParamsSchema,
+    querystring: contract.requestQuerySchema,
+    headers: contract.requestHeaderSchema,
+    description: contract.description,
+    summary: contract.summary,
+    tags: contract.tags,
+    hide: contract.visibility !== 'public',
+    ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
+    // 200 describes both branches: the JSON sync body and the SSE event stream.
+    // `isEmptyResponseExpected` contracts have no sync body to describe, so they get the
+    // stream alone rather than a schema that would serialize an empty response.
+    response: buildSseResponseSchemas(
+      contract.serverSentEventSchemas,
+      contract.responseBodySchemasByStatusCode,
+      contract.isEmptyResponseExpected ? undefined : contract.successResponseBodySchema,
+    ),
+  }
+
   const routeOptions: RouteOptions = {
     ...(options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}),
     method: contract.method,
     url,
-    // 'manual' kind: the plugin does no Accept negotiation — determineMode()
-    // below is the single negotiator (q-value aware, honors defaultMode).
-    sse: buildSSERouteField('manual', options),
-    schema: {
-      params: contract.requestPathParamsSchema,
-      querystring: contract.requestQuerySchema,
-      headers: contract.requestHeaderSchema,
-      ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
-      // Note: response schema for sync mode could be added here
-    },
+    sse: buildSSEConfig(options), // Enable SSE support with explicit kind + optional per-route config
+    schema,
     handler: async (request, reply) => {
       // Determine mode based on Accept header
       const mode = determineMode(request.headers.accept, defaultMode)
@@ -398,19 +504,27 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
   }
   const url = extractPathTemplate(contract.pathResolver, contract.requestPathParamsSchema)
 
+  const schema: ExtendedFastifySchema = {
+    params: contract.requestPathParamsSchema,
+    querystring: contract.requestQuerySchema,
+    headers: contract.requestHeaderSchema,
+    description: contract.description,
+    summary: contract.summary,
+    tags: contract.tags,
+    hide: contract.visibility !== 'public',
+    ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
+    response: buildSseResponseSchemas(
+      contract.serverSentEventSchemas,
+      contract.responseBodySchemasByStatusCode,
+    ),
+  }
+
   const routeOptions: RouteOptions = {
     ...(options?.contractMetadataToRouteMapper?.(contract.metadata) ?? {}),
     method: contract.method,
     url,
-    // 'only' kind: lenient Accept gate — `*/*` or a missing Accept header
-    // admits SSE; explicit refusal of text/event-stream gets a clean 406.
-    sse: buildSSERouteField('only', options),
-    schema: {
-      params: contract.requestPathParamsSchema,
-      querystring: contract.requestQuerySchema,
-      headers: contract.requestHeaderSchema,
-      ...(contract.requestBodySchema && { body: contract.requestBodySchema }),
-    },
+    sse: buildSSEConfig(options), // Enable SSE support with explicit kind + optional per-route config
+    schema,
     // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Core SSE route handler must coordinate context, error handling, and result processing
     handler: async (request, reply) => {
       // Create SSE context for deferred header sending
@@ -474,11 +588,13 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
         // Respect httpStatusCode from errors like PublicNonRecoverableError
         const statusCode = hasHttpStatusCode(err) ? err.httpStatusCode : 500
         const statusText = statusCode >= 500 ? 'Internal Server Error' : 'Error'
-        reply.code(statusCode).type('application/json').send({
-          statusCode,
-          error: statusText,
-          message,
-        })
+        // Sent pre-serialized: Fastify skips the response serializer for string payloads, so
+        // this envelope reaches the client intact even when the contract declares a different
+        // body for `statusCode`. Serializing it against that schema would drop `message`.
+        reply
+          .code(statusCode)
+          .type('application/json')
+          .send(JSON.stringify({ statusCode, error: statusText, message }))
       }
     },
   }

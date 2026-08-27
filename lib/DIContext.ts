@@ -1,3 +1,4 @@
+import type { SSERouteKind } from '@fastify/sse'
 import type {
   AnyDualModeContractDefinition,
   AnySSEContractDefinition,
@@ -23,8 +24,6 @@ import {
   type RegisterDualModeRoutesOptions,
   type RegisterSSERoutesOptions,
 } from './routes/index.js'
-import { SSE_ROUTE_CONFIG_KEY, type SSERouteRuntimeConfig } from './routes/sseHeartbeat.js'
-import { mergeSSERouteField } from './routes/sseRouteConfig.js'
 import type { AbstractSSEController } from './sse/AbstractSSEController.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
@@ -46,6 +45,51 @@ export type DependencyInjectionOptions = {
    * @default false
    */
   isTestMode?: boolean
+}
+
+type SSERouteConfigObject = {
+  kind?: SSERouteKind
+  heartbeat?: boolean
+  serializer?: (data: unknown) => string
+}
+
+/**
+ * Apply registration-level SSE defaults (`heartbeat`, `serializer`) to a route.
+ *
+ * `@fastify/sse` reads its per-route configuration from the top-level `sse` route
+ * option (not from `config.sse`), and only supports a boolean `heartbeat` there —
+ * the heartbeat interval is a plugin-registration option shared by all routes.
+ *
+ * Values already set on the route by the route builder win over the registration-level
+ * defaults.
+ */
+function applyGlobalSSEOptions(
+  route: RouteOptions,
+  options?: Pick<RegisterSSERoutesOptions, 'heartbeat' | 'serializer'>,
+): void {
+  if (options?.heartbeat === undefined && options?.serializer === undefined) {
+    return
+  }
+
+  const routeWithSSE = route as RouteOptions & { sse?: unknown }
+  const routeSSEOption = routeWithSSE.sse
+  if (!routeSSEOption) {
+    return
+  }
+
+  // The route option is either `true` (plain SSE), a bare kind string, or an options object.
+  const routeSSEConfig: SSERouteConfigObject =
+    typeof routeSSEOption === 'string'
+      ? { kind: routeSSEOption as NonNullable<SSERouteConfigObject['kind']> }
+      : typeof routeSSEOption === 'object'
+        ? (routeSSEOption as SSERouteConfigObject)
+        : {}
+
+  routeWithSSE.sse = {
+    ...(options.heartbeat !== undefined && { heartbeat: options.heartbeat }),
+    ...(options.serializer !== undefined && { serializer: options.serializer }),
+    ...routeSSEConfig,
+  } satisfies SSERouteConfigObject
 }
 
 export class DIContext<
@@ -389,11 +433,9 @@ export class DIContext<
   /**
    * Apply registration-time options to an SSE/dual-mode route before app.route().
    *
-   * The serializer is merged into the route's `sse` field (honored by
-   * @fastify/sse per route); a heartbeat interval disables the plugin's own
-   * heartbeat on the `sse` field and is stashed under
-   * `route.config[SSE_ROUTE_CONFIG_KEY]` where the framework heartbeat reads
-   * it at request time. Route-level options (buildHandler) take precedence.
+   * Shared by the SSE-only and dual-mode registration paths: both apply the same
+   * pre-handlers, rate limit and `sse` field defaults. Route-level options
+   * (buildHandler / buildApiRoute) take precedence over these.
    */
   private applyStreamRouteOptions(
     route: RouteOptions,
@@ -405,26 +447,7 @@ export class DIContext<
     if (options?.rateLimit) {
       this.applyRateLimit(route, options.rateLimit)
     }
-    if (options?.heartbeatInterval === undefined && options?.serializer === undefined) {
-      return
-    }
-
-    route.sse = mergeSSERouteField(route.sse, {
-      serializer: options.serializer,
-      disablePluginHeartbeat: options.heartbeatInterval !== undefined,
-    })
-
-    if (options.heartbeatInterval !== undefined) {
-      if (!route.config) {
-        route.config = {} as NonNullable<RouteOptions['config']>
-      }
-      const config = route.config as unknown as Record<string, unknown>
-      const existing = config[SSE_ROUTE_CONFIG_KEY] as SSERouteRuntimeConfig | undefined
-      config[SSE_ROUTE_CONFIG_KEY] = {
-        ...existing,
-        heartbeatInterval: options.heartbeatInterval,
-      } satisfies SSERouteRuntimeConfig
-    }
+    applyGlobalSSEOptions(route, options)
   }
 
   private applyPreHandlers(

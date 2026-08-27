@@ -11,7 +11,7 @@ import {
   SSERoomBroadcaster,
   SSERoomManager,
 } from '../../index.js'
-import { buildApiRoute } from '../../lib/api-contracts/index.ts'
+import { buildApiRoute, getSessionRooms } from '../../lib/api-contracts/index.ts'
 import {
   createResilientSubscription,
   defineFallbackBinding,
@@ -37,6 +37,7 @@ const progressEvent = defineEvent('progress', z.object({ percent: z.number() }))
 const doneEvent = defineEvent('done', z.object({ result: z.string() }))
 
 const jobContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Job status (dual-mode)',
   pathResolver: ({ jobId }) => `/api/fallback-jobs/${jobId}`,
@@ -208,15 +209,17 @@ describe('sse-fallback integration (real server, real HTTP)', () => {
         app.route(
           buildApiRoute(
             jobContract,
-            {
-              nonSse: async (request) => ({
-                status: 200,
-                body: jobService.get(request.params.jobId),
-              }),
-              sse: (request, sse) => {
+            (request, _reply, { expectedContentType, sse }) => {
+              if (expectedContentType === 'text/event-stream') {
                 const session = sse.start('keepAlive')
-                session.rooms.join(`job:${request.params.jobId}`)
-              },
+                getSessionRooms(session).join(`job:${request.params.jobId}`)
+                return
+              }
+              return {
+                status: 200,
+                contentType: 'application/json',
+                body: jobService.get(request.params.jobId),
+              }
             },
             { sseRooms: broadcaster },
           ),

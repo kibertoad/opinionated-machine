@@ -1,2 +1,6 @@
 packages:
+  - '.'
   - 'packages/*'
+minimumReleaseAgeExclude:
+  - '@lokalise/api-contracts'
+  - '@lokalise/fastify-api-contracts'

@@ -10,9 +10,7 @@ import {
   apiSseNoStartContract,
   apiSsePostErrorContract,
   apiSsePreErrorContract,
-  apiSseRespondAfterStartContract,
   apiSseRespondContract,
-  apiSseSendHeadersContract,
   apiSseSendStreamContract,
   apiValidationFailContract,
 } from './testContracts.ts'
@@ -41,34 +39,39 @@ export class TestApiController extends AbstractApiController<typeof TestApiContr
       body: { id: '1', name: request.body.name },
     })),
 
-    feed: buildApiRoute(TestApiController.contracts.feed, {
-      nonSse: async (request) => ({
-        status: 200,
-        body: { id: 'summary', name: `limit=${request.query.limit ?? 'none'}` },
-      }),
-      sse: async (_request, sse) => {
-        const session = sse.start('autoClose')
-        await session.send('update', { value: 42 })
-      },
-    }),
-
-    sseKeepAlive: buildApiRoute(TestApiController.contracts.sseKeepAlive, async (_request, sse) => {
-      const session = sse.start('keepAlive')
-      await session.send('tick', { n: 1 })
-    }),
-
-    sseSendStream: buildApiRoute(
-      TestApiController.contracts.sseSendStream,
-      async (_request, sse) => {
-        const session = sse.start('autoClose')
-        // biome-ignore lint/suspicious/useAwait: async generator required for AsyncIterable
-        async function* items() {
-          yield { event: 'item' as const, data: { i: 1 } }
-          yield { event: 'item' as const, data: { i: 2 } }
+    feed: buildApiRoute(
+      TestApiController.contracts.feed,
+      async (request, _reply, { expectedContentType, sse }) => {
+        if (expectedContentType === 'text/event-stream') {
+          const session = sse.start('autoClose')
+          await session.send('update', { value: 42 })
+          return
         }
-        await session.sendStream(items())
+        return {
+          status: 200,
+          contentType: 'application/json',
+          body: { id: 'summary', name: `limit=${request.query.limit ?? 'none'}` },
+        }
       },
     ),
+
+    sseKeepAlive: buildApiRoute(
+      TestApiController.contracts.sseKeepAlive,
+      async (_request, _reply, { sse }) => {
+        const session = sse.start('keepAlive')
+        await session.send('tick', { n: 1 })
+      },
+    ),
+
+    // Declarative streaming: an SSE status body is an AsyncIterable of events.
+    sseSendStream: buildApiRoute(TestApiController.contracts.sseSendStream, () => {
+      // biome-ignore lint/suspicious/useAwait: async generator required for AsyncIterable
+      async function* items() {
+        yield { event: 'item' as const, data: { i: 1 } }
+        yield { event: 'item' as const, data: { i: 2 } }
+      }
+      return { status: 200, body: items() }
+    }),
   }
 }
 
@@ -80,31 +83,45 @@ export class TestApiErrorController extends AbstractApiController<
     sseNoStart: apiSseNoStartContract,
     ssePreError: apiSsePreErrorContract,
     ssePostError: apiSsePostErrorContract,
+    sseInvalidEvent: apiSseInvalidEventContract,
     validationFail: apiValidationFailContract,
     headerSuccess: apiHeaderSuccessContract,
     headerFail: apiHeaderFailContract,
-    sseRespondAfterStart: apiSseRespondAfterStartContract,
-    sseSendHeaders: apiSseSendHeadersContract,
-    sseInvalidEvent: apiSseInvalidEventContract,
   } as const
 
   readonly routes = {
-    sseRespond: buildApiRoute(TestApiErrorController.contracts.sseRespond, (_request, sse) => {
-      sse.respond(404, { error: 'not found' })
-    }),
+    // Early HTTP response from an SSE-capable handler: return { status, body }
+    // without calling sse.start().
+    sseRespond: buildApiRoute(TestApiErrorController.contracts.sseRespond, () => ({
+      status: 404,
+      body: { error: 'not found' },
+    })),
 
     sseNoStart: buildApiRoute(TestApiErrorController.contracts.sseNoStart, () => {
-      // intentionally does nothing — exercises the no-start/no-respond error path
+      // intentionally does nothing — exercises the invalid-handler-result error path
     }),
 
     ssePreError: buildApiRoute(TestApiErrorController.contracts.ssePreError, () => {
-      throw Object.assign(new Error('pre-start error'), { httpStatusCode: 422 })
+      throw Object.assign(new Error('pre-start error'), { statusCode: 422 })
     }),
 
-    ssePostError: buildApiRoute(TestApiErrorController.contracts.ssePostError, (_request, sse) => {
-      sse.start('autoClose')
-      throw new Error('post-start error')
-    }),
+    ssePostError: buildApiRoute(
+      TestApiErrorController.contracts.ssePostError,
+      async (_request, _reply, { sse }) => {
+        const session = sse.start('autoClose')
+        await session.send('update', { value: 1 })
+        throw new Error('post-start error')
+      },
+    ),
+
+    sseInvalidEvent: buildApiRoute(
+      TestApiErrorController.contracts.sseInvalidEvent,
+      async (_request, _reply, { sse }) => {
+        const session = sse.start('autoClose')
+        // Fails the `typed` event schema after the stream has started
+        await session.send('typed', { value: 'not-a-number' as unknown as number })
+      },
+    ),
 
     validationFail: buildApiRoute(TestApiErrorController.contracts.validationFail, () => ({
       status: 200,
@@ -123,30 +140,5 @@ export class TestApiErrorController extends AbstractApiController<
       status: 200,
       body: { ok: true },
     })),
-
-    sseRespondAfterStart: buildApiRoute(
-      TestApiErrorController.contracts.sseRespondAfterStart,
-      (_request, sse) => {
-        sse.start('autoClose')
-        sse.respond(200, { text: 'too late' })
-      },
-    ),
-
-    sseSendHeaders: buildApiRoute(
-      TestApiErrorController.contracts.sseSendHeaders,
-      async (_request, sse) => {
-        sse.sendHeaders()
-        const session = sse.start('autoClose')
-        await session.send('done', { ok: true })
-      },
-    ),
-
-    sseInvalidEvent: buildApiRoute(
-      TestApiErrorController.contracts.sseInvalidEvent,
-      async (_request, sse) => {
-        const session = sse.start('autoClose')
-        await session.send('typed', { value: 'not-a-number' as unknown as number })
-      },
-    ),
   }
 }

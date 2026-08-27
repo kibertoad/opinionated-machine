@@ -7,6 +7,7 @@ import { buildHandler } from './fastifyRouteTypes.ts'
 describe('Handler Type Enforcement', () => {
   describe('Dual-mode contracts (successResponseBodySchema)', () => {
     const dualModeContract = buildContract({
+      visibility: 'public',
       method: 'post',
       pathResolver: () => '/api/chat',
       requestPathParamsSchema: z.object({}),
@@ -54,6 +55,7 @@ describe('Handler Type Enforcement', () => {
   describe('buildHandler enforces correct handler structure', () => {
     it('accepts valid dual-mode handlers', () => {
       const dualModeContract = buildContract({
+        visibility: 'public',
         method: 'post',
         pathResolver: () => '/api/chat',
         requestPathParamsSchema: z.object({}),
@@ -85,6 +87,7 @@ describe('Handler Type Enforcement', () => {
 
     it('accepts valid SSE-only handlers', () => {
       const sseContract = buildContract({
+        visibility: 'public',
         method: 'get',
         pathResolver: () => '/api/stream',
         requestPathParamsSchema: z.object({}),
@@ -113,6 +116,7 @@ describe('Handler Type Enforcement', () => {
 
   describe('sse.respond() with responseBodySchemasByStatusCode', () => {
     const contractWithStatusSchemas = buildContract({
+      visibility: 'public',
       method: 'post',
       pathResolver: () => '/api/resource',
       requestPathParamsSchema: z.object({}),
@@ -199,6 +203,7 @@ describe('Handler Type Enforcement', () => {
   describe('Optional schema properties (requestPathParamsSchema, requestQuerySchema, requestHeaderSchema)', () => {
     it('SSE-only contract with path params and custom headers infers correct types', () => {
       const sseContractWithParams = buildContract({
+        visibility: 'public',
         method: 'get',
         pathResolver: () => '/api/items/:id',
         requestPathParamsSchema: z.object({ id: z.string() }),
@@ -228,6 +233,7 @@ describe('Handler Type Enforcement', () => {
 
     it('Dual-mode contract with path params and custom headers infers correct types', () => {
       const dualContractWithParams = buildContract({
+        visibility: 'public',
         method: 'post',
         pathResolver: () => '/api/items/:id',
         requestPathParamsSchema: z.object({ id: z.string() }),
@@ -264,6 +270,7 @@ describe('Handler Type Enforcement', () => {
       // Verify that params/headers are properly inferred (not unknown)
       // when schemas are provided - this is the regression the conditional narrowing fix prevents
       const contract = buildContract({
+        visibility: 'public',
         method: 'get',
         pathResolver: () => '/api/items/:id',
         requestPathParamsSchema: z.object({ id: z.string() }),

@@ -14,6 +14,7 @@ const PATH_PARAMS_SCHEMA = z.object({
 })
 
 const deleteContract = buildRestContract({
+  visibility: 'public',
   method: 'delete',
   successResponseBodySchema: RESPONSE_BODY_SCHEMA,
   requestPathParamsSchema: PATH_PARAMS_SCHEMA,
@@ -21,6 +22,7 @@ const deleteContract = buildRestContract({
 })
 
 const getContract = buildRestContract({
+  visibility: 'public',
   method: 'get',
   successResponseBodySchema: RESPONSE_BODY_SCHEMA,
   requestPathParamsSchema: PATH_PARAMS_SCHEMA,
@@ -28,6 +30,7 @@ const getContract = buildRestContract({
 })
 
 const updateContract = buildRestContract({
+  visibility: 'public',
   method: 'patch',
   requestBodySchema: REQUEST_BODY_SCHEMA,
   successResponseBodySchema: z.undefined(),
@@ -38,6 +41,7 @@ const updateContract = buildRestContract({
 })
 
 const createContract = buildRestContract({
+  visibility: 'public',
   method: 'post',
   requestBodySchema: REQUEST_BODY_SCHEMA,
   successResponseBodySchema: RESPONSE_BODY_SCHEMA,

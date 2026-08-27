@@ -1,6 +1,6 @@
 {
     "name": "opinionated-machine",
-    "version": "7.0.0",
+    "version": "10.0.0",
     "description": "Very opinionated DI framework for fastify, built on top of awilix ",
     "type": "module",
     "license": "MIT",
@@ -38,21 +38,21 @@
         "ts-deepmerge": "^8.0.0"
     },
     "peerDependencies": {
-        "@lokalise/api-contracts": ">=7.0.0",
-        "@lokalise/fastify-api-contracts": ">=5.4.1",
+        "@lokalise/api-contracts": ">=8.0.0",
+        "@lokalise/fastify-api-contracts": ">=7.0.0",
         "@lokalise/node-core": ">=14.7.4",
         "awilix": ">=13.0.0",
         "awilix-manager": ">=6.0.0",
         "fastify": ">=5.0.0",
-        "fastify-type-provider-zod": ">=6.1.0",
+        "fastify-type-provider-zod": ">=7.0.0",
         "zod": ">=4.1.12"
     },
     "devDependencies": {
         "@biomejs/biome": "2.4.4",
-        "@changesets/cli": "^2.31.0",
-        "@lokalise/api-contracts": "^7.0.0",
+        "@changesets/cli": "^3.0.0",
+        "@lokalise/api-contracts": "^8.0.0",
         "@lokalise/biome-config": "^3.1.1",
-        "@lokalise/fastify-api-contracts": "^6.0.0",
+        "@lokalise/fastify-api-contracts": "^7.0.0",
         "@lokalise/node-core": "^14.7.4",
         "@lokalise/tsconfig": "^3.1.0",
         "@types/node": "^22.19.7",
@@ -81,6 +81,7 @@
     "homepage": "https://github.com/kibertoad/opinionated-machine",
     "files": [
         "README.md",
+        "CHANGELOG.md",
         "LICENSE",
         "dist/*"
     ]

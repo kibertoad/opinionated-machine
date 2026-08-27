@@ -1,3 +1,4 @@
+import type { SSERouteKind } from '@fastify/sse'
 import type {
   AnyDualModeContractDefinition,
   AnySSEContractDefinition,
@@ -405,9 +406,53 @@ export type FastifySSEPreHandler = (
 // ============================================================================
 
 /**
+ * Constrains a route kind we expose to the set `@fastify/sse` actually accepts.
+ *
+ * Used purely as a compile-time guard on the aliases below: if the plugin ever renames or
+ * drops a kind, the alias stops compiling instead of silently degrading (which is what
+ * `Extract<SSERouteKind, ...>` would do - it would quietly resolve to `never`).
+ */
+type SupportedSSERouteKind<Kind extends SSERouteKind> = Kind
+
+/**
+ * `@fastify/sse` route kinds that are sound for an **SSE-only** route.
+ *
+ * The plugin also has `'dual'` (and the `sse: true` `'legacy'` default), but neither is
+ * usable here: both leave `reply.sse` undefined for clients that do not send an explicit
+ * `text/event-stream` token, while still invoking the handler - and an SSE-only handler
+ * has a single code path that calls `sse.start()`, so it can only fail.
+ */
+export type SSEOnlyRouteKind = SupportedSSERouteKind<'manual' | 'only'>
+
+/**
+ * `@fastify/sse` route kinds that are sound for a **dual-mode** route.
+ *
+ * `'only'` is excluded: it answers non-SSE clients with `406 Not Acceptable` before the
+ * handler runs, which makes the JSON half of a dual-mode route unreachable.
+ */
+export type DualModeRouteKind = SupportedSSERouteKind<'manual' | 'dual'>
+
+/**
  * Options for configuring an SSE route.
  */
 export type FastifySSERouteOptions = {
+  /**
+   * `@fastify/sse` route kind, controlling how the plugin negotiates the `Accept` header.
+   *
+   * - `'manual'` (default): no negotiation at all. `reply.sse` is always attached and the
+   *   route handler decides at runtime whether to stream or to send a regular HTTP response.
+   *   This keeps the route working for clients that send a wildcard `Accept` header,
+   *   `Accept: application/json` or no `Accept` header at all, and keeps `sse.respond()`
+   *   early returns available to every client.
+   * - `'only'`: the plugin gates on `Accept` and answers `406 Not Acceptable` before the
+   *   handler runs unless the client accepts `text/event-stream`. A missing `Accept` header
+   *   and the wildcards `*\/*` and `text/*` pass the gate; every other concrete media type
+   *   is rejected - including `Accept: application/json`, which means `sse.respond()` early
+   *   returns become unreachable for JSON clients.
+   *
+   * @default 'manual'
+   */
+  kind?: SSEOnlyRouteKind
   /**
    * Async preHandler hook for authentication/authorization.
    * Runs BEFORE the SSE connection is established.
@@ -456,15 +501,18 @@ export type FastifySSERouteOptions = {
    */
   serializer?: (data: unknown) => string
   /**
-   * Heartbeat interval in milliseconds for this route.
+   * Whether the SSE keep-alive heartbeat is enabled for this route.
    *
-   * When set to a number, a framework-managed timer writes `: heartbeat`
-   * comment frames at that interval (the @fastify/sse plugin's own heartbeat
-   * is disabled for the route). Set to `0` or `false` to disable heartbeats
-   * for this route entirely. When unset, the plugin-level heartbeat applies
-   * (default 30000 ms, configured when registering @fastify/sse).
+   * Set to `false` to suppress heartbeat comments on this route entirely.
+   *
+   * The heartbeat *interval* is not configurable per route: `@fastify/sse`
+   * only exposes a boolean at route level. Configure the interval once for all
+   * routes when registering the plugin:
+   * `app.register(fastifySSE, { heartbeatInterval: 30000 })`.
+   *
+   * @default true
    */
-  heartbeatInterval?: number | false
+  heartbeat?: boolean
 
   /**
    * Maps contract metadata to additional Fastify route options.
@@ -708,12 +756,29 @@ export type DualModeHandlers<
  * Options for configuring a dual-mode route.
  * Extends SSE route options with JSON-specific options.
  */
-export type FastifyDualModeRouteOptions = FastifySSERouteOptions & {
+export type FastifyDualModeRouteOptions = Omit<FastifySSERouteOptions, 'kind'> & {
   /**
    * Default mode when Accept header doesn't specify preference.
    * @default 'json'
    */
   defaultMode?: DualModeType
+  /**
+   * `@fastify/sse` route kind, controlling how the plugin negotiates the `Accept` header.
+   *
+   * - `'manual'` (default): no plugin-side negotiation. `reply.sse` is always attached and
+   *   the route's own `determineMode()` picks the mode, honouring {@link defaultMode}.
+   * - `'dual'`: the plugin gates first, and only an explicit `text/event-stream` token
+   *   admits SSE. Everything else reaches the handler with `reply.sse` undefined, so this
+   *   is only sound with `defaultMode: 'json'` - the two negotiators would otherwise
+   *   disagree and the SSE branch would run without a stream. `buildFastifyRoute` rejects
+   *   that combination at route-build time.
+   *
+   * `'only'` is not offered: it answers non-SSE clients with `406` before the handler runs,
+   * which would make the JSON half of the route unreachable.
+   *
+   * @default 'manual'
+   */
+  kind?: DualModeRouteKind
 }
 
 /**
@@ -996,14 +1061,22 @@ export function buildHandler<
  */
 export type RegisterSSERoutesOptions = {
   /**
-   * Heartbeat interval in milliseconds, applied to all registered SSE routes
-   * via a framework-managed timer (the @fastify/sse plugin heartbeat is
-   * disabled for those routes). Set to `0` or `false` to disable heartbeats.
-   * Route-level `heartbeatInterval` (buildHandler options) takes precedence.
+   * Whether the SSE keep-alive heartbeat is enabled for the registered routes.
+   *
+   * Set to `false` to suppress heartbeat comments. Routes that set `heartbeat`
+   * themselves keep their own value.
+   *
+   * The heartbeat *interval* is not configurable per route: `@fastify/sse`
+   * only exposes a boolean at route level. Configure the interval once for all
+   * routes when registering the plugin:
+   * `app.register(fastifySSE, { heartbeatInterval: 30000 })`.
+   *
+   * @default true
    */
-  heartbeatInterval?: number | false
+  heartbeat?: boolean
   /**
    * Custom serializer for SSE message data.
+   * Routes that set `serializer` themselves keep their own value.
    * @default JSON.stringify
    */
   serializer?: (data: unknown) => string
@@ -1034,15 +1107,22 @@ export type RegisterSSERoutesOptions = {
  */
 export type RegisterDualModeRoutesOptions = {
   /**
-   * Heartbeat interval in milliseconds for SSE mode, applied to all
-   * registered dual-mode routes via a framework-managed timer (the
-   * @fastify/sse plugin heartbeat is disabled for those routes). Set to `0`
-   * or `false` to disable heartbeats. Route-level `heartbeatInterval`
-   * (buildHandler options) takes precedence.
+   * Whether the SSE keep-alive heartbeat is enabled for the registered routes.
+   *
+   * Set to `false` to suppress heartbeat comments in SSE mode. Routes that set
+   * `heartbeat` themselves keep their own value.
+   *
+   * The heartbeat *interval* is not configurable per route: `@fastify/sse`
+   * only exposes a boolean at route level. Configure the interval once for all
+   * routes when registering the plugin:
+   * `app.register(fastifySSE, { heartbeatInterval: 30000 })`.
+   *
+   * @default true
    */
-  heartbeatInterval?: number | false
+  heartbeat?: boolean
   /**
    * Custom serializer for SSE message data.
+   * Routes that set `serializer` themselves keep their own value.
    * @default JSON.stringify
    */
   serializer?: (data: unknown) => string

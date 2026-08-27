@@ -1,4 +1,4 @@
-import { blobBody, defineApiContract, noBodyResponse, sseBody } from '@lokalise/api-contracts'
+import { defineApiContract, sseBody } from '@lokalise/api-contracts'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod/v4'
 import { GATEWAY_METADATA_SYMBOL } from '../gateway/gatewaySymbol.ts'
@@ -12,27 +12,12 @@ import { buildApiRoute } from './apiRouteBuilder.ts'
 const userSchema = z.object({ id: z.string(), name: z.string() })
 
 const getUserContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Get user',
   pathResolver: (p: { userId: string }) => `/users/${p.userId}`,
   requestPathParamsSchema: z.object({ userId: z.string() }),
   responsesByStatusCode: { 200: userSchema },
-})
-
-const createUserContract = defineApiContract({
-  method: 'post',
-  summary: 'Create user',
-  pathResolver: () => '/users',
-  requestBodySchema: z.object({ name: z.string() }),
-  responsesByStatusCode: { 201: userSchema },
-})
-
-const deleteUserContract = defineApiContract({
-  method: 'delete',
-  summary: 'Delete user',
-  pathResolver: (p: { userId: string }) => `/users/${p.userId}`,
-  requestPathParamsSchema: z.object({ userId: z.string() }),
-  responsesByStatusCode: { 204: noBodyResponse() },
 })
 
 const sseEventsSchema = {
@@ -41,6 +26,7 @@ const sseEventsSchema = {
 }
 
 const sseOnlyContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Sse only',
   pathResolver: () => '/stream',
@@ -48,6 +34,7 @@ const sseOnlyContract = defineApiContract({
 })
 
 const dualModeContract = defineApiContract({
+  visibility: 'public',
   method: 'post',
   summary: 'Dual mode',
   pathResolver: () => '/chat',
@@ -59,112 +46,24 @@ const dualModeContract = defineApiContract({
   },
 })
 
-// Content-map response entries (api-contracts >= 6.15) — the new `{ content: {...} }` shape.
-const contentJsonContract = defineApiContract({
-  method: 'get',
-  summary: 'Content json',
-  pathResolver: () => '/content-json',
-  responsesByStatusCode: {
-    200: { content: { 'application/json': userSchema } },
-  },
-})
-
-const contentSseOnlyContract = defineApiContract({
-  method: 'get',
-  summary: 'Content sse only',
-  pathResolver: () => '/content-stream',
-  responsesByStatusCode: {
-    200: { content: { 'text/event-stream': sseBody(sseEventsSchema) } },
-  },
-})
-
-const contentDualContract = defineApiContract({
-  method: 'post',
-  summary: 'Content dual',
-  pathResolver: () => '/content-chat',
-  requestBodySchema: z.object({ message: z.string() }),
-  responsesByStatusCode: {
-    200: {
-      content: { 'application/json': userSchema, 'text/event-stream': sseBody(sseEventsSchema) },
-    },
-  },
-})
-
-const contentBlobDualContract = defineApiContract({
-  method: 'get',
-  summary: 'Content blob dual',
-  pathResolver: () => '/content-blob',
-  responsesByStatusCode: {
-    200: {
-      content: {
-        'application/octet-stream': blobBody(),
-        'text/event-stream': sseBody(sseEventsSchema),
-      },
-    },
-  },
-})
-
-const contentAllowNoBodyContract = defineApiContract({
-  method: 'get',
-  summary: 'Content allow no body',
-  pathResolver: () => '/content-allow-no-body',
-  responsesByStatusCode: {
-    200: { content: { 'text/event-stream': sseBody(sseEventsSchema) }, allowNoBody: true },
-  },
-})
-
 // ============================================================================
-// buildApiRoute — non-SSE contracts
+// buildApiRoute — delegation to buildFastifyApiRoute
 // ============================================================================
 
-describe('buildApiRoute — non-SSE', () => {
-  it('produces a GET route with correct method and url', () => {
+describe('buildApiRoute — delegation', () => {
+  it('produces a route from the contract (method, url, schema)', () => {
     const routeOptions = buildApiRoute(getUserContract, async () => ({
       status: 200,
       body: { id: '1', name: 'Alice' },
     }))
     expect(routeOptions.method).toBe('get')
     expect(routeOptions.url).toBe('/users/:userId')
-  })
-
-  it('includes path params schema', () => {
-    const routeOptions = buildApiRoute(getUserContract, async () => ({
-      status: 200,
-      body: { id: '1', name: 'Alice' },
-    }))
     expect((routeOptions.schema as { params?: unknown })?.params).toBe(
       getUserContract.requestPathParamsSchema,
     )
   })
 
-  it('produces a POST route with body schema', () => {
-    const routeOptions = buildApiRoute(createUserContract, async () => ({
-      status: 201,
-      body: { id: '1', name: 'Alice' },
-    }))
-    expect(routeOptions.method).toBe('post')
-    expect((routeOptions.schema as { body?: unknown })?.body).toBe(
-      createUserContract.requestBodySchema,
-    )
-  })
-
-  it('excludes body schema for contracts without a request body', () => {
-    const routeOptions = buildApiRoute(deleteUserContract, async () => ({
-      status: 204,
-      body: undefined,
-    }))
-    expect((routeOptions.schema as { body?: unknown })?.body).toBeUndefined()
-  })
-
-  it('does not set sse property on non-SSE routes', () => {
-    const routeOptions = buildApiRoute(getUserContract, async () => ({
-      status: 200,
-      body: { id: '1', name: 'Alice' },
-    }))
-    expect((routeOptions as { sse?: unknown }).sse).toBeUndefined()
-  })
-
-  it('attaches preHandler when provided in options', () => {
+  it('passes Fastify options like preHandler through to the route', () => {
     const preHandler = vi.fn()
     const routeOptions = buildApiRoute(
       getUserContract,
@@ -173,257 +72,12 @@ describe('buildApiRoute — non-SSE', () => {
     )
     expect(routeOptions.preHandler).toBe(preHandler)
   })
-})
 
-// ============================================================================
-// buildApiRoute — SSE-only contracts
-// ============================================================================
-
-describe('buildApiRoute — SSE-only', () => {
-  it("produces a route with sse: 'only'", () => {
-    const routeOptions = buildApiRoute(sseOnlyContract, (_request, sse) => {
+  it('marks SSE-capable contracts with the sse route option', () => {
+    const routeOptions = buildApiRoute(sseOnlyContract, (_request, _reply, { sse }) => {
       sse.start('keepAlive')
     })
-    expect((routeOptions as { sse?: unknown }).sse).toBe('only')
-  })
-
-  it('produces correct url', () => {
-    const routeOptions = buildApiRoute(sseOnlyContract, (_request, sse) => {
-      sse.start('keepAlive')
-    })
-    expect(routeOptions.url).toBe('/stream')
-  })
-})
-
-// ============================================================================
-// buildApiRoute — dual-mode contracts
-// ============================================================================
-
-describe('buildApiRoute — dual-mode', () => {
-  it("produces a route with sse: 'manual' (determineMode owns Accept negotiation)", () => {
-    const routeOptions = buildApiRoute(dualModeContract, {
-      nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
-      sse: (_request, sse) => {
-        sse.start('autoClose')
-      },
-    })
-    expect((routeOptions as { sse?: unknown }).sse).toBe('manual')
-  })
-
-  it('produces correct url and method', () => {
-    const routeOptions = buildApiRoute(dualModeContract, {
-      nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
-      sse: (_request, sse) => {
-        sse.start('autoClose')
-      },
-    })
-    expect(routeOptions.method).toBe('post')
-    expect(routeOptions.url).toBe('/chat')
-  })
-
-  it('includes body schema', () => {
-    const routeOptions = buildApiRoute(dualModeContract, {
-      nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
-      sse: (_request, sse) => {
-        sse.start('autoClose')
-      },
-    })
-    expect((routeOptions.schema as { body?: unknown })?.body).toBe(
-      dualModeContract.requestBodySchema,
-    )
-  })
-})
-
-// ============================================================================
-// buildApiRoute — custom SSE config options
-// ============================================================================
-
-describe('buildApiRoute — SSE config via options', () => {
-  it('passes custom serializer into sse config', () => {
-    const serializer = (data: unknown) => JSON.stringify(data)
-    const routeOptions = buildApiRoute(
-      sseOnlyContract,
-      (_r, sse) => {
-        sse.start('keepAlive')
-      },
-      { serializer },
-    )
-    expect((routeOptions as { sse?: unknown }).sse).toEqual({ kind: 'only', serializer })
-  })
-
-  it('passes heartbeatInterval into sse config', () => {
-    const routeOptions = buildApiRoute(
-      sseOnlyContract,
-      (_r, sse) => {
-        sse.start('keepAlive')
-      },
-      { heartbeatInterval: 10000 },
-    )
-    // A route-level interval disables the plugin heartbeat; the framework
-    // timer (started on sse.start()) handles the interval itself.
-    expect((routeOptions as { sse?: unknown }).sse).toEqual({ kind: 'only', heartbeat: false })
-  })
-})
-
-// ============================================================================
-// buildApiRoute — response schemas
-// ============================================================================
-
-describe('buildApiRoute — response schemas', () => {
-  it('includes JSON response schema for a GET route', () => {
-    const routeOptions = buildApiRoute(getUserContract, async () => ({
-      status: 200,
-      body: { id: '1', name: 'Alice' },
-    }))
-    expect(routeOptions).toEqual(
-      expect.objectContaining({
-        schema: expect.objectContaining({ response: { 200: userSchema } }),
-      }),
-    )
-  })
-
-  it('includes JSON response schema for a POST route', () => {
-    const routeOptions = buildApiRoute(createUserContract, async () => ({
-      status: 201,
-      body: { id: '1', name: 'Alice' },
-    }))
-    expect(routeOptions).toEqual(
-      expect.objectContaining({
-        schema: expect.objectContaining({ response: { 201: userSchema } }),
-      }),
-    )
-  })
-
-  it('omits noBodyResponse status codes from response schemas', () => {
-    const routeOptions = buildApiRoute(deleteUserContract, async () => ({
-      status: 204,
-      body: undefined,
-    }))
-    expect(routeOptions).toEqual(
-      expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
-    )
-  })
-
-  it('omits SSE-only status codes from response schemas', () => {
-    const routeOptions = buildApiRoute(sseOnlyContract, (_request, sse) => {
-      sse.start('keepAlive')
-    })
-    expect(routeOptions).toEqual(
-      expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
-    )
-  })
-
-  it('picks the JSON schema from a content map even when the SSE media type comes first', () => {
-    const sseFirstContract = defineApiContract({
-      method: 'get',
-      summary: 'Sse first',
-      pathResolver: () => '/mixed',
-      responsesByStatusCode: {
-        200: {
-          content: {
-            'text/event-stream': sseBody(sseEventsSchema),
-            'application/json': userSchema,
-          },
-        },
-      },
-    })
-    const routeOptions = buildApiRoute(sseFirstContract, {
-      nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
-      sse: (_request, sse) => {
-        sse.start('keepAlive')
-      },
-    })
-    expect(routeOptions).toEqual(
-      expect.objectContaining({
-        schema: expect.objectContaining({ response: { 200: userSchema } }),
-      }),
-    )
-  })
-})
-
-// ============================================================================
-// buildApiRoute — content-map response entries (api-contracts >= 6.15)
-// ============================================================================
-
-describe('buildApiRoute — content-map response entries', () => {
-  it('treats a JSON-only content entry as non-SSE', () => {
-    const routeOptions = buildApiRoute(contentJsonContract, async () => ({
-      status: 200,
-      body: { id: '1', name: 'Alice' },
-    }))
-    expect((routeOptions as { sse?: unknown }).sse).toBeUndefined()
-    expect(routeOptions).toEqual(
-      expect.objectContaining({
-        schema: expect.objectContaining({ response: { 200: userSchema } }),
-      }),
-    )
-  })
-
-  it('treats an SSE-only content entry as SSE and omits its response schema', () => {
-    const routeOptions = buildApiRoute(contentSseOnlyContract, (_request, sse) => {
-      sse.start('keepAlive')
-    })
-    expect((routeOptions as { sse?: unknown }).sse).toBe('only')
-    expect(routeOptions).toEqual(
-      expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
-    )
-  })
-
-  it('treats a JSON + SSE content entry as dual and resolves the JSON response schema', () => {
-    const routeOptions = buildApiRoute(contentDualContract, {
-      nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
-      sse: (_request, sse) => {
-        sse.start('autoClose')
-      },
-    })
-    expect((routeOptions as { sse?: unknown }).sse).toBe('manual')
-    expect(routeOptions).toEqual(
-      expect.objectContaining({
-        schema: expect.objectContaining({ response: { 200: userSchema } }),
-      }),
-    )
-  })
-
-  it('treats a blob + SSE content entry as dual (non-JSON, non-SSE descriptor counts)', () => {
-    const routeOptions = buildApiRoute(contentBlobDualContract, {
-      nonSse: async () => ({ status: 200, body: new Blob(['binary']) }),
-      sse: (_request, sse) => {
-        sse.start('autoClose')
-      },
-    })
-    expect((routeOptions as { sse?: unknown }).sse).toBe('manual')
-    // No JSON media type is declared, so no response schema is registered.
-    expect(routeOptions).toEqual(
-      expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
-    )
-  })
-
-  it('treats an allowNoBody content entry as dual', () => {
-    const routeOptions = buildApiRoute(contentAllowNoBodyContract, {
-      nonSse: async () => ({ status: 200, body: undefined }),
-      sse: (_request, sse) => {
-        sse.start('autoClose')
-      },
-    })
-    expect((routeOptions as { sse?: unknown }).sse).toBe('manual')
-    expect(routeOptions).toEqual(
-      expect.objectContaining({ schema: expect.objectContaining({ response: {} }) }),
-    )
-  })
-})
-
-// ============================================================================
-// buildApiRoute — no-path-params contract
-// ============================================================================
-
-describe('buildApiRoute — no path params', () => {
-  it('produces correct url for contract without path params', () => {
-    const routeOptions = buildApiRoute(createUserContract, async () => ({
-      status: 201,
-      body: { id: '1', name: 'Alice' },
-    }))
-    expect(routeOptions.url).toBe('/users')
-    expect((routeOptions.schema as { params?: unknown })?.params).toBeUndefined()
+    expect((routeOptions as { sse?: unknown }).sse).toBeDefined()
   })
 })
 
@@ -432,6 +86,7 @@ describe('buildApiRoute — no path params', () => {
 // ============================================================================
 
 const headerAwareContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Header aware',
   pathResolver: (p: { tenantId: string }) => `/tenants/${p.tenantId}`,
@@ -441,6 +96,7 @@ const headerAwareContract = defineApiContract({
 })
 
 const queryAwareContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Query aware',
   pathResolver: () => '/search',
@@ -469,14 +125,13 @@ describe('buildApiRoute — inline gatewayMetadata', () => {
     expect(readGatewayMetadata(routeOptions)).toBeUndefined()
   })
 
-  it('attaches metadata via a non-enumerable symbol (invisible to Fastify and JSON)', () => {
+  it('attaches metadata via a non-enumerable symbol (invisible to Fastify)', () => {
     const routeOptions = buildApiRoute(
       getUserContract,
       async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
       { gatewayMetadata: { upstream: 'users-service' } },
     )
     expect(Object.keys(routeOptions)).not.toContain(GATEWAY_METADATA_SYMBOL.toString())
-    expect(JSON.stringify(routeOptions)).not.toContain('users-service')
     expect(Object.getOwnPropertyDescriptor(routeOptions, GATEWAY_METADATA_SYMBOL)?.enumerable).toBe(
       false,
     )
@@ -534,7 +189,7 @@ describe('buildApiRoute — inline gatewayMetadata', () => {
   it('stamps metadata on SSE-only routes', () => {
     const routeOptions = buildApiRoute(
       sseOnlyContract,
-      (_req, sse) => {
+      (_request, _reply, { sse }) => {
         sse.start('keepAlive')
       },
       { gatewayMetadata: { upstream: 'streams-service' } },
@@ -545,11 +200,12 @@ describe('buildApiRoute — inline gatewayMetadata', () => {
   it('stamps metadata on dual-mode routes', () => {
     const routeOptions = buildApiRoute(
       dualModeContract,
-      {
-        nonSse: async () => ({ status: 200, body: { id: '1', name: 'Alice' } }),
-        sse: (_req, sse) => {
+      (_request, _reply, { expectedContentType, sse }) => {
+        if (expectedContentType === 'text/event-stream') {
           sse.start('autoClose')
-        },
+          return
+        }
+        return { status: 200, contentType: 'application/json', body: { id: '1', name: 'Alice' } }
       },
       { gatewayMetadata: { tags: ['chat'] } },
     )

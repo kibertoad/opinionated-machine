@@ -40,6 +40,7 @@ export const testMeta = defineEventMetadata<TestEventMetadata>()('scope', ['proj
 // ============================================================================
 
 export const subscriptionStreamContract = buildContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/subscriptions/stream',
   requestPathParamsSchema: z.object({}),

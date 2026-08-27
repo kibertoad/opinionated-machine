@@ -1,4 +1,5 @@
 import { buildSseContract } from '@lokalise/api-contracts'
+import type { RouteOptions } from 'fastify'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { z } from 'zod/v4'
 import {
@@ -7,6 +8,8 @@ import {
   type BuildFastifyDualModeRoutesReturnType,
   type BuildFastifySSERoutesReturnType,
   type DualModeRouteHandler,
+  type FastifyDualModeRouteOptions,
+  type FastifySSERouteOptions,
   type SSERouteHandler,
   type SyncModeReply,
 } from '../../index.js'
@@ -18,6 +21,7 @@ import { buildHandler } from './fastifyRouteTypes.ts'
 // ============================================================================
 
 const sseGetContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
   requestPathParamsSchema: z.object({ testGetParam: z.string() }),
@@ -25,9 +29,13 @@ const sseGetContract = buildSseContract({
   requestHeaderSchema: z.object({ testGetHeader: z.string() }),
   serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
   metadata: { requiresAuth: true, rateLimit: 100 },
+  summary: 'SSE get route',
+  description: 'Streams test messages',
+  tags: ['sse-test'],
 })
 
 const ssePostContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: (pathParams) => `/api/test/${pathParams.testPostParam}`,
   requestPathParamsSchema: z.object({ testPostParam: z.string() }),
@@ -36,6 +44,18 @@ const ssePostContract = buildSseContract({
   requestBodySchema: z.object({ testPostBody: z.string() }),
   serverSentEventSchemas: { messagePost: z.object({ text: z.string() }) },
   metadata: { requiresAuth: true, rateLimit: 100 },
+})
+
+const sseErrorsContract = buildSseContract({
+  visibility: 'public',
+  method: 'get',
+  pathResolver: () => '/api/errors',
+  requestPathParamsSchema: z.object({}),
+  responseBodySchemasByStatusCode: {
+    404: z.object({ error: z.string() }),
+    422: z.object({ details: z.string() }),
+  },
+  serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
 })
 
 class MinimalSSEController extends AbstractSSEController<any> {
@@ -51,6 +71,7 @@ class MinimalSSEController extends AbstractSSEController<any> {
 }
 
 const dualModeGetContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
   requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
@@ -59,9 +80,13 @@ const dualModeGetContract = buildSseContract({
   successResponseBodySchema: z.object({ result: z.string() }),
   serverSentEventSchemas: { messageDualGet: z.object({ text: z.string() }) },
   metadata: { requiresAuth: true, rateLimit: 100 },
+  summary: 'Dual-mode get route',
+  description: 'Returns or streams the result',
+  tags: ['dual-mode-test'],
 })
 
 const dualModePostContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: (pathParams) => `/api/dual/${pathParams.dualPostParam}`,
   requestPathParamsSchema: z.object({ dualPostParam: z.string() }),
@@ -85,6 +110,25 @@ class MinimalDualModeController extends AbstractDualModeController<any> {
   }
 }
 
+function getResponseSchemas(routeOptions: RouteOptions): Record<string, unknown> {
+  return (routeOptions.schema as { response: Record<string, unknown> }).response
+}
+
+function getContentSchema(
+  routeOptions: RouteOptions,
+  statusCode: number,
+  mediaType: string,
+): z.ZodTypeAny {
+  const entry = getResponseSchemas(routeOptions)[statusCode] as {
+    content: Record<string, { schema: z.ZodTypeAny }>
+  }
+  const schema = entry.content[mediaType]?.schema
+  if (!schema) {
+    throw new Error(`No response schema for ${statusCode} ${mediaType}`)
+  }
+  return schema
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -105,8 +149,11 @@ describe('buildFastifyRoute', () => {
           params: sseGetContract.requestPathParamsSchema,
           querystring: sseGetContract.requestQuerySchema,
           headers: sseGetContract.requestHeaderSchema,
+          description: 'Streams test messages',
+          summary: 'SSE get route',
+          tags: ['sse-test'],
         },
-        sse: 'only',
+        sse: { kind: 'manual' },
         url: '/api/test/:testGetParam',
       })
     })
@@ -127,7 +174,7 @@ describe('buildFastifyRoute', () => {
           headers: ssePostContract.requestHeaderSchema,
           body: ssePostContract.requestBodySchema,
         },
-        sse: 'only',
+        sse: { kind: 'manual' },
         url: '/api/test/:testPostParam',
       })
     })
@@ -142,21 +189,158 @@ describe('buildFastifyRoute', () => {
 
       const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
 
-      expect(routeOptions.sse).toEqual({ kind: 'only', serializer })
+      expect(routeOptions.sse).toEqual({ kind: 'manual', serializer })
     })
 
-    it('should set sse config with heartbeatInterval when heartbeatInterval is provided', () => {
+    it('should set sse config with heartbeat when heartbeat is disabled', () => {
       const handler = buildHandler(
         sseGetContract,
         { sse: async (_req, _sse) => await Promise.resolve() },
-        { heartbeatInterval: 5000 },
+        { heartbeat: false },
       )
 
       const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
 
-      // A route-level interval disables the plugin heartbeat; the framework
-      // timer (started on sse.start()) handles the interval itself.
-      expect(routeOptions.sse).toEqual({ kind: 'only', heartbeat: false })
+      expect(routeOptions.sse).toEqual({ kind: 'manual', heartbeat: false })
+    })
+
+    it('should set sse config with heartbeat when heartbeat is explicitly enabled', () => {
+      const handler = buildHandler(
+        sseGetContract,
+        { sse: async (_req, _sse) => await Promise.resolve() },
+        { heartbeat: true },
+      )
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'manual', heartbeat: true })
+    })
+
+    it('should default sse kind to manual so non-SSE Accept headers still reach the handler', () => {
+      const handler = buildHandler(sseGetContract, {
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'manual' })
+    })
+
+    it('should allow overriding sse kind per route', () => {
+      const handler = buildHandler(
+        sseGetContract,
+        { sse: async (_req, _sse) => await Promise.resolve() },
+        { kind: 'only' },
+      )
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'only' })
+    })
+
+    it('should not offer kinds that leave reply.sse undefined on an SSE-only route', () => {
+      // 'dual' (and the plugin's `sse: true` 'legacy' default) run the handler without
+      // attaching reply.sse whenever the client does not send an explicit
+      // text/event-stream token. An SSE-only handler has a single code path that calls
+      // sse.start(), so those kinds can only ever fail - keep them off the option type.
+      expectTypeOf<FastifySSERouteOptions['kind']>().toEqualTypeOf<'manual' | 'only' | undefined>()
+
+      // @ts-expect-error 'dual' always leaves an SSE-only handler without reply.sse
+      const rejected: FastifySSERouteOptions = { kind: 'dual' }
+      expect(rejected).toEqual({ kind: 'dual' })
+    })
+
+    it('should hide route from OpenAPI docs when contract visibility is internal', () => {
+      const internalContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
+        requestPathParamsSchema: z.object({ testGetParam: z.string() }),
+        serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
+        visibility: 'internal',
+      })
+      const handler = buildHandler(internalContract, {
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true })
+    })
+
+    it('should not hide route from OpenAPI docs when contract visibility is public', () => {
+      const publicContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
+        requestPathParamsSchema: z.object({ testGetParam: z.string() }),
+        serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      const handler = buildHandler(publicContract, {
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: false })
+    })
+
+    it('fails closed: hides routes whose contract lacks visibility at runtime', () => {
+      const legacyContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/test/${pathParams.testGetParam}`,
+        requestPathParamsSchema: z.object({ testGetParam: z.string() }),
+        serverSentEventSchemas: { messageGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      delete (legacyContract as { visibility?: unknown }).visibility
+      const handler = buildHandler(legacyContract, {
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true })
+    })
+
+    describe('response schema', () => {
+      it('documents the event stream under 200 text/event-stream', () => {
+        const handler = buildHandler(sseGetContract, {
+          sse: async (_req, _sse) => await Promise.resolve(),
+        })
+
+        const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+        const eventSchema = getContentSchema(routeOptions, 200, 'text/event-stream')
+        expect(eventSchema.parse({ event: 'messageGet', data: { text: 'hi' } })).toEqual({
+          event: 'messageGet',
+          data: { text: 'hi' },
+        })
+      })
+
+      it('documents error statuses declared by the contract', () => {
+        const handler = buildHandler(sseErrorsContract, {
+          sse: async (_req, _sse) => await Promise.resolve(),
+        })
+
+        const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+        const response = getResponseSchemas(routeOptions) as Record<string, z.ZodTypeAny>
+        expect(response[404]?.parse({ error: 'Not found' })).toEqual({ error: 'Not found' })
+        expect(response[422]?.parse({ details: 'nope' })).toEqual({ details: 'nope' })
+      })
+
+      it('keeps framework error envelopes serializable at a declared error status', () => {
+        const handler = buildHandler(sseErrorsContract, {
+          sse: async (_req, _sse) => await Promise.resolve(),
+        })
+
+        const routeOptions = buildFastifyRoute(new MinimalSSEController(handler), handler)
+
+        const response = getResponseSchemas(routeOptions) as Record<string, z.ZodTypeAny>
+        expect(
+          response[422]?.parse({ statusCode: 422, error: 'Bad Request', message: 'invalid' }),
+        ).toEqual({ statusCode: 422, error: 'Bad Request', message: 'invalid' })
+      })
     })
 
     describe('contractMetadataToRouteMapper', () => {
@@ -209,8 +393,11 @@ describe('buildFastifyRoute', () => {
           params: dualModeGetContract.requestPathParamsSchema,
           querystring: dualModeGetContract.requestQuerySchema,
           headers: dualModeGetContract.requestHeaderSchema,
+          description: 'Returns or streams the result',
+          summary: 'Dual-mode get route',
+          tags: ['dual-mode-test'],
         },
-        sse: 'manual',
+        sse: { kind: 'manual' },
         url: '/api/dual/:dualGetParam',
       })
     })
@@ -232,7 +419,7 @@ describe('buildFastifyRoute', () => {
           headers: dualModePostContract.requestHeaderSchema,
           body: dualModePostContract.requestBodySchema,
         },
-        sse: 'manual',
+        sse: { kind: 'manual' },
         url: '/api/dual/:dualPostParam',
       })
     })
@@ -253,21 +440,168 @@ describe('buildFastifyRoute', () => {
       expect(routeOptions.sse).toEqual({ kind: 'manual', serializer })
     })
 
-    it('should set sse config with heartbeatInterval when heartbeatInterval is provided', () => {
+    it('should set sse config with heartbeat when heartbeat is disabled', () => {
       const handler = buildHandler(
         dualModeGetContract,
         {
           sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
           sse: async (_req, _sse) => await Promise.resolve(),
         },
-        { heartbeatInterval: 5000 },
+        { heartbeat: false },
       )
 
       const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
 
-      // A route-level interval disables the plugin heartbeat; the framework
-      // timer (started on sse.start()) handles the interval itself.
       expect(routeOptions.sse).toEqual({ kind: 'manual', heartbeat: false })
+    })
+
+    it('should default sse kind to manual so the handler owns Accept negotiation', () => {
+      const handler = buildHandler(dualModeGetContract, {
+        sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'manual' })
+    })
+
+    it('should allow overriding sse kind per route', () => {
+      const handler = buildHandler(
+        dualModeGetContract,
+        {
+          sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+          sse: async (_req, _sse) => await Promise.resolve(),
+        },
+        { kind: 'dual' },
+      )
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'dual' })
+    })
+
+    it('should not offer the SSE-only kind on a dual-mode route', () => {
+      // 'only' answers non-SSE clients with 406 before the handler runs, which would make
+      // the JSON half of a dual-mode route unreachable.
+      expectTypeOf<FastifyDualModeRouteOptions['kind']>().toEqualTypeOf<
+        'manual' | 'dual' | undefined
+      >()
+
+      // @ts-expect-error 'only' would 406 the JSON half of a dual-mode route
+      const rejected: FastifyDualModeRouteOptions = { kind: 'only' }
+      expect(rejected).toEqual({ kind: 'only' })
+    })
+
+    it('should reject kind dual combined with defaultMode sse at route-build time', () => {
+      // The plugin gate admits SSE only for an explicit text/event-stream token, while
+      // determineMode() falls back to defaultMode for anything non-specific - so this
+      // pairing selects the SSE branch precisely when reply.sse was not attached.
+      const handler = buildHandler(
+        dualModeGetContract,
+        {
+          sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+          sse: async (_req, _sse) => await Promise.resolve(),
+        },
+        { kind: 'dual', defaultMode: 'sse' },
+      )
+
+      expect(() => buildFastifyRoute(new MinimalDualModeController(handler), handler)).toThrow(
+        /cannot combine kind: "dual" with defaultMode: "sse"/,
+      )
+    })
+
+    it('should allow kind dual with the default json fallback', () => {
+      const handler = buildHandler(
+        dualModeGetContract,
+        {
+          sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+          sse: async (_req, _sse) => await Promise.resolve(),
+        },
+        { kind: 'dual', defaultMode: 'json' },
+      )
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.sse).toEqual({ kind: 'dual' })
+    })
+
+    it('should hide route from OpenAPI docs when contract visibility is internal', () => {
+      const internalContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
+        requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { messageDualGet: z.object({ text: z.string() }) },
+        visibility: 'internal',
+      })
+      const handler = buildHandler(internalContract, {
+        sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true })
+    })
+
+    it('should not hide route from OpenAPI docs when contract visibility is public', () => {
+      const publicContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
+        requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { messageDualGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      const handler = buildHandler(publicContract, {
+        sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: false })
+    })
+
+    it('fails closed: hides routes whose contract lacks visibility at runtime', () => {
+      const legacyContract = buildSseContract({
+        method: 'get',
+        pathResolver: (pathParams) => `/api/dual/${pathParams.dualGetParam}`,
+        requestPathParamsSchema: z.object({ dualGetParam: z.string() }),
+        successResponseBodySchema: z.object({ result: z.string() }),
+        serverSentEventSchemas: { messageDualGet: z.object({ text: z.string() }) },
+        visibility: 'public',
+      })
+      delete (legacyContract as { visibility?: unknown }).visibility
+      const handler = buildHandler(legacyContract, {
+        sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+        sse: async (_req, _sse) => await Promise.resolve(),
+      })
+
+      const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+      expect(routeOptions.schema).toMatchObject({ hide: true })
+    })
+
+    describe('response schema', () => {
+      it('documents both the sync body and the event stream under 200', () => {
+        const handler = buildHandler(dualModeGetContract, {
+          sync: async (_req, _reply) => await Promise.resolve({ result: 'ok' }),
+          sse: async (_req, _sse) => await Promise.resolve(),
+        })
+
+        const routeOptions = buildFastifyRoute(new MinimalDualModeController(handler), handler)
+
+        expect(getContentSchema(routeOptions, 200, 'application/json')).toBe(
+          dualModeGetContract.successResponseBodySchema,
+        )
+        const eventSchema = getContentSchema(routeOptions, 200, 'text/event-stream')
+        expect(eventSchema.parse({ event: 'messageDualGet', data: { text: 'hi' } })).toEqual({
+          event: 'messageDualGet',
+          data: { text: 'hi' },
+        })
+      })
     })
 
     describe('contractMetadataToRouteMapper', () => {

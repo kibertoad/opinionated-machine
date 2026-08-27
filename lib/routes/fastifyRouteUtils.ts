@@ -15,7 +15,6 @@ import type {
   SSEStartOptions,
   SSEStreamMessage,
 } from './fastifyRouteTypes.ts'
-import { resolveHeartbeatInterval, startFrameworkHeartbeat } from './sseHeartbeat.ts'
 
 /**
  * FastifyReply extended with SSE capabilities from @fastify/sse.
@@ -63,12 +62,6 @@ export type SSELifecycleOptions<TConnection = SSESession> = {
     lastEventId: string,
   ) => Iterable<SSEMessage> | AsyncIterable<SSEMessage> | void | Promise<void>
   logger?: SSELogger
-  /**
-   * Route-level heartbeat interval in ms (framework-managed timer), or
-   * `0`/`false` to disable heartbeats for this route. When unset, the
-   * registration-time value (route.config) or the plugin default applies.
-   */
-  heartbeatInterval?: number | false
 }
 
 /**
@@ -260,8 +253,12 @@ function closeSSESession(
   try {
     sseReply.sse.close()
   } catch (err) {
-    if (sseReply.sse.isConnected) {
-      // Log error if connection closure failed and connection is still live
+    // Never let the recovery path throw: this runs from error handling, and an exception
+    // raised here would replace the error we are recovering from with a far less useful one.
+    // `sseReply.sse` itself can be undefined - the plugin only attaches it when its Accept
+    // gate admits SSE - so read `isConnected` defensively rather than dereferencing blind.
+    if (sseReply.sse?.isConnected !== false) {
+      // Log error if connection closure failed and the connection is not known to be closed
       logger?.error(
         {
           connectionId,
@@ -411,17 +408,6 @@ export function createSSEContext<Events extends SSEEventSchemas>(
   let onCloseCalled = false
   let responseData: { code: number; body: unknown } | undefined
 
-  // Framework-managed per-route heartbeat (plugin heartbeat is disabled via
-  // `heartbeat: false` on the route's `sse` field whenever an interval is set)
-  let stopHeartbeat: (() => void) | undefined
-  const maybeStartHeartbeat = () => {
-    if (stopHeartbeat) return
-    const intervalMs = resolveHeartbeatInterval(options?.heartbeatInterval, request)
-    if (!intervalMs) return
-    stopHeartbeat = startFrameworkHeartbeat(reply, intervalMs)
-    sseReply.sse.onClose(() => stopHeartbeat?.())
-  }
-
   // Helper to call onClose exactly once
   const callOnClose = async (reason: SSECloseReason) => {
     if (onCloseCalled || !connection) return
@@ -475,13 +461,19 @@ export function createSSEContext<Events extends SSEEventSchemas>(
         throw new Error('Cannot start streaming after sending a response.')
       }
 
-      started = true
-      sessionMode = mode
-
-      // Register callback for when server explicitly closes via reply.sse.close()
+      // Register callback for when server explicitly closes via reply.sse.close().
+      // This is the first `reply.sse` dereference, and it runs before `started` flips: if
+      // the plugin never attached the SSE context (its Accept gate refused, which the
+      // supported route kinds prevent but a JavaScript caller can still reach), the route
+      // handler's catch then takes the not-yet-streaming branch and reports the real error
+      // instead of trying to tear down a stream that was never set up. Everything after
+      // this point may have written to the socket, so it stays inside `started`.
       sseReply.sse.onClose(async () => {
         await callOnClose('server')
       })
+
+      started = true
+      sessionMode = mode
 
       // Send headers if not already sent via sendHeaders()
       if (!headersSent) {
@@ -492,7 +484,6 @@ export function createSSEContext<Events extends SSEEventSchemas>(
         sseReply.sse.sendHeaders()
         reply.raw.flushHeaders()
         headersSent = true
-        maybeStartHeartbeat()
       }
 
       // Handle reconnection with Last-Event-ID
@@ -575,7 +566,6 @@ export function createSSEContext<Events extends SSEEventSchemas>(
       sseReply.sse.sendHeaders()
       reply.raw.flushHeaders()
       headersSent = true
-      maybeStartHeartbeat()
     },
 
     reply,

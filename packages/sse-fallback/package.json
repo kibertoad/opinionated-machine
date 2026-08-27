@@ -31,7 +31,7 @@
         "directory": "packages/sse-fallback"
     },
     "peerDependencies": {
-        "@lokalise/api-contracts": ">=7.0.0",
+        "@lokalise/api-contracts": ">=8.0.0",
         "zod": ">=4.0.0"
     },
     "peerDependenciesMeta": {
@@ -44,7 +44,7 @@
     },
     "devDependencies": {
         "@biomejs/biome": "2.4.4",
-        "@lokalise/api-contracts": "^7.1.0",
+        "@lokalise/api-contracts": "^8.0.0",
         "@lokalise/biome-config": "^3.1.1",
         "@lokalise/tsconfig": "^3.1.0",
         "rimraf": "^6.1.2",

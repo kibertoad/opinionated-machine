@@ -11,6 +11,7 @@ import { withGatewayMetadata } from '../withGatewayMetadata.ts'
 import { buildGatewayManifestFrom, type CollectedController } from './buildManifest.ts'
 
 const getContract = buildRestContract({
+  visibility: 'public',
   method: 'get',
   successResponseBodySchema: z.object({ ok: z.boolean() }),
   requestPathParamsSchema: z.object({ userId: z.string() }),
@@ -19,6 +20,7 @@ const getContract = buildRestContract({
 })
 
 const createContract = buildRestContract({
+  visibility: 'public',
   method: 'post',
   successResponseBodySchema: z.object({ ok: z.boolean() }),
   requestBodySchema: z.object({ name: z.string() }),
@@ -123,6 +125,7 @@ describe('buildGatewayManifestFrom', () => {
 
   it('reads inline gatewayMetadata passed via buildApiRoute options', () => {
     const apiGetUserContract = defineApiContract({
+      visibility: 'public',
       method: 'get',
       summary: 'Api get user',
       pathResolver: (p: { userId: string }) => `/api/users/${p.userId}`,
@@ -131,6 +134,7 @@ describe('buildGatewayManifestFrom', () => {
       responsesByStatusCode: { 200: z.object({ id: z.string() }) },
     })
     const apiCreateUserContract = defineApiContract({
+      visibility: 'public',
       method: 'post',
       summary: 'Api create user',
       pathResolver: () => '/api/users',
@@ -222,6 +226,7 @@ import {
 import { AbstractSSEController } from '../../sse/AbstractSSEController.ts'
 
 const apiSseOnlyContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'stream',
   pathResolver: () => '/stream',
@@ -231,6 +236,7 @@ const apiSseOnlyContract = defineApiContract({
 })
 
 const apiDualContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'dual',
   pathResolver: () => '/dual',
@@ -245,6 +251,7 @@ const apiDualContract = defineApiContract({
 })
 
 const apiPlainContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'plain',
   pathResolver: () => '/plain',
@@ -257,20 +264,22 @@ class StreamingApiController extends AbstractApiController<{
   plain: typeof apiPlainContract
 }> {
   readonly routes = {
-    stream: buildApiRoute(apiSseOnlyContract, (_request, sse) => {
+    stream: buildApiRoute(apiSseOnlyContract, (_request, _reply, { sse }) => {
       sse.start('keepAlive')
     }),
-    dual: buildApiRoute(apiDualContract, {
-      nonSse: () => ({ status: 200, body: { ok: true } }),
-      sse: (_request, sse) => {
+    dual: buildApiRoute(apiDualContract, (_request, _reply, { expectedContentType, sse }) => {
+      if (expectedContentType === 'text/event-stream') {
         sse.start('autoClose')
-      },
+        return
+      }
+      return { status: 200, contentType: 'application/json', body: { ok: true } }
     }),
     plain: buildApiRoute(apiPlainContract, () => ({ status: 200, body: { ok: true } })),
   }
 }
 
 const legacySseContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/legacy-stream',
   requestPathParamsSchema: z.object({}),
@@ -280,6 +289,7 @@ const legacySseContract = buildSseContract({
 })
 
 const legacyDualContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/legacy-dual',
   requestPathParamsSchema: z.object({}),

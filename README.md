@@ -480,6 +480,7 @@ const PATH_PARAMS_SCHEMA = z.object({
 })
 
 const contract = buildRestContract({
+  visibility: 'public',
   method: 'delete',
   successResponseBodySchema: BODY_SCHEMA,
   requestPathParamsSchema: PATH_PARAMS_SCHEMA,
@@ -736,6 +737,13 @@ const app = fastify()
 await app.register(FastifySSEPlugin)
 ```
 
+Plugin-level options apply to every SSE route. The heartbeat interval is set here and only
+here - it is not a per-route option:
+
+```ts
+await app.register(FastifySSEPlugin, { heartbeatInterval: 30000 })
+```
+
 ### Defining SSE Contracts
 
 Use `buildSseContract` from `@lokalise/api-contracts` to define SSE routes. The `method` field determines the HTTP method. Paths are defined using `pathResolver`, a type-safe function that receives typed params and returns the URL path:
@@ -746,6 +754,7 @@ import { buildSseContract } from '@lokalise/api-contracts'
 
 // GET-based SSE stream with path params
 export const channelStreamContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (params) => `/api/channels/${params.channelId}/stream`,
   requestPathParamsSchema: z.object({ channelId: z.string() }),
@@ -758,6 +767,7 @@ export const channelStreamContract = buildSseContract({
 
 // GET-based SSE stream without path params
 export const notificationsContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/notifications/stream',
   requestPathParamsSchema: z.object({}),
@@ -773,6 +783,7 @@ export const notificationsContract = buildSseContract({
 
 // POST-based SSE stream (e.g., AI chat completions)
 export const chatCompletionContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/chat/completions',
   requestPathParamsSchema: z.object({}),
@@ -1102,7 +1113,8 @@ private handleAdminStream = buildHandler(adminStreamContract, {
 | `onReconnect` | Handle Last-Event-ID reconnection, return events to replay |
 | `logger` | Optional `SSELogger` for error handling (compatible with pino and `@lokalise/node-core`). If not provided, errors in lifecycle hooks are silently ignored |
 | `serializer` | Custom serializer for SSE data (e.g., for custom JSON encoding) |
-| `heartbeatInterval` | Interval in ms for `: heartbeat` keep-alive comments, managed by a framework timer (the @fastify/sse plugin heartbeat is disabled for the route). Set to `0` or `false` to disable heartbeats for the route entirely; leave unset to use the plugin-level default (30s) |
+| `heartbeat` | Set to `false` to disable heartbeat keep-alive comments for this route. The *interval* is not per-route — configure it once via `app.register(fastifySSE, { heartbeatInterval })` |
+| `kind` | `@fastify/sse` route kind - how the `Accept` header is negotiated. Defaults to `'manual'` (see below) |
 | `contractMetadataToRouteMapper` | Maps contract metadata to Fastify route options (see below) |
 
 **onClose reason parameter:**
@@ -1117,8 +1129,63 @@ options: {
     // reason is 'server' or 'client'
   },
   serializer: (data) => JSON.stringify(data, null, 2), // Pretty-print JSON
-  heartbeatInterval: 30000, // Send heartbeat every 30 seconds
+  heartbeat: false, // Disable heartbeat comments on this route
 }
+```
+
+The heartbeat *interval* is not a route option - `@fastify/sse` only exposes a boolean at route
+level, and reads the interval once, when the plugin is registered, applying it to every SSE route:
+
+```ts
+await app.register(FastifySSEPlugin, { heartbeatInterval: 30000 })
+```
+
+#### `kind` and `Accept` header negotiation
+
+Routes are registered with the `@fastify/sse` kind `'manual'`, which means the plugin performs **no**
+`Accept` header negotiation: `reply.sse` is always attached and the route handler decides at runtime
+whether to stream or to send a regular HTTP response.
+
+This matters because SSE handlers built with `buildHandler` have a single code path that calls
+`sse.start()`. Clients that do not send an explicit `Accept: text/event-stream` token - a wildcard
+`Accept` header (the default for most non-browser HTTP clients), `Accept: application/json`, or no
+`Accept` header at all (typical of clients generated from the route's OpenAPI spec) - would otherwise
+reach the handler with `reply.sse` left undefined and get a `500` instead of a stream. It also keeps
+`sse.respond()` early returns available to every client. Dual-mode routes negotiate the `Accept`
+header themselves (honouring `defaultMode`), so they use the same kind.
+
+Each route type accepts only the kinds that can actually work for it:
+
+**SSE-only routes** - `'manual' | 'only'`
+
+| Kind | Behavior |
+| ---- | -------- |
+| `'manual'` (default) | No negotiation. `reply.sse` is always attached, the handler decides |
+| `'only'` | The plugin gates on `Accept` and answers `406 Not Acceptable` before the handler runs. A missing `Accept` header and the wildcards `*/*` and `text/*` pass; **every other concrete media type is rejected**, `application/json` included - so `sse.respond()` early returns become unreachable for JSON clients |
+
+**Dual-mode routes** - `'manual' | 'dual'`
+
+| Kind | Behavior |
+| ---- | -------- |
+| `'manual'` (default) | No plugin-side negotiation. The route's own `determineMode()` picks the mode, honouring `defaultMode` |
+| `'dual'` | The plugin gates first: only an explicit `text/event-stream` token admits SSE, everything else reaches the handler with `reply.sse` undefined. Sound only with `defaultMode: 'json'` - pairing it with `defaultMode: 'sse'` is rejected at route-build time, because a wildcard or absent `Accept` header would select the SSE branch after the plugin already declined to attach the stream |
+
+The plugin's other kinds are deliberately not exposed: `'dual'` on an SSE-only route (and the
+`sse: true` `'legacy'` default) can only ever leave a single-code-path handler without `reply.sse`,
+and `'only'` on a dual-mode route would make the JSON half unreachable.
+
+Override it per route when you want different semantics:
+
+```ts
+private handleAdminStream = buildHandler(adminStreamContract, {
+  sse: async (request, sse) => {
+    const session = sse.start('keepAlive')
+    // ... handler logic
+  },
+}, {
+  // Content-negotiate: anything that does not accept text/event-stream gets 406 Not Acceptable
+  kind: 'only',
+})
 ```
 
 #### `contractMetadataToRouteMapper`
@@ -1133,6 +1200,7 @@ The mapper can return any of: `config`, `bodyLimit`, `onRequest`, `preParsing`, 
 ```ts
 // In the contract definition
 const adminStreamContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/admin/stream',
   // ...schemas...
@@ -1526,6 +1594,7 @@ import { z } from 'zod'
 import { injectSSE } from 'opinionated-machine'
 
 const streamContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: () => '/api/stream',
   requestQuerySchema: z.object({}),
@@ -2267,6 +2336,7 @@ import { buildSseContract } from '@lokalise/api-contracts'
 
 // GET dual-mode route (polling or streaming job status)
 export const jobStatusContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
   pathResolver: (params) => `/api/jobs/${params.jobId}/status`,
   requestPathParamsSchema: z.object({ jobId: z.string().uuid() }),
@@ -2285,6 +2355,7 @@ export const jobStatusContract = buildSseContract({
 
 // POST dual-mode route (OpenAI-style chat completion)
 export const chatCompletionContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: (params) => `/api/chats/${params.chatId}/completions`,
   requestPathParamsSchema: z.object({ chatId: z.string().uuid() }),
@@ -2310,6 +2381,7 @@ Dual-mode contracts support an optional `responseHeaderSchema` to define and val
 
 ```ts
 export const rateLimitedContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: () => '/api/rate-limited',
   requestPathParamsSchema: z.object({}),
@@ -2355,6 +2427,7 @@ Dual-mode and SSE contracts support `responseBodySchemasByStatusCode` to define 
 
 ```ts
 export const resourceContract = buildSseContract({
+  visibility: 'public',
   method: 'post',
   pathResolver: (params) => `/api/resources/${params.id}`,
   requestPathParamsSchema: z.object({ id: z.string() }),
@@ -2443,9 +2516,44 @@ sync: (request, reply) => {
 
 **Validation priority for 2xx status codes:**
 
-- All 2xx responses (200, 201, 204, etc.) are validated against `successResponseBodySchema`
-- `responseBodySchemasByStatusCode` is only used for non-2xx status codes
-- If you define the same 2xx code in both, `successResponseBodySchema` takes precedence
+- All 2xx responses (200, 201, 204, etc.) returned by the `sync` handler are validated against
+  `successResponseBodySchema`
+- For the `sync` handler, `responseBodySchemasByStatusCode` is only used for non-2xx status codes,
+  so `successResponseBodySchema` takes precedence when the same 2xx code is defined in both
+- `sse.respond(code, body)` is validated against `responseBodySchemasByStatusCode[code]` at every
+  status, 2xx included, because that is the schema its argument is typed from
+
+**OpenAPI output and serialization:**
+
+`buildFastifyRoute` fills in the route's `schema.response` from the contract, so the generated
+spec describes each status instead of showing a bare "Default Response":
+
+- 200 carries `text/event-stream` with one `{ id?, event, data, retry? }` envelope per entry in
+  `serverSentEventSchemas`, rendered as a `oneOf` with the `event` name pinned to a `const` in
+  each branch, plus `application/json` for the JSON body
+- Every status in `responseBodySchemasByStatusCode` gets its declared schema
+
+Because Fastify drives serialization from the same `schema.response`, a response body for a
+status the contract declares is serialized against that schema. Keys the schema does not
+declare are dropped from the body that goes out. Streamed SSE events are written directly by
+`@fastify/sse` and bypass the serializer, so the 200 event schema documents the stream without
+affecting it.
+
+A status can be reached by more than one body shape, and Fastify rejects anything the schema
+does not accept, so each status accepts every shape the runtime can produce there:
+
+- On a 2xx of a dual-mode contract, `application/json` accepts `successResponseBodySchema` (what
+  the `sync` handler is validated against) as well as the schema declared for that status (what
+  `sse.respond()` is validated against), rather than one taking precedence over the other in the
+  spec
+- On a non-2xx, the declared schema is joined by the framework error envelope
+  (`{ statusCode, message, error?, code?, ... }`), which is what Fastify sends for a failed
+  request validation and what an application-level error handler typically returns. Without it,
+  declaring a 400 body would turn every `FST_ERR_VALIDATION` on that route into a 500
+
+Both show up in the spec as an `anyOf`. Errors the SSE builders raise themselves, before
+streaming starts, are sent pre-serialized and skip the schema entirely, so the thrown error's
+message always reaches the client.
 
 ### Single Sync Handler
 
@@ -2888,12 +2996,14 @@ import {
 import { z } from 'zod/v4'
 
 const getUser = buildRestContract({
+  visibility: 'public',
   method: 'get',
   successResponseBodySchema: z.object({ id: z.string() }),
   requestPathParamsSchema: z.object({ userId: z.string() }),
   pathResolver: (p) => `/users/${p.userId}`,
 })
 const createUser = buildRestContract({
+  visibility: 'public',
   method: 'post',
   requestBodySchema: z.object({ name: z.string() }),
   successResponseBodySchema: z.object({ id: z.string() }),
@@ -3043,6 +3153,7 @@ become compile errors before you ever ship a config:
 
 ```ts
 const getUser = buildRestContract({
+  visibility: 'public',
   method: 'get',
   successResponseBodySchema: ResponseBody,
   requestHeaderSchema: z.object({ 'x-trace-id': z.string() }),
@@ -3100,7 +3211,7 @@ time.
 | `rewrite` | `{ stripPrefix: '/v2' }` or `{ replacePrefix: { from: '/v1', to: '/v2' } }` | |
 | `traffic` | `{ weights: [{ upstream: 'a', weight: 80 }, { upstream: 'b', weight: 20 }] }` | Also `shadow: { upstream, percent }` |
 | `headers` | `{ request: { add: { 'x-internal': 'true' }, remove: ['cookie'] }, response: … }` | Free-form keys; typically infra headers not in the contract |
-| `tags`, `visibility` | `tags: ['users']`, `visibility: 'internal'` | Documentation / partitioning |
+| `tags` | `tags: ['users']` | Documentation / partitioning |
 | `extensions` | `{ envoy: { … }, krakend: { … }, kong: { … } }` | Vendor escape hatch; merged onto the generated route last |
 
 ### Generating Gateway Configs
@@ -3259,18 +3370,23 @@ service broadcasts into:
 
 ```ts
 readonly routes = {
-  jobStatus: buildApiRoute(jobStatusContract, {
-    // The fallback poll: return the current snapshot with its version
-    nonSse: async (request) => ({ status: 200, body: this.jobs.get(request.params.jobId) }),
-    // The push channel: join the job's room and stay open
-    sse: (request, sse) => {
-      const session = sse.start('keepAlive')
-      session.rooms.join(`job:${request.params.jobId}`)
+  jobStatus: buildApiRoute(
+    jobStatusContract,
+    (request, _reply, { expectedContentType, sse }) => {
+      // The push channel: join the job's room and stay open
+      if (expectedContentType === 'text/event-stream') {
+        const session = sse.start('keepAlive')
+        getSessionRooms(session).join(`job:${request.params.jobId}`)
+        return
+      }
+      // The fallback poll: return the current snapshot with its version
+      return { status: 200, body: this.jobs.get(request.params.jobId) }
     },
-  }, {
-    sseRooms: this.sseRoomBroadcaster,   // enables session.rooms + broadcast delivery
-    heartbeatInterval: 15_000,           // fast client-side stale detection
-  }),
+    {
+      // enables room membership + broadcast delivery for this route's sessions
+      sseRooms: this.sseRoomBroadcaster,
+    },
+  ),
 }
 ```
 
@@ -3309,9 +3425,10 @@ For a resource to participate in the fallback pattern:
    state in the poll handler). Snapshots must **subsume** prior events.
 2. **Recommended** — stamp the SSE `id:` with that version; the client's
    default version extraction and `Last-Event-ID` replay then compose free.
-3. **Recommended** — heartbeats every ~15s (route-level `heartbeatInterval`)
-   so clients detect silently dead connections fast; correctness holds
-   without them (polls bound staleness), detection latency improves with them.
+3. **Recommended** — a short heartbeat interval (~15s, configured once via
+   `app.register(fastifySSE, { heartbeatInterval })`) so clients detect
+   silently dead connections fast; correctness holds without heartbeats
+   (polls bound staleness), detection latency improves with them.
 4. Optional — dense (consecutive) versions enable client gap detection;
    `onReconnect` replay lets clients skip the post-reconnect poll
    (`replay: 'trusted'` in the binding).

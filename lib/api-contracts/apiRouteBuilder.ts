@@ -1,47 +1,91 @@
-import { randomUUID } from 'node:crypto'
+import type { ApiContract, ApiContractResponse, ResponseEntry } from '@lokalise/api-contracts'
 import {
-  type ApiContract,
-  type ApiContractResponse,
-  ContractNoBody,
-  getSseSchemaByEventName,
-  type HttpStatusCode,
   hasAnySuccessSseResponse,
   isContentResponseEntry,
   isSseBody,
-  mapApiContractToPath,
-  type ResponseEntry,
-  resolveContractResponse,
-  type SseSchemaByEventName,
   SUCCESSFUL_HTTP_STATUS_CODES,
 } from '@lokalise/api-contracts'
-import { InternalError } from '@lokalise/node-core'
-import type { FastifyReply, RouteOptions } from 'fastify'
-import type { z } from 'zod/v4'
-import { isErrorLike } from '../errorUtils.ts'
-import { attachRouteStreamingMode } from '../gateway/routeStreaming.ts'
+import {
+  buildFastifyApiRoute,
+  type ApiRouteOptions as FastifyApiRouteOptions,
+  type InferApiHandler,
+} from '@lokalise/fastify-api-contracts'
+import type { RouteOptions } from 'fastify'
+import type { GatewayMetadata } from '../gateway/gatewayTypes.ts'
+import { attachRouteStreamingMode, type RouteStreamingMode } from '../gateway/routeStreaming.ts'
 import { attachGatewayMetadata } from '../gateway/withGatewayMetadata.ts'
-import type {
-  SSEContext,
-  SSESession,
-  SSESessionMode,
-  SSEStartOptions,
-  SSEStreamMessage,
-  SyncModeReply,
-} from '../routes/fastifyRouteTypes.ts'
-import type { SSEReply } from '../routes/fastifyRouteUtils.ts'
-import { determineMode, hasHttpStatusCode } from '../routes/fastifyRouteUtils.ts'
-import { resolveHeartbeatInterval, startFrameworkHeartbeat } from '../routes/sseHeartbeat.ts'
-import { buildSSERouteField, type SSERouteKind } from '../routes/sseRouteConfig.ts'
-import type { SSERoomOperations } from '../sse/rooms/types.ts'
-import type { ApiRouteOptions, InferApiHandler } from './apiHandlerTypes.ts'
-import { getApiSseConnectionRegistry } from './apiSseConnectionRegistry.ts'
+import type { SSERoomBroadcaster } from '../sse/rooms/SSERoomBroadcaster.ts'
+import { withSessionRooms } from './apiSseConnectionRegistry.ts'
 
-// ============================================================================
-// Internal Helpers — Response Mode
-// ============================================================================
+/**
+ * Options for configuring an ApiContract route.
+ *
+ * All options from `@lokalise/fastify-api-contracts` (any Fastify route field
+ * minus the ones the contract provides, SSE lifecycle hooks, and
+ * `contractMetadataToRouteMapper`) pass through to `buildFastifyApiRoute`
+ * unchanged.
+ *
+ * Generic in `Contract` so `gatewayMetadata.match.headers` / `match.query`
+ * keys are narrowed to the contract's request schemas. The generic is always
+ * inferred from the contract argument at the `buildApiRoute` call site, so
+ * direct references should write `ApiRouteOptions<typeof myContract>` when
+ * gateway metadata typing is needed.
+ */
+export type ApiRouteOptions<Contract extends ApiContract> = FastifyApiRouteOptions & {
+  /**
+   * Per-route gateway metadata. `match.headers` / `match.query` keys are
+   * narrowed to the contract's request schemas; `customHeaders` /
+   * `customQuery` remain the escape hatch for headers and params not
+   * declared on the contract. Validated at runtime against the same Zod
+   * schema used by `withGatewayMetadata` and stamped on the route via the
+   * shared `GATEWAY_METADATA_SYMBOL`.
+   *
+   * Equivalent to wrapping the result with `withGatewayMetadata` — keep
+   * to one form per route. If both are used on the same route, the later
+   * call (typically `withGatewayMetadata`) overwrites the inline value;
+   * there is no merge.
+   *
+   * @example
+   * ```ts
+   * buildApiRoute(MyController.contracts.getItem, this.getItem, {
+   *   gatewayMetadata: {
+   *     cache: { ttl: '60s' },
+   *     match: {
+   *       // narrowed to keys of the contract's requestHeaderSchema:
+   *       headers: { 'x-trace-id': { regex: '^[a-f0-9]+$' } },
+   *       // escape hatch for headers not declared on the contract:
+   *       customHeaders: { 'x-tenant-id': { regex: '^t_' } },
+   *     },
+   *   },
+   * })
+   * ```
+   */
+  gatewayMetadata?: GatewayMetadata<Contract>
+  /**
+   * Enable SSE rooms for this route by passing the shared `SSERoomBroadcaster`
+   * from the DI container. Sessions opened by the route's SSE handler are
+   * registered with the broadcaster (so `broadcastToRoom`/`broadcastMessage`
+   * reach them), get room operations via {@link getSessionRooms}, and are
+   * cleaned up (rooms left, dedup cache cleared) when the connection closes.
+   *
+   * Without this option `getSessionRooms()` returns no-ops and the session
+   * receives no room broadcasts.
+   *
+   * @example
+   * ```ts
+   * buildApiRoute(contracts.watchProject, this.watch, { sseRooms: this.roomBroadcaster })
+   * // inside the handler:
+   * const session = sse.start('keepAlive')
+   * getSessionRooms(session).join(`project:${request.params.projectId}`)
+   * ```
+   */
+  sseRooms?: SSERoomBroadcaster
+}
 
-type ResponseMode = 'non-sse' | 'sse' | 'dual'
-
+/**
+ * True when the contract's success response for a status code has a non-SSE
+ * representation as well — i.e. the route can answer a plain HTTP request.
+ */
 function isSuccessResponseDual(value: ApiContractResponse | ResponseEntry): boolean {
   if (isContentResponseEntry(value)) {
     // A content-map entry offers a non-SSE representation when it allows an empty
@@ -53,8 +97,15 @@ function isSuccessResponseDual(value: ApiContractResponse | ResponseEntry): bool
   return true
 }
 
-function getContractResponseMode(contract: ApiContract): ResponseMode {
-  if (!hasAnySuccessSseResponse(contract)) return 'non-sse'
+/**
+ * Derive how a contract streams, for the gateway streaming marker.
+ *
+ * Mirrors `ContractResponseMode` from `@lokalise/api-contracts` at runtime:
+ * a contract with no SSE success response is plain, one whose SSE statuses all
+ * lack a non-SSE representation is `'sse'`, and one that offers both is `'dual'`.
+ */
+function getContractStreamingMode(contract: ApiContract): RouteStreamingMode | undefined {
+  if (!hasAnySuccessSseResponse(contract)) return undefined
   for (const code of SUCCESSFUL_HTTP_STATUS_CODES) {
     const value = contract.responsesByStatusCode[code]
     if (value && isSuccessResponseDual(value)) return 'dual'
@@ -62,394 +113,23 @@ function getContractResponseMode(contract: ApiContract): ResponseMode {
   return 'sse'
 }
 
-function buildApiSSERouteField<C extends ApiContract>(
-  kind: SSERouteKind,
-  options: ApiRouteOptions<C> | undefined,
-) {
-  return buildSSERouteField(kind, {
-    serializer: options?.serializer,
-    heartbeatInterval: options?.heartbeatInterval,
-  })
-}
-
-// ============================================================================
-// Internal Helpers — Sync Route
-// ============================================================================
-
-function getSchemaForStatusCode(contract: ApiContract, status: number): z.ZodType | null {
-  const entry = contract.responsesByStatusCode[status as HttpStatusCode]
-  if (!entry) return null
-
-  // Resolve the JSON representation for this status code, covering both bare Zod
-  // schemas and content-map entries. Non-JSON responses (blob, SSE, no-body) are
-  // not validated here.
-  const resolved = resolveContractResponse(entry, 'application/json', false)
-  return resolved?.kind === 'json' ? resolved.schema : null
-}
-
-function validateApiResponseHeaders(contract: ApiContract, reply: FastifyReply): void {
-  const schema = contract.responseHeaderSchema
-  if (!schema) {
-    return
-  }
-
-  const result = schema.safeParse(reply.getHeaders())
-  if (!result.success) {
-    throw new InternalError({
-      message: 'Internal Server Error',
-      errorCode: 'RESPONSE_HEADERS_VALIDATION_FAILED',
-      details: { validationError: result.error.message },
-    })
-  }
-}
-
-type MaybePromise<T> = T | Promise<T>
-
-async function handleApiSyncRoute(
-  contract: ApiContract,
-  // biome-ignore lint/suspicious/noExplicitAny: Handler types are validated by InferApiHandler at the call site
-  handler: (request: any, reply: SyncModeReply) => MaybePromise<{ status: number; body: unknown }>,
-  // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
-  request: any,
-  reply: FastifyReply,
-): Promise<void> {
-  const { status, body } = await handler(request, reply as SyncModeReply)
-
-  if (reply.sent) {
-    request.log.warn({
-      msg: 'Sync handler sent response directly, bypassing response validation',
-      tag: 'response_sent_directly',
-      method: request.method,
-      url: request.url,
-    })
-    return
-  }
-
-  try {
-    const schema = getSchemaForStatusCode(contract, status)
-    if (schema) {
-      const result = schema.safeParse(body)
-      if (!result.success) {
-        throw new InternalError({
-          message: 'Internal Server Error',
-          errorCode: 'RESPONSE_VALIDATION_FAILED',
-          details: { validationError: result.error.message },
-        })
-      }
-    }
-  } catch (err) {
-    reply.code(500)
-    throw err
-  }
-
-  validateApiResponseHeaders(contract, reply)
-
-  if (!reply.hasHeader('content-type')) {
-    reply.type('application/json')
-  }
-
-  return reply.code(status).send(body) as unknown as undefined
-}
-
-// ============================================================================
-// Internal Helpers — SSE Route (no controller, uses reply.sse directly)
-// ============================================================================
-
-function buildApiSSEContext<C extends ApiContract>(
-  // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
-  request: any,
-  reply: FastifyReply,
-  eventSchemas: SseSchemaByEventName,
-  options: ApiRouteOptions<C> | undefined,
-): {
-  // biome-ignore lint/suspicious/noExplicitAny: SSE event schemas are contract-specific, cast at call site
-  sseContext: SSEContext<any>
-  isStarted: () => boolean
-  hasResponse: () => boolean
-  getResponseData: () => { code: number; body: unknown } | undefined
-} {
-  let started = false
-  let responseData: { code: number; body: unknown } | undefined
-  const sseReply = reply as SSEReply
-
-  // Framework-managed per-route heartbeat (plugin heartbeat is disabled via
-  // `heartbeat: false` on the route's `sse` field whenever an interval is set)
-  let stopHeartbeat: (() => void) | undefined
-  const maybeStartHeartbeat = () => {
-    if (stopHeartbeat) return
-    const intervalMs = resolveHeartbeatInterval(options?.heartbeatInterval, request)
-    if (!intervalMs) return
-    stopHeartbeat = startFrameworkHeartbeat(reply, intervalMs)
-    sseReply.sse.onClose(() => stopHeartbeat?.())
-  }
-
-  const sseContext: SSEContext = {
-    start: <Context = unknown>(mode: SSESessionMode, startOptions?: SSEStartOptions<Context>) => {
-      started = true
-
-      if (mode === 'keepAlive') {
-        sseReply.sse.keepAlive()
-      }
-
-      // sendHeaders() calls writeHead(200) but only queues headers in the buffer.
-      // flushHeaders() forces them onto the wire so the client's fetch() returns.
-      sseReply.sse.sendHeaders()
-      reply.raw.flushHeaders()
-      maybeStartHeartbeat()
-
-      const connectionId = randomUUID()
-
-      const send = async (
-        eventName: string,
-        data: unknown,
-        sendOptions?: { id?: string; retry?: number },
-      ): Promise<boolean> => {
-        const schema = eventSchemas[eventName]
-        if (schema) {
-          const result = schema.safeParse(data)
-          if (!result.success) {
-            throw new InternalError({
-              message: `SSE event validation failed for event "${eventName}": ${result.error.message}`,
-              errorCode: 'RESPONSE_VALIDATION_FAILED',
-            })
-          }
-        }
-        try {
-          await sseReply.sse.send({
-            event: eventName,
-            data,
-            id: sendOptions?.id,
-            retry: sendOptions?.retry,
-          })
-          return true
-        } catch {
-          return false
-        }
-      }
-
-      // Wire up rooms when the route opted in via options.sseRooms
-      let rooms: SSERoomOperations = { join: () => {}, leave: () => {} }
-      const broadcaster = options?.sseRooms
-      if (broadcaster) {
-        const registry = getApiSseConnectionRegistry(broadcaster)
-        // Raw send for room broadcasts — returns false (never throws) so a
-        // failed delivery doesn't abort the broadcast fan-out.
-        registry.register(connectionId, async (message) => {
-          try {
-            await sseReply.sse.send({
-              event: message.event,
-              data: message.data,
-              id: message.id,
-              retry: message.retry,
-            })
-            return true
-          } catch {
-            return false
-          }
-        })
-        // Unconditional cleanup, independent of options.onClose
-        sseReply.sse.onClose(() => registry.unregister(connectionId))
-
-        const roomManager = broadcaster.roomManager
-        rooms = {
-          join: (room) => {
-            // Guard against startup races where the stream is already dead:
-            // joining such a session would leave stale room members behind.
-            if (!sseReply.sse.isConnected || reply.raw.destroyed || reply.raw.writableEnded) {
-              return
-            }
-            roomManager.join(connectionId, room)
-          },
-          leave: (room) => roomManager.leave(connectionId, room),
-        }
-      }
-
-      const session: SSESession<typeof eventSchemas, Context> = {
-        id: connectionId,
-        request,
-        reply,
-        context: (startOptions?.context ?? {}) as Context,
-        connectedAt: new Date(),
-        // biome-ignore lint/suspicious/noExplicitAny: SSEEventSender generic is satisfied at handler call site
-        send: send as any,
-        isConnected: () => sseReply.sse.isConnected,
-        getStream: () => sseReply.sse.stream(),
-        sendStream: async (messages: AsyncIterable<SSEStreamMessage>) => {
-          for await (const message of messages) {
-            await send(message.event, message.data, { id: message.id, retry: message.retry })
-          }
-        },
-        rooms,
-        eventSchemas,
-      }
-
-      if (options?.onConnect) {
-        void Promise.resolve(options.onConnect(session)).catch(() => {})
-      }
-
-      if (options?.onClose) {
-        const onClose = options.onClose
-        sseReply.sse.onClose(() => {
-          void Promise.resolve(onClose(session, 'client')).catch(() => {})
-        })
-      }
-
-      if (options?.onReconnect && sseReply.sse.lastEventId) {
-        const onReconnect = options.onReconnect
-        const lastEventId = sseReply.sse.lastEventId
-        void sseReply.sse.replay(async () => {
-          const replay = await onReconnect(session, lastEventId)
-          if (replay) {
-            for await (const msg of replay) {
-              await sseReply.sse.send(msg)
-            }
-          }
-        })
-      }
-
-      return session
-    },
-
-    respond: ((code: number, body: unknown) => {
-      if (started) {
-        throw new Error(
-          'Cannot call sse.respond() after sse.start() — the SSE stream is already open.',
-        )
-      }
-      responseData = { code, body }
-      return { _type: 'respond' as const, code, body }
-      // biome-ignore lint/suspicious/noExplicitAny: respond typing is enforced by contract at call site
-    }) as any,
-
-    sendHeaders: () => {
-      sseReply.sse.sendHeaders()
-      maybeStartHeartbeat()
-    },
-
-    reply,
-  }
-
-  return {
-    sseContext,
-    isStarted: () => started,
-    hasResponse: () => responseData !== undefined,
-    getResponseData: () => responseData,
-  }
-}
-
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Core SSE handler coordinates context, error handling, and lifecycle
-async function handleApiSseRoute<C extends ApiContract>(
-  // biome-ignore lint/suspicious/noExplicitAny: SSE handler types are validated by InferApiHandler at call site
-  sseHandler: (request: any, sse: any) => unknown,
-  eventSchemas: SseSchemaByEventName,
-  options: ApiRouteOptions<C> | undefined,
-  // biome-ignore lint/suspicious/noExplicitAny: Request types are validated by Fastify schema
-  request: any,
-  reply: FastifyReply,
-): Promise<void> {
-  const { sseContext, isStarted, hasResponse, getResponseData } = buildApiSSEContext(
-    request,
-    reply,
-    eventSchemas,
-    options,
-  )
-
-  try {
-    await sseHandler(request, sseContext)
-
-    if (!isStarted() && !hasResponse()) {
-      throw new Error(
-        'SSE handler must either send a response (sse.respond()) ' +
-          'or start streaming (sse.start()). Handler returned without doing either.',
-      )
-    }
-
-    const responseData = getResponseData()
-    if (responseData) {
-      // Early HTTP response (sse.respond() was called before streaming)
-      reply.removeHeader('cache-control')
-      reply.removeHeader('x-accel-buffering')
-      reply.type('application/json').code(responseData.code).send(responseData.body)
-    }
-    // If started, @fastify/sse manages the rest of the connection lifecycle
-  } catch (err) {
-    if (isStarted()) {
-      // Headers already sent — can't change status code; try to send error event
-      const sseReply = reply as SSEReply
-      if (sseReply.sse.isConnected) {
-        try {
-          await sseReply.sse.send({
-            event: 'error',
-            data: { message: isErrorLike(err) ? err.message : 'Internal Server Error' },
-          })
-        } catch {
-          // Ignore send failures during error handling
-        }
-      }
-      throw err
-    }
-
-    // Streaming not started — send HTTP error response
-    const message = isErrorLike(err) ? err.message : 'Internal Server Error'
-    const statusCode = hasHttpStatusCode(err) ? err.httpStatusCode : 500
-    const statusText = statusCode >= 500 ? 'Internal Server Error' : 'Error'
-    reply.code(statusCode).type('application/json').send({ statusCode, error: statusText, message })
-  }
-}
-
-// ============================================================================
-// Internal Helpers — Schema
-// ============================================================================
-
-function buildResponseSchemas(contract: ApiContract): Record<number, unknown> {
-  return Object.keys(contract.responsesByStatusCode).reduce<Record<number, unknown>>(
-    (acc, statusCode) => {
-      const schema = getSchemaForStatusCode(contract, Number(statusCode))
-      if (schema) {
-        acc[Number(statusCode)] = schema
-      }
-      return acc
-    },
-    {},
-  )
-}
-
-function buildBaseSchema(contract: ApiContract): Record<string, unknown> {
-  const schema: Record<string, unknown> = {}
-  if (contract.requestPathParamsSchema) schema.params = contract.requestPathParamsSchema
-  if (contract.requestQuerySchema) schema.querystring = contract.requestQuerySchema
-  if (contract.requestHeaderSchema) schema.headers = contract.requestHeaderSchema
-
-  if (contract.requestBodySchema !== undefined && contract.requestBodySchema !== ContractNoBody) {
-    schema.body = contract.requestBodySchema
-  }
-
-  schema.response = buildResponseSchemas(contract)
-
-  return schema
-}
-
-// ============================================================================
-// Public API
-// ============================================================================
-
 /**
  * Build a Fastify `RouteOptions` object from an `ApiContract` + handler.
  *
- * The handler shape is inferred from the contract's response mode:
- * - `'non-sse'` — bare async function returning `{ status, body }`
- * - `'sse'`     — bare async function calling `sse.start(...)` / `sse.respond(...)`
- * - `'dual'`    — `{ nonSse, sse }` object branched by the `Accept` header
+ * Thin wrapper around `buildFastifyApiRoute` from
+ * `@lokalise/fastify-api-contracts` — the handler shape, response mode
+ * inference, SSE streaming, and validation semantics are all the package's.
+ * See its docs for the `(request, reply, context) => { status, body }`
+ * handler model and `context.sse` streaming.
  *
- * The optional `options` argument carries:
- * - any Fastify route field (`preHandler`, `onRequest`, `config`, `bodyLimit`, …)
- *   minus the ones the contract provides (`method`, `url`, `schema`, `handler`, `sse`),
- * - SSE lifecycle hooks (`onConnect`, `onClose`, `onReconnect`, `serializer`,
- *   `heartbeatInterval`) — applied for `'sse'` and `'dual'` contracts only,
- * - `defaultMode` for `'dual'` contracts when the `Accept` header is ambiguous,
+ * On top of the package builder this adds:
  * - `gatewayMetadata` — per-route gateway policy with header / query keys
  *   narrowed to the contract; equivalent to wrapping the result with
  *   `withGatewayMetadata`. See `ApiRouteOptions` for full details.
+ * - `sseRooms` — wires SSE rooms for the route (see `ApiRouteOptions`).
+ * - a `streaming: 'sse' | 'dual'` marker on SSE-capable routes, read back by
+ *   the gateway manifest builder so generators can apply streaming-appropriate
+ *   timeouts and buffering.
  *
  * @returns Fastify `RouteOptions` ready to pass to `app.route()`
  */
@@ -458,86 +138,21 @@ export function buildApiRoute<Contract extends ApiContract>(
   handler: InferApiHandler<Contract>,
   options?: ApiRouteOptions<Contract>,
 ): RouteOptions {
-  // Separate SSE-specific options (not in Fastify RouteOptions) and gateway
-  // metadata (stamped via Symbol, not spread) from passthrough options.
-  const {
-    defaultMode,
-    contractMetadataToRouteMapper,
-    gatewayMetadata,
-    serializer: _serializer,
-    heartbeatInterval: _heartbeatInterval,
-    onConnect: _onConnect,
-    onClose: _onClose,
-    onReconnect: _onReconnect,
-    logger: _logger,
-    sseRooms: _sseRooms,
-    ...fastifyOptions
-  } = options ?? {}
+  // Gateway metadata is stamped via Symbol, not spread into Fastify options;
+  // `sseRooms` is framework-level and composed into the SSE lifecycle hooks.
+  const { gatewayMetadata, sseRooms, ...passthroughOptions } = options ?? {}
+  const fastifyOptions = sseRooms
+    ? withSessionRooms(sseRooms, passthroughOptions)
+    : passthroughOptions
 
-  const url = mapApiContractToPath(contract)
-  const mode = getContractResponseMode(contract)
-  const eventSchemas = getSseSchemaByEventName(contract) ?? {}
-  const baseSchema = buildBaseSchema(contract)
-  const contractMetadata = contractMetadataToRouteMapper?.(contract.metadata) ?? {}
+  const route = buildFastifyApiRoute(contract, handler, fastifyOptions)
 
-  const finalize = (route: RouteOptions): RouteOptions => {
-    // Mark streaming routes (derived from the contract's response mode) so
-    // gateway generators can apply streaming-appropriate timeouts/buffering.
-    if (mode !== 'non-sse') {
-      attachRouteStreamingMode(route, mode)
-    }
-    return gatewayMetadata !== undefined ? attachGatewayMetadata(route, gatewayMetadata) : route
+  // Mark streaming routes (derived from the contract's response mode) so
+  // gateway generators can apply streaming-appropriate timeouts/buffering.
+  const streamingMode = getContractStreamingMode(contract)
+  if (streamingMode) {
+    attachRouteStreamingMode(route, streamingMode)
   }
 
-  if (mode === 'non-sse') {
-    // biome-ignore lint/suspicious/noExplicitAny: handler shape validated by InferApiHandler at call site
-    const syncHandler = handler as any
-    return finalize({
-      ...fastifyOptions,
-      ...contractMetadata,
-      method: contract.method,
-      url,
-      schema: baseSchema,
-      handler: async (request, reply) => handleApiSyncRoute(contract, syncHandler, request, reply),
-    })
-  }
-
-  if (mode === 'dual') {
-    const resolvedDefaultMode = defaultMode ?? 'json'
-    // biome-ignore lint/suspicious/noExplicitAny: handler shape validated by InferApiHandler at call site
-    const dualHandlers = handler as any
-    return finalize({
-      ...fastifyOptions,
-      ...contractMetadata,
-      method: contract.method,
-      url,
-      // 'manual' kind: the plugin does no Accept negotiation — determineMode()
-      // below is the single negotiator (q-value aware, honors defaultMode).
-      sse: buildApiSSERouteField('manual', options),
-      schema: baseSchema,
-      handler: (request, reply) => {
-        const responseMode = determineMode(request.headers.accept, resolvedDefaultMode)
-        if (responseMode === 'json') {
-          return handleApiSyncRoute(contract, dualHandlers.nonSse, request, reply)
-        }
-        return handleApiSseRoute(dualHandlers.sse, eventSchemas, options, request, reply)
-      },
-    })
-  }
-
-  // SSE-only
-  // biome-ignore lint/suspicious/noExplicitAny: handler shape validated by InferApiHandler at call site
-  const sseHandler = handler as any
-  return finalize({
-    ...fastifyOptions,
-    ...contractMetadata,
-    method: contract.method,
-    url,
-    // 'only' kind: lenient Accept gate — `*/*` or a missing Accept header
-    // admits SSE; explicit refusal of text/event-stream gets a clean 406.
-    sse: buildApiSSERouteField('only', options),
-    schema: baseSchema,
-    handler: async (request, reply) =>
-      handleApiSseRoute(sseHandler, eventSchemas, options, request, reply),
-  })
+  return gatewayMetadata !== undefined ? attachGatewayMetadata(route, gatewayMetadata) : route
 }

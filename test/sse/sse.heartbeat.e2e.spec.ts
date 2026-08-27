@@ -1,122 +1,101 @@
-import FastifySSEPlugin from '@fastify/sse'
-import { buildSseContract, defineApiContract, sseBody } from '@lokalise/api-contracts'
+import { setTimeout as delay } from 'node:timers/promises'
+import { buildSseContract } from '@lokalise/api-contracts'
 import { createContainer } from 'awilix'
-import fastify, { type FastifyInstance } from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { z } from 'zod/v4'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   AbstractModule,
   AbstractSSEController,
   asSSEControllerClass,
   type BuildFastifySSERoutesReturnType,
-  buildFastifyRoute,
   buildHandler,
   type DependencyInjectionOptions,
   DIContext,
   type MandatoryNameAndRegistrationPair,
-  SSEHttpClient,
-  SSETestServer,
+  type RegisterSSERoutesOptions,
 } from '../../index.js'
-import { buildApiRoute } from '../../lib/api-contracts/index.ts'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 
 /**
- * Per-route heartbeat E2E under @fastify/sse 0.6.
- *
- * The plugin only supports a plugin-level heartbeat interval; route-level
- * intervals are implemented by a framework-managed timer (the plugin's own
- * heartbeat is disabled per route via `heartbeat: false`). These tests pin:
- * - route-level intervals actually emit heartbeats (previously a silent no-op),
- * - `heartbeatInterval: false` silences a route even when the plugin-level
- *   heartbeat is fast,
- * - registration-time intervals (DIContext.registerSSERoutes options —
- *   previously written to a config location the plugin never read) work,
- * - the plugin-level default still applies to routes without overrides.
- *
- * Server A runs the plugin heartbeat at 60s, so any heartbeat observed within
- * the sub-second test window must come from the framework timer.
- * Server B runs the plugin heartbeat at 100ms to prove disabling works.
+ * `@fastify/sse` only exposes a boolean `heartbeat` per route — the interval itself is a
+ * plugin-registration option shared by every route. These tests pin that contract down:
+ * a route (or a whole registration) opting out with `heartbeat: false` must emit no
+ * heartbeat comments, while the default keeps emitting them.
  */
 
-const modernFrameworkContract = defineApiContract({
-  method: 'get',
-  summary: 'Heartbeat — modern framework timer',
-  pathResolver: () => '/hb/framework-modern',
-  responsesByStatusCode: {
-    200: { content: { 'text/event-stream': sseBody({ tick: z.object({ n: z.number() }) }) } },
-  },
-})
+// Short enough that a handful of heartbeats land well within the assertion window.
+const HEARTBEAT_INTERVAL = 20
 
-const modernDisabledContract = defineApiContract({
-  method: 'get',
-  summary: 'Heartbeat — disabled',
-  pathResolver: () => '/hb/disabled',
-  responsesByStatusCode: {
-    200: { content: { 'text/event-stream': sseBody({ tick: z.object({ n: z.number() }) }) } },
-  },
-})
+// How long each connection stays open before we assert on what the server wrote.
+const COLLECTION_WINDOW = 300
 
-const modernPluginDefaultContract = defineApiContract({
-  method: 'get',
-  summary: 'Heartbeat — plugin default',
-  pathResolver: () => '/hb/plugin-default',
-  responsesByStatusCode: {
-    200: { content: { 'text/event-stream': sseBody({ tick: z.object({ n: z.number() }) }) } },
-  },
-})
+// The comment line `@fastify/sse` writes on every heartbeat tick.
+const HEARTBEAT_COMMENT = ': heartbeat'
 
-const legacyFrameworkContract = buildSseContract({
+// Every route below opens its stream with this payload, so a test can tell a genuinely
+// silent stream apart from one that never carried anything. See `collectRawStream`.
+const STREAM_OPEN_MARKER = 'stream-open'
+
+const defaultHeartbeatContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
-  pathResolver: () => '/hb/framework-legacy',
+  pathResolver: () => '/api/heartbeat/default',
   requestPathParamsSchema: z.object({}),
   requestQuerySchema: z.object({}),
   requestHeaderSchema: z.object({}),
-  serverSentEventSchemas: { tick: z.object({ n: z.number() }) },
+  serverSentEventSchemas: { message: z.object({ text: z.string() }) },
 })
 
-const registrationContract = buildSseContract({
+const disabledHeartbeatContract = buildSseContract({
+  visibility: 'public',
   method: 'get',
-  pathResolver: () => '/hb/registration',
+  pathResolver: () => '/api/heartbeat/disabled',
   requestPathParamsSchema: z.object({}),
   requestQuerySchema: z.object({}),
   requestHeaderSchema: z.object({}),
-  serverSentEventSchemas: { tick: z.object({ n: z.number() }) },
+  serverSentEventSchemas: { message: z.object({ text: z.string() }) },
 })
 
-class LegacyHeartbeatController extends AbstractSSEController<{
-  stream: typeof legacyFrameworkContract
-}> {
-  buildSSERoutes(): BuildFastifySSERoutesReturnType<{ stream: typeof legacyFrameworkContract }> {
-    return { stream: this.handleStream }
+type HeartbeatContracts = {
+  defaultHeartbeat: typeof defaultHeartbeatContract
+  disabledHeartbeat: typeof disabledHeartbeatContract
+}
+
+class HeartbeatSSEController extends AbstractSSEController<HeartbeatContracts> {
+  public static contracts = {
+    defaultHeartbeat: defaultHeartbeatContract,
+    disabledHeartbeat: disabledHeartbeatContract,
+  } as const
+
+  buildSSERoutes(): BuildFastifySSERoutesReturnType<HeartbeatContracts> {
+    return {
+      defaultHeartbeat: this.handleDefaultHeartbeat,
+      disabledHeartbeat: this.handleDisabledHeartbeat,
+    }
   }
 
-  private handleStream = buildHandler(
-    legacyFrameworkContract,
+  private handleDefaultHeartbeat = buildHandler(defaultHeartbeatContract, {
+    sse: async (_request, sse) => {
+      const session = sse.start('keepAlive')
+      await session.send('message', { text: STREAM_OPEN_MARKER })
+    },
+  })
+
+  private handleDisabledHeartbeat = buildHandler(
+    disabledHeartbeatContract,
     {
-      sse: (_request, sse) => {
-        sse.start('keepAlive')
+      sse: async (_request, sse) => {
+        const session = sse.start('keepAlive')
+        await session.send('message', { text: STREAM_OPEN_MARKER })
       },
     },
-    { heartbeatInterval: 100 },
+    { heartbeat: false },
   )
 }
 
-class RegistrationHeartbeatController extends AbstractSSEController<{
-  stream: typeof registrationContract
-}> {
-  buildSSERoutes(): BuildFastifySSERoutesReturnType<{ stream: typeof registrationContract }> {
-    return { stream: this.handleStream }
-  }
-
-  private handleStream = buildHandler(registrationContract, {
-    sse: (_request, sse) => {
-      sse.start('keepAlive')
-    },
-  })
-}
-
-class RegistrationHeartbeatModule extends AbstractModule {
-  resolveDependencies() {
+class HeartbeatSSEModule extends AbstractModule<object> {
+  resolveDependencies(): MandatoryNameAndRegistrationPair<object> {
     return {}
   }
 
@@ -124,134 +103,136 @@ class RegistrationHeartbeatModule extends AbstractModule {
     diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      registrationHeartbeatController: asSSEControllerClass(RegistrationHeartbeatController, {
-        diOptions,
-      }),
+      heartbeatSSEController: asSSEControllerClass(HeartbeatSSEController, { diOptions }),
     }
   }
-}
-
-async function startServer(
-  pluginHeartbeatMs: number,
-  registerRoutes: (app: FastifyInstance) => void,
-): Promise<SSETestServer> {
-  const app = fastify()
-  await app.register(FastifySSEPlugin as unknown as Parameters<typeof app.register>[0], {
-    heartbeatInterval: pluginHeartbeatMs,
-  })
-  app.setValidatorCompiler(validatorCompiler)
-  app.setSerializerCompiler(serializerCompiler)
-  registerRoutes(app)
-  return SSETestServer.start(app)
 }
 
 /**
- * Connect to a keepAlive SSE route and count `: heartbeat` comment frames
- * observed within the given window.
+ * Opens a raw SSE connection and returns everything the server wrote within `durationMs`,
+ * including heartbeat comment lines (which an event-level client would discard).
+ *
+ * Most assertions in this file are negative (`not.toContain(HEARTBEAT_COMMENT)`), and a
+ * body that never arrived satisfies those just as happily as a correctly silent stream.
+ * So this helper asserts the two preconditions that make those assertions mean something,
+ * for every test at once:
+ *
+ *  1. the response is a committed SSE stream (200 + `text/event-stream`), which rules out
+ *     a mistyped path (404) or a handler that never called `sse.start()` (JSON error), and
+ *  2. the stream actually delivered this route's opening event inside the window, which
+ *     rules out a connection that was established but carried nothing back.
  */
-async function countHeartbeats(baseUrl: string, path: string, windowMs: number): Promise<number> {
-  const client = await SSEHttpClient.connect(baseUrl, path)
-  let count = 0
-  client.onRawChunk = (chunk) => {
-    count += chunk.split(': heartbeat').length - 1
+async function collectRawStream(url: string, durationMs: number): Promise<string> {
+  const abortController = new AbortController()
+  const response = await fetch(url, {
+    headers: { accept: 'text/event-stream' },
+    signal: abortController.signal,
+  })
+
+  expect(response.status).toBe(200)
+  expect(response.headers.get('content-type')).toContain('text/event-stream')
+  if (!response.body) {
+    throw new Error(`Expected a readable SSE body from ${url}`)
   }
-  const abort = new AbortController()
-  const timer = setTimeout(() => abort.abort(), windowMs)
-  try {
-    for await (const _event of client.events(abort.signal)) {
-      // no data events are expected — iterating drains the stream so
-      // onRawChunk observes heartbeat comment frames
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let received = ''
+
+  const readLoop = (async () => {
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        received += decoder.decode(value, { stream: true })
+      }
+    } catch {
+      // Expected once the connection is aborted below.
     }
-  } finally {
-    clearTimeout(timer)
-    client.close()
-  }
-  return count
+  })()
+
+  await delay(durationMs)
+  abortController.abort()
+  await readLoop
+
+  expect(received).toContain(STREAM_OPEN_MARKER)
+
+  return received
 }
 
 describe('SSE heartbeat E2E', () => {
-  describe('framework-managed route-level heartbeats (plugin heartbeat at 60s)', () => {
-    let server: SSETestServer
-    let context: DIContext<object, object>
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
 
-    beforeAll(async () => {
-      const container = createContainer({ injectionMode: 'PROXY' })
-      context = new DIContext<object, object>(container, {}, {})
-      context.registerDependencies({ modules: [new RegistrationHeartbeatModule()] }, undefined)
+  async function startServer(registerOptions?: RegisterSSERoutesOptions) {
+    const container = createContainer<object>({ injectionMode: 'PROXY' })
+    const context = new DIContext<object, object>(container, {}, {})
+    context.registerDependencies({ modules: [new HeartbeatSSEModule()] }, undefined)
 
-      const legacyController = new LegacyHeartbeatController({})
-      server = await startServer(60_000, (app) => {
-        app.route(
-          buildApiRoute(
-            modernFrameworkContract,
-            (_request, sse) => {
-              sse.start('keepAlive')
-            },
-            { heartbeatInterval: 100 },
-          ),
-        )
-        for (const routeConfig of Object.values(legacyController.buildSSERoutes())) {
-          app.route(buildFastifyRoute(legacyController, routeConfig))
-        }
-        context.registerSSERoutes(app, { heartbeatInterval: 100 })
-      })
+    server = await createSSETestServer(
+      (app) => {
+        context.registerSSERoutes(app, registerOptions)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+        ssePluginOptions: { heartbeatInterval: HEARTBEAT_INTERVAL },
+      },
+    )
+  }
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  describe('per-route heartbeat option', () => {
+    beforeEach(async () => {
+      await startServer()
     })
 
-    afterAll(async () => {
-      await context.destroy()
-      await server.close()
+    it('emits heartbeat comments by default', async () => {
+      const received = await collectRawStream(
+        `${server.baseUrl}/api/heartbeat/default`,
+        COLLECTION_WINDOW,
+      )
+
+      expect(received).toContain(HEARTBEAT_COMMENT)
     })
 
-    it('modern route with heartbeatInterval: 100 emits framework heartbeats', async () => {
-      const count = await countHeartbeats(server.baseUrl, '/hb/framework-modern', 550)
-      expect(count).toBeGreaterThanOrEqual(2)
-    })
+    it('emits no heartbeat comments when the route sets heartbeat: false', async () => {
+      const received = await collectRawStream(
+        `${server.baseUrl}/api/heartbeat/disabled`,
+        COLLECTION_WINDOW,
+      )
 
-    it('legacy route with heartbeatInterval: 100 emits framework heartbeats', async () => {
-      const count = await countHeartbeats(server.baseUrl, '/hb/framework-legacy', 550)
-      expect(count).toBeGreaterThanOrEqual(2)
-    })
-
-    it('registration-time heartbeatInterval (registerSSERoutes options) emits heartbeats', async () => {
-      const count = await countHeartbeats(server.baseUrl, '/hb/registration', 550)
-      expect(count).toBeGreaterThanOrEqual(2)
+      expect(received).not.toContain(HEARTBEAT_COMMENT)
     })
   })
 
-  describe('disabling and plugin defaults (plugin heartbeat at 100ms)', () => {
-    let server: SSETestServer
+  describe('registration-level heartbeat option', () => {
+    it('disables heartbeats for routes that do not set their own value', async () => {
+      await startServer({ heartbeat: false })
 
-    beforeAll(async () => {
-      server = await startServer(100, (app) => {
-        app.route(
-          buildApiRoute(
-            modernDisabledContract,
-            (_request, sse) => {
-              sse.start('keepAlive')
-            },
-            { heartbeatInterval: false },
-          ),
-        )
-        app.route(
-          buildApiRoute(modernPluginDefaultContract, (_request, sse) => {
-            sse.start('keepAlive')
-          }),
-        )
-      })
+      const received = await collectRawStream(
+        `${server.baseUrl}/api/heartbeat/default`,
+        COLLECTION_WINDOW,
+      )
+
+      expect(received).not.toContain(HEARTBEAT_COMMENT)
     })
 
-    afterAll(async () => {
-      await server.close()
-    })
+    it('does not override a route that sets heartbeat itself', async () => {
+      await startServer({ heartbeat: true })
 
-    it('heartbeatInterval: false silences the route despite a fast plugin heartbeat', async () => {
-      const count = await countHeartbeats(server.baseUrl, '/hb/disabled', 550)
-      expect(count).toBe(0)
-    })
+      const received = await collectRawStream(
+        `${server.baseUrl}/api/heartbeat/disabled`,
+        COLLECTION_WINDOW,
+      )
 
-    it('routes without overrides still get the plugin-level heartbeat', async () => {
-      const count = await countHeartbeats(server.baseUrl, '/hb/plugin-default', 550)
-      expect(count).toBeGreaterThanOrEqual(2)
+      expect(received).not.toContain(HEARTBEAT_COMMENT)
     })
   })
 })

@@ -14,6 +14,7 @@ import type { FallbackEvent } from './bindingTypes.ts'
 // ============================================================================
 
 const uploadStatusContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Upload status',
   pathResolver: ({ uploadId }) => `/uploads/${uploadId}/status`,
@@ -37,6 +38,7 @@ const uploadStatusContract = defineApiContract({
 })
 
 const plainPollContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Poll only',
   pathResolver: () => '/jobs/current',
@@ -46,6 +48,7 @@ const plainPollContract = defineApiContract({
 })
 
 const sseOnlyContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Stream only',
   pathResolver: () => '/jobs/stream',
@@ -127,6 +130,7 @@ describe('defineFallbackBinding', () => {
 
   it('expands the snapshotEvent shorthand', () => {
     const contract = defineApiContract({
+      visibility: 'public',
       method: 'get',
       summary: 'State',
       pathResolver: () => '/state',

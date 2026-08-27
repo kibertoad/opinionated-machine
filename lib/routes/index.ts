@@ -10,6 +10,7 @@ export {
   type DualModeHandlers,
   // Handler container types (new pattern)
   type DualModeRouteHandler,
+  type DualModeRouteKind,
   type FastifyDualModeHandlerConfig,
   type FastifyDualModeRouteOptions,
   type FastifySSEHandlerConfig,
@@ -27,6 +28,7 @@ export {
   type SSEHandlerResult,
   type SSEModeHandler,
   type SSEOnlyHandlers,
+  type SSEOnlyRouteKind,
   type SSERespondResult,
   // Handler container type (new pattern)
   type SSERouteHandler,
@@ -58,18 +60,9 @@ export {
   setupSSESession,
 } from './fastifyRouteUtils.js'
 
-// SSE route configuration for @fastify/sse 0.6 (route kinds + heartbeats)
+// Response schema helpers
 export {
-  resolveHeartbeatInterval,
-  SSE_ROUTE_CONFIG_KEY,
-  type SSERouteRuntimeConfig,
-  startFrameworkHeartbeat,
-} from './sseHeartbeat.js'
-export {
-  buildSSERouteField,
-  type FrameworkSSERouteOptions,
-  mergeSSERouteField,
-  type SSERouteField,
-  type SSERouteFieldObject,
-  type SSERouteKind,
-} from './sseRouteConfig.js'
+  buildSseEventSchema,
+  buildSseResponseSchemas,
+  type ResponseSchemasByStatusCode,
+} from './sseResponseSchema.js'
