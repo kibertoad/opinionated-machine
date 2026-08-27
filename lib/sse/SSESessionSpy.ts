@@ -1,10 +1,22 @@
 import type { SSESession } from './AbstractSSEController.ts'
 
-type ConnectionWaiter = {
-  resolve: (connection: SSESession) => void
+/**
+ * Minimal shape of an SSE session the spy needs in order to track it.
+ *
+ * Both the `SSESession` produced by this package's own SSE routes and the one
+ * produced by `@lokalise/fastify-api-contracts` (used by `buildApiRoute`)
+ * satisfy it, which lets a single spy be attached to either route style.
+ */
+export type SpiedSSESession = {
+  id: string
+  request: { url: string }
+}
+
+type ConnectionWaiter<TSession extends SpiedSSESession> = {
+  resolve: (connection: TSession) => void
   reject: (error: Error) => void
   timeoutId: ReturnType<typeof setTimeout>
-  predicate?: (connection: SSESession) => boolean
+  predicate?: (connection: TSession) => boolean
 }
 
 type DisconnectionWaiter = {
@@ -14,25 +26,30 @@ type DisconnectionWaiter = {
   timeoutId: ReturnType<typeof setTimeout>
 }
 
-export type SSESessionEvent = {
+export type SSESessionEvent<TSession extends SpiedSSESession = SSESession> = {
   type: 'connect' | 'disconnect'
   connectionId: string
-  connection?: SSESession
+  connection?: TSession
 }
 
 /**
  * Connection spy for testing SSE controllers.
  * Tracks connection and disconnection events separately.
+ *
+ * @template TSession - The session type the spy observes. Defaults to this
+ *   package's `SSESession`, which is what `AbstractSSEController` reports.
+ *   Tests wiring the spy to `buildApiRoute` routes get it parameterized with
+ *   the contracts package session type via `createSSESessionSpy()`.
  */
-export class SSESessionSpy {
-  private events: SSESessionEvent[] = []
+export class SSESessionSpy<TSession extends SpiedSSESession = SSESession> {
+  private events: SSESessionEvent<TSession>[] = []
   private activeConnections: Set<string> = new Set()
   private claimedConnections: Set<string> = new Set()
-  private connectionWaiters: ConnectionWaiter[] = []
+  private connectionWaiters: ConnectionWaiter<TSession>[] = []
   private disconnectionWaiters: DisconnectionWaiter[] = []
 
   /** @internal Called when a connection is established */
-  addConnection(connection: SSESession): void {
+  addConnection(connection: TSession): void {
     this.events.push({ type: 'connect', connectionId: connection.id, connection })
     this.activeConnections.add(connection.id)
 
@@ -88,8 +105,8 @@ export class SSESessionSpy {
    */
   waitForConnection(options?: {
     timeout?: number
-    predicate?: (connection: SSESession) => boolean
-  }): Promise<SSESession> {
+    predicate?: (connection: TSession) => boolean
+  }): Promise<TSession> {
     const timeout = options?.timeout ?? 5000
     const predicate = options?.predicate
 
@@ -108,17 +125,52 @@ export class SSESessionSpy {
     }
 
     // No matching connection yet, create a waiter
-    return new Promise<SSESession>((resolve, reject) => {
+    return new Promise<TSession>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         const index = this.connectionWaiters.findIndex((w) => w.resolve === resolve)
         if (index !== -1) {
           this.connectionWaiters.splice(index, 1)
         }
-        reject(new Error(`Timeout waiting for connection after ${timeout}ms`))
+        reject(
+          new Error(
+            `Timeout waiting for connection after ${timeout}ms${this.describeMissedConnections(predicate)}`,
+          ),
+        )
       }, timeout)
 
       this.connectionWaiters.push({ resolve, reject, timeoutId, predicate })
     })
+  }
+
+  /**
+   * Explain a timeout that had matching connections which were already gone.
+   *
+   * `waitForConnection` only hands back sessions that are still active, since a
+   * closed session can no longer be sent events. A route that streams with
+   * `autoClose` closes its session as the handler returns, so its connection is
+   * registered and closed before a test can claim it — without this hint that
+   * shows up as a bare timeout with no indication of what went wrong.
+   */
+  private describeMissedConnections(predicate?: (connection: TSession) => boolean): string {
+    const missed = this.events.filter(
+      (e) =>
+        e.type === 'connect' &&
+        e.connection &&
+        !this.activeConnections.has(e.connection.id) &&
+        (!predicate || predicate(e.connection)),
+    )
+    if (missed.length === 0) {
+      return ''
+    }
+
+    const ids = missed.map((e) => e.connectionId).join(', ')
+    return (
+      `. ${missed.length} matching connection(s) were registered but had already closed: ${ids}. ` +
+      'Only sessions that are still open can be awaited, since a closed one can no longer be sent ' +
+      'events. A session started with `autoClose` closes as its handler returns, so a route that ' +
+      'uses one cannot be awaited at all - omit `awaitServerConnection` there and assert on the ' +
+      'events the client received instead.'
+    )
   }
 
   /** Wait for a specific connection to disconnect */
@@ -158,7 +210,7 @@ export class SSESessionSpy {
   }
 
   /** Get all connection events in order, optionally filtered by connectionId */
-  getEvents(connectionId?: string): SSESessionEvent[] {
+  getEvents(connectionId?: string): SSESessionEvent<TSession>[] {
     if (connectionId === undefined) {
       return [...this.events]
     }
