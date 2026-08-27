@@ -35,6 +35,7 @@ import {
   TestRespondWithoutReturnController,
   TestRoomSSEController,
   TestSendStreamSSEController,
+  TestSlowStartPostSSEController,
   TestSSEController,
   TestValidationSSEController,
 } from './testControllers.js'
@@ -107,6 +108,9 @@ export class TestPostSSEModule extends AbstractModule<TestPostSSEModuleDependenc
     return {
       testPostSSEController: asSSEControllerClass(TestPostSSEController, { diOptions }),
       testLargeContentSSEController: asSSEControllerClass(TestLargeContentSSEController, {
+        diOptions,
+      }),
+      testSlowStartPostSSEController: asSSEControllerClass(TestSlowStartPostSSEController, {
         diOptions,
       }),
     }

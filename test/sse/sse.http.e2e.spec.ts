@@ -11,7 +11,10 @@ import {
 } from '../../index.js'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 import { validationTestStreamContract } from './fixtures/testContracts.js'
-import type { TestSSEController } from './fixtures/testControllers.js'
+import type {
+  TestSlowStartPostSSEController,
+  TestSSEController,
+} from './fixtures/testControllers.js'
 import {
   TestAuthSSEModule,
   TestChannelSSEModule,
@@ -1777,5 +1780,144 @@ describe('SSE Inject E2E (event validation)', () => {
       count: 1,
       status: 'inactive',
     })
+  })
+})
+
+describe('SSE HTTP E2E (POST endpoints)', () => {
+  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
+  let context: DIContext<object, object>
+
+  beforeEach(async () => {
+    const container = createContainer({ injectionMode: 'PROXY' })
+    context = new DIContext<object, object>(container, { isTestMode: true }, {})
+    context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
+
+    server = await createSSETestServer(
+      (app) => {
+        context.registerSSERoutes(app)
+      },
+      {
+        configureApp: (app) => {
+          app.setValidatorCompiler(validatorCompiler)
+          app.setSerializerCompiler(serializerCompiler)
+        },
+        setup: () => ({ context }),
+      },
+    )
+  })
+
+  afterEach(async () => {
+    await server.resources.context.destroy()
+    await server.close()
+  })
+
+  function getSlowStartController(): TestSlowStartPostSSEController {
+    return server.resources.context.diContainer.resolve<TestSlowStartPostSSEController>(
+      'testSlowStartPostSSEController',
+    )
+  }
+
+  it('streams events from a POST endpoint with a JSON body', async () => {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+      method: 'POST',
+      body: { message: 'hello streaming world', stream: true },
+    })
+
+    expect(client.response.status).toBe(200)
+    expect(client.response.headers.get('content-type')).toContain('text/event-stream')
+
+    const events = await client.collectEvents((event) => event.event === 'done')
+    const chunks = events.filter((e) => e.event === 'chunk').map((e) => JSON.parse(e.data).content)
+
+    expect(chunks).toEqual(['hello', 'streaming', 'world'])
+    expect(JSON.parse(events.at(-1)!.data)).toEqual({ totalTokens: 3 })
+
+    client.close()
+  })
+
+  it('sends a raw string body verbatim and honours an explicit content-type', async () => {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'raw body', stream: true }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    expect(client.response.status).toBe(200)
+
+    const events = await client.collectEvents((event) => event.event === 'done')
+    expect(events.filter((e) => e.event === 'chunk')).toHaveLength(2)
+
+    client.close()
+  })
+
+  it('rejects a body on a GET request', async () => {
+    await expect(
+      SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+        body: { message: 'hi', stream: true },
+      }),
+    ).rejects.toThrow('a request body requires a non-GET method')
+  })
+
+  it('exposes status and SSE headers while the handler is still running', async () => {
+    const controller = getSlowStartController()
+
+    // Handler calls sse.start() and only then does its slow work
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/slow-start/stream', {
+      method: 'POST',
+      body: { prompt: 'tell me a story' },
+    })
+
+    // The response is on the wire before the slow work finished
+    expect(client.response.status).toBe(200)
+    expect(client.response.headers.get('content-type')).toContain('text/event-stream')
+    expect(controller.pendingSlowWorkCount).toBe(1)
+
+    // Now release the slow work and consume what it produced
+    controller.releaseSlowWork()
+
+    const events = await client.collectEvents((event) => event.event === 'done')
+    expect(events.map((e) => e.event)).toEqual(['chunk', 'done'])
+    expect(JSON.parse(events[0]!.data)).toEqual({ content: 'tell me a story' })
+
+    client.close()
+  })
+
+  it('resolves the server-side connection for a POST request', async () => {
+    const controller = getSlowStartController()
+
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/slow-start/stream',
+      {
+        method: 'POST',
+        body: { prompt: 'awaited' },
+        awaitServerConnection: { controller },
+      },
+    )
+
+    expect(serverConnection.request.method).toBe('POST')
+    expect(serverConnection.request.url).toBe('/api/slow-start/stream')
+
+    controller.releaseSlowWork()
+
+    const events = await client.collectEvents((event) => event.event === 'done')
+    expect(JSON.parse(events[0]!.data)).toEqual({ content: 'awaited' })
+
+    client.close()
+  })
+
+  it('surfaces a failure raised before sse.start() as the declared JSON status', async () => {
+    const client = await SSEHttpClient.connect(server.baseUrl, '/api/slow-start/stream', {
+      method: 'POST',
+      body: { prompt: 'tell me a story', failBeforeStart: true },
+    })
+
+    expect(client.response.status).toBe(503)
+    expect(client.response.headers.get('content-type')).not.toContain('text/event-stream')
+
+    // Body is still readable as JSON - events were never consumed, so it isn't locked
+    await expect(client.response.json()).resolves.toEqual({ message: 'Upstream unavailable' })
+
+    client.close()
   })
 })

@@ -9,6 +9,11 @@ import { type ParsedSSEEvent, parseSSEBuffer } from '../sse/sseParser.ts'
 export type HasSessionSpy = { connectionSpy: SSESessionSpy }
 
 /**
+ * HTTP methods supported when connecting to an SSE endpoint.
+ */
+export type SSEHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH'
+
+/**
  * Options for connecting to an SSE endpoint via HTTP.
  */
 export type SSEHttpConnectOptions = {
@@ -16,6 +21,16 @@ export type SSEHttpConnectOptions = {
   query?: Record<string, string | undefined>
   /** Additional headers to send with the request */
   headers?: Record<string, string>
+  /** HTTP method to use (default: 'GET') */
+  method?: SSEHttpMethod
+  /**
+   * Request body. Objects are JSON-stringified and `content-type: application/json`
+   * is set unless `headers` already provides a content type. Strings are sent
+   * verbatim (useful for asserting on malformed-payload handling).
+   *
+   * Requires a non-GET `method`.
+   */
+  body?: unknown
 }
 
 /**
@@ -53,6 +68,13 @@ export type SSEHttpConnectResult = {
  * - **Long-lived connections** that stay open indefinitely
  * - **Real-time notifications** where events arrive over time
  * - **Push-based streaming** where the client waits for server-initiated events
+ * - **Assertions on the wire while the handler is still running** - `connect()`
+ *   resolves as soon as headers arrive, so `response.status` / `response.headers`
+ *   can be checked before the handler produces its first event
+ *
+ * GET, POST, PUT and PATCH are all supported (see `method` / `body` in
+ * {@link SSEHttpConnectOptions}), so POST SSE endpoints that take a request
+ * body can be tested over real HTTP too.
  *
  * **When to use SSEHttpClient vs SSEInjectClient:**
  *
@@ -96,10 +118,20 @@ export type SSEHttpConnectResult = {
  * ```
  */
 export class SSEHttpClient {
-  /** The fetch Response object. Available immediately after connect() returns. */
+  /**
+   * The fetch Response object. Available immediately after connect() returns,
+   * before any event is consumed, so status and headers can be asserted while
+   * the handler is still running.
+   *
+   * The response body is only locked once events are first consumed, so
+   * `response.json()` / `response.text()` still work for endpoints that
+   * answered with a regular HTTP response instead of a stream (for example an
+   * error raised before `sse.start()`).
+   */
   readonly response: Response
   private readonly abortController: AbortController
-  private readonly reader: ReadableStreamDefaultReader<Uint8Array>
+  private readonly body: ReadableStream<Uint8Array>
+  private streamReader: ReadableStreamDefaultReader<Uint8Array> | undefined
   private readonly decoder = new TextDecoder()
   private buffer = ''
   private closed = false
@@ -110,7 +142,13 @@ export class SSEHttpClient {
     if (!response.body) {
       throw new Error('SSE response has no body')
     }
-    this.reader = response.body.getReader()
+    this.body = response.body
+  }
+
+  /** Lazily acquire the stream reader, locking the response body on first use. */
+  private get reader(): ReadableStreamDefaultReader<Uint8Array> {
+    this.streamReader ??= this.body.getReader()
+    return this.streamReader
   }
 
   /**
@@ -122,7 +160,7 @@ export class SSEHttpClient {
    *
    * @param baseUrl - Base URL of the server (e.g., 'http://localhost:3000')
    * @param path - SSE endpoint path (e.g., '/api/notifications')
-   * @param options - Connection options (query params, headers)
+   * @param options - Connection options (method, body, query params, headers)
    * @returns Connected SSE client ready to receive events
    *
    * @example
@@ -133,6 +171,16 @@ export class SSEHttpClient {
    *   '/api/stream',
    *   { query: { userId: '123' }, headers: { authorization: 'Bearer token' } }
    * )
+   *
+   * // POST with a JSON body (content-type defaults to application/json)
+   * const client = await SSEHttpClient.connect(
+   *   'http://localhost:3000',
+   *   '/api/chat/completions',
+   *   { method: 'POST', body: { message: 'Hello', stream: true } }
+   * )
+   * // Headers are on the wire before the handler finished its slow work
+   * expect(client.response.status).toBe(200)
+   * expect(client.response.headers.get('content-type')).toContain('text/event-stream')
    *
    * // With awaitServerConnection (waits for server-side registration)
    * const { client, serverConnection } = await SSEHttpClient.connect(
@@ -168,13 +216,34 @@ export class SSEHttpClient {
       }
     }
 
+    const method = options?.method ?? 'GET'
+    const headers: Record<string, string> = {
+      Accept: 'text/event-stream',
+      ...options?.headers,
+    }
+
+    let body: string | undefined
+    if (options?.body !== undefined) {
+      if (method === 'GET') {
+        throw new Error(
+          "SSEHttpClient.connect(): a request body requires a non-GET method. Pass e.g. { method: 'POST', body }.",
+        )
+      }
+      body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body)
+      const hasContentType = Object.keys(headers).some(
+        (header) => header.toLowerCase() === 'content-type',
+      )
+      if (!hasContentType) {
+        headers['content-type'] = 'application/json'
+      }
+    }
+
     // Connect - fetch() returns when headers are received
     const abortController = new AbortController()
     const response = await fetch(`${baseUrl}${pathWithQuery}`, {
-      headers: {
-        Accept: 'text/event-stream',
-        ...options?.headers,
-      },
+      method,
+      headers,
+      body,
       signal: abortController.signal,
     })
 
@@ -185,7 +254,7 @@ export class SSEHttpClient {
       const { controller, timeout } = options.awaitServerConnection
       const serverConnection = await controller.connectionSpy.waitForConnection({
         timeout: timeout ?? 5000,
-        predicate: (conn) => conn.request.url === pathWithQuery,
+        predicate: (conn) => conn.request.url === pathWithQuery && conn.request.method === method,
       })
       return { client, serverConnection }
     }
@@ -365,8 +434,10 @@ export class SSEHttpClient {
    */
   close(): void {
     this.closed = true
-    // Cancel the reader first to prevent unhandled rejections from pending reads
-    this.reader.cancel().catch(() => {
+    // Cancel the reader first to prevent unhandled rejections from pending reads.
+    // Only touch it if events were actually consumed - acquiring it here would
+    // lock a body the caller may still want to read as JSON/text.
+    this.streamReader?.cancel().catch(() => {
       // Expected: may already be closed or errored
     })
     this.abortController.abort()

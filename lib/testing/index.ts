@@ -4,6 +4,7 @@ export {
   type SSEHttpConnectOptions,
   type SSEHttpConnectResult,
   type SSEHttpConnectWithSpyOptions,
+  type SSEHttpMethod,
 } from './sseHttpClient.js'
 export { SSEInjectClient, SSEInjectConnection } from './sseInjectClient.js'
 export { injectPayloadSSE, injectSSE } from './sseInjectHelpers.js'
