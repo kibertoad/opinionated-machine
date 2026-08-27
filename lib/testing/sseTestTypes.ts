@@ -149,11 +149,18 @@ export type InjectPayloadSSEOptions<Contract extends AnySSEContractDefinition> =
 }
 
 /**
- * SSE response data.
+ * Status code and headers of an SSE response, available as soon as they are on the wire —
+ * before the handler has finished streaming.
  */
-export type SSEResponse = {
+export type SSEResponseHead = {
   statusCode: number
   headers: Record<string, string | string[] | undefined>
+}
+
+/**
+ * SSE response data.
+ */
+export type SSEResponse = SSEResponseHead & {
   body: string
 }
 

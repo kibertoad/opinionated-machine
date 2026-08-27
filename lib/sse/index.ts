@@ -52,6 +52,11 @@ export {
   parseSSEBuffer,
   parseSSEEvents,
 } from './sseParser.js'
+export {
+  SSE_DIAGNOSTICS_HEADER,
+  type SSEDiagnosticsScope,
+  type SSESendFailure,
+} from './sseSendDiagnostics.js'
 // SSE Subscriptions
 export {
   defineEventMetadata,

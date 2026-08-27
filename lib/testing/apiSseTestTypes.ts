@@ -11,7 +11,8 @@ import type {
 } from '@lokalise/api-contracts'
 import type { InjectByApiContractParams } from '@lokalise/fastify-api-contracts'
 import type { z } from 'zod'
-import type { SSEResponse } from './sseTestTypes.ts'
+import type { SSESendFailure } from '../sse/sseSendDiagnostics.ts'
+import type { SSEResponse, SSEResponseHead } from './sseTestTypes.ts'
 
 /**
  * Request params for {@link injectApiSSE}, derived from a `defineApiContract` contract.
@@ -212,6 +213,16 @@ type HasApiSSEResponse<Contract extends ApiContract> = [ApiSSEEventSchemas<Contr
 export type ApiSSEEventReader<Contract extends ApiContract> = () => Promise<ApiSSEEvent<Contract>[]>
 
 /**
+ * The callable form of {@link InjectApiSSEResult.stream}.
+ *
+ * Always a function, for the same reason {@link ApiSSEEventReader} is; the result type below
+ * hides it behind {@link HasApiSSEResponse}.
+ */
+export type ApiSSEStreamReader<Contract extends ApiContract> = (
+  signal?: AbortSignal,
+) => AsyncGenerator<ApiSSEEvent<Contract>, void, unknown>
+
+/**
  * Result of an {@link injectApiSSE} call.
  *
  * The `defineApiContract` counterpart of `InjectSSEResult`: same `closed` promise and
@@ -224,6 +235,44 @@ export type InjectApiSSEResult<Contract extends ApiContract> = {
    * Parse the body with `parseSSEEvents()` — or use `events()` for typed events.
    */
   closed: Promise<SSEResponse>
+
+  /**
+   * Resolves as soon as the response head is on the wire — for a streaming response, when
+   * the handler calls `sse.start()`, long before it finishes.
+   *
+   * Lets a test assert the status and headers of a stream while the handler is still
+   * producing events, which `closed` cannot: it only settles once the stream ends.
+   *
+   * @example
+   * ```typescript
+   * const { head, stream } = injectApiSSE(app, contract, { body })
+   * expect((await head).statusCode).toBe(200)  // handler is still working
+   * ```
+   */
+  head: Promise<SSEResponseHead>
+
+  /**
+   * The sends the route could not make while serving this request — a payload that failed the
+   * contract's schema for its event, say — recorded instead of being left in the server log.
+   *
+   * `events()` and `stream()` already fail on the failures that truncated the response, so
+   * this is for the ones they deliberately let pass: a handler that catches its own failed
+   * send and streams a fallback produced the response it meant to, and a test asserting on
+   * that response should not fail — but may still want to assert the send was attempted, and
+   * rejected, exactly once.
+   *
+   * Only meaningful once the response completed (`await closed`), and only for routes built
+   * with this package's `buildApiRoute`; anything else records nothing.
+   *
+   * @example
+   * ```typescript
+   * const { closed, events, sendFailures } = injectApiSSE(app, contract, { body })
+   * await closed
+   * expect(await events()).toHaveLength(2)          // the fallback stream is intact
+   * expect(sendFailures()).toMatchObject([{ eventName: 'issue', handled: true }])
+   * ```
+   */
+  sendFailures(): SSESendFailure[]
 
   /**
    * Awaits the response, asserts the status code matches, parses the body against the
@@ -259,8 +308,9 @@ export type InjectApiSSEResult<Contract extends ApiContract> = {
    * statuses yields the union of both.
    *
    * Throws if the response isn't an SSE stream (use `bodyForStatus` for the documented
-   * error statuses), if an event name isn't declared by the contract, or if an event payload
-   * doesn't match its schema.
+   * error statuses), if an event name isn't declared by the contract, if an event payload
+   * doesn't match its schema, or if a send the route could not make — and did not recover
+   * from — ended the stream early (see `sendFailures()`).
    *
    * A contract that declares no SSE response at all types this as `never`, so calling it is
    * a compile error rather than a guaranteed throw — reach for `injectByApiContract` there.
@@ -273,4 +323,40 @@ export type InjectApiSSEResult<Contract extends ApiContract> = {
    * ```
    */
   events: HasApiSSEResponse<Contract> extends true ? ApiSSEEventReader<Contract> : never
+
+  /**
+   * Yields the contract's events as the handler writes them, rather than after the response
+   * completes — the same discriminated union and the same validation `events()` provides.
+   *
+   * This is what `events()` cannot show: that event N reached the client while the handler
+   * was still working. The request is injected with Fastify's `payloadAsStream`, so no
+   * `app.listen()`, base URL or manual connection cleanup is involved.
+   *
+   * Events are buffered from the moment the request is injected, so a generator started
+   * late still yields the stream from its first event, and the handler is never blocked by
+   * a slow (or absent) consumer. Breaking out of the loop leaves the rest of the stream
+   * readable through `closed` / `events()`; calling `stream()` again replays it from the
+   * start.
+   *
+   * Throws — before yielding anything — if the response isn't an SSE stream, and rethrows
+   * the same event-level validation errors `events()` does. If the stream was cut short by a
+   * send the route could not make (a payload that didn't match the contract's schema for its
+   * event, and that nothing caught), the generator ends by throwing an error naming that
+   * event and its Zod issues, instead of leaving the test to explain a missing event on its
+   * own. A failure the route did catch and recovered from is left to `sendFailures()`.
+   *
+   * A contract that declares no SSE response types this as `never`, exactly as `events()`.
+   *
+   * @param signal - Optional `AbortSignal` to stop the generator early
+   *
+   * @example
+   * ```typescript
+   * const { stream } = injectApiSSE(app, lqaSegmentContract, { body: { segment } })
+   *
+   * for await (const event of stream()) {
+   *   if (event.event === 'issue') expect(handlerFinished).toBe(false)  // progressive delivery
+   * }
+   * ```
+   */
+  stream: HasApiSSEResponse<Contract> extends true ? ApiSSEStreamReader<Contract> : never
 }

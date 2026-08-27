@@ -1,9 +1,17 @@
+export {
+  ApiSSEHttpClient,
+  type ConnectApiSSEParams,
+  type ConnectApiSSEResult,
+  type ConnectApiSSEWithSpyOptions,
+  connectApiSSE,
+} from './apiSseHttpHelpers.js'
 export { injectApiSSE } from './apiSseInjectHelpers.js'
 export type {
   ApiDeclaredResponseBody,
   ApiDeclaredResponseStatus,
   ApiSSEEvent,
   ApiSSEEventReader,
+  ApiSSEStreamReader,
   InjectApiSSEParams,
   InjectApiSSEResult,
 } from './apiSseTestTypes.js'
@@ -32,5 +40,6 @@ export type {
   SSEConnectOptions,
   SSEInjectMethod,
   SSEResponse,
+  SSEResponseHead,
   SSETestConnection,
 } from './sseTestTypes.js'
