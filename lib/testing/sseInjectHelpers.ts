@@ -5,6 +5,7 @@ import type {
 } from '@lokalise/api-contracts'
 import type { z } from 'zod'
 import type { AnyFastifyInstance } from './AnyFastifyInstance.ts'
+import { truncateBody } from './sseInjectShared.ts'
 import type {
   DeclaredResponseBody,
   DeclaredResponseStatus,
@@ -13,20 +14,6 @@ import type {
   InjectSSEResult,
   SSEResponse,
 } from './sseTestTypes.ts'
-
-/** Truncate a long body string for error messages. */
-const BODY_TRUNCATE_LIMIT = 500
-const truncateBody = (body: string): string => {
-  if (body.length <= BODY_TRUNCATE_LIMIT) {
-    return body
-  }
-  // Step back one unit if the cut would split a surrogate pair, so the
-  // snippet never ends in a lone (invalid) surrogate.
-  const lastCode = body.charCodeAt(BODY_TRUNCATE_LIMIT - 1)
-  const end =
-    lastCode >= 0xd800 && lastCode <= 0xdbff ? BODY_TRUNCATE_LIMIT - 1 : BODY_TRUNCATE_LIMIT
-  return `${body.slice(0, end)}…`
-}
 
 /**
  * Build a `bodyForStatus` accessor bound to one inject call. The closure

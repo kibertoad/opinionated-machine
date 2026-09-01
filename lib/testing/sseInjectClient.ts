@@ -1,5 +1,6 @@
 import { type ParsedSSEEvent, parseSSEEvents } from '@opinionated-machine/sse-parser'
 import type { AnyFastifyInstance } from './AnyFastifyInstance.ts'
+import { truncateBody } from './sseInjectShared.ts'
 import type { SSEConnectOptions, SSETestConnection } from './sseTestTypes.ts'
 
 /**
@@ -104,6 +105,39 @@ export class SSEInjectConnection implements SSETestConnection {
    */
   getHeaders(): Record<string, string | string[] | undefined> {
     return this.response.headers
+  }
+
+  /**
+   * Get the raw response body as a string.
+   *
+   * For a streaming response this is the raw `text/event-stream` payload the
+   * events were parsed from. For a route that answered with a status code
+   * before streaming started (auth failure, validation error, integration
+   * unavailable) it is that non-streaming body - typically JSON.
+   */
+  getBody(): string {
+    return this.response.body
+  }
+
+  /**
+   * Parse the raw response body as JSON, mirroring Fastify's inject `json()`.
+   *
+   * @throws if the body is empty or not valid JSON. A `text/event-stream` body
+   * is not JSON, so this only makes sense for responses emitted before
+   * streaming started.
+   */
+  json<T = unknown>(): T {
+    const { body } = this.response
+    if (!body) {
+      throw new Error(`json() — response body is empty (status ${this.response.statusCode})`)
+    }
+    try {
+      return JSON.parse(body) as T
+    } catch (err) {
+      throw new Error(
+        `json() — body is not valid JSON: ${(err as Error).message}; body: ${truncateBody(body)}`,
+      )
+    }
   }
 }
 

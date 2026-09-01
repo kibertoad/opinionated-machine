@@ -77,6 +77,8 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [SSEHttpClient](#ssehttpclient)
     - [SSEInjectClient](#sseinjectclient)
     - [Contract-Aware Inject Helpers](#contract-aware-inject-helpers)
+    - [Contract-Aware HTTP Helpers](#contract-aware-http-helpers)
+    - [When a Handler Fails to Send an Event](#when-a-handler-fails-to-send-an-event)
 - [Dual-Mode Controllers (SSE + Sync)](#dual-mode-controllers-sse--sync)
   - [Overview](#overview)
   - [Defining Dual-Mode Contracts](#defining-dual-mode-contracts)
@@ -1547,7 +1549,7 @@ The test client depends on the session mode:
 | Session Mode | Test Client | Why |
 |-------------|-------------|--------|
 | `autoClose` | `SSEInjectClient` or `injectSSE`/`injectPayloadSSE` | Handler completes and closes connection; all events available at once |
-| `keepAlive` | `SSEHttpClient` | Connection stays open; events arrive incrementally via server push |
+| `keepAlive` | `SSEHttpClient` (`connectApiSSE` for `defineApiContract` contracts) | Connection stays open; events arrive incrementally via server push |
 
 Enable the connection spy by passing `isTestMode: true` in diOptions (required for `awaitServerConnection`).
 
@@ -1622,7 +1624,7 @@ describe('NotificationsSSEController', () => {
 
 #### Testing autoClose SSE (request-response streaming)
 
-Use `SSEInjectClient` or the contract-aware `injectSSE`/`injectPayloadSSE` helpers. No real HTTP server needed - all events are available immediately after the handler completes:
+Use `SSEInjectClient` or the contract-aware `injectSSE`/`injectPayloadSSE` helpers (`injectApiSSE` for `defineApiContract` contracts). No real HTTP server needed - all events are available immediately after the handler completes:
 
 ```ts
 import { SSEInjectClient } from 'opinionated-machine'
@@ -1641,6 +1643,8 @@ it('streams chat completions', async () => {
   expect(chunks.length).toBeGreaterThan(0)
 })
 ```
+
+If the route answers with an error status before streaming starts, the response carries a JSON body instead of events - read it with `conn.getBody()` or `conn.json()` (see [SSEInjectClient](#sseinjectclient)).
 
 #### Asserting documented error responses with `bodyForStatus`
 
@@ -1676,6 +1680,70 @@ it('returns the documented 401 body when unauthenticated', async () => {
 
 `bodyForStatus(status)` awaits the response, asserts the actual status matches, JSON-parses the body, and runs it through the Zod schema declared for that status. It throws — with the offending status and a truncated body snippet — if the status doesn't match, the contract declares no schema for that status, the body isn't valid JSON, or Zod parsing fails. The raw `closed` promise is still exposed for callers that want to read `body: string` directly.
 
+#### Contracts built with `defineApiContract`: `injectApiSSE`
+
+`injectSSE` / `injectPayloadSSE` are typed against the legacy `SSEContractDefinition` from `buildSseContract`. For contracts built with the newer `defineApiContract` + `sseResponse` / `sseBody` API, use `injectApiSSE` instead — one function for every method, with `params` in the same shape `injectByApiContract` takes:
+
+```ts
+import { defineApiContract, sseResponse } from '@lokalise/api-contracts'
+import { z } from 'zod/v4'
+import { injectApiSSE } from 'opinionated-machine'
+
+const lqaSegmentContract = defineApiContract({
+  visibility: 'internal',
+  method: 'post',
+  summary: 'Perform LQA on a text segment',
+  pathResolver: () => '/v1/content/actions/lqa-text-segment',
+  requestBodySchema: z.object({ segment: z.string() }),
+  responsesByStatusCode: {
+    200: sseResponse({ review: z.object({ score: z.number() }) }),
+    400: z.object({ message: z.string() }),
+  },
+})
+
+it('streams the review', async () => {
+  const { events } = injectApiSSE(app, lqaSegmentContract, { body: { segment: 'hello' } })
+
+  // Events are validated against the contract and typed as a union on `event`.
+  for (const event of await events()) {
+    if (event.event === 'review') expect(event.data.score).toBeGreaterThan(0)
+  }
+})
+
+it('returns the documented 400 body for an empty segment', async () => {
+  const { bodyForStatus } = injectApiSSE(app, lqaSegmentContract, { body: { segment: '' } })
+
+  // `body` is typed as `{ message: string }` — the contract's 400 schema.
+  const body = await bodyForStatus(400)
+  expect(body.message).toBe('segment must not be empty')
+})
+```
+
+```ts
+it('sends each issue as soon as it is found', async () => {
+  const { head, stream } = injectApiSSE(app, lqaSegmentContract, { body: { segment: 'hello' } })
+
+  // The head is on the wire as soon as the handler calls sse.start()
+  expect((await head).statusCode).toBe(200)
+
+  for await (const event of stream()) {
+    // Each event is observed while the handler is still producing the next one
+    if (event.event === 'issue') expect(handlerFinished).toBe(false)
+  }
+})
+```
+
+`closed` and `bodyForStatus` behave as they do on `injectSSE`, except that `bodyForStatus` resolves its schema from `responsesByStatusCode`, following the same exact → range → `'default'` precedence as the contract client. `events()` is additionally available: it parses the SSE body and validates each event against the contract's SSE schemas, throwing when the response isn't a stream, when an event name isn't declared, or when a payload fails its schema.
+
+Two accessors read the response before it completes, so an inject-based suite can assert *progressive delivery* without opening a real port for it:
+
+- `head` — `{ statusCode, headers }`, resolved as soon as the response head is on the wire (for a streaming handler, at `sse.start()`).
+- `stream(signal?)` — the same typed, validated events `events()` returns, yielded as the handler writes them. The request is injected with Fastify's `payloadAsStream`; events are buffered from the moment it is injected, so a generator started late replays the stream from its first event, a consumer that breaks early leaves `closed` / `events()` intact, and the handler is never blocked waiting to be read.
+
+`closed` and `events()` still wait for the response to complete, so a route that never closes its stream (a `keepAlive` session) can only be read through `stream()` — or over real HTTP with [`connectApiSSE`](#contract-aware-http-helpers).
+
+The request always carries `accept: text/event-stream`, so a status that declares a stream answers with it — including a dual-mode status whose content map also carries a JSON schema. Those statuses are therefore not callable through `bodyForStatus`; read them with `events()`, or use `injectByApiContract` when you want the JSON side. Conversely, a contract that declares no SSE response at all types `events` as `never`, so calling it is a compile error rather than a guaranteed throw. `events()` is typed from the SSE schemas of *every* declared status, merged the same way the runtime merges them, so a contract streaming on both `200` and `'4xx'` yields the union of both event sets. See [ApiContract controller docs](./lib/api-contracts/docs.md#testing) for the full testing guide.
+
 ### SSESessionSpy API
 
 The `connectionSpy` is available when `isTestMode: true` is passed to `asSSEControllerClass`:
@@ -1704,6 +1772,77 @@ controller.connectionSpy.clear()
 ```
 
 **Note**: `waitForConnection` tracks "claimed" sessions internally. Each call returns a unique unclaimed session, allowing sequential waits for the same URL path without returning the same session twice. This is used internally by `SSEHttpClient.connect()` with `awaitServerConnection`.
+
+#### Standalone spy for `buildApiRoute` routes
+
+`connectionSpy` only exists on `AbstractSSEController`. For routes built with `buildApiRoute` there is no controller to read it off, so `createSSESessionSpy()` returns a spy plus the `onConnect` / `onClose` route hooks that drive it:
+
+```ts
+import { createSSESessionSpy, SSEHttpClient } from 'opinionated-machine'
+
+const { spy, routeOptions } = createSSESessionSpy()
+
+// in the app under test — `routeOptions` is just `{ onConnect, onClose }`
+app.route(buildApiRoute(streamContract, handler, { ...routeOptions }))
+
+// in the test — same race-free connect as with a controller
+const { client, serverConnection } = await SSEHttpClient.connect(baseUrl, '/api/stream', {
+  awaitServerConnection: { spy },
+})
+await serverConnection.send('ping', { seq: 1 })
+```
+
+`awaitServerConnection` accepts either `{ controller }` or `{ spy }`; both wait for the server-side handler to finish registering the session before `connect()` resolves.
+
+**The hooks have to reach the `buildApiRoute()` call itself.** `buildApiRoute` captures `onConnect` / `onClose` when it builds the handler, so assigning them to the `RouteOptions` object it returns does nothing — the connect would just time out:
+
+```ts
+// Does NOT work: the route was already built without the hooks
+const route = controller.routes.streamUpdates
+Object.assign(route, routeOptions) // no-op as far as SSE lifecycle hooks go
+```
+
+A route owned by a controller therefore has to accept SSE route options for a test to be able to spy on it. Take them as a dependency and pass them through:
+
+```ts
+export class StreamController extends AbstractApiController<typeof StreamController.contracts> {
+  static contracts = { streamUpdates: streamUpdatesContract } as const
+
+  readonly routes: Record<keyof typeof StreamController.contracts, RouteOptions>
+
+  constructor({ sseRouteOptions }: StreamControllerDependencies) {
+    super()
+    this.routes = {
+      streamUpdates: buildApiRoute(
+        StreamController.contracts.streamUpdates,
+        this.streamUpdates,
+        sseRouteOptions,
+      ),
+    }
+  }
+}
+
+// production wiring registers no hooks; the test registers the spy's
+const { spy, routeOptions } = createSSESessionSpy()
+const controller = new StreamController({ sseRouteOptions: routeOptions })
+```
+
+If the route already declares lifecycle hooks of its own, use `withSpy()` rather than spreading `routeOptions` over them — spreading silently drops one side or the other, depending on the order. `withSpy()` keeps the route's hook (it runs first, and the spy is notified once it settles) and passes every other option through:
+
+```ts
+const { spy, withSpy } = createSSESessionSpy()
+
+app.route(
+  buildApiRoute(streamContract, handler, withSpy({
+    heartbeat: false,
+    onConnect: (connection) => subscriptions.add(connection.id),
+  })),
+)
+```
+
+**`keepAlive` sessions only.** An `autoClose` route closes its session as the handler returns, and `waitForConnection` only hands back sessions that are still open, since a closed one can no longer be sent events. Awaiting such a connection races and usually times out (with an error that says as much) — omit `awaitServerConnection` for `autoClose` routes and assert on the events the client received instead.
+
+The spy is typed for the `SSESession` of `@lokalise/fastify-api-contracts`, which is what `buildApiRoute` passes to its hooks. To wire the same spy into a `buildFastifyRoute`-built route, parameterize it with this package's session type: `createSSESessionSpy<SSESession>()`.
 
 ### Session Monitoring
 
@@ -2188,9 +2327,9 @@ The library provides utilities for testing SSE endpoints.
 | Session Mode | Test Client | Reason |
 |-------------|-------------|--------|
 | `autoClose` | `SSEInjectClient` or `injectSSE`/`injectPayloadSSE` | Handler completes and closes connection; all events available at once |
-| `keepAlive` | `SSEHttpClient` | Connection stays open; events arrive incrementally via server push |
+| `keepAlive` | `SSEHttpClient` (`connectApiSSE` for `defineApiContract` contracts) | Connection stays open; events arrive incrementally via server push |
 
-`SSEInjectClient` and `injectSSE`/`injectPayloadSSE` do the same thing (Fastify inject), but `injectSSE`/`injectPayloadSSE` provide type safety via contracts while `SSEInjectClient` works with raw URLs.
+`SSEInjectClient` and `injectSSE`/`injectPayloadSSE` do the same thing (Fastify inject), but `injectSSE`/`injectPayloadSSE` provide type safety via contracts while `SSEInjectClient` works with raw URLs. Contracts built with `defineApiContract` use `injectApiSSE` instead of `injectSSE`/`injectPayloadSSE`.
 
 #### Detailed Comparison
 
@@ -2200,12 +2339,14 @@ The library provides utilities for testing SSE endpoints.
 | **Event delivery** | All events returned at once (after handler closes) | Events arrive incrementally |
 | **Connection lifecycle** | Handler must close for request to complete | Can stay open indefinitely |
 | **Server requirement** | No `listen()` needed | Requires a listening server (`SSETestServer.start(app)` or manual `app.listen()`) |
-| **Best for** | `autoClose` SSE (OpenAI-style, batch exports) | `keepAlive` SSE (notifications, live feeds, rooms) |
+| **Request body** | `injectPayloadSSE` / `connectWithBody` | `method` + `body` connect options |
+| **Assertions before the handler finishes** | `injectApiSSE`'s `head` / `stream()` (other inject helpers buffer the whole response) | `client.response` is available as soon as headers arrive |
+| **Best for** | `autoClose` SSE (OpenAI-style, batch exports) | `keepAlive` SSE (notifications, live feeds, rooms), streams whose headers must be asserted mid-handler |
 | **Dual-mode sync** | Use `app.inject()` with `accept: 'application/json'` | Same |
 
 #### SSEHttpClient
 
-For testing `keepAlive` SSE connections using real HTTP. Requires a listening server — use `SSETestServer.start(app)` to start your app on a random port:
+For testing `keepAlive` SSE connections using real HTTP, and for any assertion that has to happen on the wire while the handler is still running. Supports `GET`, `POST`, `PUT` and `PATCH`. Requires a listening server — use `SSETestServer.start(app)` to start your app on a random port:
 
 ```ts
 import { SSEHttpClient } from 'opinionated-machine'
@@ -2303,6 +2444,9 @@ Omit `awaitServerConnection` only in these cases:
 - Testing against external SSE endpoints (not your own controller)
 - When `isTestMode: false` (connectionSpy not available)
 - Simple smoke tests that only verify response headers/status without sending server events
+- Routes whose handler starts an `autoClose` session: it closes as the handler returns, so there is no live session left to wait for — assert on the received events instead
+
+For `keepAlive` routes built with `buildApiRoute` (no controller, so no `connectionSpy`), pass a standalone spy instead of dropping the option: `awaitServerConnection: { spy }`, with the spy from [`createSSESessionSpy()`](#standalone-spy-for-buildapiroute-routes).
 
 **Consequence**: Without `awaitServerConnection`, `connect()` resolves as soon as HTTP headers are received. Server-side connection registration may not have completed yet, so you cannot reliably send events from the server immediately after `connect()` returns.
 
@@ -2313,6 +2457,65 @@ expect(client.response.ok).toBe(true)
 expect(client.response.headers.get('content-type')).toContain('text/event-stream')
 client.close()
 ```
+
+**POST/PUT/PATCH endpoints**
+
+`connect()` also issues non-GET requests, so SSE endpoints that take a request body can be tested over real HTTP. Pass `method` and `body`. The method is accepted in either case, so the lowercase spelling your contracts already use (`method: 'post'`) works as-is:
+
+```ts
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+  method: 'POST',
+  body: { message: 'Hello', stream: true },
+})
+
+const events = await client.collectEvents((event) => event.event === 'done')
+```
+
+Bodies `fetch()` can send natively — strings, `URLSearchParams`, `FormData`, `Blob`/`File`, `ArrayBuffer`, typed arrays (`Buffer`, `Uint8Array`, …) and `ReadableStream` — are passed through untouched; anything else is JSON-stringified. `content-type: application/json` is defaulted for JSON-stringified and string bodies (so a raw string stays verbatim, which is handy for asserting on malformed payloads), unless you provide your own content type. Payloads that describe their own encoding — `URLSearchParams`, `FormData`, `Blob` — keep the content type `fetch()` gives them:
+
+```ts
+// Sent as application/x-www-form-urlencoded, not JSON-stringified into `{}`
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+  method: 'post',
+  body: new URLSearchParams({ message: 'Hello' }),
+})
+```
+
+A body without a non-GET `method` throws — `fetch()` cannot attach one to a GET request.
+
+**Asserting on the wire before the handler finishes**
+
+`connect()` resolves as soon as HTTP headers arrive, and `client.response` is populated at that point. That is what makes the "open the stream before the slow work starts" behaviour testable: assert on status and headers while the handler is still awaiting its slow call, then let it proceed.
+
+```ts
+// Handler calls sse.start() and only then makes its slow LLM call
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+  method: 'POST',
+  body: { message: 'Hello', stream: true },
+})
+
+// Already on the wire while the LLM call is still in flight
+expect(client.response.status).toBe(200)
+expect(client.response.headers.get('content-type')).toContain('text/event-stream')
+
+releaseSlowCall()
+const events = await client.collectEvents((event) => event.event === 'done')
+```
+
+The mirror case works too: a failure raised *before* `sse.start()` reaches the client as the JSON status the contract declares, not as a terminal `error` event. The response body is only locked once you start consuming events, so it can still be read as JSON:
+
+```ts
+const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+  method: 'POST',
+  body: { message: 'Hello', stream: true },
+})
+
+expect(client.response.status).toBe(503)
+expect(client.response.headers.get('content-type')).not.toContain('text/event-stream')
+expect(await client.response.json()).toEqual({ message: 'Upstream unavailable' })
+```
+
+Read that body *before* `close()`: closing aborts the request, so a body read after it (or from a `finally { client.close() }` block that runs first) rejects with an `AbortError`.
 
 #### SSEInjectClient
 
@@ -2334,11 +2537,38 @@ const conn = await client.connectWithBody(
   { model: 'gpt-4', messages: [...], stream: true },
 )
 
+// Any other method inject() accepts works too - the option is typed as
+// `SSEInjectMethod`, exported so you never have to redeclare that union
+const conn = await client.connectWithBody(
+  '/api/exports/42',
+  { reason: 'cleanup' },
+  { method: 'DELETE' },
+)
+
 // All events are available immediately (inject waits for handler to complete)
 expect(conn.getStatusCode()).toBe(200)
 const events = conn.getReceivedEvents()
 const chunks = events.filter(e => e.event === 'chunk')
 ```
+
+When the route answers with a status code *before* streaming starts (auth failure,
+validation error, integration unavailable), it sends a JSON body rather than events.
+`getBody()` returns that body raw and `json()` parses it, mirroring Fastify's own
+inject response:
+
+```ts
+const conn = await client.connect('/api/export/progress')
+
+expect(conn.getStatusCode()).toBe(503)
+expect(conn.json<{ errorCode: string }>()).toMatchObject({
+  errorCode: 'INTEGRATION_NOT_AVAILABLE',
+})
+```
+
+`json()` throws if the body is empty or isn't valid JSON, so it only makes sense for
+these pre-stream responses - a `text/event-stream` body is not JSON. For contract-typed
+tests, `injectSSE`/`injectPayloadSSE`/`injectApiSSE` offer `bodyForStatus(status)`, which
+also validates the body against the contract's schema for that status.
 
 #### Contract-Aware Inject Helpers
 
@@ -2361,6 +2591,66 @@ const { closed } = injectPayloadSSE(app, chatCompletionContract, {
 const result = await closed
 const events = parseSSEEvents(result.body)
 ```
+
+For contracts built with `defineApiContract`, use `injectApiSSE` — it types and validates the events for you, and `stream()` yields them as the handler writes them. See [Contracts built with `defineApiContract`: `injectApiSSE`](#contracts-built-with-defineapicontract-injectapisse).
+
+#### Contract-Aware HTTP Helpers
+
+`connectApiSSE` is the real-HTTP counterpart of `injectApiSSE`: the same typed, validated event union, over a connection that can stay open. Use it for `keepAlive` routes, whose response never completes, and wherever a suite needs a real socket.
+
+```ts
+import { connectApiSSE, SSETestServer } from 'opinionated-machine'
+
+const server = await SSETestServer.start(app)
+
+// Method, path, query params, headers and body all come from the contract
+const client = await connectApiSSE(server.baseUrl, lqaSegmentContract, {
+  body: { segment: 'hello' },
+})
+
+expect(client.response.status).toBe(200) // asserted while the handler is still working
+
+for await (const event of client.events()) {
+  if (event.event === 'issue') expect(event.data.severity).toBe('minor') // typed by the contract
+  if (event.event === 'review') break
+}
+
+client.close()
+await server.close()
+```
+
+- `client.events(signal?)` and `client.collectEvents(countOrPredicate, timeout?)` mirror `SSEHttpClient`'s readers, with each event validated against the contract's SSE schemas and typed as a union on `event` — the predicate sees the narrowed type too, and is invoked exactly once per event.
+- Both readers reject a response that isn't an event stream (a documented `400`/`401` raised before `sse.start()`, say) with its status and body, rather than reporting a stream that produced no events. `client.response` is still readable afterwards, so the JSON body can be asserted.
+- `client.response` is the fetch `Response`, available before any event is consumed.
+- `client.raw` is the underlying `SSEHttpClient`, for anything this wrapper doesn't cover.
+- Pass `{ awaitServerConnection: { spy } }` as a fourth argument (with a spy from `createSSESessionSpy()`) to also wait for the server-side session of a `keepAlive` route; the call then resolves to `{ client, serverConnection }`.
+
+On a connection you already have, the same typing is available per read: `client.apiEvents(contract)` and `client.collectApiEvents(contract, countOrPredicate)` on any `SSEHttpClient`.
+
+#### When a Handler Fails to Send an Event
+
+`session.send(name, payload)` validates the payload against the contract's schema for that event and throws when it doesn't match. The throw happens inside the handler: the event never reaches the wire, the stream ends early with HTTP 200, and the reason only lands in the server log — leaving the test to explain an event that is simply missing.
+
+Routes built with `buildApiRoute` report those failures to whichever helper is reading the stream. When the failure is what cut the stream short — nothing caught it — `events()`, `stream()` and the `connectApiSSE` readers throw with the offending event name, its Zod issues and the rejected payload:
+
+```
+events() — 1 SSE send failure recorded for this request:
+  - event "issue" was never sent: severity: Invalid option: expected one of "neutral"|"minor"|"major"|"critical"; payload: {"severity":"min"}
+```
+
+A failure the route *recovered* from does not fail the read. A handler that catches its own best-effort send and streams a fallback instead produced exactly the response it meant to, so the readers deliver it and record the failure as context; the same goes for a `sendStream()` source that throws while producing its next message, which is reported as the source failing rather than blamed on the last event that did reach the client.
+
+Both `injectApiSSE(...).sendFailures()` and `connectApiSSE(...).sendFailures()` return every record (`{ eventName?, data?, message, issues?, error, handled }`) — including the recovered ones — for assertions the thrown message doesn't cover:
+
+```ts
+const { closed, events, sendFailures } = injectApiSSE(app, lqaSegmentContract, { body })
+await closed
+
+expect(await events()).toHaveLength(2) // the fallback stream is intact
+expect(sendFailures()).toMatchObject([{ eventName: 'issue', handled: true }])
+```
+
+This is test-only and costs production traffic nothing: the helpers tag their requests with an `x-om-sse-diagnostics-id` header, and a session is instrumented only when that header names a diagnostics scope open in the same process — something only those helpers create. A stale or forged header matches nothing.
 
 ## Dual-Mode Controllers (SSE + Sync)
 

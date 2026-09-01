@@ -1,5 +1,45 @@
 # opinionated-machine
 
+## 10.5.0
+
+### Minor Changes
+
+- c2c7154: Read SSE responses as they are written, and with the contract's typing, on both test paths.
+  
+  - `injectApiSSE` now injects with Fastify's `payloadAsStream` and exposes `head` (status and headers, as soon as the handler calls `sse.start()`) and `stream(signal?)`, which yields the contract's typed, validated events as the handler writes them. Progressive delivery can be asserted without `app.listen()`, a base URL or manual connection cleanup. `closed`, `events()` and `bodyForStatus()` are unchanged.
+  - `connectApiSSE(baseUrl, contract, params, options?)` connects over real HTTP using the contract for method, path, query params, headers and body, and reads the stream as the same discriminated union `injectApiSSE().events()` returns. `SSEHttpClient` gained `apiEvents(contract, signal?)` and `collectApiEvents(contract, countOrPredicate, timeout?)` for connections that already exist.
+  - A payload that fails its SSE event schema no longer reaches the test as an event that is simply missing: routes built with `buildApiRoute` report the failed send — event name, Zod issues and payload — to the helper reading the stream. A failure that ended the stream early is thrown by `events()` / `stream()` / the `connectApiSSE` readers; one the route caught and streamed around is recorded instead, so a handler with a working fallback keeps passing. `injectApiSSE(...).sendFailures()` and `connectApiSSE(...).sendFailures()` expose every record, `handled` flag included. Test-only, keyed on a header that only the helpers produce and that is ignored unless it names a diagnostics scope open in the same process.
+  - `connectApiSSE`'s readers reject a response that is not an event stream with its status and body, instead of waiting out the collection timeout on a stream that was never going to arrive, and invoke a caller's `collectEvents` predicate exactly once per event.
+
+## 10.4.0
+
+### Minor Changes
+
+- 8a388e7: Expose the response body on `SSEInjectConnection`: `getBody()` returns the raw body string and `json<T>()` parses it as JSON, mirroring Fastify's inject response. This lets tests using the untyped `SSEInjectClient` assert on JSON error bodies that an SSE route sends before streaming starts (auth failures, validation errors, unavailable integrations), which previously were unreachable.
+
+## 10.3.0
+
+### Minor Changes
+
+- 197d746: Support non-GET requests in `SSEHttpClient.connect()` via new `method` and `body` connect options, so POST/PUT/PATCH SSE endpoints can be tested over real HTTP instead of only through `SSEInjectClient`. `method` is accepted in either case, matching the lowercase spelling used by route contracts. Bodies `fetch()` sends natively (strings, `URLSearchParams`, `FormData`, `Blob`, `ArrayBuffer`, typed arrays, `ReadableStream`) are passed through untouched, everything else is JSON-stringified, and `content-type: application/json` is only defaulted when it does not overwrite an encoding `fetch()` describes itself. The response body is now locked lazily, so `client.response.json()` still works for endpoints that answered with a regular HTTP response (e.g. an error raised before `sse.start()`), and a bodiless response is reported when events are consumed rather than from `connect()`. `awaitServerConnection` now matches the request method as well as the URL, so a path served by both a GET and a POST route resolves the right session; `SpiedSSESession` accordingly requires `request.method`, which every Fastify-backed session already carries.
+- 197d746: Type `SSEConnectOptions.method` as the new exported `SSEInjectMethod`, derived from Fastify's own inject options instead of a hand-listed `'GET' | 'POST' | 'PUT' | 'PATCH'` union. `SSEInjectClient.connectWithBody()` now accepts every method `inject()` accepts (including `DELETE`, `HEAD`, `OPTIONS` and the lowercase spellings), and consumers can import the union instead of redeclaring it.
+
+## 10.2.0
+
+### Minor Changes
+
+- 9a9a89d: Add `injectApiSSE`, a contract-typed SSE inject helper for contracts built with `defineApiContract` + `sseResponse`/`sseBody`. The existing `injectSSE`/`injectPayloadSSE` are typed against the legacy `SSEContractDefinition` and reject the newer contract shape. `injectApiSSE` covers every HTTP method from the contract, takes the same params as `injectByApiContract`, resolves `bodyForStatus` schemas from `responsesByStatusCode` (exact → range → `default` precedence), and adds `events()` for events parsed and validated against the contract's SSE schemas, merged across every declared status. The request always asks for `text/event-stream`, so statuses that declare a stream — dual-mode ones included — are excluded from `bodyForStatus`, and `events` is typed `never` for contracts that declare no SSE response.
+
+## 10.1.0
+
+### Minor Changes
+
+- 45dd012: Add `createSSESessionSpy()` testing factory so `buildApiRoute` routes can use `SSEHttpClient`'s `awaitServerConnection`. It returns a standalone `SSESessionSpy`, `{ onConnect, onClose }` route options to spread into a route with no lifecycle hooks of its own, and a `withSpy()` helper that merges the spy into a route's existing options by chaining rather than replacing its `onConnect` / `onClose`. `awaitServerConnection` now accepts `{ spy }` alongside `{ controller }`, and `SSESessionSpy` is generic over the observed session type, defaulting to the previous one.
+
+### Patch Changes
+
+- 45dd012: Fix `SSEHttpClient.connect()` leaking the open SSE response when `awaitServerConnection` times out. The caller never received a client handle, so a keep-alive stream stayed open and hung the test's `app.close()`, hiding the original timeout behind a suite-level timeout. A `waitForConnection` timeout now also explains itself when matching connections were registered but had already closed, which is what an `autoClose` session looks like to the spy.
+
 ## 10.0.0
 
 ### Major Changes

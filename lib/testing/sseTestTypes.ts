@@ -1,6 +1,17 @@
 import type { AnySSEContractDefinition, HttpStatusCode } from '@lokalise/api-contracts'
 import type { ParsedSSEEvent } from '@opinionated-machine/sse-parser'
+import type { InjectOptions } from 'fastify'
 import type { z } from 'zod'
+
+/**
+ * HTTP methods Fastify's `inject()` accepts, in either case.
+ *
+ * Derived from Fastify's own inject options instead of being hand-listed, so it
+ * tracks whatever the installed Fastify supports and never needs to be redefined
+ * downstream. Note that Fastify's `HTTPMethods` is wider than this - it also
+ * covers `SEARCH`, `QUERY` and the WebDAV verbs, which `inject()` does not take.
+ */
+export type SSEInjectMethod = NonNullable<InjectOptions['method']>
 
 /** Safely infer the output type of an optional Zod schema property. */
 type InferOptionalSchema<T, Fallback = unknown> =
@@ -76,6 +87,36 @@ export interface SSETestConnection {
    * Get response headers.
    */
   getHeaders(): Record<string, string | string[] | undefined>
+
+  /**
+   * Get the raw response body as a string.
+   *
+   * For a successful SSE response this is the raw `text/event-stream` payload
+   * (already parsed into events, available via `getReceivedEvents()`). It is
+   * most useful when the route answered with a status code before streaming
+   * started - an auth failure, a validation error, an unavailable integration -
+   * and responded with a JSON body instead of events.
+   */
+  getBody(): string
+
+  /**
+   * Parse the raw response body as JSON.
+   *
+   * Mirrors Fastify's own inject response `json()`. Intended for non-streaming
+   * responses emitted before streaming starts; calling it on an actual SSE
+   * stream body throws, since `text/event-stream` is not JSON.
+   *
+   * @throws if the body is empty or not valid JSON (the message includes a
+   * truncated body snippet).
+   *
+   * @example
+   * ```typescript
+   * const conn = await client.connect('/api/stream')
+   * expect(conn.getStatusCode()).toBe(503)
+   * expect(conn.json()).toMatchObject({ errorCode: 'INTEGRATION_NOT_AVAILABLE' })
+   * ```
+   */
+  json<T = unknown>(): T
 }
 
 /**
@@ -83,7 +124,8 @@ export interface SSETestConnection {
  */
 export type SSEConnectOptions = {
   headers?: Record<string, string>
-  method?: 'GET' | 'POST' | 'PUT' | 'PATCH'
+  /** Any method `inject()` accepts (default: `'POST'` for `connectWithBody`) */
+  method?: SSEInjectMethod
   body?: unknown
 }
 
@@ -107,11 +149,18 @@ export type InjectPayloadSSEOptions<Contract extends AnySSEContractDefinition> =
 }
 
 /**
- * SSE response data.
+ * Status code and headers of an SSE response, available as soon as they are on the wire —
+ * before the handler has finished streaming.
  */
-export type SSEResponse = {
+export type SSEResponseHead = {
   statusCode: number
   headers: Record<string, string | string[] | undefined>
+}
+
+/**
+ * SSE response data.
+ */
+export type SSEResponse = SSEResponseHead & {
   body: string
 }
 
