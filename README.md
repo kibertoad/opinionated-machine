@@ -3642,7 +3642,12 @@ must not get: Envoy's defaults (15s route timeout, 5-minute stream idle
 timeout) reset long-lived streams, and buffering proxies hold SSE frames until
 the response completes. Routes built from SSE-capable contracts are therefore
 stamped with a streaming mode, and the manifest carries it as
-`streaming: 'sse' | 'dual'`:
+`streaming: 'sse' | 'dual'`.
+
+The marker describes the **success path**. An error status answers with a JSON
+body on a streaming route too (including the early-return `sse.respond(404,
+...)` path), so generators size timeouts and buffering from it but must not
+assume the content type of a failure.
 
 - **Envoy** — streaming routes default to `timeout: 0s` and `idle_timeout: 0s`
   (declare `timeouts.idle` to reinstate a liveness bound; heartbeats are the
@@ -3672,7 +3677,8 @@ stamped with a streaming mode, and the manifest carries it as
 
   A route declaring `defaultMode: 'sse'` inverts the split, because there the
   server streams for a missing or wildcard `Accept` header. The manifest
-  carries the fallback branch as `streamingDefaultMode`, and Envoy makes the
+  carries the fallback branch as `streamingDefaultMode` (`'non-sse' | 'sse'`,
+  the `@lokalise/api-contracts` vocabulary), and Envoy makes the
   stream the catch-all with `<id>__json` as the narrow branch, so an
   unspecific request cannot land on the JSON branch's request timeout while the
   server is streaming. A request listing both media types resolves to JSON on
