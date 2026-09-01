@@ -7,7 +7,7 @@
 
 Close the third round of review findings on the SSE fallback stack.
 
-**SSE parser (`opinionated-machine`, vendored in `@opinionated-machine/sse-fallback`)**
+**SSE parser**
 
 - Field values follow the spec: exactly one leading space is removed after the colon and the rest is preserved. `trim()` was corrupting `data:  keep spaces  `, which matters for any decoder that reads the raw string instead of JSON.
 - CR, LF and CRLF are all line terminators. A CR at the end of the buffer is held back until the next chunk says whether it was half of a CRLF.

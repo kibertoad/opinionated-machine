@@ -1,7 +1,7 @@
+import { createSSEStreamParser, type ParsedSSEEvent } from '@opinionated-machine/sse-parser'
 import { stringify } from 'fast-querystring'
 import type { SSESession } from '../routes/fastifyRouteTypes.ts'
 import type { SSESessionSpy } from '../sse/SSESessionSpy.ts'
-import { type ParsedSSEEvent, parseSSEBuffer } from '../sse/sseParser.ts'
 
 /**
  * Interface for objects that have a sessionSpy (e.g., SSE controllers in test mode).
@@ -108,7 +108,8 @@ export class SSEHttpClient {
   private readonly abortController: AbortController
   private readonly reader: ReadableStreamDefaultReader<Uint8Array>
   private readonly decoder = new TextDecoder()
-  private buffer = ''
+  /** Owns the partial-frame buffer and the Last-Event-ID cursor across chunks. */
+  private readonly parser = createSSEStreamParser()
   private closed = false
 
   private constructor(response: Response, abortController: AbortController) {
@@ -249,11 +250,8 @@ export class SSEHttpClient {
 
       const chunk = this.decoder.decode(readResult.value, { stream: true })
       this.onRawChunk?.(chunk)
-      this.buffer += chunk
-      const parseResult = parseSSEBuffer(this.buffer)
-      this.buffer = parseResult.remaining
 
-      for (const event of parseResult.events) {
+      for (const event of this.parser.push(chunk)) {
         if (signal?.aborted) {
           return
         }

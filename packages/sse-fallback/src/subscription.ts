@@ -1,3 +1,4 @@
+import { createSSEStreamParser } from '@opinionated-machine/sse-parser'
 import type { FallbackBinding, FallbackRequestParams } from './binding.ts'
 import type { EventPayloadMap, FallbackEvent, FallbackPolicy } from './bindingTypes.ts'
 import { DEFAULT_POLICY } from './bindingTypes.ts'
@@ -5,7 +6,6 @@ import type { PollGate } from './pollGate.ts'
 import type { VersionGap } from './reconciler.ts'
 import { Reconciler } from './reconciler.ts'
 import { backoffDelay, ResettableTimer, sleep } from './scheduler.ts'
-import { parseSSEBuffer } from './sseParser.ts'
 import type { FallbackTransport, ParsedSseFrame, StreamResponse } from './transport.ts'
 import { isParsedStreamResponse } from './transport.ts'
 
@@ -589,21 +589,16 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
 
   /** Consume raw text and do the SSE framing here. */
   private async consumeChunks(chunks: AsyncIterable<string>): Promise<void> {
-    let buffer = ''
-    // The parser's cursor, carried across chunks. It is not `this.lastEventId`:
-    // an event whose data fails to parse holds that one back, and the parser
-    // knows nothing about that.
-    let cursor = this.lastEventId
+    // The parser owns the partial-frame buffer and its own cursor, which is
+    // NOT `this.lastEventId`: an event whose data fails to parse holds that
+    // one back, and the parser knows nothing about that.
+    const parser = createSSEStreamParser({ lastEventId: this.lastEventId })
     for await (const chunk of chunks) {
       if (this.streamLoopDone) return
       // ANY bytes (heartbeat comments included) prove transport liveness.
       this.onStreamActivity()
-      buffer += chunk
-      const parsed = parseSSEBuffer(buffer, cursor)
-      buffer = parsed.remaining
-      cursor = parsed.lastEventId
       let cursorHeld = false
-      for (const event of parsed.events) {
+      for (const event of parser.push(chunk)) {
         if (!this.handleParsedEvent(event)) cursorHeld = true
         if (this.streamLoopDone) return
       }
@@ -611,7 +606,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       // an empty `id:` clears it, so the cursor comes from the parser rather
       // than from the events it emitted. A frame this batch could not read
       // holds it where it was.
-      if (!cursorHeld) this.lastEventId = cursor
+      if (!cursorHeld) this.lastEventId = parser.lastEventId
     }
   }
 

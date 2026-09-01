@@ -1,3 +1,15 @@
+// Re-exported so a transport author does not have to add the parser package
+// as a second dependency to frame a stream by hand.
+export {
+  createSSEStreamParser,
+  type ParsedSSEEvent,
+  type ParseSSEBufferResult,
+  type ParseSSEStreamOptions,
+  parseSSEBuffer,
+  parseSSEResponse,
+  parseSSEStream,
+  type SSEStreamParser,
+} from '@opinionated-machine/sse-parser'
 export {
   type BindFallbackContractsOptions,
   bindFallbackContracts,
@@ -38,11 +50,6 @@ export {
   type VersionGap,
 } from './reconciler.ts'
 export { backoffDelay, ResettableTimer, sleep } from './scheduler.ts'
-export {
-  type ParsedSSEEvent,
-  type ParseSSEBufferResult,
-  parseSSEBuffer,
-} from './sseParser.ts'
 export {
   type CreateResilientSubscriptionOptions,
   createResilientSubscription,

@@ -4,7 +4,7 @@
  * (tests). Response-body validation (zod) belongs in the transport wrapper,
  * keeping this package dependency-free.
  */
-import { parseSSEBuffer } from './sseParser.ts'
+import { parseSSEStream } from '@opinionated-machine/sse-parser'
 
 /** A channel-agnostic request description built from the binding + params. */
 export type TransportRequest = {
@@ -36,10 +36,10 @@ export type RawStreamResponse = {
   status: number
   headers: Record<string, string>
   /**
-   * Decoded text chunks as they arrive — INCLUDING comment/heartbeat frames.
-   * The core parses SSE framing itself (vendored parser) and uses per-chunk
-   * arrival as byte-level liveness. Iteration ends when the stream closes;
-   * it throws on a mid-stream network error.
+   * Decoded text chunks as they arrive, INCLUDING comment/heartbeat frames.
+   * The core frames the stream itself with `@opinionated-machine/sse-parser`
+   * and uses per-chunk arrival as byte-level liveness. Iteration ends when the
+   * stream closes; it throws on a mid-stream network error.
    */
   chunks: AsyncIterable<string>
 }
@@ -334,16 +334,6 @@ async function* emptyChunks(): AsyncGenerator<string, void, unknown> {
  * Frame raw chunks the way a parsed-event client would: comment/heartbeat
  * frames are consumed by the framing and never surface as events.
  */
-async function* framesOf(
-  chunks: AsyncIterable<string>,
-): AsyncGenerator<ParsedSseFrame, void, unknown> {
-  let buffer = ''
-  let cursor: string | undefined
-  for await (const chunk of chunks) {
-    buffer += chunk
-    const parsed = parseSSEBuffer(buffer, cursor)
-    buffer = parsed.remaining
-    cursor = parsed.lastEventId
-    for (const event of parsed.events) yield event
-  }
+function framesOf(chunks: AsyncIterable<string>): AsyncIterable<ParsedSseFrame> {
+  return parseSSEStream(chunks)
 }

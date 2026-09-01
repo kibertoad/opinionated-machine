@@ -43,6 +43,8 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Error Handling](#error-handling)
   - [Long-lived Connections vs Request-Response Streaming](#long-lived-connections-vs-request-response-streaming)
   - [SSE Parsing Utilities](#sse-parsing-utilities)
+    - [parseSSEResponse](#parsesseresponse)
+    - [createSSEStreamParser and parseSSEStream](#createssestreamparser-and-parsessestream)
     - [parseSSEEvents](#parsesseevents)
     - [parseSSEBuffer](#parsessebuffer)
     - [ParsedSSEEvent Type](#parsedsseevent-type)
@@ -1383,21 +1385,86 @@ private handleStream = buildHandler(streamContract, {
     // Connection closes automatically when handler returns
   },
 })
+```
 
 ### SSE Parsing Utilities
 
-The library provides production-ready utilities for parsing SSE (Server-Sent Events) streams:
+Wire-format parsing lives in
+[`@opinionated-machine/sse-parser`](./packages/sse-parser/README.md) and is
+re-exported here, so the server's test helpers and the browser client
+(`@opinionated-machine/sse-fallback`) frame a stream with the same code.
 
-| Function | Use Case |
+| Function | Use case |
 |----------|----------|
-| `parseSSEEvents` | **Testing & complete responses** - when you have the full response body |
-| `parseSSEBuffer` | **Production streaming** - when data arrives incrementally in chunks |
+| `parseSSEResponse` | A `fetch` response: decodes the bytes and frames them for you |
+| `parseSSEStream` | An async iterable of already-decoded text chunks |
+| `createSSEStreamParser` | A stream you drive yourself, chunk by chunk |
+| `parseSSEEvents` | Testing and request-response streaming, when the full body is in hand |
+| `parseSSEBuffer` | The primitive the others are built on |
+
+#### parseSSEResponse
+
+Consume a live SSE stream from `fetch`. Multi-byte characters split across
+network chunks are held back, and breaking out of the loop cancels the
+response body.
+
+```ts
+import { parseSSEResponse } from 'opinionated-machine'
+
+const response = await fetch(url, { headers: { accept: 'text/event-stream' } })
+
+for await (const event of parseSSEResponse(response)) {
+  console.log('Received:', event.event ?? 'message', JSON.parse(event.data))
+  if (event.event === 'done') break
+}
+```
+
+Unlike `EventSource` the request is yours: custom headers, a POST body, an
+`AbortSignal`, your own reconnect policy.
+
+#### createSSEStreamParser and parseSSEStream
+
+When the transport hands you decoded text rather than a `Response`, or when you
+need the reconnect cursor after the stream ends.
+
+```ts
+import { createSSEStreamParser } from 'opinionated-machine'
+
+// One per connection: it holds the partial frame, the Last-Event-ID cursor and
+// the BOM that may open the stream.
+const parser = createSSEStreamParser({ lastEventId: resumeFrom })
+
+for await (const chunk of chunks) {
+  for (const event of parser.push(chunk)) {
+    console.log('Received:', event.event ?? 'message', event.data)
+  }
+}
+
+reconnectWith(parser.lastEventId)
+```
+
+`parseSSEStream` wraps that loop when you only want the events:
+
+```ts
+import { parseSSEStream } from 'opinionated-machine'
+
+for await (const event of parseSSEStream(chunks, {
+  onChunk: () => resetStaleConnectionTimer(),
+})) {
+  handle(event)
+}
+```
+
+`onChunk` fires for every chunk before it is framed, comment frames included.
+Framing consumes `: heartbeat` comments, so a consumer watching only events
+cannot tell an idle-but-healthy connection from a dead one.
 
 #### parseSSEEvents
 
 Parse a complete SSE response body into an array of events.
 
-**When to use:** Testing with Fastify's `inject()`, or when the full response is available (e.g., request-response style SSE like OpenAI completions):
+**When to use:** testing with Fastify's `inject()`, or when the full response is
+available (request-response style SSE such as OpenAI completions):
 
 ```ts
 import { parseSSEEvents, type ParsedSSEEvent } from 'opinionated-machine'
@@ -1421,66 +1488,57 @@ const events: ParsedSSEEvent[] = parseSSEEvents(responseBody)
 const notifications = events.map(e => JSON.parse(e.data))
 ```
 
+A trailing frame with no blank line after it is discarded, which is what the
+spec requires at the end of a stream: a body cut mid-frame must not surface its
+truncated payload as a delivered event. Reach for `parseSSEBuffer` when you want
+to inspect that leftover.
+
 #### parseSSEBuffer
 
-Parse a streaming SSE buffer, handling incomplete events at chunk boundaries.
-
-**When to use:** Production clients consuming real-time SSE streams (notifications, live feeds, chat) where events arrive incrementally:
+One pass over a buffer: the events it completed, the bytes it could not, and the
+reconnect cursor. Prefer `createSSEStreamParser` for a live stream, which keeps
+all three across chunks for you.
 
 ```ts
 import { parseSSEBuffer, type ParseSSEBufferResult } from 'opinionated-machine'
 
 let buffer = ''
+let cursor: string | undefined
 
-// As chunks arrive from a stream...
 for await (const chunk of stream) {
   buffer += chunk
-  const result: ParseSSEBufferResult = parseSSEBuffer(buffer)
+  // Feeding the cursor back is what makes Last-Event-ID survive: an event with
+  // no `id:` of its own inherits the previous one, and an `id:` frame carrying
+  // no data still moves it.
+  const result: ParseSSEBufferResult = parseSSEBuffer(buffer, cursor)
+  buffer = result.remaining
+  cursor = result.lastEventId
 
-  // Process complete events
   for (const event of result.events) {
     console.log('Received:', event.event, event.data)
-  }
-
-  // Keep incomplete data for next chunk
-  buffer = result.remaining
-}
-```
-
-**Production example with fetch:**
-
-```ts
-const response = await fetch(url)
-const reader = response.body!.getReader()
-const decoder = new TextDecoder()
-let buffer = ''
-
-while (true) {
-  const { done, value } = await reader.read()
-  if (done) break
-
-  buffer += decoder.decode(value, { stream: true })
-  const { events, remaining } = parseSSEBuffer(buffer)
-  buffer = remaining
-
-  for (const event of events) {
-    console.log('Received:', event.event, JSON.parse(event.data))
   }
 }
 ```
 
 #### ParsedSSEEvent Type
 
-Both functions return events with this structure:
+Every entry point returns events with this structure:
 
 ```ts
 type ParsedSSEEvent = {
-  id?: string      // Event ID (from "id:" field)
-  event?: string   // Event type (from "event:" field)
-  data: string     // Event data (from "data:" field, always present)
-  retry?: number   // Reconnection interval (from "retry:" field)
+  id?: string           // The "id:" this event carried, if any
+  event?: string        // Event type from "event:"; absent means 'message'
+  data: string          // Event data from "data:", always present
+  retry?: number        // Reconnection interval from "retry:"
+  lastEventId?: string  // The reconnect cursor as of this event's dispatch
 }
 ```
+
+`id` and `lastEventId` are separate on purpose. The cursor persists across
+events that carry no `id:` of their own, so it is what you reconnect with;
+`id` is what the event itself carried, so it is what you order and deduplicate
+on. Ordering on the cursor instead makes every inheriting event look like a
+duplicate of the last id-bearing one.
 
 ### Testing SSE Controllers
 

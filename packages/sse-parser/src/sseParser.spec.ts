@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseSSEBuffer } from './sseParser.ts'
+import { parseSSEBuffer, parseSSEEvents } from './sseParser.ts'
 
 describe('parseSSEBuffer', () => {
   it('parses consecutive LF-framed events', () => {
@@ -16,7 +16,7 @@ describe('parseSSEBuffer', () => {
 
   it('parses consecutive CRLF-framed events as separate events', () => {
     // A CRLF stream leaves a trailing \r on every line, including the blank
-    // separator — without handling it the two events merge into one carrying
+    // separator. Without handling it the two events merge into one carrying
     // the first id and both payloads concatenated.
     const { events, remaining } = parseSSEBuffer(
       'id: 1\r\nevent: tick\r\ndata: {"n":1}\r\n\r\nid: 2\r\nevent: tick\r\ndata: {"n":2}\r\n\r\n',
@@ -63,6 +63,16 @@ describe('parseSSEBuffer', () => {
     expect(events).toEqual([{ data: ' keep spaces  ' }, { data: 'no space' }, { data: '' }])
   })
 
+  it('dispatches a frame whose data field is empty', () => {
+    // The spec tests the data buffer for emptiness BEFORE stripping the
+    // trailing newline a `data:` field appends, so `data:` alone is an event
+    // with an empty payload, not a frame to swallow. A parser that strips
+    // first and tests after loses the event.
+    const { events } = parseSSEBuffer('event: ping\ndata:\n\n')
+
+    expect(events).toEqual([{ event: 'ping', data: '' }])
+  })
+
   it('ignores a malformed retry value instead of parsing its numeric prefix', () => {
     const { events } = parseSSEBuffer('retry: 100x\ndata: a\n\nretry: 250\ndata: b\n\n')
 
@@ -70,9 +80,16 @@ describe('parseSSEBuffer', () => {
     expect(events[1]?.retry).toBe(250)
   })
 
+  it('ignores an id field containing a NUL', () => {
+    const { events, lastEventId } = parseSSEBuffer('id: bad\0id\ndata: a\n\n', 'seed')
+
+    expect(events).toEqual([{ data: 'a', lastEventId: 'seed' }])
+    expect(lastEventId).toBe('seed')
+  })
+
   it('carries the reconnect cursor across a frame that dispatches no event', () => {
     // `id: reset` with no data still moves Last-Event-ID, and must NOT leak
-    // onto the next event's own id — that would make it look like a duplicate.
+    // onto the next event's own id, which would make it look like a duplicate.
     const { events, lastEventId } = parseSSEBuffer('id: reset\n\ndata: {"n":1}\n\n')
 
     expect(events).toEqual([{ data: '{"n":1}', lastEventId: 'reset' }])
@@ -92,5 +109,48 @@ describe('parseSSEBuffer', () => {
 
     expect(events).toEqual([{ data: '{"n":1}', lastEventId: 'seed' }])
     expect(lastEventId).toBe('seed')
+  })
+
+  it('leaves a leading BOM alone', () => {
+    // The primitive parses from an arbitrary offset, so it cannot know it is
+    // looking at the start of a stream. Entry points that do know strip it.
+    const { events, remaining } = parseSSEBuffer('﻿data: a\n\n')
+
+    expect(events).toEqual([])
+    expect(remaining).toBe('')
+  })
+})
+
+describe('parseSSEEvents', () => {
+  it('parses a complete response body', () => {
+    const events = parseSSEEvents('event: a\ndata: 1\n\nevent: b\ndata: 2\n\n')
+
+    expect(events).toEqual([
+      { event: 'a', data: '1' },
+      { event: 'b', data: '2' },
+    ])
+  })
+
+  it('joins multi-line data with newlines', () => {
+    const events = parseSSEEvents('event: log\ndata: line 1\ndata: line 2\n\n')
+
+    expect(events).toEqual([{ event: 'log', data: 'line 1\nline 2' }])
+  })
+
+  it('strips a leading BOM', () => {
+    // `Buffer.toString('utf8')`, which is what `fastify.inject()` hands back,
+    // keeps the BOM that TextDecoder would have removed. Left in place it
+    // turns the first field name into `﻿event` and the event vanishes.
+    const events = parseSSEEvents('﻿event: a\ndata: 1\n\n')
+
+    expect(events).toEqual([{ event: 'a', data: '1' }])
+  })
+
+  it('discards a trailing frame that no blank line terminated', () => {
+    // A body cut mid-frame (an aborted response, a killed stream) must not
+    // surface its truncated payload as a delivered event.
+    const events = parseSSEEvents('data: {"n":1}\n\nid: 7\ndata: {"n')
+
+    expect(events).toEqual([{ data: '{"n":1}' }])
   })
 })

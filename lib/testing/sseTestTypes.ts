@@ -1,6 +1,6 @@
 import type { AnySSEContractDefinition, HttpStatusCode } from '@lokalise/api-contracts'
+import type { ParsedSSEEvent } from '@opinionated-machine/sse-parser'
 import type { z } from 'zod'
-import type { ParsedSSEEvent } from '../sse/sseParser.ts'
 
 /** Safely infer the output type of an optional Zod schema property. */
 type InferOptionalSchema<T, Fallback = unknown> =

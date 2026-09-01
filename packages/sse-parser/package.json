@@ -1,7 +1,7 @@
 {
-    "name": "@opinionated-machine/sse-fallback",
+    "name": "@opinionated-machine/sse-parser",
     "version": "0.0.0",
-    "description": "Browser-safe SSE client core with transparent polling fallback for opinionated-machine dual-mode contracts",
+    "description": "Spec-compliant, dependency-free Server-Sent Events parser for incremental streams and complete response bodies",
     "type": "module",
     "license": "MIT",
     "main": "dist/index.js",
@@ -18,7 +18,7 @@
         }
     ],
     "scripts": {
-        "build": "pnpm --filter @opinionated-machine/sse-parser run build && rimraf dist && tsc -p tsconfig.build.json",
+        "build": "rimraf dist && tsc -p tsconfig.build.json",
         "lint": "biome check . && tsc",
         "lint:fix": "biome check --write .",
         "test": "vitest run",
@@ -28,32 +28,15 @@
     "repository": {
         "type": "git",
         "url": "git+https://github.com/kibertoad/opinionated-machine.git",
-        "directory": "packages/sse-fallback"
-    },
-    "dependencies": {
-        "@opinionated-machine/sse-parser": "workspace:*"
-    },
-    "peerDependencies": {
-        "@lokalise/api-contracts": ">=8.0.0",
-        "zod": ">=4.0.0"
-    },
-    "peerDependenciesMeta": {
-        "@lokalise/api-contracts": {
-            "optional": true
-        },
-        "zod": {
-            "optional": true
-        }
+        "directory": "packages/sse-parser"
     },
     "devDependencies": {
         "@biomejs/biome": "2.4.4",
-        "@lokalise/api-contracts": "^8.0.0",
         "@lokalise/biome-config": "^3.1.1",
         "@lokalise/tsconfig": "^3.1.0",
         "rimraf": "^6.1.2",
         "typescript": "^5.9.3",
-        "vitest": "^4.0.18",
-        "zod": "^4.4.3"
+        "vitest": "^4.0.18"
     },
     "private": false,
     "publishConfig": {
@@ -62,13 +45,13 @@
     "keywords": [
         "sse",
         "server-sent-events",
-        "polling",
-        "fallback",
-        "realtime",
+        "parser",
+        "eventsource",
+        "streaming",
         "browser",
         "opinionated-machine"
     ],
-    "homepage": "https://github.com/kibertoad/opinionated-machine/tree/main/packages/sse-fallback",
+    "homepage": "https://github.com/kibertoad/opinionated-machine/tree/main/packages/sse-parser",
     "files": [
         "README.md",
         "LICENSE",

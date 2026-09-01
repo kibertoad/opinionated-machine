@@ -11,9 +11,12 @@ channels, so app code sees exactly one uniform event stream — whether an event
 was pushed, replayed after a reconnect, or synthesized from a poll snapshot is
 invisible.
 
-**Zero runtime dependencies.** `zod` and `@lokalise/api-contracts` are
-type-only optional peers; nothing from Node.js or Fastify is imported — the
-package is safe to ship to browsers (enforced by a source-tree check in CI).
+**One runtime dependency**, `@opinionated-machine/sse-parser`: the SSE
+wire-format parser, shared with the server framework's test helpers so both
+ends of a stream frame it identically. It is itself dependency-free and
+browser-safe. `zod` and `@lokalise/api-contracts` are type-only optional peers,
+and nothing from Node.js or Fastify is imported, so the package is safe to ship
+to browsers (enforced by a source-tree check in CI).
 
 ## Why
 

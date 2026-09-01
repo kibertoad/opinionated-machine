@@ -8,6 +8,22 @@ export type {
   SSEEventSchemas,
   SSEMethod,
 } from '@lokalise/api-contracts'
+// The wire-format parser lives in its own package so that the browser client
+// (@opinionated-machine/sse-fallback) frames the stream with the same code the
+// server's test helpers do.
+export {
+  createSSEStreamParser,
+  type ParsedSSEEvent,
+  type ParseSSEBufferResult,
+  type ParseSSEStreamOptions,
+  parseSSEBuffer,
+  parseSSEEvents,
+  parseSSEResponse,
+  parseSSEStream,
+  type SSEResponseLike,
+  type SSEStreamParser,
+  type SSEStreamParserOptions,
+} from '@opinionated-machine/sse-parser'
 // Re-export route types from routes module
 export {
   type BuildFastifySSERoutesReturnType,
@@ -55,12 +71,6 @@ export {
   type SSERoomOperations,
 } from './rooms/index.js'
 export { type SSESessionEvent, SSESessionSpy } from './SSESessionSpy.js'
-export {
-  type ParsedSSEEvent,
-  type ParseSSEBufferResult,
-  parseSSEBuffer,
-  parseSSEEvents,
-} from './sseParser.js'
 // SSE Subscriptions
 export {
   defineEventMetadata,

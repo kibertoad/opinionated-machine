@@ -1,20 +1,16 @@
 ---
-name: sse-fallback
+name: sse-parser
 
 on:
   pull_request:
     branches:
       - main
     paths:
-      - 'packages/sse-fallback/**'
-      # It parses the wire format with this package.
       - 'packages/sse-parser/**'
   push:
     branches:
       - main
     paths:
-      - 'packages/sse-fallback/**'
-      # It parses the wire format with this package.
       - 'packages/sse-parser/**'
 
 permissions: {}
@@ -26,7 +22,7 @@ jobs:
       contents: read
     defaults:
       run:
-        working-directory: packages/sse-fallback
+        working-directory: packages/sse-parser
 
     steps:
       - name: Checkout Repository
@@ -36,7 +32,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -48,16 +44,8 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: .
 
-      # The wire-format parser is a workspace dependency; tests and typecheck
-      # resolve it through its build output.
-      - name: Build the parser package
-        run: pnpm --filter @opinionated-machine/sse-parser run build
-        working-directory: .
-
-      # The README promises this package is browser-safe. The root test suite
-      # asserts it too, but that suite does not run in this workflow, so make
-      # the guarantee explicit here as well: no server-only import may reach
-      # the published sources.
+      # Both the Fastify server helpers and the browser client parse the wire
+      # format with this package, so nothing server-only may reach its sources.
       - name: Check browser safety of the source tree
         run: |
           if grep -rnE "from '(node:|fastify|awilix)|require\(" src --include='*.ts' \

@@ -1,9 +1,15 @@
 /**
- * SSE (Server-Sent Events) parsing utilities, per the W3C spec.
+ * Server-Sent Events parsing, following the WHATWG event-stream interpreter.
  *
- * Vendored from `opinionated-machine`'s `lib/sse/sseParser.ts` so this
- * package stays dependency-free and browser-safe. The wire format is a
- * frozen spec — behavioral divergence risk is negligible.
+ * The wire format is frozen and both the server framework and the browser
+ * client have to read it identically, so it lives in one dependency-free,
+ * browser-safe package instead of a copy per consumer.
+ *
+ * {@link parseSSEBuffer} is the primitive: one pass over a buffer, returning
+ * the events it completed and the bytes it could not. {@link parseSSEEvents}
+ * is the whole-body convenience for a response already in memory. For streams,
+ * prefer `createSSEStreamParser` / `parseSSEStream`, which own the buffer and
+ * the reconnect cursor for you.
  *
  * @see https://html.spec.whatwg.org/multipage/server-sent-events.html
  */
@@ -32,9 +38,9 @@ export type ParsedSSEEvent = {
 
 /** Result of incremental SSE buffer parsing. */
 export type ParseSSEBufferResult = {
-  /** Complete events parsed from the buffer */
+  /** Complete events parsed from the buffer. */
   events: ParsedSSEEvent[]
-  /** Remaining incomplete data to prepend to next chunk */
+  /** Remaining incomplete data to prepend to next chunk. */
   remaining: string
   /**
    * The Last-Event-ID cursor after every event the call consumed, including
@@ -47,14 +53,31 @@ export type ParseSSEBufferResult = {
 /** `retry:` carries ASCII digits only; any other value is ignored. */
 const DIGITS_ONLY = /^\d+$/
 
+/** U+FEFF, which the spec's decode step removes once at the start of a stream. */
+const BYTE_ORDER_MARK = '﻿'
+
+/**
+ * Drop one leading BOM from the start of a stream.
+ *
+ * `TextDecoder` and `Response.text()` already do this, but a string built with
+ * `Buffer.toString('utf8')` (what `fastify.inject()` hands back) does not, and
+ * an unstripped BOM turns the first field name into `﻿data`, which the
+ * interpreter ignores. That silently swallows the first event.
+ *
+ * Only valid at a stream boundary: mid-stream the same character is payload.
+ */
+export function stripStreamBOM(text: string): string {
+  return text.startsWith(BYTE_ORDER_MARK) ? text.slice(1) : text
+}
+
 /**
  * Split a field line into name and value per the spec: the value is everything
  * after the first colon minus at most ONE leading space, and a line with no
  * colon is a field name with an empty value.
  *
- * Trimming the value instead would corrupt payloads — `data:  two spaces  `
- * has to keep one leading and both trailing spaces, which matters for any
- * decoder that reads the raw string rather than JSON.
+ * Trimming the value instead would corrupt payloads: `data:  two spaces  ` has
+ * to keep one leading and both trailing spaces, which matters for any decoder
+ * that reads the raw string rather than JSON.
  */
 function splitField(line: string): { field: string; value: string } {
   const colon = line.indexOf(':')
@@ -68,7 +91,9 @@ function splitField(line: string): { field: string; value: string } {
  *
  * CR, LF and CRLF are all line terminators. A CR at the very end of the buffer
  * is left unconsumed: the next chunk decides whether it was a bare CR or the
- * first half of a CRLF, and consuming it early would split the terminator.
+ * first half of a CRLF, and consuming it early would split the terminator,
+ * turning the LF that opens the next chunk into a spurious blank line that
+ * dispatches mid-frame.
  */
 function findLineEnd(buffer: string, from: number): { end: number; next: number } | undefined {
   for (let index = from; index < buffer.length; index += 1) {
@@ -92,7 +117,7 @@ type FrameState = {
 
 /** Apply one non-blank line to the frame under construction. */
 function applyFieldLine(line: string, state: FrameState): void {
-  // Comment lines (starting with :) are ignored — heartbeats arrive as one.
+  // Comment lines (starting with :) are ignored; heartbeats arrive as one.
   if (line.startsWith(':')) return
 
   const { field, value } = splitField(line)
@@ -115,7 +140,15 @@ function applyFieldLine(line: string, state: FrameState): void {
  *
  * Designed for streaming: append each chunk to a buffer, call this, process
  * the returned events, and carry `remaining` and `lastEventId` into the next
- * iteration.
+ * iteration. {@link createSSEStreamParser} does that bookkeeping for you.
+ *
+ * A frame with no blank line after it stays in `remaining` and is never
+ * dispatched. That is also the spec's rule for the end of a stream: pending
+ * data is discarded, because a connection dropped mid-frame would otherwise
+ * surface a truncated payload as if the server had sent it whole.
+ *
+ * Does not strip a leading BOM: that belongs to the stream entry points, which
+ * know where the stream starts. See {@link stripStreamBOM}.
  *
  * @param buffer - buffered stream text, starting at an unconsumed line
  * @param lastEventId - the reconnect cursor the previous call returned
@@ -141,8 +174,12 @@ export function parseSSEBuffer(buffer: string, lastEventId?: string): ParseSSEBu
     // A blank line dispatches, whether or not there is data to emit. The event
     // type and data buffers reset here, so an id-only frame can no longer leak
     // its id onto the next event, while the cursor it set deliberately
-    // survives — that is what Last-Event-ID reconnects from.
+    // survives, which is what Last-Event-ID reconnects from.
     if (state.idSeen) cursor = state.event.id === '' ? undefined : state.event.id
+    // Dispatch whenever the frame carried at least one `data:` field, which is
+    // the spec's "data buffer is not empty" test. It runs BEFORE the trailing
+    // newline is stripped, so `data:\n\n` is an event with an empty payload;
+    // testing the joined string instead would swallow it.
     if (state.dataLines.length > 0) {
       events.push({
         ...state.event,
@@ -157,4 +194,19 @@ export function parseSSEBuffer(buffer: string, lastEventId?: string): ParseSSEBu
   // Preserve any unconsumed content after the last dispatch, including a
   // partial event with only id:/event:/retry: lines.
   return { events, remaining: buffer.slice(consumed), lastEventId: cursor }
+}
+
+/**
+ * Parse every complete event out of a full SSE response body.
+ *
+ * For text that is already in memory in one piece: a `fastify.inject()` body,
+ * a fixture, a `Response.text()`. A leading BOM is stripped, and a trailing
+ * frame with no blank line after it is discarded the same way it would be at
+ * the end of a live stream. Use {@link parseSSEBuffer} directly when you need
+ * to inspect that leftover.
+ *
+ * @param text - complete SSE payload
+ */
+export function parseSSEEvents(text: string): ParsedSSEEvent[] {
+  return parseSSEBuffer(stripStreamBOM(text)).events
 }
