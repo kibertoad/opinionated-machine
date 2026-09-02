@@ -8,6 +8,30 @@ There are a few basic ground-rules for contributors:
 2. Contributors should attempt to adhere to the prevailing code-style.
 3. Before submitting a PR for a major new feature, or introducing a significant change, please open an issue to discuss the proposal with maintainers.
 
+## Monorepo tasks
+
+Tasks are orchestrated by [Turborepo](https://turborepo.dev). `turbo.jsonc` declares what each
+task depends on, so ordering follows the workspace graph rather than hand-written `pnpm --filter`
+chains: `@opinionated-machine/sse-parser` builds before the root package, and the root package
+builds before the gateway and rooms adapters.
+
+| Command | What it does |
+| --- | --- |
+| `pnpm run build:all` | Builds every package in dependency order |
+| `pnpm run lint:all` | Runs `biome check` and `tsc` in every package |
+| `pnpm run test:ci` | Runs the root test suite with coverage |
+| `pnpm exec turbo run test --filter=<package>` | Tests one package, building what it depends on first |
+
+Invoked from inside a package directory, turbo scopes to that package on its own, so
+`cd packages/sse-fallback && pnpm exec turbo run test` builds the parser first and then tests only
+the fallback client.
+
+The per-package `build`, `lint` and `test` scripts still exist and still do exactly one package's
+work. They assume their dependencies are already built, which is what `build:all` is for.
+
+Results are cached under `.turbo`, keyed on each task's declared inputs. Pass `--force` to ignore
+the cache for a run.
+
 ## Changesets
 
 This repo uses [Changesets](https://github.com/changesets/changesets) to automate versioning and releases.

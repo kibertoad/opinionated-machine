@@ -137,5 +137,8 @@ dist
 /.idea/
 /package-lock.json
 
+# Turborepo task cache and logs
+.turbo
+
 # Generated gateway configs from acceptance tests
 packages/gateway-*/acceptance/generated/

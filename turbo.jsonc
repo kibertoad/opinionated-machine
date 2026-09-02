@@ -1,0 +1,97 @@
+{
+    "$schema": "https://turborepo.dev/schema.json",
+    // The root tsconfig and the biome config are extended by every package, so a
+    // change to either has to invalidate every task.
+    "globalDependencies": ["tsconfig.json", "biome.jsonc"],
+    // Reaches the tools without entering any task hash: it selects reporters, not output.
+    "globalPassThroughEnv": ["CI"],
+    "tasks": {
+        // Package builds are ordered by the workspace graph: sse-parser before the
+        // root package, the root package before the gateway and rooms adapters.
+        "build": {
+            "dependsOn": ["^build"],
+            "inputs": [
+                "package.json",
+                "tsconfig.json",
+                "tsconfig.build.json",
+                "index.ts",
+                "lib/**",
+                "src/**",
+                "!**/*.spec.ts",
+                "!**/__fixtures__/**",
+                "!**/__snapshots__/**"
+            ],
+            "outputs": ["dist/**"]
+        },
+        // `biome check . && tsc` typechecks specs and test helpers too, and those
+        // resolve workspace imports through the dependency's build output.
+        "lint": {
+            "dependsOn": ["^build"],
+            "inputs": ["$TURBO_DEFAULT$", "!**/*.md", "!.changeset/**", "!.github/**"]
+        },
+        "lint:fix": {
+            "cache": false
+        },
+        "test": {
+            "dependsOn": ["^build"],
+            "inputs": [
+                "package.json",
+                "tsconfig.json",
+                "tsconfig.build.json",
+                "vitest.config.mts",
+                "vitest.config.ts",
+                "index.ts",
+                "lib/**",
+                "src/**",
+                "test/**"
+            ]
+        },
+        "test:ci": {
+            "dependsOn": ["^build"],
+            "inputs": [
+                "package.json",
+                "tsconfig.json",
+                "tsconfig.build.json",
+                "vitest.config.mts",
+                "vitest.config.ts",
+                "index.ts",
+                "lib/**",
+                "src/**",
+                "test/**"
+            ],
+            "outputs": ["coverage/**"]
+        },
+        "test:watch": {
+            "dependsOn": ["^build"],
+            "cache": false,
+            "persistent": true
+        },
+        // Everything below drives docker compose, so there is no output worth
+        // caching and a cache hit would skip the containers the assertions need.
+        "test:acceptance": {
+            "dependsOn": ["^build"],
+            "cache": false,
+            "env": ["GATEWAY_URL", "PORT"]
+        },
+        "test:docker": {
+            "dependsOn": ["^build"],
+            "cache": false
+        },
+        "acceptance:render": {
+            "dependsOn": ["build"],
+            "cache": false
+        },
+        "acceptance:up": {
+            "cache": false
+        },
+        "acceptance:down": {
+            "cache": false
+        },
+        "docker:up": {
+            "cache": false
+        },
+        "docker:down": {
+            "cache": false
+        }
+    }
+}
