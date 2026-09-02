@@ -1,6 +1,6 @@
 {
     "name": "@opinionated-machine/sse-parser",
-    "version": "0.0.0",
+    "version": "0.1.0",
     "description": "Spec-compliant, dependency-free Server-Sent Events parser for incremental streams and complete response bodies",
     "type": "module",
     "license": "MIT",
