@@ -48,6 +48,19 @@ export type ParseSSEBufferResult = {
    * so the cursor survives across chunks.
    */
   lastEventId: string | undefined
+  /**
+   * The reconnection time in ms set by a `retry:` field this call read, or
+   * `undefined` when it read none.
+   *
+   * The spec applies `retry:` as the field line is processed, not when a
+   * frame dispatches, so a bare `retry: 30000` frame carrying no `data:`
+   * still moves it, and reporting the hint only through the events that
+   * happened to carry one would drop exactly that frame on the floor.
+   * `undefined` means "no news": a hint established by an earlier call is the
+   * caller's to hold. A hint in a frame the buffer has not terminated yet is
+   * reported again by the call that finishes it.
+   */
+  retry: number | undefined
 }
 
 /** `retry:` carries ASCII digits only; any other value is ignored. */
@@ -107,6 +120,12 @@ function findLineEnd(buffer: string, from: number): { end: number; next: number 
   return undefined
 }
 
+/** Parser state whose lifetime is the stream rather than one frame. */
+type StreamFields = {
+  /** The reconnection time set by the most recent valid `retry:`. */
+  retry: number | undefined
+}
+
 /** The frame being assembled between two blank lines. */
 type FrameState = {
   event: Partial<ParsedSSEEvent>
@@ -115,8 +134,14 @@ type FrameState = {
   idSeen: boolean
 }
 
-/** Apply one non-blank line to the frame under construction. */
-function applyFieldLine(line: string, state: FrameState): void {
+/**
+ * Apply one non-blank line to the frame under construction.
+ *
+ * `retry:` is the one field whose effect outlives its frame, so it lands in
+ * `stream` rather than only on the event: the spec applies the reconnection
+ * time as the line is read, dispatch or no dispatch.
+ */
+function applyFieldLine(line: string, state: FrameState, stream: StreamFields): void {
   // Comment lines (starting with :) are ignored; heartbeats arrive as one.
   if (line.startsWith(':')) return
 
@@ -132,6 +157,7 @@ function applyFieldLine(line: string, state: FrameState): void {
     state.dataLines.push(value)
   } else if (field === 'retry' && DIGITS_ONLY.test(value)) {
     state.event.retry = Number(value)
+    stream.retry = state.event.retry
   }
 }
 
@@ -155,6 +181,7 @@ function applyFieldLine(line: string, state: FrameState): void {
  */
 export function parseSSEBuffer(buffer: string, lastEventId?: string): ParseSSEBufferResult {
   const events: ParsedSSEEvent[] = []
+  const stream: StreamFields = { retry: undefined }
   let cursor = lastEventId
   let state: FrameState = { event: {}, dataLines: [], idSeen: false }
   let consumed = 0
@@ -167,7 +194,7 @@ export function parseSSEBuffer(buffer: string, lastEventId?: string): ParseSSEBu
     position = lineEnd.next
 
     if (line !== '') {
-      applyFieldLine(line, state)
+      applyFieldLine(line, state, stream)
       continue
     }
 
@@ -193,7 +220,7 @@ export function parseSSEBuffer(buffer: string, lastEventId?: string): ParseSSEBu
 
   // Preserve any unconsumed content after the last dispatch, including a
   // partial event with only id:/event:/retry: lines.
-  return { events, remaining: buffer.slice(consumed), lastEventId: cursor }
+  return { events, remaining: buffer.slice(consumed), lastEventId: cursor, retry: stream.retry }
 }
 
 /**

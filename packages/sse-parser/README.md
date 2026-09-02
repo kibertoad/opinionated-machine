@@ -38,6 +38,11 @@ reconnectWith(parser.lastEventId)
 a batch accounts for every frame in it, including id-only frames that dispatch
 no event. A caller that gates delivery on the batch needs to see them together.
 
+`parser.retry` is the reconnection time the stream last asked for, in ms. It
+lives on the parser rather than only on the events because the spec applies
+`retry:` when the field line is read: a bare `retry: 30000` frame dispatches
+nothing, and a client that only looked at `event.retry` would ignore it.
+
 For the common case, `parseSSEStream` wraps that loop:
 
 ```ts
@@ -96,6 +101,7 @@ see that leftover.
 | An id-only frame moves the cursor without dispatching | `parseSSEBuffer` and `createSSEStreamParser` report it, so a reconnect resumes from the right place |
 | `data:` with an empty value is an event with an empty payload | The spec's emptiness check runs before the trailing newline is stripped; testing the joined string instead swallows the event |
 | `retry:` accepts ASCII digits only | `parseInt` reads `100x` as 100 |
+| `retry:` is reported even when its frame dispatches nothing | The spec applies it as the field is read, so a server sending a bare `retry: 30000` frame to revise the reconnect delay would otherwise be ignored |
 | An `id:` containing a NUL is ignored | The one field value the spec drops outright |
 | A leading BOM is stripped once, at the start of the stream | `Buffer.toString('utf8')` keeps it, and it turns the first field name into something the interpreter ignores |
 
@@ -107,5 +113,5 @@ see that leftover.
 | `parseSSEStream(chunks, options?)` | Async iterable of decoded text to events |
 | `parseSSEResponse(response, options?)` | `fetch` response body to events |
 | `parseSSEEvents(text)` | Complete body to events |
-| `parseSSEBuffer(buffer, lastEventId?)` | The primitive: one pass, returns `remaining` and the cursor |
+| `parseSSEBuffer(buffer, lastEventId?)` | The primitive: one pass, returns `remaining`, the cursor and any `retry:` it read |
 | `stripStreamBOM(text)` | For callers that do their own buffering |

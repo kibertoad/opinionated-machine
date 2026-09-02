@@ -32,10 +32,14 @@ Two failure detectors run independently:
 | Timer | Reset by | Catches |
 |---|---|---|
 | `staleConnection` | **any bytes** (incl. `: heartbeat` comments) | silently dead connections — force-close + reconnect + poll |
-| `deadman` | **data events only** | healthy-but-wrong streams (a dropped message on a live connection) — reconciliation poll |
+| `deadman` | **delivered events only** | healthy-but-wrong streams: a dropped message on a live connection, repaired by a reconciliation poll |
 
-Heartbeats deliberately do *not* reset the deadman: transport liveness is not
-delivery correctness.
+Heartbeats deliberately do *not* reset the deadman, and neither does a
+duplicate the version gate drops: transport liveness is not delivery
+correctness. A delivered event pushes the next poll out but does not shorten
+the interval back to `deadmanDelayMs`; a stream that keeps delivering needs
+less reconciliation, so only a poll that finds news the stream missed resets
+the backoff.
 
 ## Declaring a binding
 
@@ -274,7 +278,7 @@ responsibility.
 |---|---|---|
 | `initialPoll` | `'eager'` | closes the startup race for one GET |
 | `deadmanDelayMs` | 10 000 | `LIVE_STATE_POLICY` preset: 120 000 |
-| `deadmanIdleBackoff` | ×1.5 up to 60 s | quiet subscriptions poll less |
+| `deadmanIdleBackoff` | ×1.5 up to 60 s | quiet subscriptions poll less; only a poll that finds news resets it |
 | `staleConnectionTimeoutMs` | 60 000 | `'off'` to disable byte-level liveness |
 | `connectTimeoutMs` | 15 000 | a connect that never sends headers is a failure, not a stall |
 | `pollTimeoutMs` | 10 000 | a poll that never settles would disable the backbone |

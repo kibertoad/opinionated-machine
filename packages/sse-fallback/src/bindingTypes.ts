@@ -217,12 +217,18 @@ export type FallbackPolicy = {
    */
   initialPoll: 'eager' | 'delayed' | 'none'
   /**
-   * Deadman delay: how long after the last DATA EVENT (heartbeats do not
-   * count — they prove transport liveness, not delivery) before a
-   * reconciliation poll fires.
+   * Deadman delay: how long after the last DELIVERED EVENT before a
+   * reconciliation poll fires. Heartbeats do not count, and neither do
+   * duplicates below the watermark: both prove transport liveness, not
+   * delivery.
    */
   deadmanDelayMs: number
-  /** Consecutive no-news polls stretch the deadman interval. */
+  /**
+   * Consecutive no-news polls stretch the deadman interval, and delivered
+   * events do NOT shrink it back: a stream that keeps delivering is proving
+   * it needs less reconciliation, not more. Only a poll that finds something
+   * the stream missed resets the interval to {@link deadmanDelayMs}.
+   */
   deadmanIdleBackoff: { factor: number; maxMs: number }
   /**
    * Force-close the stream when NO BYTES (events, comments, heartbeats)

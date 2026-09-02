@@ -38,6 +38,14 @@ export type SSEStreamParser = {
    * frames. This is what to send as `Last-Event-ID` when reconnecting.
    */
   readonly lastEventId: string | undefined
+  /**
+   * The reconnection time in ms the stream last asked for, once it has asked.
+   *
+   * Sticky and independent of dispatch, so a bare `retry: 30000` frame moves
+   * it even though it delivers no event. Read it alongside each `push` when
+   * the hint feeds a reconnect delay.
+   */
+  readonly retry: number | undefined
   /** Bytes of an unterminated frame held back for the next chunk. */
   readonly buffered: string
 }
@@ -45,6 +53,7 @@ export type SSEStreamParser = {
 export function createSSEStreamParser(options: SSEStreamParserOptions = {}): SSEStreamParser {
   let buffer = ''
   let cursor = options.lastEventId
+  let retry: number | undefined
   let atStreamStart = true
 
   return {
@@ -58,10 +67,14 @@ export function createSSEStreamParser(options: SSEStreamParserOptions = {}): SSE
       const parsed = parseSSEBuffer(buffer, cursor)
       buffer = parsed.remaining
       cursor = parsed.lastEventId
+      if (parsed.retry !== undefined) retry = parsed.retry
       return parsed.events
     },
     get lastEventId(): string | undefined {
       return cursor
+    },
+    get retry(): number | undefined {
+      return retry
     },
     get buffered(): string {
       return buffer

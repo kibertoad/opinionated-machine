@@ -617,6 +617,11 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         if (!this.handleParsedEvent(event)) cursorHeld = true
         if (this.streamLoopDone) return
       }
+      // A `retry:` frame carrying no data dispatches no event, so the hint
+      // comes from the parser rather than from the events it emitted. The
+      // parser value is sticky and the clamp is idempotent, so re-reading it
+      // per chunk costs nothing.
+      if (parser.retry !== undefined) this.applyRetryHint(parser.retry)
       // An `id:` frame carrying no data still moves the reconnect cursor, and
       // an empty `id:` clears it, so the cursor comes from the parser rather
       // than from the events it emitted. A frame this batch could not read
@@ -670,10 +675,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
    *   reconnect cursor where it was.
    */
   private handleParsedEvent(parsed: ParsedSseFrame): boolean {
-    if (parsed.retry !== undefined && Number.isFinite(parsed.retry)) {
-      const { minMs, maxMs } = this.policy.serverRetryHintBounds
-      this.serverRetryHintMs = Math.min(Math.max(parsed.retry, minMs), maxMs)
-    }
+    if (parsed.retry !== undefined) this.applyRetryHint(parsed.retry)
 
     let data: unknown
     try {
@@ -690,20 +692,27 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
 
     this.advanceEventCursor(parsed)
 
-    // A data event (not a heartbeat) — reset the deadman. Not while
-    // hydrating: there the deadman is the retry timer for the snapshot the
-    // buffered events are waiting on, and a busy stream would push it out
-    // indefinitely.
-    if (!this.reconciler.isHydrating) {
-      this.idlePolls = 0
-      this.armDeadman()
-    }
-
     const outcome = this.reconciler.handleEvent({
       event: parsed.event ?? 'message',
       data,
       ...(parsed.id !== undefined ? { id: parsed.id } : {}),
     })
+
+    // Only an event the reconciler actually delivered pushes the
+    // reconciliation poll out, which is why this runs after the version gate
+    // and not before it. A duplicate below the watermark carries no news, and
+    // a flood of them would otherwise hold the poll off forever; an event
+    // buffered during hydration delivers nothing either, which keeps the
+    // deadman working as the retry timer for the snapshot it is waiting on.
+    //
+    // The idle backoff level survives on purpose. A healthily delivering
+    // stream needs LESS reconciliation, not more, and resetting `idlePolls`
+    // here pinned the interval at `deadmanDelayMs`: a stream with an event
+    // every 15s polled between nearly every pair of events, forever, while a
+    // fully idle one backed off to `deadmanIdleBackoff.maxMs`. A poll that
+    // does find news still resets it, in `executePoll`.
+    if (outcome.deliveries.length > 0) this.armDeadman()
+
     if (outcome.duplicate) {
       this.diagnostics.onDuplicate?.(parsed.event ?? 'message')
     }
@@ -732,6 +741,18 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     if (stateSuspended) {
       this.diagnostics.onStateSuspended?.(gap)
     }
+  }
+
+  /**
+   * Record a server `retry:` reconnection hint, clamped into policy bounds.
+   *
+   * The value is remote input: `retry: 0` would spin a zero-delay reconnect
+   * loop and a huge one would park reconnection for hours.
+   */
+  private applyRetryHint(retryMs: number): void {
+    if (!Number.isFinite(retryMs)) return
+    const { minMs, maxMs } = this.policy.serverRetryHintBounds
+    this.serverRetryHintMs = Math.min(Math.max(retryMs, minMs), maxMs)
   }
 
   private onStaleConnection(): void {
@@ -839,7 +860,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       if (outcome.hydrationCompleted && !this.stopped) {
         // Hydration can complete while 'connecting' (normal startup) or
         // 'polling' (first successful connect after starting degraded).
-        this.setStatus(this.streamConnected ? 'live' : this.degraded ? 'polling' : 'reconnecting')
+        this.setStatus(this.statusAfterHydration())
       }
       if (outcome.terminated) {
         this.stopWith({ reason: 'terminal-event' })
@@ -930,21 +951,23 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         this.reportGap(outcome.gap, outcome.stateSuspended)
       }
       this.deliver(outcome.deliveries, outcome.state)
-      this.setStatus(this.statusAfterAbandonedHydration())
+      this.setStatus(this.statusAfterHydration())
       if (outcome.terminated) this.stopWith({ reason: 'terminal-event' })
     }
   }
 
   /**
-   * Status to report once subscribe-first hydration is abandoned.
+   * Status to report once subscribe-first hydration is over, whether the
+   * snapshot landed or the polls were given up on.
    *
-   * `streamConnected` is set before the first chunk arrives, so it cannot
-   * stand in for "delivery is healthy": hydration is abandoned precisely
-   * because polls kept failing, and if the stream has been silent too then
-   * nothing has been delivered at all. Only actual bytes earn `'live'` —
-   * which is the same rule the byte-based recovery in `onStreamActivity` uses.
+   * `streamConnected` is set when the response headers arrive, before any
+   * byte of the body, so it cannot stand in for "delivery is healthy": a
+   * stream parked with headers and nothing behind them has delivered nothing.
+   * Only actual bytes earn `'live'`, the same rule the byte-based recovery in
+   * `onStreamActivity` uses. A byte-less stream stays `'connecting'` until it
+   * produces one, and `onStreamActivity` promotes it then.
    */
-  private statusAfterAbandonedHydration(): SubscriptionStatus {
+  private statusAfterHydration(): SubscriptionStatus {
     if (this.streamProducedBytes) return 'live'
     if (this.degraded) return 'polling'
     return this.streamConnected ? 'connecting' : 'reconnecting'

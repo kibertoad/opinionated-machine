@@ -80,6 +80,29 @@ describe('parseSSEBuffer', () => {
     expect(events[1]?.retry).toBe(250)
   })
 
+  it('reports a retry hint from a frame that dispatches no event', () => {
+    // The spec sets the reconnection time when the field line is processed,
+    // not when a frame dispatches, so a server revising the delay with a bare
+    // `retry:` frame must be heard. Gating on dispatch drops it silently.
+    const { events, retry } = parseSSEBuffer('retry: 30000\n\n')
+
+    expect(events).toEqual([])
+    expect(retry).toBe(30_000)
+  })
+
+  it('leaves the retry hint absent when the buffer carried none', () => {
+    // Absent means "no news", so a caller holding a hint from an earlier
+    // chunk keeps it instead of having it cleared by every quiet buffer.
+    expect(parseSSEBuffer('data: a\n\n').retry).toBeUndefined()
+    expect(parseSSEBuffer('retry: nope\n\n').retry).toBeUndefined()
+  })
+
+  it('reports the last retry hint in the buffer', () => {
+    const { retry } = parseSSEBuffer('retry: 1000\ndata: a\n\nretry: 5000\n\n')
+
+    expect(retry).toBe(5_000)
+  })
+
   it('ignores an id field containing a NUL', () => {
     const { events, lastEventId } = parseSSEBuffer('id: bad\0id\ndata: a\n\n', 'seed')
 

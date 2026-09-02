@@ -80,7 +80,9 @@ describe('createResilientSubscription', () => {
     expect(snapshots).toHaveLength(1) // eager hydration poll
     snapshots[0]?.respond({ status: 'pending', version: 0 })
     await flush()
-    expect(sub.status).toBe('live')
+    // Hydration is done, but the stream has produced no bytes yet: response
+    // headers are not delivery, so this is still 'connecting'.
+    expect(sub.status).toBe('connecting')
 
     streams[0]?.pushEvent('done', { result: 'ok' }, { id: '1' })
     await flush()
@@ -263,12 +265,17 @@ describe('createResilientSubscription', () => {
     expect(snapshots.length).toBeGreaterThanOrEqual(1)
     for (const call of [...snapshots]) call.respond({ status: 'pending', version: 0 })
 
-    // Background SSE retry eventually reconnects; the (first successful)
-    // connect starts eager hydration — answering its snapshot goes live.
+    // Background SSE retry eventually reconnects and its connect starts eager
+    // hydration. Answering that snapshot does not go live on its own: bytes
+    // off the reconnected stream are what leave degraded mode.
     await vi.advanceTimersByTimeAsync(200)
     await flush()
     expect(streams.length).toBeGreaterThanOrEqual(1)
     for (const call of [...snapshots]) call.respond({ status: 'pending', version: 0 })
+    await flush()
+    expect(sub.status).toBe('polling')
+
+    streams.at(-1)?.pushHeartbeat()
     await flush()
     expect(sub.status).toBe('live')
   })
@@ -317,6 +324,82 @@ describe('createResilientSubscription', () => {
     expect(delivered).toEqual([
       { event: 'progress', data: { percent: 60 }, id: '6', origin: 'sse' },
     ])
+  })
+
+  it('does not report a byte-less stream as live when hydration completes', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    await flush()
+    expect(sub.status).toBe('connecting')
+
+    // The stream is accepted (headers only) and the hydration snapshot lands.
+    // Headers are not delivery: nothing has come down the stream yet.
+    snapshots[0]?.respond({ status: 'pending', version: 1 })
+    await flush()
+    expect(sub.status).toBe('connecting')
+
+    // The first real bytes are what earn 'live'.
+    streams[0]?.pushHeartbeat()
+    await flush()
+    expect(sub.status).toBe('live')
+  })
+
+  it('does not let duplicate events hold off the reconciliation poll', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 5 })
+    await flush()
+
+    // Frames below the watermark deliver nothing, so they must not push the
+    // reconciliation poll out: a flood of them would suppress it forever.
+    for (let i = 0; i < 3; i += 1) {
+      await vi.advanceTimersByTimeAsync(300)
+      streams[0]?.pushEvent('progress', { percent: 10 }, { id: '3' })
+      await flush()
+    }
+
+    await vi.advanceTimersByTimeAsync(150)
+    expect(snapshots).toHaveLength(2)
+  })
+
+  it('lets the idle backoff keep growing while the stream keeps delivering', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, deadmanIdleBackoff: { factor: 2, maxMs: 8_000 } },
+      random: () => 1,
+    })
+    await flush()
+    // Hydration poll carried no news, so the deadman stretches to 2s.
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(snapshots).toHaveLength(2)
+    // Still no news: the next reconciliation is 4s out.
+    snapshots[1]?.respond({ status: 'pending', version: 1 })
+    await flush()
+
+    // A delivered event pushes that poll out, at the interval the backoff has
+    // reached. Pulling it back to deadmanDelayMs would poll between nearly
+    // every pair of events on a healthy stream.
+    await vi.advanceTimersByTimeAsync(1_000)
+    streams[0]?.pushEvent('progress', { percent: 20 }, { id: '2' })
+    await flush()
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(snapshots).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(snapshots).toHaveLength(3)
   })
 
   it('polls immediately on a version gap (dense mode) instead of waiting for the deadman', async () => {
@@ -485,6 +568,31 @@ describe('createResilientSubscription — liveness and failure bounds', () => {
 
     expect(transport.streamConnects).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(499)
+    expect(transport.streamConnects).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(transport.streamConnects).toHaveLength(2)
+  })
+
+  it('honors a retry hint from a frame that carries no data', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, serverRetryHintBounds: { minMs: 500, maxMs: 5_000 } },
+      random: () => 1,
+    })
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+
+    // No `data:` field, so the frame dispatches no event. The reconnect delay
+    // still has to move, or a server cannot revise it on a quiet stream.
+    streams[0]?.pushRaw('retry: 3000\n\n')
+    await flush()
+    streams[0]?.close()
+    await flush()
+
+    expect(transport.streamConnects).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(2_999)
     expect(transport.streamConnects).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(transport.streamConnects).toHaveLength(2)

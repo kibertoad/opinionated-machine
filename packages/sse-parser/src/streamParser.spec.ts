@@ -50,6 +50,20 @@ describe('createSSEStreamParser', () => {
     expect(parser.push('data: a\n\n')).toEqual([{ data: 'a', lastEventId: 'seed' }])
   })
 
+  it('holds the retry hint across chunks, including from a frame with no data', () => {
+    const parser = createSSEStreamParser()
+
+    expect(parser.retry).toBeUndefined()
+    expect(parser.push('retry: 30000\n\n')).toEqual([])
+    expect(parser.retry).toBe(30_000)
+    // A quiet chunk does not clear an established hint.
+    expect(parser.push('data: a\n\n')).toEqual([{ data: 'a' }])
+    expect(parser.retry).toBe(30_000)
+    // A later hint replaces it.
+    parser.push('retry: 1000\ndata: b\n\n')
+    expect(parser.retry).toBe(1_000)
+  })
+
   it('strips a BOM at the start of the stream and nowhere else', () => {
     const parser = createSSEStreamParser()
 
