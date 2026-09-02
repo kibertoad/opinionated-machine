@@ -45,6 +45,7 @@ export {
   defaultCompareVersions,
   type EventOutcome,
   type IncomingEvent,
+  type InvalidVersionInfo,
   Reconciler,
   type SnapshotOutcome,
   type VersionGap,

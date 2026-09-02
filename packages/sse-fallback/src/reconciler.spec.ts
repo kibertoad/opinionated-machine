@@ -495,6 +495,253 @@ describe('Reconciler — default event versions from SSE ids', () => {
   })
 })
 
+describe('Reconciler — epoch regression', () => {
+  it('resyncs instead of wedging when the writer moves to a LOWER epoch', () => {
+    // The documented migration: createEventIdSequence seeds its epoch from
+    // Date.now(), createRedisEventIdSequence defaults to '0'. Ranking the new
+    // epoch as an older version dropped every event that followed, forever.
+    const reconciler = jobReconciler()
+    reconciler.handleEvent({
+      event: 'progress',
+      data: { percent: 10 },
+      id: '1754838000000-000000000002',
+    })
+
+    const migrated = reconciler.handleEvent({
+      event: 'progress',
+      data: { percent: 20 },
+      id: '0-000000000001',
+    })
+    expect(migrated.duplicate).toBe(false)
+    expect(migrated.deliveries).toHaveLength(1)
+    expect(migrated.gap).toEqual({
+      from: '1754838000000-000000000002',
+      to: '0-000000000001',
+      reason: 'epoch-change',
+    })
+
+    // The new epoch is the ordering scope now: its counter keeps flowing, and
+    // dedup works inside it.
+    const next = reconciler.handleEvent({
+      event: 'progress',
+      data: { percent: 30 },
+      id: '0-000000000002',
+    })
+    expect(next.deliveries).toHaveLength(1)
+    expect(next.gap).toBeUndefined()
+    const replayed = reconciler.handleEvent({
+      event: 'progress',
+      data: { percent: 30 },
+      id: '0-000000000002',
+    })
+    expect(replayed.duplicate).toBe(true)
+  })
+
+  it('suspends the state layer on an epoch regression, like any other gap', () => {
+    type Ledger = { revision: string; total: number }
+    type LedgerEvents = { added: { amount: number } }
+    const reconciler = new Reconciler<Ledger, LedgerEvents, number>(
+      {
+        version: { ofSnapshot: (s) => s.revision },
+        state: {
+          init: (s) => s.total,
+          apply: (total, event) => total + (event.data as { amount: number }).amount,
+        },
+      },
+      { hydrationBufferLimit: 3 },
+    )
+    reconciler.handleSnapshot({ revision: '900-000000000001', total: 10 })
+    reconciler.handleEvent({ event: 'added', data: { amount: 5 }, id: '900-000000000002' })
+    expect(reconciler.getState()).toBe(15)
+
+    const migrated = reconciler.handleEvent({
+      event: 'added',
+      data: { amount: 7 },
+      id: '0-000000000001',
+    })
+    expect(migrated.gap?.reason).toBe('epoch-change')
+    expect(migrated.stateSuspended).toBe(true)
+    expect(migrated.deliveries).toHaveLength(1)
+    // Deltas are not applied across the re-scoping...
+    expect(reconciler.getState()).toBe(15)
+
+    // ...the repair snapshot from the new epoch rebuilds state.
+    const repair = reconciler.handleSnapshot({ revision: '0-000000000001', total: 22 })
+    expect(repair.stateRepaired).toBe(true)
+    expect(reconciler.getState()).toBe(22)
+    expect(reconciler.isStateSuspended).toBe(false)
+  })
+
+  it('honours a custom comparator rather than bypassing it on an epoch change', () => {
+    // Declaring `version.compare` means owning ordering end to end, epochs
+    // included: the bypass exists to correct the DEFAULT comparator, which is
+    // the one that ranks by epoch.
+    const reconciler = jobReconciler({
+      version: {
+        ofSnapshot: (s) => s.version,
+        compare: (a, b) => (a === b ? 0 : String(a) < String(b) ? -1 : 1),
+      },
+    })
+    reconciler.handleEvent({ event: 'progress', data: { percent: 10 }, id: '900-000000000002' })
+
+    const lowerEpoch = reconciler.handleEvent({
+      event: 'progress',
+      data: { percent: 20 },
+      id: '0-000000000001',
+    })
+    expect(lowerEpoch.duplicate).toBe(true)
+    expect(lowerEpoch.gap).toBeUndefined()
+  })
+
+  it('accepts a snapshot from a new epoch instead of dropping it as stale', () => {
+    // A poll-only subscription hits the same regression with no events at all.
+    type Doc = { revision: string; body: string }
+    type DocEvents = { changed: { body: string } }
+    const reconciler = new Reconciler<Doc, DocEvents, undefined>(
+      {
+        snapshotToEvents: (s) => [{ event: 'changed', data: { body: s.body } }],
+        version: { ofSnapshot: (s) => s.revision },
+      },
+      { hydrationBufferLimit: 3 },
+    )
+    reconciler.handleSnapshot({ revision: '900-000000000004', body: 'old' })
+
+    const migrated = reconciler.handleSnapshot({ revision: '0-000000000001', body: 'new' })
+    expect(migrated.stale).toBe(false)
+    expect(migrated.advanced).toBe(true)
+    expect(migrated.deliveries).toHaveLength(1)
+  })
+})
+
+describe('Reconciler — unorderable versions', () => {
+  it('degrades to at-least-once when ofSnapshot returns undefined', () => {
+    const invalid: unknown[] = []
+    const reconciler = new Reconciler<JobSnapshot, JobEvents, undefined>(jobConfig, {
+      hydrationBufferLimit: 3,
+      onInvalidVersion: (info) => invalid.push(info),
+    })
+
+    // A snapshot body that simply has no version field.
+    const snapshot = reconciler.handleSnapshot({ status: 'pending' } as unknown as JobSnapshot)
+    expect(snapshot.advanced).toBe(true)
+    expect(invalid).toEqual([{ source: 'snapshot', value: undefined }])
+
+    // The watermark was NOT poisoned: events still flow, and the gate still
+    // works from the first orderable version onwards.
+    const first = reconciler.handleEvent({ event: 'progress', data: { percent: 10 }, id: '7' })
+    expect(first.duplicate).toBe(false)
+    expect(first.deliveries).toHaveLength(1)
+    const older = reconciler.handleEvent({ event: 'progress', data: { percent: 5 }, id: '6' })
+    expect(older.duplicate).toBe(true)
+    const newer = reconciler.handleEvent({ event: 'progress', data: { percent: 20 }, id: '8' })
+    expect(newer.deliveries).toHaveLength(1)
+
+    // A later snapshot is not compared against a poisoned watermark either.
+    const later = reconciler.handleSnapshot({ status: 'completed', result: 'ok', version: 9 })
+    expect(later.stale).toBe(false)
+    expect(later.deliveries).toHaveLength(1)
+  })
+
+  it('rejects NaN, Infinity and empty-string versions', () => {
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, '', {}]) {
+      const invalid: unknown[] = []
+      const reconciler = new Reconciler<JobSnapshot, JobEvents, undefined>(
+        { ...jobConfig, version: { ofSnapshot: () => value as number } },
+        { hydrationBufferLimit: 3, onInvalidVersion: (info) => invalid.push(info) },
+      )
+      reconciler.handleSnapshot({ status: 'pending', version: 1 })
+      expect(invalid).toEqual([{ source: 'snapshot', value }])
+
+      const delivered = reconciler.handleEvent({
+        event: 'progress',
+        data: { percent: 10 },
+        id: '1',
+      })
+      expect(delivered.duplicate).toBe(false)
+      expect(delivered.deliveries).toHaveLength(1)
+    }
+  })
+
+  it('reports an unorderable ofEvent result but keeps undefined silent', () => {
+    const invalid: unknown[] = []
+    const reconciler = new Reconciler<JobSnapshot, JobEvents, undefined>(
+      {
+        ...jobConfig,
+        version: {
+          ofSnapshot: (s) => s.version,
+          ofEvent: (event) => (event.event === 'progress' ? Number.NaN : undefined),
+        },
+      },
+      { hydrationBufferLimit: 3, onInvalidVersion: (info) => invalid.push(info) },
+    )
+    reconciler.handleSnapshot({ status: 'pending', version: 5 })
+
+    const delivered = reconciler.handleEvent({ event: 'progress', data: { percent: 10 }, id: '6' })
+    expect(delivered.deliveries).toHaveLength(1)
+    expect(invalid).toEqual([{ source: 'event', value: Number.NaN }])
+
+    // A documented "no version" answer is not a misconfiguration.
+    invalid.length = 0
+    reconciler.handleEvent({ event: 'done', data: { result: 'ok' } })
+    expect(invalid).toEqual([])
+  })
+})
+
+describe('Reconciler — gaps while flushing the hydration buffer', () => {
+  it('reports a gap found in the flushed buffer so the caller polls', () => {
+    const reconciler = jobReconciler({
+      version: { ofSnapshot: (s) => s.version, dense: true },
+    })
+    reconciler.beginHydration()
+    reconciler.handleEvent({ event: 'progress', data: { percent: 10 }, id: '6' })
+    // 7 never arrived.
+    reconciler.handleEvent({ event: 'progress', data: { percent: 30 }, id: '8' })
+
+    const flushed = reconciler.handleSnapshot({ status: 'pending', version: 5 })
+    expect(flushed.hydrationCompleted).toBe(true)
+    expect(flushed.deliveries).toHaveLength(2)
+    // The earliest hole: one repair poll covers every later one.
+    expect(flushed.gap).toEqual({ from: 6, to: 8, reason: 'sequence' })
+  })
+
+  it('reports a gap found while abandoning hydration, with the state suspension', () => {
+    type Ledger = { version: number; total: number }
+    type LedgerEvents = { added: { amount: number } }
+    const reconciler = new Reconciler<Ledger, LedgerEvents, number>(
+      {
+        version: { ofSnapshot: (s) => s.version, dense: true },
+        state: {
+          init: (s) => s.total,
+          apply: (total, event) => total + (event.data as { amount: number }).amount,
+        },
+      },
+      { hydrationBufferLimit: 5 },
+    )
+    reconciler.handleSnapshot({ version: 1, total: 0 })
+    reconciler.beginHydration()
+    reconciler.handleEvent({ event: 'added', data: { amount: 1 }, id: '2' })
+    reconciler.handleEvent({ event: 'added', data: { amount: 1 }, id: '5' })
+
+    const abandoned = reconciler.abandonHydration()
+    expect(abandoned.deliveries).toHaveLength(2)
+    expect(abandoned.gap).toEqual({ from: 2, to: 5, reason: 'sequence' })
+    expect(abandoned.stateSuspended).toBe(true)
+  })
+
+  it('leaves gap undefined when the flush finds no hole', () => {
+    const reconciler = jobReconciler({
+      version: { ofSnapshot: (s) => s.version, dense: true },
+    })
+    reconciler.beginHydration()
+    reconciler.handleEvent({ event: 'progress', data: { percent: 10 }, id: '6' })
+    reconciler.handleEvent({ event: 'progress', data: { percent: 20 }, id: '7' })
+
+    const flushed = reconciler.handleSnapshot({ status: 'pending', version: 5 })
+    expect(flushed.deliveries).toHaveLength(2)
+    expect(flushed.gap).toBeUndefined()
+  })
+})
+
 describe('Reconciler — abandoning hydration', () => {
   it('flushes the buffered events instead of discarding them', () => {
     const reconciler = jobReconciler()

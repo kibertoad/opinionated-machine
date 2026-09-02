@@ -3,7 +3,7 @@ import type { FallbackBinding, FallbackRequestParams } from './binding.ts'
 import type { EventPayloadMap, FallbackEvent, FallbackPolicy } from './bindingTypes.ts'
 import { DEFAULT_POLICY } from './bindingTypes.ts'
 import type { PollGate } from './pollGate.ts'
-import type { VersionGap } from './reconciler.ts'
+import type { InvalidVersionInfo, VersionGap } from './reconciler.ts'
 import { Reconciler } from './reconciler.ts'
 import { backoffDelay, ResettableTimer, sleep } from './scheduler.ts'
 import type { FallbackTransport, ParsedSseFrame, StreamResponse } from './transport.ts'
@@ -85,6 +85,14 @@ export type FallbackDiagnostics = {
   onStateRepaired?: () => void
   /** A listener passed to `onEvent` / `onStateChange` / `onStatusChange` threw. */
   onListenerError?: (error: unknown) => void
+  /**
+   * A version extractor returned something the gate cannot order, so the item
+   * was delivered without advancing the watermark. Delivery keeps working
+   * (at-least-once, no deduplication between the channels), but the binding
+   * is misconfigured or the payload is missing its version field — this hook
+   * is the only signal that says so.
+   */
+  onInvalidVersion?: (info: InvalidVersionInfo) => void
 }
 
 export type CreateResilientSubscriptionOptions = {
@@ -256,6 +264,13 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     this.onAuthChallenge = options.onAuthChallenge
     this.reconciler = new Reconciler(binding.config, {
       hydrationBufferLimit: this.policy.hydrationBufferLimit,
+      onInvalidVersion: (info) => {
+        try {
+          this.diagnostics.onInvalidVersion?.(info)
+        } catch (error) {
+          this.diagnostics.onListenerError?.(error)
+        }
+      },
     })
 
     if (options.signal) {
@@ -697,12 +712,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       this.schedulePoll()
     }
     if (outcome.gap) {
-      this.diagnostics.onGap?.(outcome.gap)
-      if (outcome.stateSuspended) {
-        // getState() is frozen at its pre-gap value from here until a snapshot
-        // repairs it, while events keep flowing to listeners.
-        this.diagnostics.onStateSuspended?.(outcome.gap)
-      }
+      this.reportGap(outcome.gap, outcome.stateSuspended)
       // A gap is a loss, not a reorder — polling is the only repair.
       this.schedulePoll()
     }
@@ -711,6 +721,17 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       this.stopWith({ reason: 'terminal-event' })
     }
     return true
+  }
+
+  /**
+   * Surface a detected gap. `getState()` is frozen at its pre-gap value from
+   * here until a snapshot repairs it, while events keep flowing to listeners.
+   */
+  private reportGap(gap: VersionGap, stateSuspended: boolean): void {
+    this.diagnostics.onGap?.(gap)
+    if (stateSuspended) {
+      this.diagnostics.onStateSuspended?.(gap)
+    }
   }
 
   private onStaleConnection(): void {
@@ -806,6 +827,14 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       if (outcome.stateRepaired) {
         this.diagnostics.onStateRepaired?.()
       }
+      if (outcome.gap) {
+        // Flushing the hydration buffer ran the buffered events through the
+        // same version gate, and it found a hole. Only a snapshot repairs
+        // one, so queue the repair poll (the `finally` below starts it once
+        // this poll releases the in-flight latch).
+        this.reportGap(outcome.gap, outcome.stateSuspended)
+        this.schedulePoll()
+      }
       this.deliver(outcome.deliveries, outcome.state)
       if (outcome.hydrationCompleted && !this.stopped) {
         // Hydration can complete while 'connecting' (normal startup) or
@@ -894,6 +923,12 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       this.pollFailures >= this.policy.hydrationAbandonAfterFailures
     ) {
       const outcome = this.reconciler.abandonHydration()
+      if (outcome.gap) {
+        // No extra poll here: the snapshot endpoint is the thing that just
+        // failed, and `this.deadman` was armed with the failure backoff one
+        // line above, which is the repair attempt.
+        this.reportGap(outcome.gap, outcome.stateSuspended)
+      }
       this.deliver(outcome.deliveries, outcome.state)
       this.setStatus(this.statusAfterAbandonedHydration())
       if (outcome.terminated) this.stopWith({ reason: 'terminal-event' })

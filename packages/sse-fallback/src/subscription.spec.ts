@@ -1060,6 +1060,118 @@ describe('createResilientSubscription — listener isolation', () => {
   })
 })
 
+describe('createResilientSubscription — gaps found while flushing hydration', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('reports the gap and polls immediately, like a gap on a live event', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const gaps: Array<{ from: unknown; to: unknown }> = []
+    createResilientSubscription(
+      makeBinding({ version: { ofSnapshot: (s) => s.version, dense: true } }),
+      {
+        transport,
+        policy: TEST_POLICY,
+        random: () => 1,
+        diagnostics: { onGap: (gap) => gaps.push(gap) },
+      },
+    )
+    await flush()
+
+    // Both arrive while the hydration snapshot is still in flight, so they are
+    // buffered and only meet the version gate when the buffer is flushed.
+    streams[0]?.pushEvent('progress', { percent: 60 }, { id: '6' })
+    streams[0]?.pushEvent('progress', { percent: 80 }, { id: '8' })
+    await flush()
+    expect(snapshots).toHaveLength(1)
+
+    snapshots[0]?.respond({ status: 'pending', version: 5 })
+    await flush()
+
+    expect(gaps).toEqual([{ from: 6, to: 8, reason: 'sequence' }])
+    // The repair poll fires with NO timer advance.
+    expect(snapshots).toHaveLength(2)
+  })
+
+  it('reports a gap found while abandoning hydration without an extra poll', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const gaps: Array<{ from: unknown; to: unknown }> = []
+    createResilientSubscription(
+      makeBinding({ version: { ofSnapshot: (s) => s.version, dense: true } }),
+      {
+        transport,
+        policy: { ...TEST_POLICY, hydrationAbandonAfterFailures: 1 },
+        random: () => 1,
+        diagnostics: { onGap: (gap) => gaps.push(gap) },
+      },
+    )
+    await flush()
+    streams[0]?.pushEvent('progress', { percent: 60 }, { id: '6' })
+    streams[0]?.pushEvent('progress', { percent: 80 }, { id: '8' })
+    await flush()
+
+    // The snapshot endpoint fails, so hydration is abandoned and the buffer is
+    // flushed through the gate.
+    snapshots[0]?.respond({ status: 'pending', version: 5 }, 500)
+    await flush()
+
+    expect(gaps).toEqual([{ from: 6, to: 8, reason: 'sequence' }])
+    // No immediate repair poll: the snapshot endpoint is what just failed, and
+    // the failure backoff already owns the next attempt.
+    expect(snapshots).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(snapshots).toHaveLength(2)
+  })
+})
+
+describe('createResilientSubscription — unorderable versions', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('keeps delivering and reports the misconfiguration instead of wedging', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const invalid: unknown[] = []
+    const delivered: Array<FallbackEvent<Events>> = []
+    const sub = createResilientSubscription(
+      // A snapshot body whose version field is absent at runtime.
+      makeBinding({ version: { ofSnapshot: () => undefined as unknown as number } }),
+      {
+        transport,
+        policy: TEST_POLICY,
+        random: () => 1,
+        diagnostics: { onInvalidVersion: (info) => invalid.push(info) },
+      },
+    )
+    sub.onEvent((event) => delivered.push(event))
+    await flush()
+
+    snapshots[0]?.respond({ status: 'pending', version: 1 })
+    await flush()
+    expect(invalid).toEqual([{ source: 'snapshot', value: undefined }])
+
+    // Not wedged: the stream keeps delivering, and so does the next poll.
+    streams[0]?.pushEvent('progress', { percent: 10 }, { id: '1' })
+    await flush()
+    await vi.advanceTimersByTimeAsync(1_000)
+    snapshots[1]?.respond({ status: 'completed', result: 'ok', version: 2 })
+    await flush()
+
+    expect(delivered).toEqual([
+      { event: 'progress', data: { percent: 10 }, id: '1', origin: 'sse' },
+      { event: 'done', data: { result: 'ok' }, origin: 'poll' },
+    ])
+    expect(sub.status).toBe('stopped')
+  })
+})
+
 describe('createResilientSubscription — abandoned hydration status', () => {
   beforeEach(() => {
     vi.useFakeTimers()

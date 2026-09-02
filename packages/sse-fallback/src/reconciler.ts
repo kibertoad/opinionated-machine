@@ -34,6 +34,20 @@ export type VersionGap = {
   reason: 'sequence' | 'epoch-change'
 }
 
+/**
+ * A version extractor returned a value that cannot be ordered — `undefined`
+ * from `version.ofSnapshot` (a snapshot body missing its version field is the
+ * usual cause), `NaN`, `Infinity`, an empty string, or a non-scalar.
+ *
+ * The item is still delivered, just without advancing the watermark, so the
+ * subscription degrades to at-least-once rather than wedging. This exists so
+ * that degradation is visible instead of silent.
+ */
+export type InvalidVersionInfo = {
+  source: 'snapshot' | 'event'
+  value: unknown
+}
+
 export type IncomingEvent = {
   event: string
   data: unknown
@@ -71,6 +85,13 @@ export type SnapshotOutcome<Events extends EventPayloadMap> = {
   advanced: boolean
   /** Hydration completed with this snapshot (buffered events were flushed). */
   hydrationCompleted: boolean
+  /**
+   * A gap was detected while flushing the hydration buffer — caller should
+   * poll now. Buffered events pass through the same version gate as live
+   * ones, so the hole they expose needs the same repair poll; without this
+   * the gap would be found and then silently dropped with the flush outcome.
+   */
+  gap?: VersionGap
   terminated: boolean
   state?: { value: unknown }
   /** Whether the state layer is still gap-suspended after this snapshot. */
@@ -106,12 +127,21 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
    */
   private stateReplayTruncated = false
   private terminated = false
+  private readonly onInvalidVersion: ((info: InvalidVersionInfo) => void) | undefined
 
   constructor(
     config: FallbackBindingConfig<Snapshot, Events, State>,
-    options: { hydrationBufferLimit: number },
+    options: {
+      hydrationBufferLimit: number
+      /**
+       * Reported when a version extractor hands back something that cannot be
+       * ordered. Purely observational — the reconciler degrades on its own.
+       */
+      onInvalidVersion?: (info: InvalidVersionInfo) => void
+    },
   ) {
     this.config = config
+    this.onInvalidVersion = options.onInvalidVersion
     const shorthandEvent = config.snapshotEvent
     this.snapshotToEvents =
       config.snapshotToEvents ??
@@ -215,12 +245,29 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
     if (this.terminated) return outcome
 
     const versioned = this.config.version !== 'none'
+    // A version this reconciler cannot order (a body missing the field, NaN,
+    // an empty string) is treated as no version at all rather than stored:
+    // an unorderable watermark compares as "not less than" against every
+    // later item, which would drop the whole stream as stale duplicates.
     const snapshotVersion = versioned
-      ? (this.config.version as { ofSnapshot: (s: Snapshot) => Version }).ofSnapshot(snapshot)
+      ? (this.normalizeVersion(
+          (this.config.version as { ofSnapshot: (s: Snapshot) => Version }).ofSnapshot(snapshot),
+          'snapshot',
+        ) ?? null)
       : null
 
+    // An epoch change re-scopes ordering, so counters on either side are not
+    // comparable and "below the watermark" means nothing: a snapshot from the
+    // new epoch is the resync, not a stale arrival. Without this a writer
+    // migrated to a lower epoch (the documented `createEventIdSequence` ->
+    // `createRedisEventIdSequence` move) would have every snapshot dropped.
+    const epochChanged =
+      snapshotVersion !== null &&
+      this.highWatermark !== null &&
+      this.isEpochChange(this.highWatermark, snapshotVersion)
+
     const watermarkComparison =
-      versioned && snapshotVersion !== null && this.highWatermark !== null
+      !epochChanged && snapshotVersion !== null && this.highWatermark !== null
         ? this.compare(snapshotVersion, this.highWatermark)
         : undefined
 
@@ -389,11 +436,30 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
       this.gateAndDeliver(incoming, 'sse', eventOutcome)
       outcome.deliveries.push(...eventOutcome.deliveries)
       if (eventOutcome.state) outcome.state = eventOutcome.state
+      // The first hole is enough: one repair poll covers every later one, and
+      // reporting the earliest keeps `from` at the last version actually
+      // delivered before the loss.
+      if (eventOutcome.gap && !outcome.gap) outcome.gap = eventOutcome.gap
       if (eventOutcome.terminated) outcome.terminated = true
     }
+    outcome.stateSuspended = this.stateSuspended
     // snapshotVersion is already the watermark, so gateAndDeliver dropped
     // anything the snapshot subsumed. (Parameter kept for readability.)
     void snapshotVersion
+  }
+
+  /**
+   * Record a detected gap on the outcome and suspend the state layer, so the
+   * caller polls for a repair snapshot instead of applying deltas across a
+   * hole.
+   */
+  private registerGap(gap: VersionGap, outcome: EventOutcome<Events>): void {
+    outcome.gap = gap
+    if (this.config.state && (this.config.state.reinitOnGap ?? true)) {
+      // Deltas must not be applied across a gap; the repair snapshot
+      // re-initializes state.
+      this.stateSuspended = true
+    }
   }
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: the version gate is the correctness core — splitting it would scatter the invariants it guards
@@ -407,19 +473,28 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
     if (versioned) {
       version = this.extractEventVersion(incoming)
       if (version !== undefined && this.highWatermark !== null) {
-        const comparison = this.compare(version, this.highWatermark)
-        if (comparison <= 0) {
-          outcome.duplicate = true
-          return
-        }
         const gap = this.detectGap(this.highWatermark, version)
-        if (gap) {
-          outcome.gap = gap
-          if (this.config.state && (this.config.state.reinitOnGap ?? true)) {
-            // Deltas must not be applied across a gap; the repair snapshot
-            // re-initializes state.
-            this.stateSuspended = true
+        // An epoch change is resolved BEFORE the duplicate gate, because the
+        // two epochs are not comparable: a lower epoch is not an older event,
+        // it is a different ordering scope. Ranking it as a duplicate is how
+        // a writer that moved to a lower epoch (the documented
+        // `createEventIdSequence` -> `createRedisEventIdSequence` migration,
+        // whose DEFAULT_EPOCH is '0') wedged the subscription for good —
+        // every event sorted below a watermark it could never reach.
+        // Adopting the new epoch and reporting the gap turns that into what
+        // the docs promise: a resync poll. Two writers with different epochs
+        // broadcasting into one room (explicitly unsupported) now alternate
+        // gaps instead of silently dropping one writer's events; the repair
+        // polls are rate-limited by the deadman backoff and the poll gate.
+        if (gap?.reason === 'epoch-change' && this.ordersEpochs) {
+          this.registerGap(gap, outcome)
+        } else {
+          const comparison = this.compare(version, this.highWatermark)
+          if (comparison <= 0) {
+            outcome.duplicate = true
+            return
           }
+          if (gap) this.registerGap(gap, outcome)
         }
       }
     }
@@ -453,17 +528,59 @@ export class Reconciler<Snapshot, Events extends EventPayloadMap, State> {
     const versionConfig = this.config.version
     if (versionConfig === 'none') return undefined
     if (versionConfig.ofEvent) {
-      return versionConfig.ofEvent({
+      const extracted = versionConfig.ofEvent({
         event: incoming.event,
         data: incoming.data,
         ...(incoming.id !== undefined ? { id: incoming.id } : {}),
         origin: 'sse',
       } as FallbackEvent<Events>)
+      // `undefined` is a documented answer here ("this event carries no
+      // version"), so it is not reported; anything else unorderable is.
+      return extracted === undefined ? undefined : this.normalizeVersion(extracted, 'event')
     }
     // Default: the SSE id, when it is a shape this package can order —
     // a bare integer, or a `createEventIdSequence()` id.
     if (incoming.id === undefined || incoming.id === '') return undefined
     return parseDefaultVersion(incoming.id)
+  }
+
+  /**
+   * A version the gate can actually order, or `undefined`.
+   *
+   * Nothing in the type system stops an extractor from handing back
+   * `undefined` (a snapshot body whose version field is absent), `NaN`, an
+   * empty string or an object, and storing one as the watermark is the worst
+   * outcome the gate has: `defaultCompareVersions` falls through to a
+   * lexicographic comparison against `'undefined'`/`'NaN'`, every later item
+   * ranks at or below it, and the subscription drops everything as a
+   * duplicate — silently, forever. Dropping the version instead costs
+   * deduplication (at-least-once delivery) and keeps the stream flowing.
+   */
+  private normalizeVersion(value: unknown, source: 'snapshot' | 'event'): Version | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string' && value !== '') return value
+    this.onInvalidVersion?.({ source, value })
+    return undefined
+  }
+
+  /**
+   * Whether the epoch bypass below applies. A binding that declares
+   * `version.compare` owns ordering end to end, including across epochs, so
+   * its verdict is never overridden here — the bypass exists to correct the
+   * DEFAULT comparator, which ranks by epoch and therefore reads a lowered
+   * epoch as an older version.
+   */
+  private get ordersEpochs(): boolean {
+    const versionConfig = this.config.version
+    return versionConfig !== 'none' && versionConfig.compare === undefined
+  }
+
+  /**
+   * Whether two versions belong to different ordering scopes under the
+   * default comparator — see {@link ordersEpochs}.
+   */
+  private isEpochChange(a: Version, b: Version): boolean {
+    return this.ordersEpochs && isEpochChange(a, b)
   }
 
   private compare(a: Version, b: Version): number {
@@ -542,6 +659,19 @@ function toCounter(version: Version): SequenceParts | undefined {
     return { epoch: BigInt(parsed[1] as string), counter: BigInt(parsed[2] as string) }
   }
   return /^\d+$/.test(version) ? { epoch: 0n, counter: BigInt(version) } : undefined
+}
+
+/**
+ * Whether two versions belong to different ordering scopes (a writer restart,
+ * or a move to a differently-seeded sequence). Counters on either side of an
+ * epoch change measure nothing against each other, so neither "newer" nor
+ * "older" is meaningful — only "resync".
+ */
+function isEpochChange(a: Version, b: Version): boolean {
+  const left = toCounter(a)
+  const right = toCounter(b)
+  if (left === undefined || right === undefined) return false
+  return left.epoch !== right.epoch
 }
 
 /**

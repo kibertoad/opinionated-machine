@@ -198,8 +198,9 @@ adoption bridge — strongly prefer real versions.
    (`job.version`, a revision column) as the id source: it is per-scope and
    writer-independent. A per-process `createEventIdSequence()` is safe only for
    a single writer — two pods sequencing into the same room use different
-   epochs, and the client silently drops the older-epoch pod's events. For
-   multi-writer scopes use a domain version or the Redis-backed
+   epochs, so every alternation between them reads as an epoch change and costs
+   a resync poll. For multi-writer scopes use a domain version or the
+   Redis-backed
    `createRedisEventIdSequence()` from
    `@opinionated-machine/sse-rooms-redis`.
 3. Optional: dense versions (enables gap detection → instant repair polls),
@@ -312,10 +313,28 @@ on either side are unrelated, so the reconciler reports it as a gap with
 `reason: 'epoch-change'`, polls for a snapshot, and rebuilds delta state from it
 rather than applying more deltas across the restart.
 
+That holds in **either direction**. A new epoch is not necessarily a larger one:
+moving a writer from `createEventIdSequence()` (epoch seeded from `Date.now()`)
+to `createRedisEventIdSequence()` (epoch `'0'` by default) lowers it. The epoch
+is compared before the duplicate gate for exactly that reason — ranking the new
+scope as "older" would drop every event and snapshot that followed it, forever.
+The new epoch simply becomes the ordering scope, and the resync poll repairs
+whatever the switch skipped. This applies to the default comparator only: a
+binding that declares `version.compare` owns ordering end to end, epochs
+included, and its verdict is never overridden.
+
 Ids in any other shape (a UUID, say) carry **no** version: they are unique but
 not orderable, so events are delivered at-least-once and the watermark does not
 move. Declare `version.ofEvent` explicitly for any other id scheme rather than
 letting an unorderable id masquerade as a version.
+
+The same rule protects the gate from a version it cannot order at all —
+`version.ofSnapshot` returning `undefined` because the body has no version
+field, or `NaN`, or an empty string. Such a value is never stored as the
+watermark (one that compares as "not less than" everything would drop the whole
+stream as duplicates); the item is delivered, the watermark stays put, and
+`diagnostics.onInvalidVersion` reports the degradation to at-least-once, which
+is otherwise invisible.
 
 ## Known limitations (v1)
 
