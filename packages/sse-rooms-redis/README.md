@@ -99,6 +99,41 @@ type RedisAdapterConfig = {
 }
 ```
 
+## Shared event-id sequences
+
+The room fan-out this adapter provides is exactly where per-process event ids
+break. `createEventIdSequence()` in `opinionated-machine` is in-memory and
+per-process: its epoch defaults to the process start time, and a fallback
+client's default extractor orders by epoch first. Two pods broadcasting into
+the same room therefore use different epochs — their events interleave, the
+client's high-watermark lands on the newer epoch, and every subsequent event
+from the older-epoch pod compares as stale and is **silently dropped**. The
+failure only appears under horizontal scale.
+
+`createRedisEventIdSequence()` backs the counter with Redis `INCR` and uses
+one constant epoch, so every pod contributes to a single ordered run:
+
+```ts
+import { createRedisEventIdSequence } from '@opinionated-machine/sse-rooms-redis'
+
+// One key per ordering scope — ids from different keys are not comparable.
+const seq = createRedisEventIdSequence({ client: redis, key: `sse:seq:job:${jobId}` })
+
+await broadcaster.broadcastToRoom(room, statusEvent, data, { id: await seq.next() })
+```
+
+One round trip per id, deliberately: reserving ids in blocks would let a pod
+holding an earlier block publish after a pod holding a later one, which is the
+out-of-order delivery this exists to prevent.
+
+`node-redis` names the command `incrBy`, so wrap it:
+`{ incrby: (key, by) => client.incrBy(key, by) }`.
+
+When the resource already has a **domain version** (`job.version`, a revision
+column), prefer that over any generated sequence — it is per-scope and
+writer-independent for free, and the snapshot body has to carry it anyway for
+the client's version gate.
+
 ## How It Works
 
 ### Architecture

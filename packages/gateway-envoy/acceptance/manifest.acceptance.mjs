@@ -30,5 +30,39 @@ export const acceptanceManifest = {
       // Tight timeout so we can verify Envoy enforces it.
       metadata: { upstream: 'upstream', timeouts: { request: '200ms' } },
     },
+    {
+      id: 'sse.stream',
+      method: 'GET',
+      path: '/sse',
+      controller: 'sse',
+      routeKey: 'stream',
+      // Marked streaming: the generator disables the route timeout and idle
+      // timeout, so the stream must survive event gaps longer than the HCM
+      // stream_idle_timeout configured in render-config.mjs.
+      streaming: 'sse',
+      metadata: { upstream: 'upstream' },
+    },
+    {
+      id: 'sse.dual',
+      method: 'GET',
+      path: '/dual',
+      controller: 'sse',
+      routeKey: 'dual',
+      // Marked dual: the generator emits TWO Envoy routes — an Accept-matched
+      // stream branch with the timeouts disabled, and a catch-all JSON branch
+      // that keeps this request timeout. One route could only do one of those.
+      streaming: 'dual',
+      metadata: { upstream: 'upstream', timeouts: { request: '200ms' } },
+    },
+    {
+      id: 'sse.unmarked',
+      method: 'GET',
+      path: '/sse-unmarked',
+      controller: 'sse',
+      routeKey: 'unmarked',
+      // Same upstream behavior but NOT marked streaming: the HCM
+      // stream_idle_timeout applies and resets the stream mid-gap.
+      metadata: { upstream: 'upstream' },
+    },
   ],
 }

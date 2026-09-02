@@ -34,7 +34,7 @@
         "directory": "packages/gateway-envoy"
     },
     "peerDependencies": {
-        "opinionated-machine": ">=6.17.0"
+        "opinionated-machine": ">=10.1.0"
     },
     "dependencies": {
         "yaml": "^2.5.1"

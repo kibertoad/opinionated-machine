@@ -11,6 +11,7 @@ import type { z } from 'zod'
 import { ZodObject } from 'zod'
 import type { AbstractDualModeController } from '../dualmode/AbstractDualModeController.ts'
 import { isErrorLike } from '../errorUtils.ts'
+import { attachRouteStreamingMode } from '../gateway/routeStreaming.ts'
 import type { AbstractSSEController } from '../sse/AbstractSSEController.ts'
 import type {
   DualModeRouteHandler,
@@ -475,7 +476,13 @@ function buildDualModeRouteInternal<Contract extends AnyDualModeContractDefiniti
     routeOptions.preHandler = options.preHandler
   }
 
-  return routeOptions
+  // Carry the fallback branch into the manifest: a gateway splitting this
+  // route needs to know where a request with no (or a wildcard) Accept header
+  // goes, or it applies request-shaped timeouts to an SSE response.
+  // The manifest speaks the api-contracts vocabulary (`sse` / `non-sse`), which
+  // is wider than this route's own negotiation: the branch that does not stream
+  // is JSON here, but a gateway only needs to know that it is not a stream.
+  return attachRouteStreamingMode(routeOptions, 'dual', defaultMode === 'sse' ? 'sse' : 'non-sse')
 }
 
 /**
@@ -603,7 +610,7 @@ function buildSSERouteInternal<Contract extends AnySSEContractDefinition>(
     routeOptions.preHandler = options.preHandler
   }
 
-  return routeOptions
+  return attachRouteStreamingMode(routeOptions, 'sse')
 }
 
 // ============================================================================

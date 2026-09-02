@@ -8,7 +8,7 @@
 
 import type { SSEEventSchemas } from '@lokalise/api-contracts'
 import { type ApiContract, getSseSchemaByEventName } from '@lokalise/api-contracts'
-import type { ParsedSSEEvent } from '../sse/sseParser.ts'
+import type { ParsedSSEEvent } from '@opinionated-machine/sse-parser'
 import type { ApiSSEEvent } from './apiSseTestTypes.ts'
 import { truncateBody } from './sseInjectShared.ts'
 

@@ -1,4 +1,4 @@
-import { type ParsedSSEEvent, parseSSEEvents } from '../sse/sseParser.ts'
+import { type ParsedSSEEvent, parseSSEEvents } from '@opinionated-machine/sse-parser'
 import type { AnyFastifyInstance } from './AnyFastifyInstance.ts'
 import { truncateBody } from './sseInjectShared.ts'
 import type { SSEConnectOptions, SSETestConnection } from './sseTestTypes.ts'

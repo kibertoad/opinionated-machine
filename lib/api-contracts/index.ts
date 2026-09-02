@@ -10,4 +10,12 @@ export type {
 } from '@lokalise/fastify-api-contracts'
 export { AbstractApiController } from './AbstractApiController.ts'
 export { type ApiRouteOptions, buildApiRoute } from './apiRouteBuilder.ts'
+export {
+  ApiSseConnectionRegistry,
+  getApiSseConnectionRegistry,
+  getSessionRooms,
+  type PendingJoin,
+  type SSERoomsOptions,
+  withSessionRooms,
+} from './apiSseConnectionRegistry.ts'
 export { asApiControllerClass } from './asApiControllerClass.ts'

@@ -43,6 +43,8 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Error Handling](#error-handling)
   - [Long-lived Connections vs Request-Response Streaming](#long-lived-connections-vs-request-response-streaming)
   - [SSE Parsing Utilities](#sse-parsing-utilities)
+    - [parseSSEResponse](#parsesseresponse)
+    - [createSSEStreamParser and parseSSEStream](#createssestreamparser-and-parsessestream)
     - [parseSSEEvents](#parsesseevents)
     - [parseSSEBuffer](#parsessebuffer)
     - [ParsedSSEEvent Type](#parsedsseevent-type)
@@ -94,7 +96,12 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Field Reference](#field-reference)
   - [Generating Gateway Configs](#generating-gateway-configs)
   - [Inspecting the Manifest at Runtime](#inspecting-the-manifest-at-runtime)
+  - [Streaming Routes](#streaming-routes)
   - [What's Not Covered](#whats-not-covered)
+- [Polling Fallback for SSE](#polling-fallback-for-sse)
+  - [Serving the Pattern](#serving-the-pattern)
+  - [Monotonic Event IDs](#monotonic-event-ids)
+  - [Server-Side Guarantees Checklist](#server-side-guarantees-checklist)
 
 ## Basic usage
 
@@ -1380,21 +1387,86 @@ private handleStream = buildHandler(streamContract, {
     // Connection closes automatically when handler returns
   },
 })
+```
 
 ### SSE Parsing Utilities
 
-The library provides production-ready utilities for parsing SSE (Server-Sent Events) streams:
+Wire-format parsing lives in
+[`@opinionated-machine/sse-parser`](./packages/sse-parser/README.md) and is
+re-exported here, so the server's test helpers and the browser client
+(`@opinionated-machine/sse-fallback`) frame a stream with the same code.
 
-| Function | Use Case |
+| Function | Use case |
 |----------|----------|
-| `parseSSEEvents` | **Testing & complete responses** - when you have the full response body |
-| `parseSSEBuffer` | **Production streaming** - when data arrives incrementally in chunks |
+| `parseSSEResponse` | A `fetch` response: decodes the bytes and frames them for you |
+| `parseSSEStream` | An async iterable of already-decoded text chunks |
+| `createSSEStreamParser` | A stream you drive yourself, chunk by chunk |
+| `parseSSEEvents` | Testing and request-response streaming, when the full body is in hand |
+| `parseSSEBuffer` | The primitive the others are built on |
+
+#### parseSSEResponse
+
+Consume a live SSE stream from `fetch`. Multi-byte characters split across
+network chunks are held back, and breaking out of the loop cancels the
+response body.
+
+```ts
+import { parseSSEResponse } from 'opinionated-machine'
+
+const response = await fetch(url, { headers: { accept: 'text/event-stream' } })
+
+for await (const event of parseSSEResponse(response)) {
+  console.log('Received:', event.event ?? 'message', JSON.parse(event.data))
+  if (event.event === 'done') break
+}
+```
+
+Unlike `EventSource` the request is yours: custom headers, a POST body, an
+`AbortSignal`, your own reconnect policy.
+
+#### createSSEStreamParser and parseSSEStream
+
+When the transport hands you decoded text rather than a `Response`, or when you
+need the reconnect cursor after the stream ends.
+
+```ts
+import { createSSEStreamParser } from 'opinionated-machine'
+
+// One per connection: it holds the partial frame, the Last-Event-ID cursor and
+// the BOM that may open the stream.
+const parser = createSSEStreamParser({ lastEventId: resumeFrom })
+
+for await (const chunk of chunks) {
+  for (const event of parser.push(chunk)) {
+    console.log('Received:', event.event ?? 'message', event.data)
+  }
+}
+
+reconnectWith(parser.lastEventId)
+```
+
+`parseSSEStream` wraps that loop when you only want the events:
+
+```ts
+import { parseSSEStream } from 'opinionated-machine'
+
+for await (const event of parseSSEStream(chunks, {
+  onChunk: () => resetStaleConnectionTimer(),
+})) {
+  handle(event)
+}
+```
+
+`onChunk` fires for every chunk before it is framed, comment frames included.
+Framing consumes `: heartbeat` comments, so a consumer watching only events
+cannot tell an idle-but-healthy connection from a dead one.
 
 #### parseSSEEvents
 
 Parse a complete SSE response body into an array of events.
 
-**When to use:** Testing with Fastify's `inject()`, or when the full response is available (e.g., request-response style SSE like OpenAI completions):
+**When to use:** testing with Fastify's `inject()`, or when the full response is
+available (request-response style SSE such as OpenAI completions):
 
 ```ts
 import { parseSSEEvents, type ParsedSSEEvent } from 'opinionated-machine'
@@ -1418,66 +1490,57 @@ const events: ParsedSSEEvent[] = parseSSEEvents(responseBody)
 const notifications = events.map(e => JSON.parse(e.data))
 ```
 
+A trailing frame with no blank line after it is discarded, which is what the
+spec requires at the end of a stream: a body cut mid-frame must not surface its
+truncated payload as a delivered event. Reach for `parseSSEBuffer` when you want
+to inspect that leftover.
+
 #### parseSSEBuffer
 
-Parse a streaming SSE buffer, handling incomplete events at chunk boundaries.
-
-**When to use:** Production clients consuming real-time SSE streams (notifications, live feeds, chat) where events arrive incrementally:
+One pass over a buffer: the events it completed, the bytes it could not, and the
+reconnect cursor. Prefer `createSSEStreamParser` for a live stream, which keeps
+all three across chunks for you.
 
 ```ts
 import { parseSSEBuffer, type ParseSSEBufferResult } from 'opinionated-machine'
 
 let buffer = ''
+let cursor: string | undefined
 
-// As chunks arrive from a stream...
 for await (const chunk of stream) {
   buffer += chunk
-  const result: ParseSSEBufferResult = parseSSEBuffer(buffer)
+  // Feeding the cursor back is what makes Last-Event-ID survive: an event with
+  // no `id:` of its own inherits the previous one, and an `id:` frame carrying
+  // no data still moves it.
+  const result: ParseSSEBufferResult = parseSSEBuffer(buffer, cursor)
+  buffer = result.remaining
+  cursor = result.lastEventId
 
-  // Process complete events
   for (const event of result.events) {
     console.log('Received:', event.event, event.data)
-  }
-
-  // Keep incomplete data for next chunk
-  buffer = result.remaining
-}
-```
-
-**Production example with fetch:**
-
-```ts
-const response = await fetch(url)
-const reader = response.body!.getReader()
-const decoder = new TextDecoder()
-let buffer = ''
-
-while (true) {
-  const { done, value } = await reader.read()
-  if (done) break
-
-  buffer += decoder.decode(value, { stream: true })
-  const { events, remaining } = parseSSEBuffer(buffer)
-  buffer = remaining
-
-  for (const event of events) {
-    console.log('Received:', event.event, JSON.parse(event.data))
   }
 }
 ```
 
 #### ParsedSSEEvent Type
 
-Both functions return events with this structure:
+Every entry point returns events with this structure:
 
 ```ts
 type ParsedSSEEvent = {
-  id?: string      // Event ID (from "id:" field)
-  event?: string   // Event type (from "event:" field)
-  data: string     // Event data (from "data:" field, always present)
-  retry?: number   // Reconnection interval (from "retry:" field)
+  id?: string           // The "id:" this event carried, if any
+  event?: string        // Event type from "event:"; absent means 'message'
+  data: string          // Event data from "data:", always present
+  retry?: number        // Reconnection interval from "retry:"
+  lastEventId?: string  // The reconnect cursor as of this event's dispatch
 }
 ```
+
+`id` and `lastEventId` are separate on purpose. The cursor persists across
+events that carry no `id:` of their own, so it is what you reconnect with;
+`id` is what the event itself carried, so it is what you order and deduplicate
+on. Ordering on the cursor instead makes every inheriting event look like a
+duplicate of the last id-bearing one.
 
 ### Testing SSE Controllers
 
@@ -3017,6 +3080,13 @@ await app.ready()
 
 ### Accept Header Routing
 
+Dual-mode routes are registered with @fastify/sse kind `'manual'`, so the
+framework's `determineMode()` is the single Accept negotiator: q-value aware,
+`defaultMode` applies for `*/*` or a missing `Accept` header (including
+`defaultMode: 'sse'`). SSE-only routes use kind `'only'` — a missing header or
+`*/*` streams, and a client that explicitly refuses `text/event-stream`
+(e.g. `Accept: application/json`) receives a clean 406.
+
 The `Accept` header determines response mode:
 
 ```bash
@@ -3478,7 +3548,7 @@ time.
 | Field | Example | Notes |
 | ----- | ------- | ----- |
 | `upstream` | `'users-service'` | Logical cluster name; resolved to a host by the generator |
-| `timeouts` | `{ request: '5s', idle: '60s', connect: '1s' }` | Duration units: `ms` / `s` / `m` / `h` |
+| `timeouts` | `{ request: '5s', idle: '60s', connect: '1s' }` | Duration units: `ms` / `s` / `m` / `h`. `idle` maps to Envoy route `idle_timeout`, joins Kong's loosest-wins `read_timeout`, and raises KrakenD's endpoint `timeout` — declare it on streaming routes to bound liveness (pair with heartbeats) |
 | `retry` | `{ attempts: 2, on: ['5xx', 'connect-failure'], perTryTimeout: '2s' }` | |
 | `rateLimit` | `{ requests: 100, per: '1m', key: 'ip' }` | `key`: `'ip'`, `{ header }`, `{ customHeader }`, `{ query }`, `{ customQuery }` |
 | `cache` | `{ ttl: '60s', methods: ['GET'], vary: ['Accept-Language'] }` | |
@@ -3565,11 +3635,82 @@ const manifest = app.buildGatewayManifest()
 The manifest is rebuilt on every call, so it always reflects the current set
 of registered controllers.
 
+### Streaming Routes
+
+SSE and dual-mode routes need gateway treatment that request-response routes
+must not get: Envoy's defaults (15s route timeout, 5-minute stream idle
+timeout) reset long-lived streams, and buffering proxies hold SSE frames until
+the response completes. Routes built from SSE-capable contracts are therefore
+stamped with a streaming mode, and the manifest carries it as
+`streaming: 'sse' | 'dual'`.
+
+The marker describes the **success path**. An error status answers with a JSON
+body on a streaming route too (including the early-return `sse.respond(404,
+...)` path), so generators size timeouts and buffering from it but must not
+assume the content type of a failure.
+
+- **Envoy** — streaming routes default to `timeout: 0s` and `idle_timeout: 0s`
+  (declare `timeouts.idle` to reinstate a liveness bound; heartbeats are the
+  intended keep-alive). `EnvoyOptions.streamIdleTimeout` sets the listener-wide
+  HCM `stream_idle_timeout` for everything else. Declaring `timeouts.request`
+  on an SSE-only route warns — it bounds the stream's total lifetime.
+
+  With both of those timeouts off, a streaming route would otherwise have an
+  **unbounded** lifetime, and the authorization checked when the stream opened
+  would stay in force for as long as the connection lives — a principal removed
+  from a scope keeps receiving events until they close the tab. Streaming
+  routes therefore emit a route-level `max_stream_duration`, defaulting to
+  30 minutes. Configure it with `EnvoyOptions.maxStreamDuration` (`'off'` for
+  the old unbounded behaviour) or per route with `timeouts.maxDuration`
+  (`'0s'` to opt out). The ceiling is invisible to users when the client
+  treats a server close as a routine reconnect, which
+  `@opinionated-machine/sse-fallback` does.
+
+  A **dual-mode** route is emitted as *two* Envoy routes, because one route
+  cannot be both: `<id>__sse`, matched on `Accept: text/event-stream`, and
+  `<id>`, the catch-all. The declared timeouts are split between them rather
+  than applied to both — `timeouts.idle` goes to the stream branch,
+  `timeouts.request` to the JSON branch, which is the fallback poll path and
+  the one that most needs a bound. The split keys off the `Accept` header, the
+  same predicate `determineMode()` uses server-side, quality values included:
+  `text/event-stream;q=0` is a refusal, so it takes the JSON branch.
+
+  A route declaring `defaultMode: 'sse'` inverts the split, because there the
+  server streams for a missing or wildcard `Accept` header. The manifest
+  carries the fallback branch as `streamingDefaultMode` (`'non-sse' | 'sse'`,
+  the `@lokalise/api-contracts` vocabulary), and Envoy makes the
+  stream the catch-all with `<id>__json` as the narrow branch, so an
+  unspecific request cannot land on the JSON branch's request timeout while the
+  server is streaming. A request listing both media types resolves to JSON on
+  the server but takes the stream branch at the gateway; the renderer warns
+  about that residual ambiguity.
+- **Kong** — streaming routes emit `response_buffering: false` (Kong ≥ 2.3);
+  `timeouts.idle` joins the loosest-wins service `read_timeout`. Streaming
+  routes without a declared idle warn: heartbeats must arrive within the
+  effective `read_timeout` (Kong default 60s) or the stream is reset.
+
+  Kong CE's `read_timeout` is **service-level**, so a long streaming idle
+  window loosens every route sharing that upstream. Each co-located
+  non-streaming route that inherits a raised timeout is warned about by name;
+  give streaming routes their own `metadata.upstream` when the plain routes
+  beside them need to stay tightly bounded.
+- **KrakenD** — the endpoint `timeout` uses the looser of `timeouts.request` /
+  `timeouts.idle`; streaming routes with neither warn about KrakenD's 2s
+  default endpoint timeout.
+
+Routes declared through `AbstractApiController` are always included in the
+manifest. Legacy `AbstractSSEController` / `AbstractDualModeController` routes
+are included when you opt in:
+
+```ts
+const manifest = context.buildGatewayManifest({
+  service: 'users-api',
+  includeStreamingControllers: true, // default false — existing manifests don't silently grow
+})
+```
+
 ### What's Not Covered
 
-- **SSE and dual-mode controllers.** Only routes from `AbstractController` and
-  `AbstractApiController` appear in the manifest today. Streaming routes still
-  proxy through every gateway, but they aren't listed.
 - **Fields a particular gateway can't natively express.** They show up in
   `result.warnings` rather than disappearing. Reach for `extensions.<vendor>`
   to hand-write the missing piece on a per-route basis.
@@ -3577,3 +3718,206 @@ of registered controllers.
   gateway runs separately. The generators don't compare deployed gateway
   state against the manifest.
 
+
+## Polling Fallback for SSE
+
+Push channels fail silently: connections die without an error event, proxies
+kill idle streams, a broadcast misses a rebalancing room. When the missed
+notification gates workflow progress ("upload finished"), the user is stuck.
+
+[`@opinionated-machine/sse-fallback`](./packages/sse-fallback/README.md) is a
+browser-safe, zero-dependency client core that makes **polling the correctness
+backbone** and SSE the latency optimization: the client subscribes to the SSE
+branch of a dual-mode route and keeps a deadman timer — when no data event
+arrives within the window, it polls the JSON branch of the same route. A
+version gate reconciles the two channels so app code sees exactly one uniform
+event stream:
+
+```ts
+// Shared contracts module — the binding is the reconciliation declaration
+export const uploadStatusBinding = defineFallbackBinding(uploadStatusContract, {
+  snapshotToEvents: (s) =>
+    s.status === 'completed' ? [{ event: 'uploadFinished', data: { result: s.result } }] : [],
+  version: { ofSnapshot: (s) => s.version },
+  terminalEvents: ['uploadFinished', 'uploadFailed'],
+})
+
+// Client — identical result whether it traveled over SSE, replay, or a poll
+const sub = createResilientSubscription(uploadStatusBinding, { transport, params })
+const { result } = await sub.waitFor('uploadFinished')
+```
+
+See the [package README](./packages/sse-fallback/README.md) for the state
+machine, reconciliation semantics, hydration (initial load + live updates),
+and the transport interface.
+
+### Serving the Pattern
+
+One dual-mode `AbstractApiController` route serves both channels — the sync
+branch answers the fallback polls, the SSE branch joins a room that the domain
+service broadcasts into:
+
+```ts
+readonly routes = {
+  jobStatus: buildApiRoute(
+    jobStatusContract,
+    (request, _reply, { expectedContentType, sse }) => {
+      // The push channel: join the job's room and stay open
+      if (expectedContentType === 'text/event-stream') {
+        const session = sse.start('keepAlive')
+        getSessionRooms(session).join(`job:${request.params.jobId}`)
+        return
+      }
+      // The fallback poll: return the current snapshot with its version
+      return { status: 200, body: this.jobs.get(request.params.jobId) }
+    },
+    {
+      // enables room membership + broadcast delivery for this route's sessions
+      sseRooms: this.sseRoomBroadcaster,
+    },
+  ),
+}
+```
+
+```ts
+// Domain service — broadcast with a monotonic id so clients can order events
+await this.sseRoomBroadcaster.broadcastToRoom(`job:${jobId}`, doneEvent, { result }, {
+  id: String(job.version),
+})
+```
+
+### SSE Rooms Authorization
+
+Room membership decides who receives a broadcast, so it is an authorization
+boundary. The handler above names the room from a path param; nothing in that
+line checks that the authenticated principal belongs to the job's scope. Pass
+an options object instead of the bare broadcaster to declare the check once
+per route:
+
+```ts
+{
+  sseRooms: {
+    broadcaster: this.sseRoomBroadcaster,
+    // Refused joins are logged and dropped; the stream itself stays open.
+    authorizeJoin: (session, room) => this.membership.canRead(session.request.user, room),
+    // Close the session after 30 minutes, forcing a re-authorized reconnect.
+    maxSessionLifetimeMs: 30 * 60_000,
+  },
+}
+```
+
+A synchronous verdict is applied before `join()` returns; an async one is
+applied when it resolves, so the session joins a moment later and the client's
+reconciliation poll covers anything broadcast in between.
+
+Authorization checked at connect goes stale, so revocation needs a termination
+path of its own:
+
+```ts
+const registry = getApiSseConnectionRegistry(this.sseRoomBroadcaster)
+
+registry.evict(connectionId)                  // end one stream
+registry.evictFromRoom(room, connectionId)    // drop one scope, keep the stream
+registry.closeRoom(`project:${projectId}`)    // end every stream in a scope
+```
+
+Only connections on the current node are closed, so a revocation event has to
+reach every node. A client that reconnects (as
+`@opinionated-machine/sse-fallback` does) comes back through the route's own
+authorization, so evicting a still-authorized principal costs a reconnect
+rather than a broken surface — which is also why `maxSessionLifetimeMs` is
+cheap: it doubles as the token-refresh mechanism and the backstop for a
+revocation that never reached `evict()`.
+
+`test/api-contracts/api.rooms.security.e2e.spec.ts` is the pattern to copy per
+endpoint: a negative cross-tenant join test, and a mid-stream revocation test.
+
+### Monotonic Event IDs
+
+`Last-Event-ID` replay, client-side ordering, and the fallback version gate
+all need event ids a client can ORDER, not just deduplicate. Use
+`createEventIdSequence()` (one sequence per ordering scope — per room, per
+resource):
+
+```ts
+import { compareEventIds, createEventIdSequence } from 'opinionated-machine'
+
+const seq = createEventIdSequence()
+await broadcaster.broadcastToRoom(room, statusEvent, data, { id: seq.next() })
+
+// Ids order lexicographically within an epoch; across epochs (e.g. after a
+// process restart) compareEventIds returns undefined — clients resync via poll
+compareEventIds('e1-000000000001', 'e1-000000000002') // -1
+```
+
+**Prefer a domain version** (`job.version`, a revision column) over a generated
+sequence whenever the resource has one: it is per-scope and writer-independent
+for free, and the snapshot body has to carry it anyway for the client's version
+gate.
+
+`createEventIdSequence()` is in-memory and per-process, which makes it safe
+only for a **single-writer** ordering scope. Its epoch defaults to the process
+start time, and the client's default extractor orders by epoch first. If two
+pods of the same service broadcast into the same room, each with its own
+sequence, their epochs differ: the events interleave, the client's watermark
+lands on the newer epoch, and every subsequent event from the older-epoch pod
+compares as stale and is **silently dropped**. The failure only shows up under
+horizontal scale, so it reaches production.
+
+For a multi-writer scope use a domain version, a fixed shared `epoch` with a
+`start` handed out from shared storage, or the Redis-backed sequence:
+
+```ts
+import { createRedisEventIdSequence } from '@opinionated-machine/sse-rooms-redis'
+
+// One counter per ordering scope, shared by every pod — one INCR per id.
+const seq = createRedisEventIdSequence({ client: redis, key: `sse:seq:job:${jobId}` })
+await broadcaster.broadcastToRoom(room, statusEvent, data, { id: await seq.next() })
+```
+
+A shared counter orders **allocation**, not delivery. Between `next()` and the
+broadcast a writer can be descheduled while another pod allocates the next id
+and publishes first, so the client sees the higher id and drops the lower one
+as stale. What to do about it depends on what the events carry:
+
+- **Replacement-safe events** (the payload describes the state of the scope,
+  or the id is a domain version read in the same transaction that wrote it):
+  nothing. The dropped event is superseded by the one that overtook it, which
+  is what the version gate is for.
+- **Delta events applied to client state** (`state.apply`): the drop is a real
+  loss. Serialize allocation and publication per ordering scope — one writer
+  per scope, or a per-scope lock or outbox that publishes in id order.
+
+Either way, call `next()` immediately before the broadcast with nothing awaited
+in between: the window that reorders is exactly that gap.
+
+### Server-Side Guarantees Checklist
+
+For a resource to participate in the fallback pattern:
+
+1. **Required** — a monotonic version per resource, present in both the
+   snapshot body and each event, and truthful: a snapshot at version *v*
+   reflects every event ≤ *v* (publish events after commit; read committed
+   state in the poll handler). Snapshots must **subsume** prior events.
+2. **Recommended** — stamp the SSE `id:` with that version; the client's
+   default version extraction (bare integers and `createEventIdSequence()`
+   ids alike) and `Last-Event-ID` replay then compose free. Make sure the id
+   source is safe for the number of writers the scope has — see
+   [Monotonic Event IDs](#monotonic-event-ids).
+3. **Recommended** — a short heartbeat interval (~15s, configured once via
+   `app.register(fastifySSE, { heartbeatInterval })`) so clients detect
+   silently dead connections fast; correctness holds without heartbeats
+   (polls bound staleness), detection latency improves with them.
+4. Optional — dense (consecutive) versions enable client gap detection;
+   `onReconnect` replay lets clients skip the post-reconnect poll
+   (`replay: 'trusted'` in the binding).
+5. Gateway — declare `timeouts.idle` on streaming routes (or rely on the
+   streaming-route defaults) so proxies don't reset quiet streams; see
+   [Streaming Routes](#streaming-routes).
+6. Authorization — room membership decides who receives a broadcast, so it is
+   an authorization boundary. Declare the scope check once per route with
+   `sseRooms.authorizeJoin` rather than trusting every handler body, give
+   sessions a `maxSessionLifetimeMs` so a check made at connect cannot stay in
+   force forever, and call `getApiSseConnectionRegistry(broadcaster).evict()` /
+   `.closeRoom()` when access is revoked mid-stream. See
+   [SSE Rooms Authorization](#sse-rooms-authorization).

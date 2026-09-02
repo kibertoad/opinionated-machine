@@ -1,0 +1,64 @@
+---
+name: sse-parser
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'packages/sse-parser/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/sse-parser/**'
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/sse-parser
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: 'pnpm'
+
+      - name: Install all dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      # Both the Fastify server helpers and the browser client parse the wire
+      # format with this package, so nothing server-only may reach its sources.
+      - name: Check browser safety of the source tree
+        run: |
+          if grep -rnE "from '(node:|fastify|awilix)|require\(" src --include='*.ts' \
+            --exclude='*.spec.ts'; then
+            echo "::error::server-only import found in a browser-safe package"
+            exit 1
+          fi
+
+      - name: Run Tests
+        run: pnpm test
+
+      - name: Run Linting
+        run: pnpm run lint
+
+      - name: Build
+        run: pnpm run build

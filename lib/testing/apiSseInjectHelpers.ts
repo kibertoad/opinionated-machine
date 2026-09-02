@@ -6,9 +6,13 @@ import {
   type ResponsesByStatusCode,
   resolveResponseEntry,
 } from '@lokalise/api-contracts'
+import {
+  createSSEStreamParser,
+  type ParsedSSEEvent,
+  parseSSEEvents,
+} from '@opinionated-machine/sse-parser'
 import type { LightMyRequestResponse } from 'fastify'
 import type { z } from 'zod'
-import { type ParsedSSEEvent, parseSSEBuffer, parseSSEEvents } from '../sse/sseParser.ts'
 import {
   describeSendFailures,
   openSSEDiagnosticsScope,
@@ -233,16 +237,16 @@ class InjectedSSEStream {
     }
 
     let body = ''
-    let buffer = ''
     const decoder = new TextDecoder()
+    // Owns the partial frame across chunks, so a frame split by a flush boundary
+    // is not read as two.
+    const parser = createSSEStreamParser()
     try {
       for await (const chunk of res.stream()) {
         const text =
           typeof chunk === 'string' ? chunk : decoder.decode(chunk as Uint8Array, { stream: true })
         body += text
-        buffer += text
-        const { events, remaining } = parseSSEBuffer(buffer)
-        buffer = remaining
+        const events = parser.push(text)
         if (events.length > 0) {
           this.received.push(...events)
           this.notify()
@@ -253,11 +257,10 @@ class InjectedSSEStream {
       throw err
     }
 
-    // A stream that ended without a terminating blank line still carries one last event.
-    const trailing = parseSSEEvents(buffer)
-    if (trailing.length > 0) {
-      this.received.push(...trailing)
-    }
+    // Anything still buffered is a frame the response ended in the middle of. The spec
+    // discards pending data at the end of a stream, so it is not delivered as an event:
+    // a truncated payload reported as a real one hides the handler bug that produced it.
+    // The raw text is still on `body` for a test that wants to look.
 
     this.ended = true
     this.notify()

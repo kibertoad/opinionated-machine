@@ -8,6 +8,7 @@ import type {
 import { InternalError } from '@lokalise/node-core'
 import type { FastifyReply } from 'fastify'
 import type { z } from 'zod'
+import type { GatewayMetadataValue } from '../gateway/gatewayMetadata.ts'
 import type { BuildFastifySSERoutesReturnType, SSESession } from '../routes/fastifyRouteTypes.ts'
 import type { SSERoomBroadcaster } from './rooms/SSERoomBroadcaster.ts'
 import type { SSERoomManager } from './rooms/SSERoomManager.ts'
@@ -87,6 +88,16 @@ type SSEReply = FastifyReply & { sse: SSEReplyInterface }
 export abstract class AbstractSSEController<
   APIContracts extends Record<string, AnySSEContractDefinition>,
 > {
+  /**
+   * Optional controller-level defaults for gateway metadata.
+   *
+   * Only consulted when the controller is included in a gateway manifest via
+   * `buildGatewayManifest({ includeStreamingControllers: true })`. Merged
+   * underneath per-route metadata; see `AbstractController.gatewayDefaults`
+   * for full semantics.
+   */
+  public readonly gatewayDefaults?: GatewayMetadataValue
+
   /** Map of connection ID to connection object */
   protected connections: Map<string, SSESession> = new Map()
 

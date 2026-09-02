@@ -1,8 +1,8 @@
 import type { ApiContract } from '@lokalise/api-contracts'
+import { createSSEStreamParser, type ParsedSSEEvent } from '@opinionated-machine/sse-parser'
 import { stringify } from 'fast-querystring'
 import type { SSESession } from '../routes/fastifyRouteTypes.ts'
 import type { SpiedSSESession, SSESessionSpy } from '../sse/SSESessionSpy.ts'
-import { type ParsedSSEEvent, parseSSEBuffer } from '../sse/sseParser.ts'
 import { resolveApiSseSchemas, validateApiSseEvent } from './apiSseEventValidation.ts'
 import type { ApiSSEEvent } from './apiSseTestTypes.ts'
 
@@ -244,11 +244,19 @@ export class SSEHttpClient {
    * subsequent body read with an `AbortError`.
    */
   readonly response: Response
+  /**
+   * Optional hook invoked with every decoded raw text chunk as it arrives —
+   * including comment frames (e.g. `: heartbeat`) that the SSE parser drops.
+   * Useful for asserting heartbeat delivery or tracking byte-level liveness.
+   * Only fires while the stream is being consumed via events()/collectEvents().
+   */
+  onRawChunk?: (chunk: string) => void
   private readonly abortController: AbortController
   private readonly responseBody: ReadableStream<Uint8Array> | null
   private streamReader: ReadableStreamDefaultReader<Uint8Array> | undefined
   private readonly decoder = new TextDecoder()
-  private buffer = ''
+  /** Owns the partial-frame buffer and the Last-Event-ID cursor across chunks. */
+  private readonly parser = createSSEStreamParser()
   private closed = false
 
   private constructor(response: Response, abortController: AbortController) {
@@ -467,11 +475,10 @@ export class SSEHttpClient {
         break
       }
 
-      this.buffer += this.decoder.decode(readResult.value, { stream: true })
-      const parseResult = parseSSEBuffer(this.buffer)
-      this.buffer = parseResult.remaining
+      const chunk = this.decoder.decode(readResult.value, { stream: true })
+      this.onRawChunk?.(chunk)
 
-      for (const event of parseResult.events) {
+      for (const event of this.parser.push(chunk)) {
         if (signal?.aborted) {
           return
         }

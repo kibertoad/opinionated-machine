@@ -211,3 +211,164 @@ describe('buildGatewayManifestFrom', () => {
     expect(() => buildGatewayManifestFrom(list, { service: 'svc' })).toThrow()
   })
 })
+
+// ============================================================================
+// Streaming marker
+// ============================================================================
+
+import { buildSseContract, sseBody } from '@lokalise/api-contracts'
+import {
+  AbstractDualModeController,
+  type BuildFastifyDualModeRoutesReturnType,
+  type BuildFastifySSERoutesReturnType,
+  buildHandler,
+} from '../../../index.js'
+import { AbstractSSEController } from '../../sse/AbstractSSEController.ts'
+
+const apiSseOnlyContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'stream',
+  pathResolver: () => '/stream',
+  responsesByStatusCode: {
+    200: { content: { 'text/event-stream': sseBody({ tick: z.object({ n: z.number() }) }) } },
+  },
+})
+
+const apiDualContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'dual',
+  pathResolver: () => '/dual',
+  responsesByStatusCode: {
+    200: {
+      content: {
+        'application/json': z.object({ ok: z.boolean() }),
+        'text/event-stream': sseBody({ tick: z.object({ n: z.number() }) }),
+      },
+    },
+  },
+})
+
+const apiPlainContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'plain',
+  pathResolver: () => '/plain',
+  responsesByStatusCode: { 200: z.object({ ok: z.boolean() }) },
+})
+
+class StreamingApiController extends AbstractApiController<{
+  stream: typeof apiSseOnlyContract
+  dual: typeof apiDualContract
+  plain: typeof apiPlainContract
+}> {
+  readonly routes = {
+    stream: buildApiRoute(apiSseOnlyContract, (_request, _reply, { sse }) => {
+      sse.start('keepAlive')
+    }),
+    dual: buildApiRoute(apiDualContract, (_request, _reply, { expectedContentType, sse }) => {
+      if (expectedContentType === 'text/event-stream') {
+        sse.start('autoClose')
+        return
+      }
+      return { status: 200, contentType: 'application/json', body: { ok: true } }
+    }),
+    plain: buildApiRoute(apiPlainContract, () => ({ status: 200, body: { ok: true } })),
+  }
+}
+
+const legacySseContract = buildSseContract({
+  visibility: 'public',
+  method: 'get',
+  pathResolver: () => '/legacy-stream',
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  serverSentEventSchemas: { tick: z.object({ n: z.number() }) },
+})
+
+const legacyDualContract = buildSseContract({
+  visibility: 'public',
+  method: 'get',
+  pathResolver: () => '/legacy-dual',
+  requestPathParamsSchema: z.object({}),
+  requestQuerySchema: z.object({}),
+  requestHeaderSchema: z.object({}),
+  successResponseBodySchema: z.object({ ok: z.boolean() }),
+  serverSentEventSchemas: { tick: z.object({ n: z.number() }) },
+})
+
+class LegacyStreamingController extends AbstractSSEController<{
+  stream: typeof legacySseContract
+}> {
+  buildSSERoutes(): BuildFastifySSERoutesReturnType<{ stream: typeof legacySseContract }> {
+    return { stream: this.handleStream }
+  }
+
+  private handleStream = buildHandler(legacySseContract, {
+    sse: (_request, sse) => {
+      sse.start('keepAlive')
+    },
+  })
+}
+
+class LegacyDualStreamingController extends AbstractDualModeController<{
+  dual: typeof legacyDualContract
+}> {
+  buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<{
+    dual: typeof legacyDualContract
+  }> {
+    return { dual: this.handleDual }
+  }
+
+  private handleDual = buildHandler(legacyDualContract, {
+    sync: async () => ({ ok: true }),
+    sse: (_request, sse) => {
+      sse.start('autoClose')
+    },
+  })
+}
+
+describe('buildGatewayManifestFrom — streaming marker', () => {
+  it('marks api-contract SSE and dual routes, leaves plain routes unmarked', () => {
+    const manifest = buildGatewayManifestFrom(
+      [{ name: 'streamingController', kind: 'api', controller: new StreamingApiController() }],
+      { service: 'svc' },
+    )
+    const byKey = Object.fromEntries(manifest.routes.map((r) => [r.routeKey, r]))
+    expect(byKey.stream?.streaming).toBe('sse')
+    expect(byKey.dual?.streaming).toBe('dual')
+    expect(byKey.plain?.streaming).toBeUndefined()
+    expect('streaming' in (byKey.plain ?? {})).toBe(false)
+  })
+
+  it('includes legacy SSE/dual-mode controllers with streaming markers', () => {
+    const manifest = buildGatewayManifestFrom(
+      [
+        {
+          name: 'legacySse',
+          kind: 'sse-legacy',
+          controller: new LegacyStreamingController({}),
+        },
+        {
+          name: 'legacyDual',
+          kind: 'dualmode-legacy',
+          controller: new LegacyDualStreamingController({}),
+        },
+      ],
+      { service: 'svc' },
+    )
+    const byPath = Object.fromEntries(manifest.routes.map((r) => [r.path, r]))
+    expect(byPath['/legacy-stream']).toMatchObject({
+      controller: 'legacySse',
+      streaming: 'sse',
+      method: 'GET',
+    })
+    expect(byPath['/legacy-dual']).toMatchObject({
+      controller: 'legacyDual',
+      streaming: 'dual',
+      method: 'GET',
+    })
+  })
+})

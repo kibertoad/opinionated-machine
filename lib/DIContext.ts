@@ -270,7 +270,11 @@ export class DIContext<
    * like `@opinionated-machine/gateway-envoy` or
    * `@opinionated-machine/gateway-krakend` to produce a config.
    *
-   * SSE and dual-mode controllers are not included in v1.
+   * SSE and dual-mode routes declared through `AbstractApiController` are
+   * always included and carry a `streaming: 'sse' | 'dual'` marker. Routes
+   * from legacy `AbstractSSEController` / `AbstractDualModeController`
+   * controllers are included only when `includeStreamingControllers: true`
+   * is passed (off by default so existing manifests don't silently grow).
    *
    * @example
    * ```ts
@@ -295,6 +299,19 @@ export class DIContext<
       // biome-ignore lint/suspicious/noExplicitAny: any api controller works here
       const controller: AbstractApiController<any> = this.diContainer.resolve(name)
       collected.push({ name, kind: 'api', controller })
+    }
+
+    if (options.includeStreamingControllers) {
+      for (const name of this.sseControllerNames) {
+        // biome-ignore lint/suspicious/noExplicitAny: any SSE controller works here
+        const controller: AbstractSSEController<any> = this.diContainer.resolve(name)
+        collected.push({ name, kind: 'sse-legacy', controller })
+      }
+      for (const name of this.dualModeControllerNames) {
+        // biome-ignore lint/suspicious/noExplicitAny: any dual-mode controller works here
+        const controller: AbstractDualModeController<any> = this.diContainer.resolve(name)
+        collected.push({ name, kind: 'dualmode-legacy', controller })
+      }
     }
 
     return buildGatewayManifestFrom(collected, options)
@@ -406,16 +423,24 @@ export class DIContext<
     route: RouteOptions,
     options?: RegisterDualModeRoutesOptions,
   ): void {
-    if (options?.preHandler) {
-      this.applyPreHandlers(route, options.preHandler)
-    }
-    if (options?.rateLimit) {
-      this.applyRateLimit(route, options.rateLimit)
-    }
-    applyGlobalSSEOptions(route, options)
+    this.applyStreamRouteOptions(route, options)
   }
 
   private applySSERouteOptions(route: RouteOptions, options?: RegisterSSERoutesOptions): void {
+    this.applyStreamRouteOptions(route, options)
+  }
+
+  /**
+   * Apply registration-time options to an SSE/dual-mode route before app.route().
+   *
+   * Shared by the SSE-only and dual-mode registration paths: both apply the same
+   * pre-handlers, rate limit and `sse` field defaults. Route-level options
+   * (buildHandler / buildApiRoute) take precedence over these.
+   */
+  private applyStreamRouteOptions(
+    route: RouteOptions,
+    options?: RegisterSSERoutesOptions | RegisterDualModeRoutesOptions,
+  ): void {
     if (options?.preHandler) {
       this.applyPreHandlers(route, options.preHandler)
     }

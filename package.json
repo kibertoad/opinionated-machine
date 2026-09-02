@@ -18,7 +18,7 @@
         }
     ],
     "scripts": {
-        "build": "rimraf dist && tsc -p tsconfig.build.json",
+        "build": "pnpm --filter @opinionated-machine/sse-parser run build && rimraf dist && tsc -p tsconfig.build.json",
         "lint": "biome check . && tsc",
         "lint:fix": "biome check --write .",
         "test": "vitest --typecheck",
@@ -33,6 +33,7 @@
     },
     "dependencies": {
         "@fastify/sse": "^0.6.0",
+        "@opinionated-machine/sse-parser": "workspace:*",
         "fast-querystring": "^1.1.2",
         "fastify-plugin": "^6.0.0",
         "ts-deepmerge": "^8.0.0"

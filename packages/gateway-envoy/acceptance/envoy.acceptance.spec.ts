@@ -50,4 +50,68 @@ describe('envoy acceptance', () => {
     const res = await fetchGateway('/nope')
     expect(res.status).toBe(404)
   })
+
+  describe('streaming routes (HCM stream_idle_timeout is 2s)', () => {
+    it('marked streaming route survives an idle gap longer than the listener idle timeout', async () => {
+      // The upstream sends the second event after a 3s silence — past the 2s
+      // HCM stream_idle_timeout. The route is marked streaming, so the
+      // generator disabled its route timeout and idle timeout.
+      const res = await fetchGateway('/sse?gapMs=3000')
+      expect(res.status).toBe(200)
+      const body = await res.text()
+      expect(body).toContain('event: first')
+      expect(body).toContain('event: second')
+    })
+
+    it('dual-mode stream branch survives the same gap', async () => {
+      // The Accept-matched branch of the split carries the stream timeouts.
+      const res = await fetchGateway('/dual?gapMs=3000', {
+        headers: { accept: 'text/event-stream' },
+      })
+      expect(res.status).toBe(200)
+      const body = await res.text()
+      expect(body).toContain('event: first')
+      expect(body).toContain('event: second')
+    })
+
+    it('dual-mode JSON branch keeps its route timeout', async () => {
+      // Same path, no Accept for the stream: the catch-all branch applies, and
+      // with it the 200ms request timeout the manifest declared. Before the
+      // split this branch inherited the stream's `timeout: 0s` and hung.
+      const res = await fetchGateway('/dual?ms=2000', { headers: { accept: 'application/json' } })
+      expect(res.status).toBe(504)
+    })
+
+    it('dual-mode JSON branch still answers a fast request', async () => {
+      const res = await fetchGateway('/dual', { headers: { accept: 'application/json' } })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { branch: string }
+      expect(body.branch).toBe('json')
+    })
+
+    it('unmarked route stream is reset at the listener idle timeout', async () => {
+      // Same upstream behavior, but the route carries no streaming marker —
+      // Envoy resets the stream during the 3s gap. Depending on timing the
+      // reset surfaces as a truncated body or a network error.
+      const res = await fetchGateway('/sse-unmarked?gapMs=3000')
+      // Assert the request actually reached the SSE upstream first: a 404 or a
+      // 503 also contains no 'event: second', so without this the test would
+      // pass on broken route matching or a misconfigured cluster.
+      expect(res.status).toBe(200)
+      const body = await res.text().catch(() => '')
+      expect(body).not.toContain('event: second')
+    })
+
+    it('routes an Accept that refuses the stream with q=0 to the JSON branch', async () => {
+      // `contains: 'text/event-stream'` alone would match this header and send
+      // a client that explicitly refused the stream to the stream branch.
+      const res = await fetchGateway('/dual?ms=0', {
+        headers: { accept: 'application/json, text/event-stream;q=0' },
+      })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('application/json')
+      const body = (await res.json()) as { branch: string }
+      expect(body.branch).toBe('json')
+    })
+  })
 })

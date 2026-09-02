@@ -16,6 +16,7 @@ The route-building, handler-shape inference, response validation, and SSE stream
 - [Creating a Controller](#creating-a-controller)
 - [Registering with DI](#registering-with-di)
 - [Route Options](#route-options)
+- [SSE Rooms](#sse-rooms)
 - [Testing](#testing)
 
 ## Overview
@@ -244,6 +245,76 @@ buildApiRoute(contract, handler, {
 ```
 
 Any other [Fastify `RouteOptions`](https://fastify.dev/docs/latest/Reference/Routes/) fields (`bodyLimit`, `onRequest`, `config`, etc.) can also be passed and are forwarded directly to Fastify. The contract itself is exposed as `config.apiContract` on the built route.
+
+On top of the options `@lokalise/fastify-api-contracts` accepts, `buildApiRoute`
+adds two:
+
+| Option | Description |
+|--------|-------------|
+| `gatewayMetadata` | Per-route gateway policy, with `match.headers` / `match.query` keys narrowed to the contract. Equivalent to wrapping the route with `withGatewayMetadata()` |
+| `sseRooms` | Enable SSE rooms for this route by passing the shared `SSERoomBroadcaster` (see [SSE Rooms](#sse-rooms)) |
+
+## SSE Rooms
+
+Room membership is off by default in `buildApiRoute` sessions:
+`getSessionRooms(session)` returns no-ops and the session receives no
+broadcasts. Pass the shared `SSERoomBroadcaster` via `options.sseRooms` to make
+them real: the session joins/leaves rooms on the shared `SSERoomManager`,
+receives `broadcastToRoom` / `broadcastMessage` deliveries, and is cleaned up
+(rooms left, dedup cache cleared) when the connection closes.
+
+`@lokalise/fastify-api-contracts` owns the `SSESession` shape and has no `rooms`
+field, so room operations are reached through `getSessionRooms(session)` rather
+than `session.rooms` (the accessor the legacy controllers expose).
+
+This unlocks the polling-fallback serving pattern — one dual-mode route whose
+sync branch answers snapshot polls while a domain service broadcasts events
+into a room the SSE branch joined:
+
+```ts
+export class JobController extends AbstractApiController<typeof JobController.contracts> {
+  public static contracts = { jobStatus: jobStatusContract } as const
+  private readonly jobService: JobService
+  private readonly sseRoomBroadcaster: SSERoomBroadcaster
+
+  constructor({ jobService, sseRoomBroadcaster }: Dependencies) {
+    super()
+    this.jobService = jobService
+    this.sseRoomBroadcaster = sseRoomBroadcaster
+    this.routes = {
+      jobStatus: buildApiRoute(
+        JobController.contracts.jobStatus,
+        (request, _reply, { expectedContentType, sse }) => {
+          // Push channel: join the job's room and stay open
+          if (expectedContentType === 'text/event-stream') {
+            const session = sse.start('keepAlive')
+            getSessionRooms(session).join(`job:${request.params.jobId}`)
+            return
+          }
+          // Fallback poll: current snapshot, including its version
+          return { status: 200, body: this.jobService.get(request.params.jobId) }
+        },
+        {
+          sseRooms: this.sseRoomBroadcaster,
+        },
+      ),
+    }
+  }
+
+  readonly routes: BuildApiRoutesReturnType<typeof JobController.contracts>
+}
+
+// Domain service, anywhere in the app — stamp monotonic ids so clients can
+// order events (see createEventIdSequence):
+await this.sseRoomBroadcaster.broadcastToRoom(`job:${jobId}`, doneEvent, { result }, {
+  id: String(job.version),
+})
+```
+
+Register `sseRoomManager` + `sseRoomBroadcaster` in DI exactly as for the
+legacy controllers (see the root README's "SSE Rooms" section); the same
+broadcaster instance can serve legacy controllers and `buildApiRoute` routes
+simultaneously.
 
 ## Testing
 
