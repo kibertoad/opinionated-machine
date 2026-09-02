@@ -102,6 +102,7 @@ Very opinionated DI framework for fastify, built on top of awilix
   - [Serving the Pattern](#serving-the-pattern)
   - [Monotonic Event IDs](#monotonic-event-ids)
   - [Server-Side Guarantees Checklist](#server-side-guarantees-checklist)
+- [Development](#development)
 
 ## Basic usage
 
@@ -3921,3 +3922,20 @@ For a resource to participate in the fallback pattern:
    force forever, and call `getApiSseConnectionRegistry(broadcaster).evict()` /
    `.closeRoom()` when access is revoked mid-stream. See
    [SSE Rooms Authorization](#sse-rooms-authorization).
+
+## Development
+
+Tasks are orchestrated by [Turborepo](https://turborepo.dev), which reads the workspace graph from
+`turbo.jsonc`:
+
+```bash
+pnpm run build:all   # build every package in dependency order
+pnpm run lint:all    # biome + tsc in every package
+pnpm run test:ci     # root suite with coverage
+```
+
+Start with `build:all` on a fresh clone. The per-package `build`, `lint` and `test` scripts each do
+one package's work and assume their workspace dependencies are already built, so `pnpm run build`
+on its own fails until the graph has been built once.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full task table and caching notes.

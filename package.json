@@ -24,8 +24,8 @@
         "lint:all": "turbo run lint",
         "lint:fix": "biome check --write .",
         "test": "vitest --typecheck",
-        "test:ci": "vitest --typecheck --coverage",
-        "prepublishOnly": "pnpm run build:all",
+        "test:ci": "pnpm run test --coverage",
+        "prepublishOnly": "pnpm run build",
         "changeset": "changeset",
         "ci:publish": "changeset publish"
     },

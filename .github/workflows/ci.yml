@@ -21,6 +21,18 @@ jobs:
       matrix:
         node-version: [22.x, 24.x, 26.x]
 
+    # packages/sse-rooms-redis has an integration suite that talks to a real Redis.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,7 +57,13 @@ jobs:
         run: pnpm run build:all
 
       - name: Run Tests
-        run: pnpm run test:ci
+        run: pnpm exec turbo run test:ci
+
+      # The root suite excludes packages/**, and every per-package workflow is
+      # path-filtered, so without this step a change under lib/ that breaks a
+      # package's tests reaches main unnoticed.
+      - name: Run Package Tests
+        run: pnpm exec turbo run test --filter='./packages/*'
 
       - name: Run Linting
         run: pnpm run lint:all

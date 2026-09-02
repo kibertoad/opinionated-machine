@@ -1,13 +1,16 @@
 {
     "$schema": "https://turborepo.dev/schema.json",
-    // The root tsconfig and the biome config are extended by every package, so a
-    // change to either has to invalidate every task.
-    "globalDependencies": ["tsconfig.json", "biome.jsonc"],
+    // The root tsconfig and the biome config are extended by every package, and
+    // pnpm-workspace.yaml plus .npmrc decide which packages exist and how they
+    // resolve, so a change to any of them has to invalidate every task.
+    "globalDependencies": ["tsconfig.json", "biome.jsonc", "pnpm-workspace.yaml", ".npmrc"],
     // Reaches the tools without entering any task hash: it selects reporters, not output.
     "globalPassThroughEnv": ["CI"],
     "tasks": {
         // Package builds are ordered by the workspace graph: sse-parser before the
         // root package, the root package before the gateway and rooms adapters.
+        // The two directory exclusions hold only because every tsconfig.build.json
+        // excludes the same two directories from compilation. Keep the lists in step.
         "build": {
             "dependsOn": ["^build"],
             "inputs": [
@@ -25,12 +28,28 @@
         },
         // `biome check . && tsc` typechecks specs and test helpers too, and those
         // resolve workspace imports through the dependency's build output.
+        //
+        // Inputs are one package's own files. The root package's `biome check .` does
+        // walk packages/, but every file it reaches there is already covered by that
+        // package's own lint task, so no lint error can hide behind a root cache hit.
         "lint": {
             "dependsOn": ["^build"],
-            "inputs": ["$TURBO_DEFAULT$", "!**/*.md", "!.changeset/**", "!.github/**"]
-        },
-        "lint:fix": {
-            "cache": false
+            "inputs": [
+                "package.json",
+                "tsconfig.json",
+                "tsconfig.build.json",
+                "vitest.config.mts",
+                "vitest.config.ts",
+                "vitest.acceptance.config.ts",
+                "index.ts",
+                "lib/**",
+                "src/**",
+                "test/**",
+                "acceptance/**",
+                // The root tsconfig typechecks test/**, and one spec there imports
+                // packages/sse-fallback/src directly. See the note on `test` below.
+                "packages/sse-fallback/src/**"
+            ]
         },
         "test": {
             "dependsOn": ["^build"],
@@ -43,9 +62,22 @@
                 "index.ts",
                 "lib/**",
                 "src/**",
-                "test/**"
+                "test/**",
+                // The root suite imports packages/sse-fallback/src by relative path and
+                // greps every file under it for server-only imports. sse-fallback is not
+                // a dependency of the root package, so `^build` never reaches it and
+                // nothing else would pull those files into the hash.
+                "packages/sse-fallback/src/**"
             ]
         },
+        // Redis lives in a service container, which is not part of any task hash, so a
+        // cache hit here would report a pass without ever opening a connection.
+        "@opinionated-machine/sse-rooms-redis#test": {
+            "dependsOn": ["^build"],
+            "cache": false
+        },
+        // Only the root package defines this one today: the coverage-gated suite.
+        // Same inputs as `test`, plus the coverage report as an output.
         "test:ci": {
             "dependsOn": ["^build"],
             "inputs": [
@@ -57,17 +89,13 @@
                 "index.ts",
                 "lib/**",
                 "src/**",
-                "test/**"
+                "test/**",
+                "packages/sse-fallback/src/**"
             ],
             "outputs": ["coverage/**"]
         },
-        "test:watch": {
-            "dependsOn": ["^build"],
-            "cache": false,
-            "persistent": true
-        },
-        // Everything below drives docker compose, so there is no output worth
-        // caching and a cache hit would skip the containers the assertions need.
+        // Both of these drive docker compose, so there is no output worth caching and
+        // a cache hit would skip the containers the assertions need.
         "test:acceptance": {
             "dependsOn": ["^build"],
             "cache": false,
@@ -75,22 +103,6 @@
         },
         "test:docker": {
             "dependsOn": ["^build"],
-            "cache": false
-        },
-        "acceptance:render": {
-            "dependsOn": ["build"],
-            "cache": false
-        },
-        "acceptance:up": {
-            "cache": false
-        },
-        "acceptance:down": {
-            "cache": false
-        },
-        "docker:up": {
-            "cache": false
-        },
-        "docker:down": {
             "cache": false
         }
     }

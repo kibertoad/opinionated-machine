@@ -32,6 +32,10 @@ work. They assume their dependencies are already built, which is what `build:all
 Results are cached under `.turbo`, keyed on each task's declared inputs. Pass `--force` to ignore
 the cache for a run.
 
+Tasks that depend on something outside their hash are not cached at all: the gateway acceptance
+suites and `packages/sse-rooms-redis`'s tests need a live container, and a cache hit would report a
+pass without ever starting one.
+
 ## Changesets
 
 This repo uses [Changesets](https://github.com/changesets/changesets) to automate versioning and releases.
