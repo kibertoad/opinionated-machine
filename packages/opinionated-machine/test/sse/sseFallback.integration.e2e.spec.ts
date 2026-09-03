@@ -1,6 +1,12 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { defineApiContract, sseBody } from '@lokalise/api-contracts'
+import {
+  createResilientSubscription,
+  defineFallbackBinding,
+  type FallbackPolicy,
+  type FallbackTransport,
+} from '@opinionated-machine/sse-fallback'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod/v4'
@@ -12,12 +18,6 @@ import {
   SSERoomManager,
 } from '../../index.js'
 import { buildApiRoute, getSessionRooms } from '../../lib/api-contracts/index.ts'
-import {
-  createResilientSubscription,
-  defineFallbackBinding,
-  type FallbackPolicy,
-  type FallbackTransport,
-} from '../../packages/sse-fallback/src/index.ts'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 
 /**
@@ -388,7 +388,10 @@ function sourceFilesUnder(dir: string, prefix = ''): string[] {
 
 describe('sse-fallback browser safety', () => {
   it('has no node:/fastify/server-only imports in its source tree', () => {
-    const srcDir = join(__dirname, '..', '..', 'packages', 'sse-fallback', 'src')
+    // The check reads sse-fallback's sources from this suite because that
+    // package compiles with `types: []` and no DOM-unsafe globals, so a spec
+    // using node:fs cannot live inside the tree it is meant to guard.
+    const srcDir = join(__dirname, '..', '..', '..', 'sse-fallback', 'src')
     // Walk the tree rather than the top level: a flat scan would miss anything
     // added under a new subdirectory, which is exactly when this check matters.
     const files = sourceFilesUnder(srcDir)

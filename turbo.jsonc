@@ -7,8 +7,8 @@
     // Reaches the tools without entering any task hash: it selects reporters, not output.
     "globalPassThroughEnv": ["CI"],
     "tasks": {
-        // Package builds are ordered by the workspace graph: sse-parser before the
-        // root package, the root package before the gateway and rooms adapters.
+        // Package builds are ordered by the workspace graph: sse-parser before
+        // opinionated-machine, opinionated-machine before the gateway and rooms adapters.
         // The two directory exclusions hold only because every tsconfig.build.json
         // excludes the same two directories from compilation. Keep the lists in step.
         "build": {
@@ -26,12 +26,15 @@
             ],
             "outputs": ["dist/**"]
         },
+        // The workspace root is not a package, so no package's `lint` reaches the
+        // shared configs that sit beside it. Uncached: the check walks the whole
+        // tree, which is more than any input list here could describe honestly,
+        // and biome gets through it in about a second.
+        "//#lint": {
+            "cache": false
+        },
         // `biome check . && tsc` typechecks specs and test helpers too, and those
         // resolve workspace imports through the dependency's build output.
-        //
-        // Inputs are one package's own files. The root package's `biome check .` does
-        // walk packages/, but every file it reaches there is already covered by that
-        // package's own lint task, so no lint error can hide behind a root cache hit.
         "lint": {
             "dependsOn": ["^build"],
             "inputs": [
@@ -45,10 +48,7 @@
                 "lib/**",
                 "src/**",
                 "test/**",
-                "acceptance/**",
-                // The root tsconfig typechecks test/**, and one spec there imports
-                // packages/sse-fallback/src directly. See the note on `test` below.
-                "packages/sse-fallback/src/**"
+                "acceptance/**"
             ]
         },
         "test": {
@@ -62,12 +62,7 @@
                 "index.ts",
                 "lib/**",
                 "src/**",
-                "test/**",
-                // The root suite imports packages/sse-fallback/src by relative path and
-                // greps every file under it for server-only imports. sse-fallback is not
-                // a dependency of the root package, so `^build` never reaches it and
-                // nothing else would pull those files into the hash.
-                "packages/sse-fallback/src/**"
+                "test/**"
             ]
         },
         // Redis lives in a service container, which is not part of any task hash, so a
@@ -76,7 +71,7 @@
             "dependsOn": ["^build"],
             "cache": false
         },
-        // Only the root package defines this one today: the coverage-gated suite.
+        // Only opinionated-machine defines this one today: the coverage-gated suite.
         // Same inputs as `test`, plus the coverage report as an output.
         "test:ci": {
             "dependsOn": ["^build"],
@@ -89,8 +84,7 @@
                 "index.ts",
                 "lib/**",
                 "src/**",
-                "test/**",
-                "packages/sse-fallback/src/**"
+                "test/**"
             ],
             "outputs": ["coverage/**"]
         },

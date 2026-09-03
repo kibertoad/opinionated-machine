@@ -1,5 +1,4 @@
 packages:
-  - '.'
   - 'packages/*'
 minimumReleaseAgeExclude:
   - '@lokalise/api-contracts'

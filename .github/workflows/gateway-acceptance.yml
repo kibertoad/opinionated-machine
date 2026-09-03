@@ -11,7 +11,7 @@ on:
     branches:
       - main
     paths:
-      - 'lib/gateway/**'
+      - 'packages/opinionated-machine/lib/gateway/**'
       - 'packages/gateway-envoy/**'
       - 'packages/gateway-krakend/**'
       - 'packages/gateway-kong/**'
@@ -20,7 +20,7 @@ on:
     branches:
       - main
     paths:
-      - 'lib/gateway/**'
+      - 'packages/opinionated-machine/lib/gateway/**'
       - 'packages/gateway-envoy/**'
       - 'packages/gateway-krakend/**'
       - 'packages/gateway-kong/**'
@@ -49,7 +49,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         working-directory: .
-      # turbo builds the root package these tasks resolve through.
+      # turbo builds opinionated-machine, which these tasks resolve through.
       - name: Run unit tests
         run: pnpm exec turbo run test
       - name: Run acceptance tests (docker compose)
@@ -75,7 +75,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         working-directory: .
-      # turbo builds the root package these tasks resolve through.
+      # turbo builds opinionated-machine, which these tasks resolve through.
       - name: Run unit tests
         run: pnpm exec turbo run test
       - name: Run acceptance tests (docker compose)
@@ -101,7 +101,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         working-directory: .
-      # turbo builds the root package these tasks resolve through.
+      # turbo builds opinionated-machine, which these tasks resolve through.
       - name: Run unit tests
         run: pnpm exec turbo run test
       - name: Run acceptance tests (docker compose)

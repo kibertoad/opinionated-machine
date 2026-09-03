@@ -6,7 +6,7 @@ export default defineConfig({
     watch: false,
     environment: 'node',
     reporters: ['verbose'],
-    exclude: ['**/node_modules/**', '**/dist/**', 'packages/**'],
+    exclude: ['**/node_modules/**', '**/dist/**'],
     typecheck: {
       enabled: true,
       checker: 'tsc',
