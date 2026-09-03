@@ -21,6 +21,18 @@ jobs:
       matrix:
         node-version: [22.x, 24.x, 26.x]
 
+    # packages/sse-rooms-redis has an integration suite that talks to a real Redis.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,13 +54,20 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm run build
+        run: pnpm run build:all
 
       - name: Run Tests
-        run: pnpm run test:ci
+        run: pnpm exec turbo run test:ci
+
+      # Every per-package workflow is path-filtered, so without this step a
+      # change in opinionated-machine that breaks a package's tests reaches main
+      # unnoticed. opinionated-machine is excluded because the step above already
+      # ran its suite through `test:ci`.
+      - name: Run Package Tests
+        run: pnpm exec turbo run test --filter='./packages/*' --filter='!opinionated-machine'
 
       - name: Run Linting
-        run: pnpm run lint
+        run: pnpm run lint:all
 
   automerge:
     needs: build

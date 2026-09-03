@@ -48,16 +48,10 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: .
 
-      # The wire-format parser is a workspace dependency; tests and typecheck
-      # resolve it through its build output.
-      - name: Build the parser package
-        run: pnpm --filter @opinionated-machine/sse-parser run build
-        working-directory: .
-
-      # The README promises this package is browser-safe. The root test suite
-      # asserts it too, but that suite does not run in this workflow, so make
-      # the guarantee explicit here as well: no server-only import may reach
-      # the published sources.
+      # The README promises this package is browser-safe. The
+      # opinionated-machine suite asserts it too, but that suite does not run in
+      # this workflow, so make the guarantee explicit here as well: no
+      # server-only import may reach the published sources.
       - name: Check browser safety of the source tree
         run: |
           if grep -rnE "from '(node:|fastify|awilix)|require\(" src --include='*.ts' \
@@ -66,11 +60,12 @@ jobs:
             exit 1
           fi
 
+      # turbo builds the workspace dependencies these tasks resolve through.
       - name: Run Tests
-        run: pnpm test
+        run: pnpm exec turbo run test
 
       - name: Run Linting
-        run: pnpm run lint
+        run: pnpm exec turbo run lint
 
       - name: Build
-        run: pnpm run build
+        run: pnpm exec turbo run build

@@ -3,5 +3,5 @@
     "compilerOptions": {
         "types": ["node"]
     },
-    "exclude": ["node_modules", "dist", "**/*.spec.ts"]
+    "exclude": ["node_modules", "dist", "**/*.spec.ts", "**/__fixtures__/**", "**/__snapshots__/**"]
 }

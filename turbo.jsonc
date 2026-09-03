@@ -1,0 +1,103 @@
+{
+    "$schema": "https://turborepo.dev/schema.json",
+    // The root tsconfig and the biome config are extended by every package, and
+    // pnpm-workspace.yaml plus .npmrc decide which packages exist and how they
+    // resolve, so a change to any of them has to invalidate every task.
+    "globalDependencies": ["tsconfig.json", "biome.jsonc", "pnpm-workspace.yaml", ".npmrc"],
+    // Reaches the tools without entering any task hash: it selects reporters, not output.
+    "globalPassThroughEnv": ["CI"],
+    "tasks": {
+        // Package builds are ordered by the workspace graph: sse-parser before
+        // opinionated-machine, opinionated-machine before the gateway and rooms adapters.
+        // The two directory exclusions hold only because every tsconfig.build.json
+        // excludes the same two directories from compilation. Keep the lists in step.
+        "build": {
+            "dependsOn": ["^build"],
+            "inputs": [
+                "package.json",
+                "tsconfig.json",
+                "tsconfig.build.json",
+                "index.ts",
+                "lib/**",
+                "src/**",
+                "!**/*.spec.ts",
+                "!**/__fixtures__/**",
+                "!**/__snapshots__/**"
+            ],
+            "outputs": ["dist/**"]
+        },
+        // The workspace root is not a package, so no package's `lint` reaches the
+        // shared configs that sit beside it. Uncached: the check walks the whole
+        // tree, which is more than any input list here could describe honestly,
+        // and biome gets through it in about a second.
+        "//#lint": {
+            "cache": false
+        },
+        // `biome check . && tsc` typechecks specs and test helpers too, and those
+        // resolve workspace imports through the dependency's build output.
+        "lint": {
+            "dependsOn": ["^build"],
+            "inputs": [
+                "package.json",
+                "tsconfig.json",
+                "tsconfig.build.json",
+                "vitest.config.mts",
+                "vitest.config.ts",
+                "vitest.acceptance.config.ts",
+                "index.ts",
+                "lib/**",
+                "src/**",
+                "test/**",
+                "acceptance/**"
+            ]
+        },
+        "test": {
+            "dependsOn": ["^build"],
+            "inputs": [
+                "package.json",
+                "tsconfig.json",
+                "tsconfig.build.json",
+                "vitest.config.mts",
+                "vitest.config.ts",
+                "index.ts",
+                "lib/**",
+                "src/**",
+                "test/**"
+            ]
+        },
+        // Redis lives in a service container, which is not part of any task hash, so a
+        // cache hit here would report a pass without ever opening a connection.
+        "@opinionated-machine/sse-rooms-redis#test": {
+            "dependsOn": ["^build"],
+            "cache": false
+        },
+        // Only opinionated-machine defines this one today: the coverage-gated suite.
+        // Same inputs as `test`, plus the coverage report as an output.
+        "test:ci": {
+            "dependsOn": ["^build"],
+            "inputs": [
+                "package.json",
+                "tsconfig.json",
+                "tsconfig.build.json",
+                "vitest.config.mts",
+                "vitest.config.ts",
+                "index.ts",
+                "lib/**",
+                "src/**",
+                "test/**"
+            ],
+            "outputs": ["coverage/**"]
+        },
+        // Both of these drive docker compose, so there is no output worth caching and
+        // a cache hit would skip the containers the assertions need.
+        "test:acceptance": {
+            "dependsOn": ["^build"],
+            "cache": false,
+            "env": ["GATEWAY_URL", "PORT"]
+        },
+        "test:docker": {
+            "dependsOn": ["^build"],
+            "cache": false
+        }
+    }
+}

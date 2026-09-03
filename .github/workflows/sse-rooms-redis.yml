@@ -7,13 +7,13 @@ on:
       - main
     paths:
       - 'packages/sse-rooms-redis/**'
-      - 'lib/sse/rooms/**'
+      - 'packages/opinionated-machine/lib/sse/rooms/**'
   push:
     branches:
       - main
     paths:
       - 'packages/sse-rooms-redis/**'
-      - 'lib/sse/rooms/**'
+      - 'packages/opinionated-machine/lib/sse/rooms/**'
 
 permissions: {}
 
@@ -57,12 +57,9 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: .
 
-      - name: Build root package
-        run: pnpm run build
-        working-directory: .
-
+      # turbo builds opinionated-machine, which these tasks resolve through.
       - name: Run Tests
-        run: pnpm test
+        run: pnpm exec turbo run test
 
       - name: Run Linting
-        run: pnpm run lint
+        run: pnpm exec turbo run lint

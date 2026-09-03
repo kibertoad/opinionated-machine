@@ -6,7 +6,7 @@
         "./node_modules/@lokalise/biome-config/configs/biome-package.jsonc"
     ],
     "files": {
-        "includes": ["**", "!**/dist", "!**/coverage", "!**/acceptance/generated"]
+        "includes": ["**", "!**/dist", "!**/coverage", "!**/.turbo", "!**/acceptance/generated"]
     },
     "linter": {
         "rules": {
@@ -29,7 +29,7 @@
             }
         },
         {
-            // Stand-alone acceptance CLI scripts — console output is intentional.
+            // Stand-alone acceptance CLI scripts: console output is intentional.
             "includes": ["**/acceptance/*.mjs"],
             "linter": {
                 "rules": {
