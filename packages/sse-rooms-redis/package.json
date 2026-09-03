@@ -44,7 +44,7 @@
         "opinionated-machine": "workspace:*",
         "rimraf": "^6.1.2",
         "typescript": "^5.9.3",
-        "vitest": "^4.0.18"
+        "vitest": "^4.1.11"
     },
     "private": false,
     "publishConfig": {
