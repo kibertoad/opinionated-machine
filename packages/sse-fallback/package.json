@@ -1,6 +1,6 @@
 {
     "name": "@opinionated-machine/sse-fallback",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Browser-safe SSE client core with transparent polling fallback for opinionated-machine dual-mode contracts",
     "type": "module",
     "license": "MIT",
