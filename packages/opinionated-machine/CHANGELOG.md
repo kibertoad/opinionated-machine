@@ -1,5 +1,31 @@
 # opinionated-machine
 
+## 11.0.1
+
+### Patch Changes
+
+- be94a1f: Move the framework's sources from the workspace root into `packages/opinionated-machine`, so every
+  package in the repo lives under `packages/*`.
+  
+  The published contents are unchanged: same entry points, same `files`, same README and CHANGELOG.
+  `repository.directory` now points at the package, and the workspace root is private and holds only
+  the orchestration scripts (`build:all`, `lint:all`, `test:all`, `changeset`, `ci:publish`) plus the
+  shared `tsconfig.json`, `biome.jsonc` and `turbo.jsonc` every package extends.
+  
+  `@opinionated-machine/sse-fallback` is now a declared devDependency of the framework package rather
+  than a relative path into a sibling directory, which is what lets turbo order and hash the suite
+  that integrates against it.
+- be94a1f: Orchestrate workspace tasks with Turborepo.
+  
+  `turbo.jsonc` declares each task's dependencies, inputs and outputs, so ordering follows the
+  workspace graph instead of hand-written `pnpm --filter` chains. The per-package `build` scripts
+  lost their `pnpm --filter @opinionated-machine/sse-parser run build` prefix and now compile
+  exactly one package; `pnpm run build:all` and `pnpm run lint:all` drive the whole graph.
+  
+  Keeping the per-package `build` scripts single-package also keeps `prepublishOnly` safe: changesets
+  publishes chunk-mates concurrently, so a hook that rebuilt sibling packages would `rimraf` a `dist`
+  that another `pnpm publish` was packing at that moment.
+
 ## 11.0.0
 
 ### Major Changes
