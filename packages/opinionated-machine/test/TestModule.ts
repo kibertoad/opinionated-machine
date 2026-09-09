@@ -7,6 +7,7 @@ import {
 import type { DependencyInjectionOptions } from '../lib/DIContext.js'
 import {
   asControllerClass,
+  asDomainEventEmitterFunction,
   asEnqueuedJobQueueManagerFunction,
   asEnqueuedJobWorkerClass,
   asJobQueueClass,
@@ -81,6 +82,15 @@ export class TestMessageQueueConsumer {
 
   close() {
     this.isStarted = false
+    return Promise.resolve()
+  }
+}
+
+export class DomainEventEmitter {
+  isDisposed = false
+
+  dispose() {
+    this.isDisposed = true
     return Promise.resolve()
   }
 }
@@ -188,6 +198,8 @@ export class TestModule extends AbstractModule {
       }),
 
       queueManager: asEnqueuedJobQueueManagerFunction(() => new QueueManager(), diOptions),
+
+      eventEmitter: asDomainEventEmitterFunction(() => new DomainEventEmitter()),
     }
   }
 

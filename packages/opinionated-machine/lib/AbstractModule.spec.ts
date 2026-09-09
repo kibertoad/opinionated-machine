@@ -34,6 +34,8 @@ describe('InferPublicModuleDependencies', () => {
     expectTypeOf<PublicDeps>().toHaveProperty('queue')
     // asEnqueuedJobQueueManagerFunction → public
     expectTypeOf<PublicDeps>().toHaveProperty('queueManager')
+    // asDomainEventEmitterFunction → public
+    expectTypeOf<PublicDeps>().toHaveProperty('eventEmitter')
   })
 
   it('omits non-public dependencies from the type', () => {
