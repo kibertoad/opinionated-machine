@@ -1,5 +1,11 @@
 # opinionated-machine
 
+## 11.1.0
+
+### Minor Changes
+
+- 19b8ebb: Add `asDomainEventEmitterFunction` resolver, which disposes the domain event emitter after queue consumers and job workers but before the job queue manager.
+
 ## 11.0.1
 
 ### Patch Changes
