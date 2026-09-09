@@ -231,6 +231,19 @@ describe('opinionated-machine', () => {
     })
   })
 
+  describe('domain event emitter', () => {
+    it('is disposed on destroy', async () => {
+      const context = createContext()
+      const { eventEmitter } = context.diContainer.cradle
+
+      await context.init()
+      expect(eventEmitter.isDisposed).toBe(false)
+
+      await context.destroy()
+      expect(eventEmitter.isDisposed).toBe(true)
+    })
+  })
+
   describe('periodic jobs', () => {
     it('registers periodic jobs, by default they are disabled', async () => {
       const context = createContext()

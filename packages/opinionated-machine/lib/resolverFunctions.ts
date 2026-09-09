@@ -41,6 +41,11 @@ export interface EnqueuedJobQueueManager {
   start(enabled?: string[] | boolean): Promise<void>
 }
 
+// this follows message-queue-toolkit conventions
+export interface DisposableDomainEventEmitter {
+  dispose(): Promise<void>
+}
+
 export function asSingletonClass<T = object>(
   Type: ClassValue<T>,
   opts: BuildResolverOptions<T> & { public: true },
@@ -378,6 +383,31 @@ export function asPeriodicJobClass<T = object>(
       workerOptions.diOptions.periodicJobsEnabled,
       workerOptions.jobName,
     ),
+    lifetime: 'SINGLETON',
+    ...opts,
+  })
+}
+
+export function asDomainEventEmitterFunction<T extends DisposableDomainEventEmitter>(
+  fn: FunctionReturning<T>,
+  opts: BuildResolverOptions<T> & { public: false },
+): BuildResolver<T> & DisposableResolver<T>
+export function asDomainEventEmitterFunction<T extends DisposableDomainEventEmitter>(
+  fn: FunctionReturning<T>,
+  opts?: BuildResolverOptions<T>,
+): PublicResolver<T>
+export function asDomainEventEmitterFunction<T extends DisposableDomainEventEmitter>(
+  fn: FunctionReturning<T>,
+  opts?: BuildResolverOptions<T>,
+): BuildResolver<T> & DisposableResolver<T> {
+  return asFunction(fn, {
+    // this follows message-queue-toolkit conventions
+    asyncDispose: 'dispose',
+    // Disposing the emitter stops it accepting events, so it comes after everything that can still
+    // emit - queue consumers (10) and job workers (15) - and before the queue manager (20) and the
+    // clients closed by container.dispose(), which its draining handlers still need.
+    asyncDisposePriority: 17,
+    public: true,
     lifetime: 'SINGLETON',
     ...opts,
   })
