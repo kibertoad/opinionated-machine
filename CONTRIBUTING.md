@@ -92,8 +92,15 @@ A release takes two passes over `main`:
 1. **Version.** A push to `main` with changesets pending runs the suite, then opens or
    updates the `Release Packages` PR (`changeset version` applied the changesets to
    `package.json` and `CHANGELOG.md`). Nothing is published on this pass. The workflow
-   waits for that PR's own checks, squash-merges it, and sends a `repository_dispatch`,
-   which is needed because a push made with `GITHUB_TOKEN` triggers no workflows.
+   squash-merges that PR and sends a `repository_dispatch`, which is needed because a
+   push made with `GITHUB_TOKEN` triggers no workflows.
+
+   The version PR is merged without waiting for checks of its own, because it has none:
+   GitHub creates a `ci` run for a PR opened with `GITHUB_TOKEN` but never starts its
+   jobs. That costs nothing here — the PR contains only version bumps and CHANGELOG
+   edits, and pass 2 tests the merged result before anything is published. Handing
+   `changesets/action` a GitHub App token would make those checks run, and is the
+   upgrade to make if one becomes available.
 2. **Publish.** The dispatch re-runs `ci.yml` against the version-bumped tree. With no
    changesets left, `changeset publish` pushes every workspace version that is not yet on
    the registry, and the action tags each one and cuts a GitHub release. A final step

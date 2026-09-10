@@ -49,36 +49,45 @@ async function isPublished(name, version) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** @returns {Promise<boolean>} */
-async function isPublishedWithRetry(name, version) {
+/**
+ * A lookup that never throws: a registry outage must not take the whole report with
+ * it, or the one run that needs this script prints nothing at all.
+ *
+ * @returns {Promise<{ published: boolean, error?: string }>}
+ */
+async function lookup(name, version) {
+  let error
   for (let attempt = 1; attempt <= LOOKUP_ATTEMPTS; attempt++) {
-    if (await isPublished(name, version)) return true
+    try {
+      if (await isPublished(name, version)) return { published: true }
+      error = undefined
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause)
+    }
     if (attempt < LOOKUP_ATTEMPTS) await sleep(RETRY_DELAY_MS)
   }
-  return false
+  return { published: false, error }
 }
 
 const packages = await readPublicManifests()
 const results = await Promise.all(
-  packages.map(async (pkg) => ({
-    ...pkg,
-    published: await isPublishedWithRetry(pkg.name, pkg.version),
-  })),
+  packages.map(async (pkg) => ({ ...pkg, ...(await lookup(pkg.name, pkg.version)) })),
 )
 
-for (const { name, version, published } of results) {
-  console.log(`${published ? 'ok     ' : 'MISSING'}  ${name}@${version}`)
+for (const { name, version, published, error } of results) {
+  const state = published ? 'ok     ' : error ? 'ERROR  ' : 'MISSING'
+  console.log(`${state}  ${name}@${version}${error ? ` (${error})` : ''}`)
 }
 
-const missing = results.filter((result) => !result.published)
-if (missing.length === 0) {
+const unresolved = results.filter((result) => !result.published)
+if (unresolved.length === 0) {
   console.log(`\nAll ${results.length} public packages are on the registry.`)
   process.exit(0)
 }
 
-const list = missing.map(({ name, version }) => `${name}@${version}`).join(', ')
+const list = unresolved.map(({ name, version }) => `${name}@${version}`).join(', ')
 console.error(
-  `\n::error::Not on the npm registry: ${list}. A first publish needs a trusted publisher ` +
-    'configured on npmjs.com for that package; otherwise re-run this workflow to retry.',
+  `\n::error::Not confirmed on the npm registry: ${list}. A first publish needs a trusted ` +
+    'publisher configured on npmjs.com for that package; otherwise re-run this workflow to retry.',
 )
 process.exit(1)

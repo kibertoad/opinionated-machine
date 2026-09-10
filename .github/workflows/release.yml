@@ -60,12 +60,21 @@ jobs:
         if: ${{ !cancelled() && steps.changesets.conclusion != 'skipped' && steps.changesets.outputs.has-changesets != 'true' }}
         run: pnpm run verify:published
 
-      # The version PR is the commit `changeset publish` runs from, so it is the one
-      # commit that most needs its checks to pass. It used to be merged with --admin
-      # seconds after it opened, which cancelled its own CI run before it could report.
+      # The version PR carries nothing but version bumps and CHANGELOG edits, and its
+      # own `ci` run never executes: GitHub creates a run for a PR opened with
+      # GITHUB_TOKEN but never starts its jobs, so every one of these runs has
+      # completed with zero jobs (runs 33105348708, 34372455173). Waiting on those
+      # checks would hang until this step timed out.
+      #
+      # The gate that matters sits on the other side of the merge instead: the
+      # dispatch below re-runs the full matrix against the merged tree, and
+      # `needs: build` in ci.yml holds the publish until that is green. Nothing
+      # reaches npm from a commit whose tests have not passed. Giving
+      # changesets/action a GitHub App token would let the version PR be verified on
+      # its own too, and is the upgrade to make if one becomes available.
       - name: Auto-merge Changesets PR
         if: steps.changesets.outputs.has-changesets == 'true'
-        timeout-minutes: 45
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -76,23 +85,8 @@ jobs:
             exit 1
           fi
 
-          # Checks are not registered the instant the PR opens, and an empty check list
-          # reads as success to `--watch`. Wait for the first one to appear.
-          status=0
-          for _ in $(seq 1 18); do
-            status=0
-            gh pr checks "$PR_NUMBER" --repo "$REPO" > /dev/null 2>&1 || status=$?
-            [ "$status" -eq 8 ] || break
-            echo "No checks reported on PR #$PR_NUMBER yet; waiting."
-            sleep 10
-          done
-
-          if [ "$status" -eq 8 ]; then
-            echo "::error::No checks ever reported on version PR #$PR_NUMBER; refusing to merge it unverified."
-            exit 1
-          fi
-
-          gh pr checks "$PR_NUMBER" --repo "$REPO" --watch --fail-fast --interval 20
+          # No --admin: a branch protection rule added later should block this merge
+          # rather than be silently bypassed by it.
           gh pr merge --squash "$PR_NUMBER" --repo "$REPO"
 
           # The merge is pushed with GITHUB_TOKEN, which does not trigger workflows.
