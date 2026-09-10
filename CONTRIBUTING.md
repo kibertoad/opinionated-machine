@@ -80,3 +80,38 @@ Create **one changeset per logical change** (not per package): a single changese
 
 Releases are triggered automatically when a PR with a changeset is merged to `main`.
 Do not bump version numbers manually: versioning is handled by the release pipeline.
+
+### How the pipeline runs
+
+`release.yml` is a reusable workflow that `ci.yml` calls, never a workflow that fires on
+its own. It runs only after the whole `build` matrix is green, so nothing reaches npm from
+a commit whose tests have not passed.
+
+A release takes two passes over `main`:
+
+1. **Version.** A push to `main` with changesets pending runs the suite, then opens or
+   updates the `Release Packages` PR (`changeset version` applied the changesets to
+   `package.json` and `CHANGELOG.md`). Nothing is published on this pass. The workflow
+   waits for that PR's own checks, squash-merges it, and sends a `repository_dispatch`,
+   which is needed because a push made with `GITHUB_TOKEN` triggers no workflows.
+2. **Publish.** The dispatch re-runs `ci.yml` against the version-bumped tree. With no
+   changesets left, `changeset publish` pushes every workspace version that is not yet on
+   the registry, and the action tags each one and cuts a GitHub release. A final step
+   reads the registry back (`pnpm run verify:published`) so a publish that only got
+   halfway through fails with the names of what is missing rather than a stack trace.
+
+### A changeset is required
+
+`ci.yml` runs `changeset status` against the PR's base branch and fails when a package
+under `packages/` changed without one. If a package change genuinely needs no release
+(a comment, a test-only fix), either add an empty changeset with
+`pnpm changeset add --empty` or label the PR `skip-changeset`. The check is skipped for
+Dependabot PRs and for the `Release Packages` PR.
+
+### Publishing credentials
+
+There is no npm token. The release job publishes over OIDC through npm's trusted
+publishing, which is what `id-token: write` in `ci.yml` is for. The consequence for a
+**new** package: configure a trusted publisher for it on npmjs.com before its first
+release, or `changeset publish` fails that package with `E404` while publishing the rest
+of the workspace normally.

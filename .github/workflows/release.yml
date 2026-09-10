@@ -1,15 +1,13 @@
 name: Release
 
+# Called by ci.yml, never triggered directly: publishing must be gated on a green
+# build of the exact commit it publishes, and `needs:` is the only gate GitHub
+# offers that cannot race. See the "Releases" section of CONTRIBUTING.md.
 on:
-  push:
-    branches:
-      - main
-  repository_dispatch:
-    types:
-      - release
+  workflow_call: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions: {}
@@ -44,6 +42,9 @@ jobs:
       - name: Build
         run: pnpm run build:all
 
+      # With changesets pending this versions them into a PR and publishes nothing.
+      # With none pending every unpublished workspace version goes to npm, authenticated
+      # by the job's OIDC token rather than by NODE_AUTH_TOKEN.
       - name: Create Release Pull Request or Publish
         id: changesets
         uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
@@ -53,12 +54,48 @@ jobs:
           pr-title: "Release Packages"
           commit-message: "chore: update versions"
 
+      # `changeset publish` publishes package by package and does not tag anything if
+      # one of them fails, so a partial release otherwise leaves no usable record.
+      - name: Verify the registry matches the workspace
+        if: ${{ !cancelled() && steps.changesets.conclusion != 'skipped' && steps.changesets.outputs.has-changesets != 'true' }}
+        run: pnpm run verify:published
+
+      # The version PR is the commit `changeset publish` runs from, so it is the one
+      # commit that most needs its checks to pass. It used to be merged with --admin
+      # seconds after it opened, which cancelled its own CI run before it could report.
       - name: Auto-merge Changesets PR
         if: steps.changesets.outputs.has-changesets == 'true'
-        run: |
-          gh pr merge --squash --admin "$PR_NUMBER"
-          gh api --method POST /repos/$REPO/dispatches -f 'event_type=release'
+        timeout-minutes: 45
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
+        run: |
+          if [ -z "$PR_NUMBER" ]; then
+            echo "::error::Changesets reported pending changesets but produced no version PR."
+            exit 1
+          fi
+
+          # Checks are not registered the instant the PR opens, and an empty check list
+          # reads as success to `--watch`. Wait for the first one to appear.
+          status=0
+          for _ in $(seq 1 18); do
+            status=0
+            gh pr checks "$PR_NUMBER" --repo "$REPO" > /dev/null 2>&1 || status=$?
+            [ "$status" -eq 8 ] || break
+            echo "No checks reported on PR #$PR_NUMBER yet; waiting."
+            sleep 10
+          done
+
+          if [ "$status" -eq 8 ]; then
+            echo "::error::No checks ever reported on version PR #$PR_NUMBER; refusing to merge it unverified."
+            exit 1
+          fi
+
+          gh pr checks "$PR_NUMBER" --repo "$REPO" --watch --fail-fast --interval 20
+          gh pr merge --squash "$PR_NUMBER" --repo "$REPO"
+
+          # The merge is pushed with GITHUB_TOKEN, which does not trigger workflows.
+          # repository_dispatch is one of the two events exempt from that rule, so it
+          # is what re-enters ci.yml for the publish half of the release.
+          gh api --method POST "/repos/$REPO/dispatches" -f 'event_type=release'
