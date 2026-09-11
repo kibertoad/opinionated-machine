@@ -126,7 +126,7 @@ importers:
     dependencies:
       '@fastify/sse':
         specifier: ^0.6.0
-        version: 0.6.0(fastify@5.12.1)
+        version: 0.6.0(fastify@5.12.3)
       '@opinionated-machine/sse-parser':
         specifier: workspace:*
         version: link:../sse-parser
@@ -151,7 +151,7 @@ importers:
         version: 3.1.1
       '@lokalise/fastify-api-contracts':
         specifier: ^7.0.0
-        version: 7.0.0(@fastify/sse@0.6.0(fastify@5.12.1))(@lokalise/api-contracts@8.0.0(zod@4.5.4))(@lokalise/node-core@14.9.1(zod@4.5.4))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.1)(openapi-types@12.1.3)(zod@4.5.4))(fastify@5.12.1)(zod@4.5.4)
+        version: 7.0.0(@fastify/sse@0.6.0(fastify@5.12.3))(@lokalise/api-contracts@8.0.0(zod@4.5.4))(@lokalise/node-core@14.9.1(zod@4.5.4))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.3)(openapi-types@12.1.3)(zod@4.5.4))(fastify@5.12.3)(zod@4.5.4)
       '@lokalise/node-core':
         specifier: ^14.7.4
         version: 14.9.1(zod@4.5.4)
@@ -174,11 +174,11 @@ importers:
         specifier: ^7.0.0
         version: 7.0.0(awilix@13.0.5)
       fastify:
-        specifier: ^5.7.4
-        version: 5.12.1
+        specifier: ^5.12.3
+        version: 5.12.3
       fastify-type-provider-zod:
         specifier: ^7.0.0
-        version: 7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.1)(openapi-types@12.1.3)(zod@4.5.4)
+        version: 7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.3)(openapi-types@12.1.3)(zod@4.5.4)
       rimraf:
         specifier: ^6.1.2
         version: 6.1.3
@@ -866,11 +866,11 @@ packages:
   fast-string-width@3.0.2:
     resolution: {integrity: sha512-gX8LrtNEI5hq8DVUfRQMbr5lpaS4nMIWV+7XEbXk2b8kiQIizgnlr12B4dA3ZEx3308ze0O4Q1R+cHts8kyUJg==}
 
-  fast-uri@3.1.5:
-    resolution: {integrity: sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==}
+  fast-uri@3.1.7:
+    resolution: {integrity: sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==}
 
-  fast-uri@4.1.2:
-    resolution: {integrity: sha512-TyGmBcbDTZXcb2cj5MV89DrF42DKvb3y5DDUNh95iO+IMeAzMkVSxK1PZRrRIpc9yg8U2GhGdbofNa0LS/a4Bw==}
+  fast-uri@4.1.4:
+    resolution: {integrity: sha512-dODXrIxlS9JSdgAnhIUKOosKV1oMtU2VtVw87QRaHzyl5jxO290Ii5tEZfCfzfWNHi3jKWwBSdQj0qIyshdZdQ==}
 
   fast-wrap-ansi@0.2.2:
     resolution: {integrity: sha512-7F2Fl+TjRSenLqlU3UjSH0iyqopqoZIu7eZVpEirP2g1GtWa2G/ecEmBdgz31+Mxr+ELclgg6sokpSFIQiZ02Q==}
@@ -886,11 +886,11 @@ packages:
       openapi-types: ^12.1.3
       zod: '>=4.1.5'
 
-  fastify@5.12.1:
-    resolution: {integrity: sha512-FWi+tQvwxR/PeRX7Z2mhfEF5ozJ3jn9asiiclzKXNSzJRHAYcU924aIOKAdHFJ+YIKieh3cqr1IwCOvTr41B3Q==}
+  fastify@5.12.3:
+    resolution: {integrity: sha512-reZ8wce5VNCcufIt9AVtzZa3L4u1j8esikn7OEgHWLVpRpL5R7Y2+Xzj70OUkv5zDfzUAxXZT6cu4Rt0zr3EKA==}
 
-  fastq@1.20.1:
-    resolution: {integrity: sha512-GGToxJ/w1x32s/D2EKND7kTil4n8OVk/9mycTc4VDza13lOvpUZTGX3mFSCtV9ksdGBVzvsyAVLM6mHFThxXxw==}
+  fastq@1.20.3:
+    resolution: {integrity: sha512-XKv5nnLs6nLF71NgiKJLIZFLkPyIEuOselLG7ujZnGrRfQK8HpvY+WqKhAJUAdLomwVHErVS4LfxFlPq0/FTAw==}
 
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
@@ -905,8 +905,8 @@ packages:
     resolution: {integrity: sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==}
     engines: {node: '>=8'}
 
-  find-my-way@9.8.0:
-    resolution: {integrity: sha512-JtyUgATO7qxRp2zKhrmWof74Mqxc1ikbwpwMY97p8ipuTj2QtreA4gK2JNAF6SOqqHnYYkwMUvsgQVi2AJxIyw==}
+  find-my-way@9.9.0:
+    resolution: {integrity: sha512-sJsgZ1sQH2UDuowPuMKg8az7Qc8F0jnj+SKkFWU/+T0xcFlgV5skgXOGUqmQzOdmW6ALA7AhJINWx3qFBkbLHA==}
     engines: {node: '>=20'}
 
   fsevents@2.3.3:
@@ -1624,7 +1624,7 @@ snapshots:
     dependencies:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 4.1.2
+      fast-uri: 4.1.4
 
   '@fastify/error@4.2.0': {}
 
@@ -1643,10 +1643,10 @@ snapshots:
       '@fastify/forwarded': 3.0.2
       ipaddr.js: 2.5.0
 
-  '@fastify/sse@0.6.0(fastify@5.12.1)':
+  '@fastify/sse@0.6.0(fastify@5.12.3)':
     dependencies:
       '@fastify/error': 4.2.0
-      fastify: 5.12.1
+      fastify: 5.12.3
       fastify-plugin: 6.0.0
 
   '@fastify/swagger@9.8.1':
@@ -1676,17 +1676,17 @@ snapshots:
 
   '@lokalise/biome-config@3.1.1': {}
 
-  '@lokalise/fastify-api-contracts@7.0.0(@fastify/sse@0.6.0(fastify@5.12.1))(@lokalise/api-contracts@8.0.0(zod@4.5.4))(@lokalise/node-core@14.9.1(zod@4.5.4))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.1)(openapi-types@12.1.3)(zod@4.5.4))(fastify@5.12.1)(zod@4.5.4)':
+  '@lokalise/fastify-api-contracts@7.0.0(@fastify/sse@0.6.0(fastify@5.12.3))(@lokalise/api-contracts@8.0.0(zod@4.5.4))(@lokalise/node-core@14.9.1(zod@4.5.4))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.3)(openapi-types@12.1.3)(zod@4.5.4))(fastify@5.12.3)(zod@4.5.4)':
     dependencies:
       '@lokalise/api-contracts': 8.0.0(zod@4.5.4)
       '@lokalise/node-core': 14.9.1(zod@4.5.4)
-      fastify: 5.12.1
-      fastify-type-provider-zod: 7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.1)(openapi-types@12.1.3)(zod@4.5.4)
+      fastify: 5.12.3
+      fastify-type-provider-zod: 7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.3)(openapi-types@12.1.3)(zod@4.5.4)
       light-my-request: 6.6.0
       negotiator: 1.0.0
       zod: 4.5.4
     optionalDependencies:
-      '@fastify/sse': 0.6.0(fastify@5.12.1)
+      '@fastify/sse': 0.6.0(fastify@5.12.3)
 
   '@lokalise/node-core@14.9.1(zod@4.5.4)':
     dependencies:
@@ -1730,7 +1730,7 @@ snapshots:
   '@nodelib/fs.walk@1.2.8':
     dependencies:
       '@nodelib/fs.scandir': 2.1.5
-      fastq: 1.20.1
+      fastq: 1.20.3
 
   '@oxc-project/types@0.139.0': {}
 
@@ -1891,7 +1891,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.5
+      fast-uri: 3.1.7
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -1908,7 +1908,7 @@ snapshots:
   avvio@9.3.0:
     dependencies:
       '@fastify/error': 4.2.0
-      fastq: 1.20.1
+      fastq: 1.20.3
 
   awilix-manager@7.0.0(awilix@13.0.5):
     dependencies:
@@ -1987,7 +1987,7 @@ snapshots:
       '@fastify/merge-json-schemas': 0.2.1
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 4.1.2
+      fast-uri: 4.1.4
       json-schema-ref-resolver: 3.0.0
       rfdc: 1.4.1
 
@@ -2003,9 +2003,9 @@ snapshots:
     dependencies:
       fast-string-truncated-width: 3.0.3
 
-  fast-uri@3.1.5: {}
+  fast-uri@3.1.7: {}
 
-  fast-uri@4.1.2: {}
+  fast-uri@4.1.4: {}
 
   fast-wrap-ansi@0.2.2:
     dependencies:
@@ -2013,15 +2013,15 @@ snapshots:
 
   fastify-plugin@6.0.0: {}
 
-  fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.1)(openapi-types@12.1.3)(zod@4.5.4):
+  fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.3)(openapi-types@12.1.3)(zod@4.5.4):
     dependencies:
       '@fastify/error': 4.2.0
       '@fastify/swagger': 9.8.1
-      fastify: 5.12.1
+      fastify: 5.12.3
       openapi-types: 12.1.3
       zod: 4.5.4
 
-  fastify@5.12.1:
+  fastify@5.12.3:
     dependencies:
       '@fastify/ajv-compiler': 4.0.6
       '@fastify/error': 4.2.0
@@ -2030,7 +2030,7 @@ snapshots:
       abstract-logging: 2.0.1
       avvio: 9.3.0
       fast-json-stringify: 7.0.1
-      find-my-way: 9.8.0
+      find-my-way: 9.9.0
       light-my-request: 6.6.0
       pino: 10.3.1
       process-warning: 5.1.0
@@ -2039,7 +2039,7 @@ snapshots:
       semver: 7.8.5
       toad-cache: 3.7.4
 
-  fastq@1.20.1:
+  fastq@1.20.3:
     dependencies:
       reusify: 1.1.0
 
@@ -2051,7 +2051,7 @@ snapshots:
     dependencies:
       to-regex-range: 5.0.1
 
-  find-my-way@9.8.0:
+  find-my-way@9.9.0:
     dependencies:
       fast-deep-equal: 3.1.3
       fast-querystring: 1.1.2
@@ -2129,7 +2129,7 @@ snapshots:
   json-schema-resolver@3.0.0:
     dependencies:
       debug: 4.4.3
-      fast-uri: 3.1.5
+      fast-uri: 3.1.7
       rfdc: 1.4.1
     transitivePeerDependencies:
       - supports-color
