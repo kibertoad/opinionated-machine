@@ -63,7 +63,7 @@
         "rimraf": "^6.1.2",
         "typescript": "^5.9.3",
         "vitest": "^4.1.11",
-        "zod": "^4.6.1"
+        "zod": "^4.6.2"
     },
     "private": false,
     "publishConfig": {
