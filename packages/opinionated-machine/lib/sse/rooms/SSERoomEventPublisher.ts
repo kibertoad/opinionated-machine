@@ -1,4 +1,4 @@
-import { InternalError } from '@lokalise/node-core'
+import { type Either, InternalError } from '@lokalise/node-core'
 import type { z } from 'zod'
 import type { SSEEventDefinition } from '../defineEvent.js'
 import type { SSELogger } from '../sseTypes.js'
@@ -40,6 +40,18 @@ export type SSERoomEventPublishOptions = RoomBroadcastOptions & {
   metadata?: Record<string, unknown>
 }
 
+/** The same error either way, so a caller switching between the two methods sees one shape. */
+const validationError = (
+  room: string | string[],
+  event: string,
+  error: z.ZodError,
+): InternalError =>
+  new InternalError({
+    message: `SSE event validation failed for event "${event}": ${error.message}`,
+    errorCode: 'SSE_EVENT_VALIDATION_FAILED',
+    details: { room: Array.isArray(room) ? room.join(',') : room, event },
+  })
+
 /**
  * Fire-and-forget broadcasting for domain code: a room event goes out and the caller does not
  * await the fan-out.
@@ -54,8 +66,8 @@ export type SSERoomEventPublishOptions = RoomBroadcastOptions & {
  *
  * - **A payload that violates its own event schema is a bug in the producer.** Nobody receives
  *   the event, so swallowing it means believing you published something you did not.
- *   {@link publish} throws. {@link safePublish} logs instead, for a caller that cannot absorb a
- *   throw.
+ *   {@link publish} throws. {@link safePublish} returns the error instead, for a caller that
+ *   cannot absorb a throw.
  * - **A failed broadcast is the world's problem**, and no caller here can retry it, so both
  *   methods log it. It also happens after the call has returned, which is why neither method can
  *   report it in a return value.
@@ -115,24 +127,26 @@ export class SSERoomEventPublisher {
     const validation = event.schema.safeParse(data)
 
     if (!validation.success) {
-      throw new InternalError({
-        message: `SSE event validation failed for event "${event.event}": ${validation.error.message}`,
-        errorCode: 'SSE_EVENT_VALIDATION_FAILED',
-        details: { room: Array.isArray(room) ? room.join(',') : room, event: event.event },
-      })
+      throw validationError(room, event.event, validation.error)
     }
 
     this.broadcast(room, event, validation.data, context, options)
   }
 
   /**
-   * {@link publish}, but a payload that fails its schema is logged and dropped rather than
+   * {@link publish}, but a payload that fails its schema comes back as an error instead of being
    * thrown.
    *
    * For a producer that cannot absorb a throw: a message handler whose primary work has already
    * committed would be retried in full and redo it, and the retry cannot succeed anyway, since a
-   * malformed payload fails the same way every time. Prefer {@link publish} everywhere else. A
-   * swallowed contract violation means believing an event went out when nothing did.
+   * malformed payload fails the same way every time. Prefer {@link publish} everywhere else.
+   *
+   * The failure is logged as well as returned, so a caller that ignores the result still leaves
+   * a trace rather than silence.
+   *
+   * @returns `{ result: true }` once the payload has been validated and handed to the
+   * broadcaster. That is acceptance, not delivery: the fan-out has not happened yet, and its
+   * own failure is logged rather than returned.
    */
   safePublish<T extends z.ZodType>(
     room: string | string[],
@@ -140,7 +154,7 @@ export class SSERoomEventPublisher {
     data: z.input<T>,
     context?: SSELogContext,
     options?: SSERoomEventPublishOptions,
-  ): void {
+  ): Either<InternalError, true> {
     const validation = event.schema.safeParse(data)
 
     if (!validation.success) {
@@ -149,10 +163,13 @@ export class SSERoomEventPublisher {
         { room, event: event.event, issues: validation.error.issues },
         'Refusing to broadcast an SSE event that fails its own schema',
       )
-      return
+
+      return { error: validationError(room, event.event, validation.error) }
     }
 
     this.broadcast(room, event, validation.data, context, options)
+
+    return { result: true }
   }
 
   /**

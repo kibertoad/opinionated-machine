@@ -2105,16 +2105,24 @@ They differ in one thing: what a malformed payload does.
 | | malformed payload | failed broadcast |
 | --- | --- | --- |
 | `publish` | throws `InternalError` | logged |
-| `safePublish` | logged | logged |
+| `safePublish` | returns `{ error }`, and logs | logged |
 
 Reach for `safePublish` in a producer that cannot absorb a throw: a message handler whose primary
 work has already committed would be retried in full and redo it, and the retry cannot succeed
 anyway, since a malformed payload fails the same way every time. Prefer `publish` everywhere
 else.
 
-Neither reports a failed broadcast, because it happens after the call has returned. Use the
-broadcaster directly when the delivered count matters, or when a failed delivery is something the
-caller can act on.
+```ts
+const outcome = this.publisher.safePublish(room, event, payload, requestContext)
+if (outcome.error) {
+  // decide for yourself: metric, Bugsnag, a compensating write
+}
+```
+
+`{ result: true }` means the payload was validated and handed to the broadcaster. That is
+acceptance, not delivery: the fan-out has not run yet, and neither method reports its outcome,
+because it happens after the call has returned. Use the broadcaster directly when the delivered
+count matters, or when a failed delivery is something the caller can act on.
 
 #### Room Name Helpers
 

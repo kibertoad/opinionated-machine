@@ -64,7 +64,7 @@ describe('SSERoomEventPublisher', () => {
       roomManager.join('conn-1', ROOM)
 
       expect(() => publisher.publish(ROOM, THING_UPDATED, MALFORMED_PAYLOAD)).toThrow(
-        /SSE event validation failed for event "thing.updated"/,
+        expect.objectContaining({ errorCode: 'SSE_EVENT_VALIDATION_FAILED' }),
       )
       expect(sendEvent).not.toHaveBeenCalled()
       expect(error).not.toHaveBeenCalled()
@@ -136,16 +136,36 @@ describe('SSERoomEventPublisher', () => {
       expect(error).not.toHaveBeenCalled()
     })
 
-    it('logs a payload that fails the event schema rather than throwing', () => {
+    it('returns the error for a payload that fails the event schema rather than throwing', () => {
       roomManager.join('conn-1', ROOM)
 
-      expect(() => publisher.safePublish(ROOM, THING_UPDATED, MALFORMED_PAYLOAD)).not.toThrow()
+      const outcome = publisher.safePublish(ROOM, THING_UPDATED, MALFORMED_PAYLOAD)
 
+      expect(outcome.error).toMatchObject({
+        errorCode: 'SSE_EVENT_VALIDATION_FAILED',
+        details: { room: ROOM, event: 'thing.updated' },
+      })
+      expect(outcome.result).toBeUndefined()
       expect(sendEvent).not.toHaveBeenCalled()
+    })
+
+    // Returned and logged: a caller that ignores the result still leaves a trace.
+    it('logs the refusal as well as returning it', () => {
+      publisher.safePublish(ROOM, THING_UPDATED, MALFORMED_PAYLOAD)
+
       expect(error).toHaveBeenCalledWith(
         expect.objectContaining({ room: ROOM, event: 'thing.updated' }),
         'Refusing to broadcast an SSE event that fails its own schema',
       )
+    })
+
+    // Acceptance, not delivery: the fan-out has not run yet when this returns.
+    it('reports acceptance once the payload is handed to the broadcaster', () => {
+      roomManager.join('conn-1', ROOM)
+
+      const outcome = publisher.safePublish(ROOM, THING_UPDATED, VALID_PAYLOAD)
+
+      expect(outcome).toEqual({ result: true })
     })
 
     // A `RequestContext` goes in whole: the publisher reads its logger and ignores the rest, so
