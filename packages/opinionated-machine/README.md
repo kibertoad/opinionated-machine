@@ -2067,16 +2067,24 @@ class MetricsService {
   onMetricsUpdate(
     dashboardId: string,
     metrics: { cpu: number; memory: number },
-    requestContext: { logger: SSELogger },
+    requestContext: RequestContext,
   ) {
-    // No await: a failure is logged, not returned.
-    this.publisher.publish(`dashboard:${dashboardId}`, metricsUpdateEvent, metrics, {
-      // Pass the request-scoped logger so a dropped event carries its correlation id
-      logger: requestContext.logger,
-    })
+    // No await: a failure is logged, not returned. The context is passed whole; only its
+    // logger is read, so a dropped event carries the correlation id of whatever produced it.
+    this.publisher.publish(
+      `dashboard:${dashboardId}`,
+      metricsUpdateEvent,
+      metrics,
+      requestContext,
+    )
   }
 }
 ```
+
+The context parameter is typed as `SSELogContext` (`{ logger: SSELogger }`) rather than any
+concrete context type, so `@lokalise/fastify-extras`' `RequestContext` satisfies it structurally
+and this package needs no dependency on it. A job or consumer context of your own works the same
+way, and a caller that has none omits the argument and falls back to the injected logger.
 
 Two things it does beyond hiding the promise:
 

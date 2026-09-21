@@ -10,8 +10,17 @@ export type SSERoomEventPublisherDependencies = {
 }
 
 /**
+ * Whatever the caller is working on behalf of, narrowed to the one thing the publisher needs
+ * from it. `@lokalise/fastify-extras`' `RequestContext` satisfies this structurally, as does a
+ * job or consumer context of your own, so neither this package nor its callers need an adapter.
+ */
+export type SSELogContext = {
+  logger: SSELogger
+}
+
+/**
  * Everything {@link SSERoomBroadcaster.broadcastToRoom} accepts, so the publisher is not a lossy
- * wrapper over it, plus a per-call logger.
+ * wrapper over it.
  */
 export type SSERoomEventPublishOptions = RoomBroadcastOptions & {
   /**
@@ -28,12 +37,6 @@ export type SSERoomEventPublishOptions = RoomBroadcastOptions & {
    * resolver pipeline), so it is redundant unless one is installed.
    */
   metadata?: Record<string, unknown>
-  /**
-   * Logger for this call, overriding the injected one. Pass the request-scoped logger where the
-   * caller has one, so a dropped event carries the correlation id of the message or request that
-   * produced it.
-   */
-  logger?: SSELogger
 }
 
 /**
@@ -51,10 +54,14 @@ export type SSERoomEventPublishOptions = RoomBroadcastOptions & {
  * // In your DI module
  * sseRoomEventPublisher: asSingletonClass(SSERoomEventPublisher),
  *
- * // In a listener
- * this.publisher.publish(ProjectSse.roomResolver(projectId), ProjectSse.events.updated, payload, {
- *   logger: requestContext.logger,
- * })
+ * // In a listener. `requestContext` is passed straight through: the publisher reads its
+ * // logger, so a dropped event carries the correlation id of whatever produced it.
+ * this.publisher.publish(
+ *   ProjectSse.roomResolver(projectId),
+ *   ProjectSse.events.updated,
+ *   payload,
+ *   requestContext,
+ * )
  * ```
  */
 export class SSERoomEventPublisher {
@@ -79,14 +86,19 @@ export class SSERoomEventPublisher {
    * instead of being left to every client. Delivery-time validation discards its own result and
    * serializes what it was handed, so calling {@link SSERoomBroadcaster.broadcastToRoom}
    * directly sends the unparsed input.
+   *
+   * `context` is whatever the caller is acting on behalf of; only its logger is read, so a
+   * request context goes in as-is. Omit it in a caller that has none and the injected logger is
+   * used, which costs the failure its correlation id and nothing else.
    */
   publish<T extends z.ZodType>(
     room: string | string[],
     event: SSEEventDefinition<string, T>,
     data: z.input<T>,
+    context?: SSELogContext,
     options?: SSERoomEventPublishOptions,
   ): void {
-    const logger = options?.logger ?? this.logger
+    const logger = context?.logger ?? this.logger
 
     const validation = event.schema.safeParse(data)
     if (!validation.success) {

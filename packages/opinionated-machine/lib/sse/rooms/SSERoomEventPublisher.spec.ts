@@ -108,17 +108,14 @@ describe('SSERoomEventPublisher', () => {
     )
   })
 
-  it('logs through the per-call logger when one is given', () => {
+  // A `RequestContext` goes in whole: the publisher reads its logger and ignores the rest, so
+  // callers hand over the context they already hold rather than picking it apart.
+  it('logs through the context logger when a context is given', () => {
     const requestScopedError = vi.fn<SSELogger['error']>()
+    // Shaped like a `RequestContext`: fields beyond `logger` are along for the ride.
+    const requestContext = { logger: { error: requestScopedError }, reqId: 'req-1' }
 
-    publisher.publish(
-      ROOM,
-      THING_UPDATED,
-      { id: 'not-a-uuid' },
-      {
-        logger: { error: requestScopedError },
-      },
-    )
+    publisher.publish(ROOM, THING_UPDATED, { id: 'not-a-uuid' }, requestContext)
 
     expect(requestScopedError).toHaveBeenCalledTimes(1)
     expect(error).not.toHaveBeenCalled()
@@ -127,7 +124,10 @@ describe('SSERoomEventPublisher', () => {
   it('passes broadcast options through to the broadcaster', async () => {
     roomManager.join('conn-1', ROOM)
 
-    publisher.publish(ROOM, THING_UPDATED, VALID_PAYLOAD, { id: 'msg-1', retry: 5000 })
+    publisher.publish(ROOM, THING_UPDATED, VALID_PAYLOAD, undefined, {
+      id: 'msg-1',
+      retry: 5000,
+    })
 
     await vi.waitFor(() =>
       expect(sendEvent).toHaveBeenCalledWith(

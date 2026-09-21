@@ -63,6 +63,7 @@ export {
   type PreDeliveryFilter,
   type RoomBroadcastOptions,
   type RoomNameResolver,
+  type SSELogContext,
   type SSERoomAdapter,
   SSERoomBroadcaster,
   SSERoomEventPublisher,
