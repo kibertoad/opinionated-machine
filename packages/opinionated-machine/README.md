@@ -2088,19 +2088,33 @@ way, and a caller that has none omits the argument and falls back to the injecte
 
 Two things it does beyond hiding the promise:
 
-- **Validates before broadcasting.** Delivery-time validation runs once per connection, so a
-  payload that fails its schema is reported once per open connection on every node, names the
-  event but not the code that produced it, and is not checked at all when nobody has joined the
-  room. Validating at the producer reduces that to one log line naming the failing field,
-  whether or not anyone is listening.
+- **Validates before broadcasting, and throws.** A payload that violates its own event schema is
+  a bug in the producer, and nobody receives the event, so dropping it quietly means believing
+  you published something you did not. Delivery-time validation cannot give you this: it runs
+  once per connection, so it reports the mismatch once per open connection on every node, names
+  the event but not the code that produced it, does not run at all when nobody has joined the
+  room, and by then the call has long returned.
 - **Puts the parsed value on the wire,** so a schema default is filled in once here rather than
   left to every client. Delivery-time validation discards its own result and serializes what it
   was handed, so `broadcastToRoom()` sends the unparsed input.
 
-Use the broadcaster directly when the delivered count matters, or when a failed broadcast is
-something the caller can act on. `publish` returns `void` rather than a result because only one
-of its two failures is knowable before it returns: the schema check is synchronous, the broadcast
-rejects afterwards. A result type would carry the first and silently drop the second.
+#### `publish` vs `safePublish`
+
+They differ in one thing: what a malformed payload does.
+
+| | malformed payload | failed broadcast |
+| --- | --- | --- |
+| `publish` | throws `InternalError` | logged |
+| `safePublish` | logged | logged |
+
+Reach for `safePublish` in a producer that cannot absorb a throw: a message handler whose primary
+work has already committed would be retried in full and redo it, and the retry cannot succeed
+anyway, since a malformed payload fails the same way every time. Prefer `publish` everywhere
+else.
+
+Neither reports a failed broadcast, because it happens after the call has returned. Use the
+broadcaster directly when the delivered count matters, or when a failed delivery is something the
+caller can act on.
 
 #### Room Name Helpers
 
