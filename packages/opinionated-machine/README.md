@@ -56,6 +56,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [Session Room Operations](#session-room-operations)
     - [Broadcasting to Rooms](#broadcasting-to-rooms)
     - [Room Broadcaster (Decoupled Broadcasting)](#room-broadcaster-decoupled-broadcasting)
+    - [Room Event Publisher (Fire-and-Forget)](#room-event-publisher-fire-and-forget)
     - [Room Name Helpers](#room-name-helpers)
     - [Room Query Methods](#room-query-methods)
     - [Auto-Leave on Disconnect](#auto-leave-on-disconnect)
@@ -2025,6 +2026,103 @@ class MetricsService {
 ```
 
 The broadcaster provides `broadcastToRoom()` (with `defineEvent()`-based type safety), `broadcastMessage()` (raw SSEMessage), plus room query methods (`getConnectionsInRoom`, `getConnectionCountInRoom`). Multiple controllers register their `sendEvent` with the same broadcaster — the first to recognize a connection handles delivery.
+
+#### Room Event Publisher (Fire-and-Forget)
+
+`broadcastToRoom()` returns a promise, and most producers of a room event have nothing to do with
+it. An event listener or message queue handler has already committed its primary work by the time
+it broadcasts: it cannot retry a dropped hint, has nowhere to report one, and awaiting the fan-out
+would tie its latency to the number of open connections. `SSERoomEventPublisher` is the broadcaster
+without the promise.
+
+```ts
+import { defineEvent, SSERoomEventPublisher } from 'opinionated-machine'
+import { z } from 'zod'
+
+const metricsUpdateEvent = defineEvent(
+  'metricsUpdate',
+  z.object({ cpu: z.number(), memory: z.number() }),
+)
+
+// Register alongside the broadcaster it wraps; it expects 'sseRoomBroadcaster' and 'logger'
+// in the cradle, so the names must match exactly.
+class DashboardModule extends AbstractModule {
+  resolveDependencies() {
+    return {
+      sseRoomManager: asValue(new SSERoomManager()),
+      sseRoomBroadcaster: asSingletonClass(SSERoomBroadcaster),
+      sseRoomEventPublisher: asSingletonClass(SSERoomEventPublisher),
+      metricsService: asSingletonClass(MetricsService),
+    }
+  }
+}
+
+class MetricsService {
+  private publisher: SSERoomEventPublisher
+
+  constructor(deps: { sseRoomEventPublisher: SSERoomEventPublisher }) {
+    this.publisher = deps.sseRoomEventPublisher
+  }
+
+  onMetricsUpdate(
+    dashboardId: string,
+    metrics: { cpu: number; memory: number },
+    requestContext: RequestContext,
+  ) {
+    // No await: a failure is logged, not returned. The context is passed whole; only its
+    // logger is read, so a dropped event carries the correlation id of whatever produced it.
+    this.publisher.publish(
+      `dashboard:${dashboardId}`,
+      metricsUpdateEvent,
+      metrics,
+      requestContext,
+    )
+  }
+}
+```
+
+The context parameter is typed as `SSELogContext` (`{ logger: SSELogger }`) rather than any
+concrete context type, so `@lokalise/fastify-extras`' `RequestContext` satisfies it structurally
+and this package needs no dependency on it. A job or consumer context of your own works the same
+way, and a caller that has none omits the argument and falls back to the injected logger.
+
+Two things it does beyond hiding the promise:
+
+- **Validates before broadcasting, and throws.** A payload that violates its own event schema is
+  a bug in the producer, and nobody receives the event, so dropping it quietly means believing
+  you published something you did not. Delivery-time validation cannot give you this: it runs
+  once per connection, so it reports the mismatch once per open connection on every node, names
+  the event but not the code that produced it, does not run at all when nobody has joined the
+  room, and by then the call has long returned.
+- **Puts the parsed value on the wire,** so a schema default is filled in once here rather than
+  left to every client. Delivery-time validation discards its own result and serializes what it
+  was handed, so `broadcastToRoom()` sends the unparsed input.
+
+#### `publish` vs `safePublish`
+
+They differ in one thing: what a malformed payload does.
+
+| | malformed payload | failed broadcast |
+| --- | --- | --- |
+| `publish` | throws `InternalError` | logged |
+| `safePublish` | returns `{ error }`, and logs | logged |
+
+Reach for `safePublish` in a producer that cannot absorb a throw: a message handler whose primary
+work has already committed would be retried in full and redo it, and the retry cannot succeed
+anyway, since a malformed payload fails the same way every time. Prefer `publish` everywhere
+else.
+
+```ts
+const outcome = this.publisher.safePublish(room, event, payload, requestContext)
+if (outcome.error) {
+  // decide for yourself: metric, Bugsnag, a compensating write
+}
+```
+
+`{ result: true }` means the payload was validated and handed to the broadcaster. That is
+acceptance, not delivery: the fan-out has not run yet, and neither method reports its outcome,
+because it happens after the call has returned. Use the broadcaster directly when the delivered
+count matters, or when a failed delivery is something the caller can act on.
 
 #### Room Name Helpers
 

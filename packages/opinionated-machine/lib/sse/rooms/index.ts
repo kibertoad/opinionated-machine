@@ -4,6 +4,12 @@
 export { InMemoryAdapter } from './adapters/InMemoryAdapter.js'
 export { defineRoom } from './defineRoom.js'
 export { SSERoomBroadcaster } from './SSERoomBroadcaster.js'
+export {
+  type SSELogContext,
+  SSERoomEventPublisher,
+  type SSERoomEventPublisherDependencies,
+  type SSERoomEventPublishOptions,
+} from './SSERoomEventPublisher.js'
 export { SSERoomManager } from './SSERoomManager.js'
 // Types
 export type {
