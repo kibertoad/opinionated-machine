@@ -49,6 +49,11 @@ export type SSERoomEventPublishOptions = RoomBroadcastOptions & {
  * {@link SSERoomBroadcaster} without the promise; code that needs the delivered count, or that
  * can act on a failure, should keep using the broadcaster directly.
  *
+ * `publish` returns `void` rather than a result, and deliberately. Of the two ways it can fail,
+ * only the schema check is knowable before it returns: the broadcast rejects afterwards. A
+ * result type could therefore carry one failure and silently drop the other, which reads as a
+ * guarantee the method does not make. The awaitable half of that choice is the broadcaster.
+ *
  * @example
  * ```typescript
  * // In your DI module

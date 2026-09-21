@@ -2098,7 +2098,9 @@ Two things it does beyond hiding the promise:
   was handed, so `broadcastToRoom()` sends the unparsed input.
 
 Use the broadcaster directly when the delivered count matters, or when a failed broadcast is
-something the caller can act on.
+something the caller can act on. `publish` returns `void` rather than a result because only one
+of its two failures is knowable before it returns: the schema check is synchronous, the broadcast
+rejects afterwards. A result type would carry the first and silently drop the second.
 
 #### Room Name Helpers
 
