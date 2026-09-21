@@ -21,7 +21,7 @@
     },
     "devDependencies": {
         "@biomejs/biome": "2.4.4",
-        "@changesets/cli": "^3.0.2",
+        "@changesets/cli": "^3.0.3",
         "@lokalise/biome-config": "^3.1.1",
         "@lokalise/tsconfig": "^3.1.0",
         "@types/node": "^22.19.7",
