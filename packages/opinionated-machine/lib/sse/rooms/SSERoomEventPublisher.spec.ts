@@ -56,6 +56,24 @@ describe('SSERoomEventPublisher', () => {
     expect(error).not.toHaveBeenCalled()
   })
 
+  // Delivery-time validation discards its own result and serializes what it was handed, so a
+  // default only reaches the wire if the publisher substitutes the parsed value here.
+  it('broadcasts the parsed value, so a schema default is on the wire', async () => {
+    const thingCreated = defineEvent(
+      'thing.created',
+      z.object({ id: z.string(), source: z.string().default('api') }),
+    )
+    roomManager.join('conn-1', ROOM)
+
+    publisher.publish(ROOM, thingCreated, { id: 'thing-1' })
+
+    await vi.waitFor(() => expect(sendEvent).toHaveBeenCalledTimes(1))
+    expect(sendEvent).toHaveBeenCalledWith(
+      'conn-1',
+      expect.objectContaining({ data: { id: 'thing-1', source: 'api' } }),
+    )
+  })
+
   it('refuses a payload that fails the event schema', () => {
     roomManager.join('conn-1', ROOM)
 

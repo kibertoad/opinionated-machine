@@ -9,9 +9,24 @@ export type SSERoomEventPublisherDependencies = {
   logger: SSELogger
 }
 
+/**
+ * Everything {@link SSERoomBroadcaster.broadcastToRoom} accepts, so the publisher is not a lossy
+ * wrapper over it, plus a per-call logger.
+ */
 export type SSERoomEventPublishOptions = RoomBroadcastOptions & {
+  /**
+   * The SSE `id:` put on the wire. Defaults to a random UUID. Set it to a value a client can
+   * order, such as the sequence from `createEventIdSequence()`, when consumers deduplicate or
+   * resume by event id.
+   */
   id?: string
+  /** The SSE `retry:` hint, in milliseconds: how long a client waits before reconnecting. */
   retry?: number
+  /**
+   * Per-broadcast context handed to the pre-delivery filter, and to other nodes alongside the
+   * message. Only a filter reads it (`SSESubscriptionManager` installs one to evaluate its
+   * resolver pipeline), so it is redundant unless one is installed.
+   */
   metadata?: Record<string, unknown>
   /**
    * Logger for this call, overriding the injected one. Pass the request-scoped logger where the
@@ -59,6 +74,11 @@ export class SSERoomEventPublisher {
    * every node, naming the event but not the code that produced it, and a room nobody has
    * joined validates nothing at all. Checking up front reduces that to one log line, at the
    * producer, naming the failing field, whether or not anyone is listening.
+   *
+   * What goes on the wire is the parsed value, so a schema default is filled in once here
+   * instead of being left to every client. Delivery-time validation discards its own result and
+   * serializes what it was handed, so calling {@link SSERoomBroadcaster.broadcastToRoom}
+   * directly sends the unparsed input.
    */
   publish<T extends z.ZodType>(
     room: string | string[],
@@ -77,8 +97,14 @@ export class SSERoomEventPublisher {
       return
     }
 
-    this.sseRoomBroadcaster.broadcastToRoom(room, event, data, options).catch((error: unknown) => {
-      logger.error({ error, room, event: event.event }, 'Failed to broadcast SSE event')
-    })
+    // Already schema-valid, so the re-parse at delivery accepts it; the cast is only needed
+    // because `z.output` is not `z.input` for a schema that defaults or transforms.
+    const parsed = validation.data as z.input<T>
+
+    this.sseRoomBroadcaster
+      .broadcastToRoom(room, event, parsed, options)
+      .catch((error: unknown) => {
+        logger.error({ error, room, event: event.event }, 'Failed to broadcast SSE event')
+      })
   }
 }

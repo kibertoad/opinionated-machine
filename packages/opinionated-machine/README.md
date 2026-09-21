@@ -56,6 +56,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [Session Room Operations](#session-room-operations)
     - [Broadcasting to Rooms](#broadcasting-to-rooms)
     - [Room Broadcaster (Decoupled Broadcasting)](#room-broadcaster-decoupled-broadcasting)
+    - [Room Event Publisher (Fire-and-Forget)](#room-event-publisher-fire-and-forget)
     - [Room Name Helpers](#room-name-helpers)
     - [Room Query Methods](#room-query-methods)
     - [Auto-Leave on Disconnect](#auto-leave-on-disconnect)
@@ -2025,6 +2026,71 @@ class MetricsService {
 ```
 
 The broadcaster provides `broadcastToRoom()` (with `defineEvent()`-based type safety), `broadcastMessage()` (raw SSEMessage), plus room query methods (`getConnectionsInRoom`, `getConnectionCountInRoom`). Multiple controllers register their `sendEvent` with the same broadcaster — the first to recognize a connection handles delivery.
+
+#### Room Event Publisher (Fire-and-Forget)
+
+`broadcastToRoom()` returns a promise, and most producers of a room event have nothing to do with
+it. An event listener or message queue handler has already committed its primary work by the time
+it broadcasts: it cannot retry a dropped hint, has nowhere to report one, and awaiting the fan-out
+would tie its latency to the number of open connections. `SSERoomEventPublisher` is the broadcaster
+without the promise.
+
+```ts
+import { defineEvent, SSERoomEventPublisher } from 'opinionated-machine'
+import { z } from 'zod'
+
+const metricsUpdateEvent = defineEvent(
+  'metricsUpdate',
+  z.object({ cpu: z.number(), memory: z.number() }),
+)
+
+// Register alongside the broadcaster it wraps; it expects 'sseRoomBroadcaster' and 'logger'
+// in the cradle, so the names must match exactly.
+class DashboardModule extends AbstractModule {
+  resolveDependencies() {
+    return {
+      sseRoomManager: asValue(new SSERoomManager()),
+      sseRoomBroadcaster: asSingletonClass(SSERoomBroadcaster),
+      sseRoomEventPublisher: asSingletonClass(SSERoomEventPublisher),
+      metricsService: asSingletonClass(MetricsService),
+    }
+  }
+}
+
+class MetricsService {
+  private publisher: SSERoomEventPublisher
+
+  constructor(deps: { sseRoomEventPublisher: SSERoomEventPublisher }) {
+    this.publisher = deps.sseRoomEventPublisher
+  }
+
+  onMetricsUpdate(
+    dashboardId: string,
+    metrics: { cpu: number; memory: number },
+    requestContext: { logger: SSELogger },
+  ) {
+    // No await: a failure is logged, not returned.
+    this.publisher.publish(`dashboard:${dashboardId}`, metricsUpdateEvent, metrics, {
+      // Pass the request-scoped logger so a dropped event carries its correlation id
+      logger: requestContext.logger,
+    })
+  }
+}
+```
+
+Two things it does beyond hiding the promise:
+
+- **Validates before broadcasting.** Delivery-time validation runs once per connection, so a
+  payload that fails its schema is reported once per open connection on every node, names the
+  event but not the code that produced it, and is not checked at all when nobody has joined the
+  room. Validating at the producer reduces that to one log line naming the failing field,
+  whether or not anyone is listening.
+- **Puts the parsed value on the wire,** so a schema default is filled in once here rather than
+  left to every client. Delivery-time validation discards its own result and serializes what it
+  was handed, so `broadcastToRoom()` sends the unparsed input.
+
+Use the broadcaster directly when the delivered count matters, or when a failed broadcast is
+something the caller can act on.
 
 #### Room Name Helpers
 
