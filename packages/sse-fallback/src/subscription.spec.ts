@@ -32,6 +32,7 @@ function makeBinding(
     config: {
       snapshotToEvents: (s) =>
         s.status === 'completed' ? [{ event: 'done', data: { result: s.result as string } }] : [],
+      snapshotSource: 'endpoint',
       version: { ofSnapshot: (s) => s.version },
       terminalEvents: ['done'],
       ...overrides,
@@ -1016,26 +1017,14 @@ describe('createResilientSubscription: stream refusal', () => {
     vi.useRealTimers()
   })
 
-  it('stops on a refused stream by default', async () => {
-    const { transport } = makeHarness()
-    transport.denyNextStreamConnect({ status: 404 })
-    const sub = createResilientSubscription(makeBinding(), {
-      transport,
-      policy: TEST_POLICY,
-      random: () => 1,
-    })
-    await flush()
-
-    expect(sub.result).toEqual({ reason: 'unretryable-status', status: 404, channel: 'stream' })
-  })
-
-  it('keeps polling when the stream alone is refused', async () => {
+  it('keeps polling when the stream alone is refused, without being asked to', async () => {
     const { transport, snapshots } = makeHarness()
     const refusals: Array<{ status: number; streamWasLive: boolean }> = []
     transport.denyNextStreamConnect({ status: 404 })
     const sub = createResilientSubscription(makeBinding(), {
       transport,
-      policy: { ...TEST_POLICY, streamRefusal: 'keep-polling' },
+      // No streamRefusal: 'auto' reads snapshotSource: 'endpoint'.
+      policy: TEST_POLICY,
       diagnostics: { onStreamRefused: (refusal) => refusals.push(refusal) },
       random: () => 1,
     })
@@ -1187,6 +1176,37 @@ describe('createResilientSubscription: stream refusal', () => {
     expect(transport.snapshotCalls).toHaveLength(0)
   })
 
+  it('stops on a refused stream when the surface asks for it over polling', async () => {
+    const { transport } = makeHarness()
+    transport.denyNextStreamConnect({ status: 404 })
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, streamRefusal: 'stop' },
+      random: () => 1,
+    })
+    await flush()
+
+    expect(sub.result).toEqual({ reason: 'unretryable-status', status: 404, channel: 'stream' })
+  })
+
+  it('stops on a refused stream when the snapshot is synthesized', async () => {
+    const { transport } = makeHarness()
+    const refusals: number[] = []
+    transport.denyNextStreamConnect({ status: 404 })
+    const sub = createResilientSubscription(makeBinding({ snapshotSource: 'synthesized' }), {
+      transport,
+      policy: TEST_POLICY,
+      diagnostics: { onStreamRefused: ({ status }) => refusals.push(status) },
+      random: () => 1,
+    })
+    await flush()
+
+    // Polling it on would report a healthy subscription that never delivers.
+    expect(sub.result).toEqual({ reason: 'unretryable-status', status: 404, channel: 'stream' })
+    expect(refusals).toEqual([])
+    expect(transport.snapshotCalls).toHaveLength(0)
+  })
+
   it('leaves streamAbandoned false when a connect failure degrades the subscription', async () => {
     const { transport } = makeHarness()
     transport.denyNextStreamConnect({ error: new Error('connect refused') })
@@ -1201,6 +1221,106 @@ describe('createResilientSubscription: stream refusal', () => {
     expect(sub.status).toBe('polling')
     expect(sub.streamAbandoned).toBe(false)
     expect(transport.streamConnects.length).toBeGreaterThan(2)
+  })
+})
+
+describe('createResilientSubscription: synthesized snapshots', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const pushOnly = () => makeBinding({ snapshotSource: 'synthesized' })
+
+  it('never polls: no hydration, no deadman, no repair after a drop', async () => {
+    const { transport, streams } = makeHarness()
+    const sub = createResilientSubscription(pushOnly(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    await flush()
+
+    // initialPoll: 'eager' would have hydrated an endpoint binding here.
+    expect(transport.snapshotCalls).toHaveLength(0)
+    expect(sub.status).toBe('connecting')
+
+    streams[0]?.pushEvent('progress', { percent: 10 }, { id: '1' })
+    await flush()
+    expect(sub.status).toBe('live')
+
+    // Well past the deadman, and past the reconciliation poll a drop forces.
+    streams[0]?.close()
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(transport.snapshotCalls).toHaveLength(0)
+    expect(transport.streamConnects.length).toBeGreaterThan(1)
+  })
+
+  it('reports reconnecting rather than polling while the stream is down', async () => {
+    const { transport } = makeHarness()
+    transport.denyNextStreamConnect({ error: new Error('connect refused') })
+    transport.denyNextStreamConnect({ error: new Error('connect refused') })
+    transport.denyNextStreamConnect({ error: new Error('connect refused') })
+    const statuses: string[] = []
+    const sub = createResilientSubscription(pushOnly(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    sub.onStatusChange((status) => statuses.push(status))
+    await vi.advanceTimersByTimeAsync(500)
+
+    // Degraded (the backoff is capped, a silent connect cannot claim 'live'),
+    // but 'polling' would name a channel that delivers nothing here.
+    expect(sub.status).toBe('reconnecting')
+    expect(statuses).not.toContain('polling')
+    expect(transport.snapshotCalls).toHaveLength(0)
+  })
+
+  it('reconnects a silent stream on nudge, since there is no poll to force', async () => {
+    const { transport, streams } = makeHarness()
+    const sub = createResilientSubscription(pushOnly(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    await flush()
+    expect(transport.streamConnects).toHaveLength(1)
+
+    // Accepted, then silent: exactly the case a consumer nudges about.
+    sub.nudge()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(transport.streamConnects).toHaveLength(2)
+    expect(transport.snapshotCalls).toHaveLength(0)
+
+    streams[1]?.pushEvent('progress', { percent: 10 }, { id: '1' })
+    await flush()
+    sub.nudge()
+    await vi.advanceTimersByTimeAsync(500)
+
+    // A stream that is producing is left alone.
+    expect(transport.streamConnects).toHaveLength(2)
+  })
+
+  it('refuses the configurations that could only deliver nothing', () => {
+    const { transport } = makeHarness()
+
+    expect(() =>
+      createResilientSubscription(pushOnly(), {
+        transport,
+        policy: { ...TEST_POLICY, mode: 'poll-only' },
+      }),
+    ).toThrow(/mode: 'poll-only' requires snapshotSource: 'endpoint'/)
+
+    expect(() =>
+      createResilientSubscription(pushOnly(), {
+        transport,
+        policy: { ...TEST_POLICY, streamRefusal: 'keep-polling' },
+      }),
+    ).toThrow(/streamRefusal: 'keep-polling' requires snapshotSource: 'endpoint'/)
   })
 })
 

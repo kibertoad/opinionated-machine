@@ -11,6 +11,7 @@ type JobEvents = {
 const jobConfig: FallbackBindingConfig<JobSnapshot, JobEvents> = {
   snapshotToEvents: (s) =>
     s.status === 'completed' ? [{ event: 'done', data: { result: s.result as string } }] : [],
+  snapshotSource: 'endpoint',
   version: { ofSnapshot: (s) => s.version },
   terminalEvents: ['done'],
 }
@@ -182,6 +183,7 @@ describe('Reconciler — state layer', () => {
   const stateConfig: FallbackBindingConfig<CounterSnapshot, CounterEvents, CounterState> = {
     snapshotEvent: undefined,
     snapshotToEvents: () => [],
+    snapshotSource: 'endpoint',
     version: {
       ofSnapshot: (s) => s.revision,
       ofEvent: (e) => e.data.revision,
@@ -321,6 +323,7 @@ describe('Reconciler — state layer', () => {
     const reconciler = new Reconciler<CounterSnapshot, SnapEvents, CounterState>(
       {
         snapshotEvent: 'stateChanged',
+        snapshotSource: 'endpoint',
         version: { ofSnapshot: (s) => s.revision },
         state: {
           init: (s) => ({ revision: s.revision, items: [...s.items] }),
@@ -542,6 +545,7 @@ describe('Reconciler — epoch regression', () => {
     type LedgerEvents = { added: { amount: number } }
     const reconciler = new Reconciler<Ledger, LedgerEvents, number>(
       {
+        snapshotSource: 'endpoint',
         version: { ofSnapshot: (s) => s.revision },
         state: {
           init: (s) => s.total,
@@ -600,6 +604,7 @@ describe('Reconciler — epoch regression', () => {
     const reconciler = new Reconciler<Doc, DocEvents, undefined>(
       {
         snapshotToEvents: (s) => [{ event: 'changed', data: { body: s.body } }],
+        snapshotSource: 'endpoint',
         version: { ofSnapshot: (s) => s.revision },
       },
       { hydrationBufferLimit: 3 },
@@ -709,6 +714,7 @@ describe('Reconciler — gaps while flushing the hydration buffer', () => {
     type LedgerEvents = { added: { amount: number } }
     const reconciler = new Reconciler<Ledger, LedgerEvents, number>(
       {
+        snapshotSource: 'endpoint',
         version: { ofSnapshot: (s) => s.version, dense: true },
         state: {
           init: (s) => s.total,
@@ -793,6 +799,7 @@ describe('Reconciler — terminal events from a snapshot', () => {
           { event: 'done', data: { ok: true } },
           { event: 'progress', data: { step: 2 } },
         ],
+        snapshotSource: 'endpoint',
         version: { ofSnapshot: (s) => s.version },
         terminalEvents: ['done'],
       },
@@ -823,7 +830,11 @@ describe('defaultCompareVersions — integers beyond MAX_SAFE_INTEGER', () => {
       { tick: Record<string, never> },
       undefined
     >(
-      { snapshotToEvents: () => [], version: { ofSnapshot: (s) => s.version } },
+      {
+        snapshotToEvents: () => [],
+        snapshotSource: 'endpoint',
+        version: { ofSnapshot: (s) => s.version },
+      },
       { hydrationBufferLimit: 10 },
     )
 

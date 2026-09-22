@@ -44,13 +44,17 @@ the backoff.
 ## Declaring a binding
 
 The binding is the one thing that cannot be inferred: how a poll snapshot
-relates to the SSE events. Declare it once, colocated with the contract:
+relates to the SSE events, and whether there is one to relate at all. Declare
+it once, colocated with the contract:
 
 ```ts
 import { defineFallbackBinding } from '@opinionated-machine/sse-fallback'
 
 // Use case A — await async completion
 export const uploadStatusBinding = defineFallbackBinding(uploadStatusContract, {
+  // The snapshot is a real route the server answers, so polling can carry
+  // this subscription on its own. See "Choosing the combination" below.
+  snapshotSource: 'endpoint',
   // Translate a snapshot into events; [] = "no news" (still advances the watermark)
   snapshotToEvents: (s) =>
     s.status === 'completed'
@@ -64,6 +68,7 @@ export const uploadStatusBinding = defineFallbackBinding(uploadStatusContract, {
 
 // Use case B — initial state load + live hydration
 export const projectStateBinding = defineFallbackBinding(projectStateContract, {
+  snapshotSource: 'endpoint',
   snapshotEvent: 'stateChanged', // shorthand: snapshot body ≡ this event's payload
   version: { ofSnapshot: (s) => s.revision, ofEvent: (e) => e.data.revision, dense: true },
   state: {
@@ -98,7 +103,9 @@ for await (const event of sub.events()) { ... }
 sub.onStateChange((state) => render(state))
 
 sub.status                        // 'connecting' | 'live' | 'reconnecting' | 'polling' | 'stopped'
-sub.nudge()                       // force an immediate reconciliation poll
+sub.nudge()                       // force a repair now: a poll, or a reconnect
+                                  // when the snapshot is synthesized
+sub.streamAbandoned               // true once a refusal took the stream for good
 sub.stop()
 ```
 
@@ -124,7 +131,7 @@ try {
 | `reason` | Meaning |
 |---|---|
 | `'terminal-event'` | a terminal event was delivered — success |
-| `'unretryable-status'` | refused with a status in `unretryableStatuses` (`status`, `channel`); a stream refusal only lands here under `streamRefusal: 'stop'` |
+| `'unretryable-status'` | refused with a status in `unretryableStatuses` (`status`, `channel`); a stream refusal lands here unless the poll can carry the subscription alone |
 | `'budget-exhausted'` | `subscriptionBudget` ran out (`limit`) — show an error and offer a retry |
 | `'manual'` | the caller called `stop()`, or the creation `signal` aborted |
 
@@ -167,7 +174,8 @@ successful request in between stops the subscription with
 ### Adopting before the SSE endpoint exists
 
 `policy.mode: 'poll-only'` (or the `POLL_ONLY_POLICY` preset) never opens a
-stream. The binding, version gate, reconciler and state machine are the same
+stream. It needs `snapshotSource: 'endpoint'`, since the poll is then the only
+channel there is. The binding, version gate, reconciler and state machine are the same
 ones the streaming rollout will use, so enabling SSE later is a config change
 on an already-integrated subscription rather than a second migration.
 
@@ -178,12 +186,172 @@ than the snapshot are flushed — a zero missed-event window. After N
 consecutive connect failures the subscription degrades to pure polling and
 keeps probing SSE in the background.
 
-One route into `POLLING_ONLY` never probes again: under
-`streamRefusal: 'keep-polling'`, a stream refused with an unretryable status
-is given up for the life of the subscription. `subscription.streamAbandoned`
-is what separates that from ordinary degradation, since both report
-`status: 'polling'`, and `diagnostics.onStreamRefused` reports the moment it
-happens.
+One route into `POLLING_ONLY` never probes again: when a stream is refused
+with an unretryable status and the poll carries the subscription on, the
+stream is given up for the life of the subscription.
+`subscription.streamAbandoned` is what separates that from ordinary
+degradation, since both report `status: 'polling'`, and
+`diagnostics.onStreamRefused` reports the moment it happens.
+
+A binding whose snapshot is synthesized never reaches `POLLING_ONLY` at all:
+there is no poll to fall back to, so the machine is `CONNECTING → LIVE ⇄
+RECONNECTING → STOPPED` and a stream that is down reports `'reconnecting'`
+for as long as it stays down.
+
+## Choosing the combination
+
+Three knobs decide what happens when something goes wrong: `snapshotSource` on
+the binding, `mode` and `streamRefusal` on the policy. Only `snapshotSource`
+has no default, because it is the only one the package cannot work out for
+itself. A binding whose snapshot is answered locally is structurally identical
+to one backed by a real route, and the difference only shows up at runtime, as
+polls that return 200 and carry nothing.
+
+| Surface | `snapshotSource` | `mode` | `streamRefusal` | Also |
+|---|---|---|---|---|
+| Await an async operation | `'endpoint'` | `'dual'` | `'auto'` | `subscriptionBudget` |
+| Live view with a read route | `'endpoint'` | `'dual'` | `'auto'` | `LIVE_STATE_POLICY` |
+| Live view where latency is the product | `'endpoint'` | `'dual'` | `'stop'` | `LIVE_STATE_POLICY` |
+| Transitions no read reproduces | `'synthesized'` | `'dual'` | `'auto'` | repair on reconnect |
+| SSE route not built yet | `'endpoint'` | `'poll-only'` | not read | `POLL_ONLY_POLICY` |
+
+### Awaiting an async operation
+
+An upload, an export, a long import: one subscription, one terminal event,
+then it is over. The snapshot route already exists, because the page rendered
+the operation before it subscribed, so the poll is the correctness backbone
+and SSE only makes it feel instant.
+
+```ts
+export const uploadStatusBinding = defineFallbackBinding(uploadStatusContract, {
+  snapshotSource: 'endpoint',
+  snapshotToEvents: (s) =>
+    s.status === 'completed' ? [{ event: 'uploadFinished', data: { result: s.result } }] : [],
+  version: { ofSnapshot: (s) => s.version },
+  terminalEvents: ['uploadFinished'],
+})
+
+const sub = createResilientSubscription(uploadStatusBinding, {
+  transport,
+  params: { pathParams: { uploadId } },
+  // A backend stuck in 'pending' would otherwise poll until the tab closes.
+  policy: { subscriptionBudget: { maxDurationMs: 10 * 60_000, maxPolls: 200 } },
+})
+const { result } = await sub.waitFor('uploadFinished')
+```
+
+Everything else is default and should stay that way. `initialPoll: 'eager'`
+hydrates from the snapshot before the first event, so an operation that
+finished before the subscription opened still resolves the wait.
+`streamRefusal: 'auto'` resolves to keeping the poll: a refused SSE route
+costs the instant feel, not the result. The budget is the one addition worth
+making, because a wait that never ends is worse than one that fails.
+
+### A live view with a read route
+
+A list or a state view that stays mounted: rows updating as an import
+progresses, a counter on a dashboard. The read route exists because the list
+had to load, so both channels work and the poll covers whatever the stream
+misses.
+
+```ts
+export const uploadedItemsBinding = bindFallbackContracts(
+  GET_UPLOADED_ITEMS_CONTRACT,
+  GET_UPLOADED_ITEMS_SUBSCRIBE_CONTRACT,
+  {
+    snapshotSource: 'endpoint',
+    snapshotToEvents: (snapshot) =>
+      snapshot.data.map((item) => ({ event: 'upload_item.changed', data: item })),
+    version: 'none',
+  },
+)
+
+createResilientSubscription(uploadedItemsBinding, {
+  transport,
+  params,
+  // Permanently mounted, so poll slowly while idle and nudge() on user intent.
+  policy: LIVE_STATE_POLICY,
+})
+```
+
+`LIVE_STATE_POLICY` stretches the idle deadman to 120s backing off to 300s, so
+a tab left open overnight is not a polling machine, and holds the degraded
+cadence at 60s for when the stream is gone. No budget here: the subscription
+should outlive anything the user is doing. `nudge()` is the way back to fast,
+for the moment a user does something that ought to show a result now.
+
+### Transitions no read reproduces
+
+Some events are not state. "This batch of segments was re-translated", "the
+search index caught up", "word counts were recalculated": no `GET` returns
+them, so a poll has nothing to fetch. The transport answers the snapshot
+channel locally, and the binding says so.
+
+```ts
+const pushOnlyTransport: FallbackTransport = {
+  openStream: (request, opts) => streamTransport.openStream(request, opts),
+  fetchSnapshot: () => Promise.resolve({ status: 200, headers: {}, body: {} }),
+}
+
+const binding: FallbackBinding<unknown, SegmentEvents> = {
+  config: { snapshotSource: 'synthesized', snapshotToEvents: () => [], version: 'none' },
+  buildSnapshotRequest: () => ({ path: '', method: 'get' }), // never dispatched
+  buildStreamRequest: (params) => ({ path: streamPath(params), method: 'get' }),
+}
+```
+
+`'synthesized'` switches the poll channel off rather than running it into a
+wall: no hydration poll, no deadman, no fallback cadence, and `nudge()`
+reconnects a silent stream instead of fetching nothing. The status machine
+loses `'polling'`, since there is nothing to poll, and a stream that is down
+reports `'reconnecting'`.
+
+A refused stream stops the subscription, which is what this shape wants: the
+stop is the only signal that live updates are gone, and something has to act
+on it. Repair after a reconnect is the consumer's too, since only they know
+what to re-read:
+
+```ts
+sub.onStatusChange((status) => {
+  if (status === 'live') queryClient.invalidateQueries({ queryKey: ['segments', projectId] })
+  if (status === 'stopped') reportToErrorTracker('live segment updates are off')
+})
+```
+
+A snapshot route that exists but cannot be expressed as events belongs here
+too. An endpoint that answers 204 when no process is running gives
+`snapshotToEvents` nothing to return, and a read model that ten call sites
+already share through a query cache is better invalidated on reconnect than
+duplicated into the version gate.
+
+### Latency is the product
+
+A cursor position, a presence dot, a live-typing badge. A 15s poll is not a
+degraded version of those, it is a different feature that happens to return
+data.
+
+```ts
+createResilientSubscription(presenceBinding, {
+  transport,
+  policy: { ...LIVE_STATE_POLICY, streamRefusal: 'stop' },
+})
+```
+
+The snapshot stays `'endpoint'`, because it exists and hydration uses it. What
+changes is the meaning of a refusal: `'stop'` hands the surface one clear
+signal to hide the indicator, instead of a cadence nobody perceives as live.
+
+### Combinations the constructor rejects
+
+Both throw at `createResilientSubscription`, rather than at the first failure
+hours later:
+
+- `mode: 'poll-only'` with `snapshotSource: 'synthesized'`. No stream is ever
+  opened and the poll delivers nothing, so the subscription could only sit
+  there.
+- `streamRefusal: 'keep-polling'` with `snapshotSource: 'synthesized'`. The
+  poll cannot stand in for a refused stream, so the subscription would report
+  itself healthy and deliver nothing.
 
 ## The version gate
 
@@ -297,7 +465,7 @@ responsibility.
 | `hydrationAbandonAfterFailures` | 3 | flush the buffer rather than silence a healthy stream |
 | `unretryableStatuses` | 401, 403, 404 | stop instead of retrying |
 | `authChallengeStatuses` | 401 | offered to `onAuthChallenge` before giving up |
-| `streamRefusal` | `'stop'` | `'keep-polling'` keeps the poll when the stream alone is refused |
+| `streamRefusal` | `'auto'` | follows `snapshotSource`: keep polling on an endpoint snapshot, stop on a synthesized one |
 | `mode` | `'dual'` | `'poll-only'` never opens a stream |
 | `subscriptionBudget` | unset | `{ maxDurationMs, maxPolls }` — a hard give-up bound |
 

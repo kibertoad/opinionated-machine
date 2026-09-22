@@ -187,7 +187,10 @@ export type ResilientSubscription<
    * between subscribing and a terminal event that arrived first.
    */
   onStop(listener: (detail: SubscriptionStopDetail) => void): () => void
-  /** Force an immediate reconciliation poll + connection check. */
+  /**
+   * Force a repair now: a reconciliation poll, or, for a binding whose
+   * snapshot is synthesized, a reconnect of a stream that has gone quiet.
+   */
   nudge(): void
   /** Stop the subscription: cancel timers, abort in-flight requests. */
   stop(): void
@@ -229,6 +232,14 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   private readonly onAuthChallenge:
     | ((challenge: { status: number; channel: 'poll' | 'stream' }) => boolean | Promise<boolean>)
     | undefined
+  /**
+   * Whether a poll can deliver anything. False for a synthesized snapshot,
+   * which answers without asking the server: every poll would be a request
+   * for news that only the stream carries.
+   */
+  private readonly pollCanDeliver: boolean
+  /** {@link FallbackPolicy.streamRefusal}, with `'auto'` resolved. */
+  private readonly streamRefusal: 'stop' | 'keep-polling'
 
   private readonly abortController = new AbortController()
   private currentStreamAbort: AbortController | undefined
@@ -284,6 +295,14 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     this.transport = options.transport
     this.params = options.params ?? {}
     this.policy = { ...DEFAULT_POLICY, ...binding.config.policy, ...options.policy }
+    assertPolicySuitsBinding(binding.config.snapshotSource, this.policy)
+    this.pollCanDeliver = binding.config.snapshotSource === 'endpoint'
+    this.streamRefusal =
+      this.policy.streamRefusal === 'auto'
+        ? this.pollCanDeliver
+          ? 'keep-polling'
+          : 'stop'
+        : this.policy.streamRefusal
     this.diagnostics = options.diagnostics ?? {}
     this.random = options.random ?? Math.random
     this.parseEventData = options.parseEventData ?? JSON.parse
@@ -316,7 +335,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     if (this.policy.mode === 'poll-only') {
       // No stream is ever opened, so the machine starts where a dual-mode
       // subscription only lands after repeated connect failures.
-      this.degradeToPolling({ forcePoll: this.policy.initialPoll === 'eager' })
+      this.degrade({ forcePoll: this.policy.initialPoll === 'eager' })
       return
     }
 
@@ -434,12 +453,16 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
 
   nudge(): void {
     if (this.stopped) return
-    this.schedulePoll()
-    // If the stream looks dead, force a reconnect check too.
-    if (this.streamConnected && this.policy.staleConnectionTimeoutMs !== 'off') {
-      // Byte-activity watchdog stays authoritative; nothing else to do here.
+    if (this.pollCanDeliver) {
+      this.schedulePoll()
+      // The byte-activity watchdog stays authoritative for the stream.
       return
     }
+    // No poll to force: a fresh stream is the only repair there is. Cut a
+    // connection that has carried nothing rather than wait out the backoff,
+    // the same move the stale-connection watchdog makes. A stream that is
+    // producing is left alone.
+    if (!this.streamProducedBytes) this.currentStreamAbort?.abort()
   }
 
   stop(): void {
@@ -513,7 +536,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
             const recovered = await this.tryAuthChallenge(response.status, 'stream')
             if (this.stopped) return
             if (!recovered) {
-              if (this.policy.streamRefusal === 'keep-polling') {
+              if (this.streamRefusal === 'keep-polling') {
                 this.abandonStream(response.status)
                 return
               }
@@ -529,18 +552,24 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
           this.serverRetryHintMs = undefined
 
           if (firstConnect) {
-            if (this.policy.initialPoll === 'eager') {
-              // Subscribe-first hydration: buffer live events until the
-              // snapshot lands — zero missed-event window.
-              this.reconciler.beginHydration()
-              this.schedulePoll()
-            } else {
-              this.setStatus('live')
+            // A synthesized snapshot hydrates nothing and proves nothing, so
+            // neither branch applies: `onStreamActivity` promotes this
+            // subscription to 'live' when the first byte arrives, the only
+            // evidence its one channel has.
+            if (this.pollCanDeliver) {
+              if (this.policy.initialPoll === 'eager') {
+                // Subscribe-first hydration: buffer live events until the
+                // snapshot lands, a zero missed-event window.
+                this.reconciler.beginHydration()
+                this.schedulePoll()
+              } else {
+                this.setStatus('live')
+              }
             }
           } else {
             // While degraded, an accepted connect is not evidence of anything:
             // only bytes downgrade the status back out of 'polling'.
-            if (!this.degraded) {
+            if (!this.degraded && this.pollCanDeliver) {
               this.setStatus('live')
             }
             if ((this.binding.config.replay ?? 'untrusted') === 'untrusted') {
@@ -581,7 +610,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       if (this.consecutiveConnectFailures >= this.policy.degradedAfterFailures) {
         // The poll this drop needs is scheduled below; the deadman carries
         // the degraded cadence from its next arm.
-        if (!this.degraded) this.degradeToPolling({ forcePoll: false })
+        if (!this.degraded) this.degrade({ forcePoll: false })
       } else {
         this.setStatus('reconnecting')
       }
@@ -627,7 +656,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     // The hook may have stopped the subscription; a stopped one must not be
     // put back into 'polling'.
     if (this.stopped || this.reconciler.isTerminated) return
-    this.degradeToPolling({ forcePoll: true })
+    this.degrade({ forcePoll: true })
   }
 
   private consumeStream(response: StreamResponse): Promise<void> {
@@ -828,15 +857,24 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   // --------------------------------------------------------------------
 
   /**
-   * Switch to the degraded cadence, from wherever the subscription came:
+   * Enter the degraded state, from wherever the subscription came:
    * `mode: 'poll-only'` at construction, enough consecutive connect failures,
-   * or a stream given up on a refusal.
+   * or a stream given up on a refusal. It caps the reconnect backoff and
+   * stops an accepted-but-silent connect from claiming `'live'`.
+   *
+   * With a synthesized snapshot it stops there. `'polling'` would name a
+   * channel that delivers nothing, so the status stays `'reconnecting'`: the
+   * stream being down IS the outage, and nothing covers it.
    *
    * `forcePoll` polls now instead of waiting for the deadman, which the
    * callers with nothing else armed depend on.
    */
-  private degradeToPolling(opts: { forcePoll: boolean }): void {
+  private degrade(opts: { forcePoll: boolean }): void {
     this.degraded = true
+    if (!this.pollCanDeliver) {
+      this.setStatus('reconnecting')
+      return
+    }
     this.setStatus('polling')
     if (opts.forcePoll) {
       this.schedulePoll()
@@ -846,6 +884,10 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   }
 
   private schedulePoll(): void {
+    // A synthesized snapshot has no news in it: every caller here (hydration,
+    // the deadman, a gap repair, a dropped stream, `nudge`) is asking for
+    // reconciliation that only the stream can provide.
+    if (!this.pollCanDeliver) return
     if (this.stopped || this.reconciler.isTerminated) return
     if (this.pollInFlight) {
       this.pollQueued = true
@@ -1048,6 +1090,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   }
 
   private armDeadman(): void {
+    if (!this.pollCanDeliver) return
     if (this.stopped || this.reconciler.isTerminated) return
     if (this.degraded) {
       this.deadman.arm(this.policy.degradedPollIntervalMs)
@@ -1139,6 +1182,27 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         ;(timer as { unref?: () => void }).unref?.()
       }
     })
+  }
+}
+
+/**
+ * Reject the combinations that could only ever deliver nothing, at
+ * construction rather than as a subscription that looks alive.
+ */
+function assertPolicySuitsBinding(
+  snapshotSource: 'endpoint' | 'synthesized',
+  policy: FallbackPolicy,
+): void {
+  if (snapshotSource === 'endpoint') return
+  if (policy.mode === 'poll-only') {
+    throw new Error(
+      "mode: 'poll-only' requires snapshotSource: 'endpoint'. A synthesized snapshot is answered without asking the server, so a subscription that never opens a stream could not deliver anything.",
+    )
+  }
+  if (policy.streamRefusal === 'keep-polling') {
+    throw new Error(
+      "streamRefusal: 'keep-polling' requires snapshotSource: 'endpoint'. A synthesized snapshot is answered without asking the server, so polling on after a refused stream would report a healthy subscription that delivers nothing.",
+    )
   }
 }
 

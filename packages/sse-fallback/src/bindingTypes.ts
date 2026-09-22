@@ -110,6 +110,26 @@ export type FallbackBindingConfig<Snapshot, Events extends EventPayloadMap, Stat
    */
   snapshotEvent?: keyof Events & string
 
+  /**
+   * Where a poll snapshot comes from, and with it whether polling can carry
+   * this subscription when the stream cannot.
+   *
+   * - `'endpoint'`: a real request the server answers. The poll is the
+   *   correctness backbone: it hydrates, it repairs gaps, and it keeps
+   *   delivering while the stream is down.
+   * - `'synthesized'`: the transport answers it without asking the server
+   *   (`fetchSnapshot` resolving a local value, `snapshotToEvents: () => []`),
+   *   because the events are transitions no read reproduces. A poll delivers
+   *   nothing the stream did not, so none are run: no hydration poll, no
+   *   deadman, no fallback cadence, and a refused stream stops the
+   *   subscription instead of pretending a poll covers it. Repair after a
+   *   reconnect is the consumer's job, off `onStatusChange`.
+   *
+   * Required, and not inferable: both shapes implement the same binding, and
+   * the difference only shows up in what the transport does at runtime.
+   */
+  snapshotSource: 'endpoint' | 'synthesized'
+
   /** Version extraction/ordering, or `'none'` (see {@link VersionConfig}). */
   version: VersionConfig<Snapshot, FallbackEvent<Events>>
 
@@ -300,21 +320,27 @@ export type FallbackPolicy = {
    * What a refusal on the STREAM channel does: a status in
    * {@link unretryableStatuses} that `onAuthChallenge` did not recover.
    *
-   * - `'stop'` ends the subscription, and with it the poll.
+   * - `'auto'` reads {@link FallbackBindingConfig.snapshotSource}:
+   *   `'endpoint'` keeps polling, `'synthesized'` stops. This is the right
+   *   answer for both, which is why the binding is asked to declare it.
    * - `'keep-polling'` gives the stream up and leaves the poll running on
    *   its degraded cadence, so a route that moved or a permission covering
-   *   the stream alone costs latency instead of every channel. Only for a
-   *   binding whose snapshot is a real endpoint: one that answers its own
-   *   snapshot locally would poll on and deliver nothing, hiding the refusal.
+   *   the stream alone costs latency instead of every channel. Requires
+   *   `snapshotSource: 'endpoint'`; the constructor throws otherwise, since
+   *   a synthesized snapshot would poll on and deliver nothing, hiding the
+   *   refusal instead of surviving it.
+   * - `'stop'` ends the subscription, and with it the poll. Worth setting
+   *   over `'auto'` on a surface where a 15s poll cadence is not a product
+   *   (a live cursor, a presence indicator): failing loudly beats pretending.
    *
-   * `'keep-polling'` is one-way for the life of the subscription: the stream
+   * Keeping the poll is one-way for the life of the subscription: the stream
    * is never reopened, and `subscription.streamAbandoned` reports it.
    *
-   * A refusal on the poll channel stops the subscription under either value.
+   * A refusal on the poll channel stops the subscription under any value.
    * Whether a stream is opened at all is {@link mode}, a separate question.
-   * @default 'stop'
+   * @default 'auto'
    */
-  streamRefusal: 'stop' | 'keep-polling'
+  streamRefusal: 'auto' | 'stop' | 'keep-polling'
 }
 
 export const DEFAULT_POLICY: FallbackPolicy = {
@@ -335,7 +361,7 @@ export const DEFAULT_POLICY: FallbackPolicy = {
   hydrationBufferLimit: 1_000,
   unretryableStatuses: [401, 403, 404],
   authChallengeStatuses: [401],
-  streamRefusal: 'stop',
+  streamRefusal: 'auto',
 }
 
 /**
@@ -357,7 +383,8 @@ export const LIVE_STATE_POLICY: FallbackPolicy = {
 /**
  * Preset for adopters with no SSE endpoint yet: same binding, version gate and
  * state machine as the dual-mode presets, polling only. Flip `mode` back to
- * `'dual'` once the stream exists.
+ * `'dual'` once the stream exists. Requires `snapshotSource: 'endpoint'`: the
+ * poll is the only channel there is.
  */
 export const POLL_ONLY_POLICY: FallbackPolicy = {
   ...DEFAULT_POLICY,
