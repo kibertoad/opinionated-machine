@@ -49,6 +49,12 @@ export type SubscriptionStopDetail = {
   limit?: 'maxDurationMs' | 'maxPolls'
   /** Which channel hit the refusal, for `'unretryable-status'`. */
   channel?: 'poll' | 'stream'
+  /**
+   * Whether the stream had ever carried bytes, for a refusal with
+   * `channel: 'stream'`. Same signal as `diagnostics.onStreamRefused`, which
+   * only fires where the subscription keeps polling instead of stopping.
+   */
+  streamWasLive?: boolean
 }
 
 /**
@@ -61,6 +67,7 @@ export class SubscriptionStoppedError extends Error {
   readonly status: number | undefined
   readonly limit: 'maxDurationMs' | 'maxPolls' | undefined
   readonly channel: 'poll' | 'stream' | undefined
+  readonly streamWasLive: boolean | undefined
 
   constructor(detail: SubscriptionStopDetail) {
     super(`Subscription stopped (${detail.reason}) before the awaited event arrived`)
@@ -69,6 +76,7 @@ export class SubscriptionStoppedError extends Error {
     this.status = detail.status
     this.limit = detail.limit
     this.channel = detail.channel
+    this.streamWasLive = detail.streamWasLive
   }
 }
 
@@ -228,6 +236,8 @@ type IteratorFeed<Events extends EventPayloadMap> = {
   finish: () => void
 }
 
+type AuthCredit = 'available' | 'spent-by-poll' | 'spent-by-stream' | 'declined'
+
 class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State> {
   private readonly binding: FallbackBinding<Snapshot, Events, State>
   private readonly transport: FallbackTransport
@@ -282,11 +292,11 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   /** Polls attempted, for `subscriptionBudget.maxPolls`. */
   private pollsAttempted = 0
   /**
-   * The one auth retry per failure streak: `'spent'` once `onAuthChallenge`
-   * ran, `'declined'` once it said it could not recover. Both hold until a
-   * request succeeds.
+   * The one auth retry per failure streak: the channel that spent it once
+   * `onAuthChallenge` ran, `'declined'` once it said it could not recover.
+   * Both hold until a request succeeds.
    */
-  private authCredit: 'available' | 'spent' | 'declined' = 'available'
+  private authCredit: AuthCredit = 'available'
 
   private readonly deadman = new ResettableTimer(() => this.schedulePoll())
   private readonly staleConnection = new ResettableTimer(() => this.onStaleConnection())
@@ -560,6 +570,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
                 reason: 'unretryable-status',
                 status: response.status,
                 channel: 'stream',
+                streamWasLive: this.streamEverProducedBytes,
               })
               return
             }
@@ -687,13 +698,14 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
    */
   private abandonStream(status: number): void {
     this.streamAbandonedValue = true
-    // A retry spent on a refresh that worked, only for the stream to be
-    // refused anyway, went to a channel that no longer exists. The poll now
-    // carries the subscription alone, so it gets the credit back instead of
-    // dying on a refusal the application was never asked about. A hook that
-    // declined keeps its answer: the poll carries the same credentials, and
-    // asking again would mean a second refresh or login prompt for one outage.
-    if (this.authCredit === 'spent') this.authCredit = 'available'
+    // A retry the STREAM spent on a refresh that worked, only to be refused
+    // anyway, went to a channel that no longer exists. The poll now carries
+    // the subscription alone, so it gets the credit back instead of dying on
+    // a refusal the application was never asked about. A hook that declined
+    // keeps its answer: the poll carries the same credentials, and asking
+    // again would mean a second refresh or login prompt for one outage. A
+    // credit the poll spent stays spent: its own retry is what it bought.
+    if (this.authCredit === 'spent-by-stream') this.authCredit = 'available'
     const streamWasLive = this.streamEverProducedBytes
     this.runListener(() => this.diagnostics.onStreamRefused?.({ status, streamWasLive }), undefined)
     // The hook may have stopped the subscription; a stopped one must not be
@@ -1070,7 +1082,8 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     if (inFlight) return await inFlight
 
     if (this.authCredit !== 'available') return false
-    this.authCredit = 'spent'
+    const spent: AuthCredit = channel === 'stream' ? 'spent-by-stream' : 'spent-by-poll'
+    this.authCredit = spent
     const refresh = (async () => {
       let recovered = false
       try {
@@ -1079,7 +1092,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         this.diagnostics.onListenerError?.(error)
       }
       // A request that succeeded meanwhile already started a new streak.
-      if (!recovered && this.authCredit === 'spent') this.authCredit = 'declined'
+      if (!recovered && this.authCredit === spent) this.authCredit = 'declined'
       return recovered
     })()
     this.authRefresh = refresh

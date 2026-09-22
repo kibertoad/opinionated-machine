@@ -193,6 +193,7 @@ export function readFallbackBinding(contract: object): FallbackBinding | undefin
  * @example
  * ```ts
  * export const uploadStatusBinding = defineFallbackBinding(uploadStatusContract, {
+ *   snapshotSource: 'endpoint',
  *   snapshotToEvents: (s) =>
  *     s.status === 'completed' ? [{ event: 'uploadFinished', data: { result: s.result } }] : [],
  *   version: { ofSnapshot: (s) => s.version },

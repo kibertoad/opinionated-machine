@@ -315,8 +315,9 @@ the events in an `onEvent` listener instead.
 
 A refused stream stops the subscription, which is what this shape wants: the
 stop is the only signal that live updates are gone, and something has to act
-on it. Repair after a reconnect is the consumer's too, since only they know
-what to re-read:
+on it. The stop detail carries `streamWasLive`, which tells a route nobody
+could reach from one withdrawn mid-session. Repair after a reconnect is the
+consumer's job too, since only they know what to re-read:
 
 ```ts
 sub.onStatusChange((status) => {
