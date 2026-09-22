@@ -991,6 +991,61 @@ describe('createResilientSubscription — auth challenge', () => {
     expect(sub.result).toEqual({ reason: 'unretryable-status', status: 401, channel: 'poll' })
   })
 
+  it('keeps polling when the stream alone is refused under poll-only', async () => {
+    const { transport, snapshots } = makeHarness()
+    const refusals: number[] = []
+    transport.denyNextStreamConnect({ status: 404 })
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, streamRefusal: 'poll-only' },
+      diagnostics: { onStreamRefused: ({ status }) => refusals.push(status) },
+      random: () => 1,
+    })
+    await flush()
+
+    expect(refusals).toEqual([404])
+    expect(sub.result).toBeUndefined()
+    expect(sub.status).toBe('polling')
+    // Nothing else would have armed one: the eager poll is scheduled by an
+    // accepted connect, and this subscription never had one.
+    expect(snapshots).toHaveLength(1)
+
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(transport.streamConnects).toHaveLength(1)
+    expect(transport.snapshotCalls.length).toBeGreaterThan(1)
+  })
+
+  it('stops on a refused poll even under poll-only', async () => {
+    const { transport, snapshots } = makeHarness()
+    transport.denyNextStreamConnect({ status: 404 })
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, streamRefusal: 'poll-only' },
+      random: () => 1,
+    })
+    await flush()
+
+    snapshots[0]?.respond({}, 403)
+    await flush()
+
+    expect(sub.result).toEqual({ reason: 'unretryable-status', status: 403, channel: 'poll' })
+  })
+
+  it('stops on a refused stream by default', async () => {
+    const { transport } = makeHarness()
+    transport.denyNextStreamConnect({ status: 404 })
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: TEST_POLICY,
+      random: () => 1,
+    })
+    await flush()
+
+    expect(sub.result).toEqual({ reason: 'unretryable-status', status: 404, channel: 'stream' })
+  })
+
   it('recovers a stream connect refused with 401', async () => {
     const { transport, snapshots } = makeHarness()
     transport.denyNextStreamConnect({ status: 401 })

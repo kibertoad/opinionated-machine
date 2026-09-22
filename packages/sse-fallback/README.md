@@ -124,7 +124,7 @@ try {
 | `reason` | Meaning |
 |---|---|
 | `'terminal-event'` | a terminal event was delivered — success |
-| `'unretryable-status'` | refused with a status in `unretryableStatuses` (`status`, `channel`) |
+| `'unretryable-status'` | refused with a status in `unretryableStatuses` (`status`, `channel`); a stream refusal only lands here under `streamRefusal: 'stop'` |
 | `'budget-exhausted'` | `subscriptionBudget` ran out (`limit`) — show an error and offer a retry |
 | `'manual'` | the caller called `stop()`, or the creation `signal` aborted |
 
@@ -290,6 +290,7 @@ responsibility.
 | `hydrationAbandonAfterFailures` | 3 | flush the buffer rather than silence a healthy stream |
 | `unretryableStatuses` | 401, 403, 404 | stop instead of retrying |
 | `authChallengeStatuses` | 401 | offered to `onAuthChallenge` before giving up |
+| `streamRefusal` | `'stop'` | `'poll-only'` keeps the poll when the stream alone is refused |
 | `mode` | `'dual'` | `'poll-only'` never opens a stream |
 | `subscriptionBudget` | unset | `{ maxDurationMs, maxPolls }` — a hard give-up bound |
 

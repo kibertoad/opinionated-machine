@@ -25,7 +25,9 @@ export type SubscriptionStatus = 'connecting' | 'live' | 'reconnecting' | 'polli
  * - `'terminal-event'` — a terminal event was delivered. Success.
  * - `'unretryable-status'` — the stream or a poll was refused with a status in
  *   `unretryableStatuses` (and `onAuthChallenge`, if any, did not recover).
- *   `status` carries which one.
+ *   `status` carries which one. A stream refusal reaches here under the
+ *   default `streamRefusal: 'stop'`; `'poll-only'` keeps the subscription
+ *   alive on its poll instead.
  * - `'budget-exhausted'` — `subscriptionBudget` ran out. `limit` says which
  *   half. Show an actionable error and offer a manual retry.
  * - `'manual'` — the caller called `stop()`, or the `signal` passed at
@@ -76,6 +78,13 @@ export type FallbackDiagnostics = {
   onStaleSnapshot?: () => void
   onPollError?: (error: unknown) => void
   onStreamError?: (error: unknown) => void
+  /**
+   * The stream was refused with a status it cannot retry past, and the
+   * subscription carried on polling instead of stopping
+   * (`streamRefusal: 'poll-only'`). Delivery keeps working, late: nothing
+   * else reports that the push channel is gone.
+   */
+  onStreamRefused?: (refusal: { status: number }) => void
   /**
    * A gap suspended the state layer: `getState()` is frozen at its pre-gap
    * value until a snapshot repairs it, even though events keep flowing.
@@ -488,6 +497,11 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
             const recovered = await this.tryAuthChallenge(response.status, 'stream')
             if (this.stopped) return
             if (!recovered) {
+              if (this.policy.streamRefusal === 'poll-only') {
+                this.diagnostics.onStreamRefused?.({ status: response.status })
+                this.enterPollOnly()
+                return
+              }
               this.stopWith({
                 reason: 'unretryable-status',
                 status: response.status,
@@ -770,6 +784,21 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   // --------------------------------------------------------------------
   // Polling
   // --------------------------------------------------------------------
+
+  /**
+   * Give the stream up for the life of the subscription and let the poll carry
+   * it. The caller returns straight after, which ends the stream loop, so the
+   * refused connect is never retried.
+   *
+   * The poll is forced rather than left to the deadman: under
+   * `initialPoll: 'eager'` the hydration poll is scheduled by an accepted
+   * connect, so a first connect that is refused leaves nothing armed.
+   */
+  private enterPollOnly(): void {
+    this.degraded = true
+    this.setStatus('polling')
+    this.schedulePoll()
+  }
 
   private schedulePoll(): void {
     if (this.stopped || this.reconciler.isTerminated) return
