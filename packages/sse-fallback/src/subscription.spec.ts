@@ -991,46 +991,29 @@ describe('createResilientSubscription — auth challenge', () => {
     expect(sub.result).toEqual({ reason: 'unretryable-status', status: 401, channel: 'poll' })
   })
 
-  it('keeps polling when the stream alone is refused under poll-only', async () => {
+  it('recovers a stream connect refused with 401', async () => {
     const { transport, snapshots } = makeHarness()
-    const refusals: number[] = []
-    transport.denyNextStreamConnect({ status: 404 })
+    transport.denyNextStreamConnect({ status: 401 })
     const sub = createResilientSubscription(makeBinding(), {
       transport,
-      policy: { ...TEST_POLICY, streamRefusal: 'poll-only' },
-      diagnostics: { onStreamRefused: ({ status }) => refusals.push(status) },
+      policy: { ...TEST_POLICY, initialPoll: 'delayed' },
       random: () => 1,
+      onAuthChallenge: () => true,
     })
-    await flush()
+    await vi.advanceTimersByTimeAsync(200)
 
-    expect(refusals).toEqual([404])
+    expect(transport.streamConnects.length).toBeGreaterThan(1)
     expect(sub.result).toBeUndefined()
-    expect(sub.status).toBe('polling')
-    // Nothing else would have armed one: the eager poll is scheduled by an
-    // accepted connect, and this subscription never had one.
-    expect(snapshots).toHaveLength(1)
-
-    snapshots[0]?.respond({ status: 'pending', version: 0 })
-    await vi.advanceTimersByTimeAsync(5_000)
-
-    expect(transport.streamConnects).toHaveLength(1)
-    expect(transport.snapshotCalls.length).toBeGreaterThan(1)
+    expect(snapshots.length).toBeGreaterThan(0)
   })
+})
 
-  it('stops on a refused poll even under poll-only', async () => {
-    const { transport, snapshots } = makeHarness()
-    transport.denyNextStreamConnect({ status: 404 })
-    const sub = createResilientSubscription(makeBinding(), {
-      transport,
-      policy: { ...TEST_POLICY, streamRefusal: 'poll-only' },
-      random: () => 1,
-    })
-    await flush()
-
-    snapshots[0]?.respond({}, 403)
-    await flush()
-
-    expect(sub.result).toEqual({ reason: 'unretryable-status', status: 403, channel: 'poll' })
+describe('createResilientSubscription: stream refusal', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('stops on a refused stream by default', async () => {
@@ -1046,20 +1029,178 @@ describe('createResilientSubscription — auth challenge', () => {
     expect(sub.result).toEqual({ reason: 'unretryable-status', status: 404, channel: 'stream' })
   })
 
-  it('recovers a stream connect refused with 401', async () => {
+  it('keeps polling when the stream alone is refused', async () => {
     const { transport, snapshots } = makeHarness()
+    const refusals: Array<{ status: number; streamWasLive: boolean }> = []
+    transport.denyNextStreamConnect({ status: 404 })
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, streamRefusal: 'keep-polling' },
+      diagnostics: { onStreamRefused: (refusal) => refusals.push(refusal) },
+      random: () => 1,
+    })
+    await flush()
+
+    // Nothing ever reached this subscriber over the stream, which is what
+    // tells a route that moved from one withdrawn mid-session.
+    expect(refusals).toEqual([{ status: 404, streamWasLive: false }])
+    expect(sub.result).toBeUndefined()
+    expect(sub.status).toBe('polling')
+    expect(sub.streamAbandoned).toBe(true)
+    // Nothing else would have armed one: the eager poll is scheduled by an
+    // accepted connect, and this subscription never had one.
+    expect(snapshots).toHaveLength(1)
+
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(transport.streamConnects).toHaveLength(1)
+    expect(transport.snapshotCalls.length).toBeGreaterThan(1)
+  })
+
+  it('stops on a refused poll even under keep-polling', async () => {
+    const { transport, snapshots } = makeHarness()
+    transport.denyNextStreamConnect({ status: 404 })
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, streamRefusal: 'keep-polling' },
+      random: () => 1,
+    })
+    await flush()
+
+    snapshots[0]?.respond({}, 403)
+    await flush()
+
+    expect(sub.result).toEqual({ reason: 'unretryable-status', status: 403, channel: 'poll' })
+  })
+
+  it('gives the stream up for good when a reconnect is refused', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    const refusals: Array<{ status: number; streamWasLive: boolean }> = []
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, streamRefusal: 'keep-polling' },
+      diagnostics: { onStreamRefused: (refusal) => refusals.push(refusal) },
+      random: () => 1,
+    })
+    await flush()
+    snapshots[0]?.respond({ status: 'pending', version: 0 })
+    await flush()
+    streams[0]?.pushEvent('progress', { percent: 10 }, { id: '1' })
+    await flush()
+    expect(sub.status).toBe('live')
+
+    transport.denyNextStreamConnect({ status: 403 })
+    streams[0]?.close()
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(refusals).toEqual([{ status: 403, streamWasLive: true }])
+    expect(sub.streamAbandoned).toBe(true)
+    expect(sub.status).toBe('polling')
+    expect(sub.result).toBeUndefined()
+    expect(transport.streamConnects).toHaveLength(2)
+
+    // The reconciliation poll the drop scheduled, then the degraded cadence.
+    snapshots[1]?.respond({ status: 'pending', version: 1 })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(transport.streamConnects).toHaveLength(2)
+    expect(transport.snapshotCalls.length).toBeGreaterThan(2)
+  })
+
+  it('offers the poll its own auth challenge after the stream spent the retry', async () => {
+    const { transport, snapshots } = makeHarness()
+    const challenges: Array<{ status: number; channel: 'poll' | 'stream' }> = []
+    transport.denyNextStreamConnect({ status: 401 })
     transport.denyNextStreamConnect({ status: 401 })
     const sub = createResilientSubscription(makeBinding(), {
       transport,
-      policy: { ...TEST_POLICY, initialPoll: 'delayed' },
+      policy: { ...TEST_POLICY, streamRefusal: 'keep-polling' },
       random: () => 1,
-      onAuthChallenge: () => true,
+      onAuthChallenge: (challenge) => {
+        challenges.push(challenge)
+        return true
+      },
     })
-    await vi.advanceTimersByTimeAsync(200)
+    await vi.advanceTimersByTimeAsync(500)
 
-    expect(transport.streamConnects.length).toBeGreaterThan(1)
+    // The refreshed credentials bought one reconnect, refused the same way.
+    expect(challenges).toEqual([{ status: 401, channel: 'stream' }])
+    expect(sub.streamAbandoned).toBe(true)
+    expect(snapshots).toHaveLength(1)
+
+    snapshots[0]?.respond({}, 401)
+    await flush()
+
+    // The poll carries the subscription alone now, so it gets its own offer
+    // rather than dying on a credit the stream spent.
+    expect(challenges).toEqual([
+      { status: 401, channel: 'stream' },
+      { status: 401, channel: 'poll' },
+    ])
     expect(sub.result).toBeUndefined()
-    expect(snapshots.length).toBeGreaterThan(0)
+  })
+
+  it('contains a throwing onStreamRefused instead of retrying the refused connect', async () => {
+    const { transport, snapshots } = makeHarness()
+    const listenerErrors: unknown[] = []
+    transport.denyNextStreamConnect({ status: 404 })
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, streamRefusal: 'keep-polling' },
+      diagnostics: {
+        onStreamRefused: () => {
+          throw new Error('diagnostics blew up')
+        },
+        onListenerError: (error) => listenerErrors.push(error),
+      },
+      random: () => 1,
+    })
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(listenerErrors).toHaveLength(1)
+    expect(transport.streamConnects).toHaveLength(1)
+    expect(sub.streamAbandoned).toBe(true)
+    expect(sub.status).toBe('polling')
+    expect(sub.result).toBeUndefined()
+    expect(snapshots).toHaveLength(1)
+  })
+
+  it('stays stopped when the refusal hook stops the subscription', async () => {
+    const { transport } = makeHarness()
+    const statuses: string[] = []
+    transport.denyNextStreamConnect({ status: 404 })
+    let stopFromHook: (() => void) | undefined
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, streamRefusal: 'keep-polling' },
+      diagnostics: { onStreamRefused: () => stopFromHook?.() },
+      random: () => 1,
+    })
+    stopFromHook = () => sub.stop()
+    sub.onStatusChange((status) => statuses.push(status))
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(sub.result).toEqual({ reason: 'manual' })
+    expect(sub.status).toBe('stopped')
+    expect(statuses).toEqual(['stopped'])
+    expect(transport.snapshotCalls).toHaveLength(0)
+  })
+
+  it('leaves streamAbandoned false when a connect failure degrades the subscription', async () => {
+    const { transport } = makeHarness()
+    transport.denyNextStreamConnect({ error: new Error('connect refused') })
+    transport.denyNextStreamConnect({ error: new Error('connect refused') })
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, streamRefusal: 'keep-polling' },
+      random: () => 1,
+    })
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(sub.status).toBe('polling')
+    expect(sub.streamAbandoned).toBe(false)
+    expect(transport.streamConnects.length).toBeGreaterThan(2)
   })
 })
 

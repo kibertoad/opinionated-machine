@@ -178,6 +178,13 @@ than the snapshot are flushed — a zero missed-event window. After N
 consecutive connect failures the subscription degrades to pure polling and
 keeps probing SSE in the background.
 
+One route into `POLLING_ONLY` never probes again: under
+`streamRefusal: 'keep-polling'`, a stream refused with an unretryable status
+is given up for the life of the subscription. `subscription.streamAbandoned`
+is what separates that from ordinary degradation, since both report
+`status: 'polling'`, and `diagnostics.onStreamRefused` reports the moment it
+happens.
+
 ## The version gate
 
 Every event and snapshot carries a version; an item is delivered iff its
@@ -290,7 +297,7 @@ responsibility.
 | `hydrationAbandonAfterFailures` | 3 | flush the buffer rather than silence a healthy stream |
 | `unretryableStatuses` | 401, 403, 404 | stop instead of retrying |
 | `authChallengeStatuses` | 401 | offered to `onAuthChallenge` before giving up |
-| `streamRefusal` | `'stop'` | `'poll-only'` keeps the poll when the stream alone is refused |
+| `streamRefusal` | `'stop'` | `'keep-polling'` keeps the poll when the stream alone is refused |
 | `mode` | `'dual'` | `'poll-only'` never opens a stream |
 | `subscriptionBudget` | unset | `{ maxDurationMs, maxPolls }` — a hard give-up bound |
 

@@ -301,16 +301,20 @@ export type FallbackPolicy = {
    * {@link unretryableStatuses} that `onAuthChallenge` did not recover.
    *
    * - `'stop'` ends the subscription, and with it the poll.
-   * - `'poll-only'` gives the stream up and leaves the poll running on its
-   *   degraded cadence, so a route that moved or a permission covering the
-   *   stream alone costs latency instead of every channel. Only for a binding
-   *   whose snapshot is a real endpoint: one that answers its own snapshot
-   *   locally would poll on and deliver nothing, hiding the refusal.
+   * - `'keep-polling'` gives the stream up and leaves the poll running on
+   *   its degraded cadence, so a route that moved or a permission covering
+   *   the stream alone costs latency instead of every channel. Only for a
+   *   binding whose snapshot is a real endpoint: one that answers its own
+   *   snapshot locally would poll on and deliver nothing, hiding the refusal.
+   *
+   * `'keep-polling'` is one-way for the life of the subscription: the stream
+   * is never reopened, and `subscription.streamAbandoned` reports it.
    *
    * A refusal on the poll channel stops the subscription under either value.
+   * Whether a stream is opened at all is {@link mode}, a separate question.
    * @default 'stop'
    */
-  streamRefusal: 'stop' | 'poll-only'
+  streamRefusal: 'stop' | 'keep-polling'
 }
 
 export const DEFAULT_POLICY: FallbackPolicy = {

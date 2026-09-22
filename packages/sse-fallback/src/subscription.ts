@@ -26,7 +26,7 @@ export type SubscriptionStatus = 'connecting' | 'live' | 'reconnecting' | 'polli
  * - `'unretryable-status'` — the stream or a poll was refused with a status in
  *   `unretryableStatuses` (and `onAuthChallenge`, if any, did not recover).
  *   `status` carries which one. A stream refusal reaches here under the
- *   default `streamRefusal: 'stop'`; `'poll-only'` keeps the subscription
+ *   default `streamRefusal: 'stop'`; `'keep-polling'` keeps the subscription
  *   alive on its poll instead.
  * - `'budget-exhausted'` — `subscriptionBudget` ran out. `limit` says which
  *   half. Show an actionable error and offer a manual retry.
@@ -81,10 +81,15 @@ export type FallbackDiagnostics = {
   /**
    * The stream was refused with a status it cannot retry past, and the
    * subscription carried on polling instead of stopping
-   * (`streamRefusal: 'poll-only'`). Delivery keeps working, late: nothing
+   * (`streamRefusal: 'keep-polling'`). Delivery keeps working, late: nothing
    * else reports that the push channel is gone.
+   *
+   * `streamWasLive` says whether this subscription had ever received bytes
+   * over the stream. That separates a route nobody could reach (a deploy that
+   * moved the path) from one withdrawn mid-session (a permission change),
+   * which are different faults with different owners.
    */
-  onStreamRefused?: (refusal: { status: number }) => void
+  onStreamRefused?: (refusal: { status: number; streamWasLive: boolean }) => void
   /**
    * A gap suspended the state layer: `getState()` is frozen at its pre-gap
    * value until a snapshot repairs it, even though events keep flowing.
@@ -155,6 +160,15 @@ export type ResilientSubscription<
   getState(): State | undefined
   onStateChange(listener: (state: State) => void): () => void
   readonly status: SubscriptionStatus
+  /**
+   * Whether the stream has been given up for the life of the subscription: a
+   * refusal met `streamRefusal: 'keep-polling'`, so nothing will reconnect.
+   * `'polling'` alone does not say that, since it is equally where a
+   * subscription sits while it degrades and keeps probing SSE. A badge that
+   * tells "slower for now" from "push is gone until you resubscribe" reads
+   * this alongside {@link status}.
+   */
+  readonly streamAbandoned: boolean
   /**
    * Observe status transitions. `detail` is present exactly when `status` is
    * `'stopped'`, and says why — see {@link StopReason}.
@@ -234,6 +248,10 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   private degraded = false
   /** Whether the current stream has produced any bytes at all. */
   private streamProducedBytes = false
+  /** Whether ANY stream of this subscription ever produced bytes. */
+  private streamEverProducedBytes = false
+  /** Whether the stream has been given up for good, see `abandonStream`. */
+  private streamAbandonedValue = false
 
   private pollInFlight = false
   private pollQueued = false
@@ -298,13 +316,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     if (this.policy.mode === 'poll-only') {
       // No stream is ever opened, so the machine starts where a dual-mode
       // subscription only lands after repeated connect failures.
-      this.degraded = true
-      this.setStatus('polling')
-      if (this.policy.initialPoll === 'eager') {
-        this.schedulePoll()
-      } else {
-        this.armDeadman()
-      }
+      this.degradeToPolling({ forcePoll: this.policy.initialPoll === 'eager' })
       return
     }
 
@@ -321,6 +333,10 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
 
   get status(): SubscriptionStatus {
     return this.statusValue
+  }
+
+  get streamAbandoned(): boolean {
+    return this.streamAbandonedValue
   }
 
   get result(): SubscriptionStopDetail | undefined {
@@ -453,7 +469,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: the connect/consume/reconnect loop is a single state machine — splitting it would obscure the transitions
   private async runStreamLoop(): Promise<void> {
     let firstConnect = true
-    while (!this.stopped) {
+    while (!this.stopped && !this.streamAbandoned) {
       const streamAbort = new AbortController()
       this.currentStreamAbort = streamAbort
       const onMasterAbort = () => streamAbort.abort()
@@ -497,9 +513,8 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
             const recovered = await this.tryAuthChallenge(response.status, 'stream')
             if (this.stopped) return
             if (!recovered) {
-              if (this.policy.streamRefusal === 'poll-only') {
-                this.diagnostics.onStreamRefused?.({ status: response.status })
-                this.enterPollOnly()
+              if (this.policy.streamRefusal === 'keep-polling') {
+                this.abandonStream(response.status)
                 return
               }
               this.stopWith({
@@ -554,7 +569,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         this.abortController.signal.removeEventListener('abort', onMasterAbort)
       }
 
-      if (this.stopped || this.reconciler.isTerminated) return
+      if (this.stopped || this.streamAbandoned || this.reconciler.isTerminated) return
 
       // A connection only counts as successful once it has actually carried
       // bytes. A stream that is accepted and then closes immediately would
@@ -564,12 +579,9 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         this.consecutiveConnectFailures += 1
       }
       if (this.consecutiveConnectFailures >= this.policy.degradedAfterFailures) {
-        if (!this.degraded) {
-          this.degraded = true
-          this.setStatus('polling')
-          // Degraded cadence applies from the next deadman arm.
-          this.armDeadman()
-        }
+        // The poll this drop needs is scheduled below; the deadman carries
+        // the degraded cadence from its next arm.
+        if (!this.degraded) this.degradeToPolling({ forcePoll: false })
       } else {
         this.setStatus('reconnecting')
       }
@@ -587,6 +599,35 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       const proceed = await sleep(delay, this.abortController.signal)
       if (!proceed) return
     }
+  }
+
+  /**
+   * Give the stream up for the life of the subscription and let the poll
+   * carry it, after a refusal no reconnect can get past.
+   *
+   * One-way, and held in `streamAbandonedValue` rather than in the caller's
+   * `return`: the connect loop tests it, so neither a later edit nor a
+   * throwing hook can put the subscription back on a request the server has
+   * already refused. Re-probing on a timer would win the latency back, at the
+   * cost of turning one refusal into an unbounded retry.
+   *
+   * The poll is forced rather than left to the deadman: under
+   * `initialPoll: 'eager'` the hydration poll is scheduled by an accepted
+   * connect, so a first connect that is refused leaves nothing armed.
+   */
+  private abandonStream(status: number): void {
+    this.streamAbandonedValue = true
+    // The one auth retry was spent on a channel that no longer exists. The
+    // poll now carries the subscription alone and has never been offered to
+    // `onAuthChallenge`, so it gets the credit instead of dying on a refusal
+    // the application was never asked to fix.
+    this.authRetrySpent = false
+    const streamWasLive = this.streamEverProducedBytes
+    this.runListener(() => this.diagnostics.onStreamRefused?.({ status, streamWasLive }), undefined)
+    // The hook may have stopped the subscription; a stopped one must not be
+    // put back into 'polling'.
+    if (this.stopped || this.reconciler.isTerminated) return
+    this.degradeToPolling({ forcePoll: true })
   }
 
   private consumeStream(response: StreamResponse): Promise<void> {
@@ -649,6 +690,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     this.armStaleConnection()
     if (this.streamProducedBytes) return
     this.streamProducedBytes = true
+    this.streamEverProducedBytes = true
     // The stream is demonstrably working — clear the failure history and
     // leave degraded mode. Doing this here rather than at connect keeps a
     // connect-then-close loop counted as the failure it is.
@@ -786,18 +828,21 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   // --------------------------------------------------------------------
 
   /**
-   * Give the stream up for the life of the subscription and let the poll carry
-   * it. The caller returns straight after, which ends the stream loop, so the
-   * refused connect is never retried.
+   * Switch to the degraded cadence, from wherever the subscription came:
+   * `mode: 'poll-only'` at construction, enough consecutive connect failures,
+   * or a stream given up on a refusal.
    *
-   * The poll is forced rather than left to the deadman: under
-   * `initialPoll: 'eager'` the hydration poll is scheduled by an accepted
-   * connect, so a first connect that is refused leaves nothing armed.
+   * `forcePoll` polls now instead of waiting for the deadman, which the
+   * callers with nothing else armed depend on.
    */
-  private enterPollOnly(): void {
+  private degradeToPolling(opts: { forcePoll: boolean }): void {
     this.degraded = true
     this.setStatus('polling')
-    this.schedulePoll()
+    if (opts.forcePoll) {
+      this.schedulePoll()
+    } else {
+      this.armDeadman()
+    }
   }
 
   private schedulePoll(): void {
@@ -1118,6 +1163,9 @@ export function createResilientSubscription<
     onStateChange: (listener) => impl.onStateChange(listener),
     get status() {
       return impl.status
+    },
+    get streamAbandoned() {
+      return impl.streamAbandoned
     },
     onStatusChange: (listener) => impl.onStatusChange(listener),
     get result() {
