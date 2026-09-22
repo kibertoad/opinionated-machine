@@ -110,6 +110,27 @@ export type FallbackBindingConfig<Snapshot, Events extends EventPayloadMap, Stat
    */
   snapshotEvent?: keyof Events & string
 
+  /**
+   * Where a poll snapshot comes from, and with it whether polling can carry
+   * this subscription when the stream cannot.
+   *
+   * - `'endpoint'`: a real request the server answers. The poll is the
+   *   correctness backbone: it hydrates, it repairs gaps, and it keeps
+   *   delivering while the stream is down.
+   * - `'synthesized'`: the transport answers it without asking the server
+   *   (`fetchSnapshot` resolving a local value, `snapshotToEvents: () => []`),
+   *   because the events are transitions no read reproduces. A poll delivers
+   *   nothing the stream did not, so none are run: no hydration poll, no
+   *   deadman, no fallback cadence, and a refused stream stops the
+   *   subscription instead of pretending a poll covers it. Repair after a
+   *   reconnect is the consumer's job, off `onStatusChange`. With no snapshot
+   *   to initialize it from, {@link state} is rejected alongside it.
+   *
+   * Required, and not inferable: both shapes implement the same binding, and
+   * the difference only shows up in what the transport does at runtime.
+   */
+  snapshotSource: 'endpoint' | 'synthesized'
+
   /** Version extraction/ordering, or `'none'` (see {@link VersionConfig}). */
   version: VersionConfig<Snapshot, FallbackEvent<Events>>
 
@@ -125,7 +146,8 @@ export type FallbackBindingConfig<Snapshot, Events extends EventPayloadMap, Stat
    * the subscription handle exposes `getState()` / `onStateChange()`.
    * Snapshots REPLACE state via `init`; live events update it via `apply`.
    * Events synthesized from a snapshot are not applied (the snapshot already
-   * subsumes them).
+   * subsumes them). Requires `snapshotSource: 'endpoint'`: a synthesized
+   * snapshot is never fetched, so there would be nothing to `init` from.
    */
   state?: {
     init: (snapshot: Snapshot) => State
@@ -296,6 +318,31 @@ export type FallbackPolicy = {
    * @default [401]
    */
   authChallengeStatuses: ReadonlyArray<number>
+  /**
+   * What a refusal on the STREAM channel does: a status in
+   * {@link unretryableStatuses} that `onAuthChallenge` did not recover.
+   *
+   * - `'auto'` reads {@link FallbackBindingConfig.snapshotSource}:
+   *   `'endpoint'` keeps polling, `'synthesized'` stops. This is the right
+   *   answer for both, which is why the binding is asked to declare it.
+   * - `'keep-polling'` gives the stream up and leaves the poll running on
+   *   its degraded cadence, so a route that moved or a permission covering
+   *   the stream alone costs latency instead of every channel. Requires
+   *   `snapshotSource: 'endpoint'`; the constructor throws otherwise, since
+   *   a synthesized snapshot would poll on and deliver nothing, hiding the
+   *   refusal instead of surviving it.
+   * - `'stop'` ends the subscription, and with it the poll. Worth setting
+   *   over `'auto'` on a surface where a 15s poll cadence is not a product
+   *   (a live cursor, a presence indicator): failing loudly beats pretending.
+   *
+   * Keeping the poll is one-way for the life of the subscription: the stream
+   * is never reopened, and `subscription.streamAbandoned` reports it.
+   *
+   * A refusal on the poll channel stops the subscription under any value.
+   * Whether a stream is opened at all is {@link mode}, a separate question.
+   * @default 'auto'
+   */
+  streamRefusal: 'auto' | 'stop' | 'keep-polling'
 }
 
 export const DEFAULT_POLICY: FallbackPolicy = {
@@ -316,6 +363,7 @@ export const DEFAULT_POLICY: FallbackPolicy = {
   hydrationBufferLimit: 1_000,
   unretryableStatuses: [401, 403, 404],
   authChallengeStatuses: [401],
+  streamRefusal: 'auto',
 }
 
 /**
@@ -337,7 +385,8 @@ export const LIVE_STATE_POLICY: FallbackPolicy = {
 /**
  * Preset for adopters with no SSE endpoint yet: same binding, version gate and
  * state machine as the dual-mode presets, polling only. Flip `mode` back to
- * `'dual'` once the stream exists.
+ * `'dual'` once the stream exists. Requires `snapshotSource: 'endpoint'`: the
+ * poll is the only channel there is.
  */
 export const POLL_ONLY_POLICY: FallbackPolicy = {
   ...DEFAULT_POLICY,

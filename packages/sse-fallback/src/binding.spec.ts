@@ -75,6 +75,7 @@ describe('defineFallbackBinding', () => {
         s.status === 'completed'
           ? [{ event: 'uploadFinished', data: { result: s.result as string } }]
           : [],
+      snapshotSource: 'endpoint',
       version: { ofSnapshot: (s) => s.version },
       terminalEvents: ['uploadFinished', 'uploadFailed'],
     })
@@ -97,6 +98,7 @@ describe('defineFallbackBinding', () => {
         expectTypeOf(s.version).toEqualTypeOf<number>()
         return []
       },
+      snapshotSource: 'endpoint',
       version: {
         ofSnapshot: (s) => s.version,
         ofEvent: (e) => {
@@ -111,11 +113,13 @@ describe('defineFallbackBinding', () => {
     defineFallbackBinding(uploadStatusContract, {
       // @ts-expect-error 'nope' is not a declared event
       snapshotToEvents: () => [{ event: 'nope', data: {} }],
+      snapshotSource: 'endpoint',
       version: { ofSnapshot: (s) => s.version },
     })
     defineFallbackBinding(uploadStatusContract, {
       // @ts-expect-error payload shape mismatch for uploadFinished
       snapshotToEvents: () => [{ event: 'uploadFinished', data: { wrong: true } }],
+      snapshotSource: 'endpoint',
       version: { ofSnapshot: (s) => s.version },
     })
   })
@@ -124,6 +128,7 @@ describe('defineFallbackBinding', () => {
     expect(() =>
       defineFallbackBinding(plainPollContract, {
         snapshotToEvents: () => [],
+        snapshotSource: 'endpoint',
         version: 'none',
       }),
     ).toThrow(/dual-mode contract/)
@@ -146,6 +151,7 @@ describe('defineFallbackBinding', () => {
     })
     const binding = defineFallbackBinding(contract, {
       snapshotEvent: 'stateChanged',
+      snapshotSource: 'endpoint',
       version: { ofSnapshot: (s) => s.revision },
     })
     expect(binding.config.snapshotToEvents?.({ revision: 7 })).toEqual([
@@ -156,14 +162,39 @@ describe('defineFallbackBinding', () => {
   it('requires exactly one of snapshotToEvents / snapshotEvent', () => {
     expect(() =>
       defineFallbackBinding(uploadStatusContract, {
+        snapshotSource: 'endpoint',
         version: { ofSnapshot: (s) => s.version },
       }),
     ).toThrow(/exactly one/)
   })
 
+  it('rejects a missing or misspelled snapshotSource instead of switching polling off', () => {
+    for (const snapshotSource of [undefined, 'Endpoint']) {
+      expect(() =>
+        defineFallbackBinding(uploadStatusContract, {
+          snapshotToEvents: () => [],
+          snapshotSource: snapshotSource as unknown as 'endpoint',
+          version: { ofSnapshot: (s) => s.version },
+        }),
+      ).toThrow(/snapshotSource must be 'endpoint' or 'synthesized'/)
+    }
+  })
+
+  it('rejects a state layer beside a synthesized snapshot, which could never initialize it', () => {
+    expect(() =>
+      defineFallbackBinding(uploadStatusContract, {
+        snapshotToEvents: () => [],
+        snapshotSource: 'synthesized',
+        version: { ofSnapshot: (s) => s.version },
+        state: { init: () => 0, apply: (count) => count + 1 },
+      }),
+    ).toThrow(/state requires snapshotSource: 'endpoint'/)
+  })
+
   it('stamps the binding on the contract for server-side introspection', () => {
     const binding = defineFallbackBinding(uploadStatusContract, {
       snapshotToEvents: () => [],
+      snapshotSource: 'endpoint',
       version: { ofSnapshot: (s) => s.version },
     })
     expect(readFallbackBinding(uploadStatusContract)).toBe(binding)
@@ -190,6 +221,7 @@ describe('defineFallbackBinding', () => {
   it('serializes query params and passes headers/body through', () => {
     const binding = defineFallbackBinding(uploadStatusContract, {
       snapshotToEvents: () => [],
+      snapshotSource: 'endpoint',
       version: { ofSnapshot: (s) => s.version },
     })
     const request = binding.buildSnapshotRequest({
@@ -209,6 +241,7 @@ describe('defineFallbackBinding', () => {
 describe('bindFallbackContracts', () => {
   it('binds a separate poll + stream contract pair with param mapping', () => {
     const binding = bindFallbackContracts(plainPollContract, sseOnlyContract, {
+      snapshotSource: 'endpoint',
       snapshotToEvents: (s) => [
         { event: 'update', data: { status: s.status, version: s.version } },
       ],
@@ -225,6 +258,7 @@ describe('bindFallbackContracts', () => {
     expect(() =>
       bindFallbackContracts(uploadStatusContract, sseOnlyContract, {
         snapshotToEvents: () => [],
+        snapshotSource: 'endpoint',
         version: 'none',
       }),
     ).toThrow(/plain \(non-SSE\) contract/)
@@ -234,6 +268,7 @@ describe('bindFallbackContracts', () => {
     expect(() =>
       bindFallbackContracts(plainPollContract, plainPollContract, {
         snapshotToEvents: () => [],
+        snapshotSource: 'endpoint',
         version: 'none',
       }),
     ).toThrow(/SSE success response/)
@@ -242,6 +277,7 @@ describe('bindFallbackContracts', () => {
   it('applies mapParams to each side independently', () => {
     const binding = bindFallbackContracts(plainPollContract, sseOnlyContract, {
       snapshotToEvents: () => [],
+      snapshotSource: 'endpoint',
       version: 'none',
       mapParams: {
         toStream: (params) => ({ ...params, queryParams: { channel: 'jobs' } }),
@@ -278,6 +314,7 @@ describe('fromLegacyDualModeContract', () => {
         expectTypeOf(s.version).toEqualTypeOf<number>()
         return s.status === 'done' ? [{ event: 'done', data: { result: s.status } }] : []
       },
+      snapshotSource: 'endpoint',
       version: { ofSnapshot: (s) => s.version },
       terminalEvents: ['done'],
     })
@@ -288,7 +325,7 @@ describe('fromLegacyDualModeContract', () => {
     expect(() =>
       fromLegacyDualModeContract(
         { ...legacyContract, isDualMode: false as unknown as true },
-        { snapshotToEvents: () => [], version: 'none' },
+        { snapshotToEvents: () => [], snapshotSource: 'endpoint', version: 'none' },
       ),
     ).toThrow(/legacy dual-mode contract/)
   })

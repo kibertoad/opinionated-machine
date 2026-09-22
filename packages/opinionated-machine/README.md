@@ -3835,6 +3835,8 @@ event stream:
 ```ts
 // Shared contracts module — the binding is the reconciliation declaration
 export const uploadStatusBinding = defineFallbackBinding(uploadStatusContract, {
+  // Polling can carry this on its own: the snapshot is a real route
+  snapshotSource: 'endpoint',
   snapshotToEvents: (s) =>
     s.status === 'completed' ? [{ event: 'uploadFinished', data: { result: s.result } }] : [],
   version: { ofSnapshot: (s) => s.version },

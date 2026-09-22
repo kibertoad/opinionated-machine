@@ -60,6 +60,7 @@ const jobContract = defineApiContract({
 })
 
 const jobBinding = defineFallbackBinding(jobContract, {
+  snapshotSource: 'endpoint',
   snapshotToEvents: (s) =>
     s.status === 'completed' ? [{ event: 'done', data: { result: s.result as string } }] : [],
   version: { ofSnapshot: (s) => s.version },
