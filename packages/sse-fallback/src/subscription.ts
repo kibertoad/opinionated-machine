@@ -7,7 +7,12 @@ import type { PollGate } from './pollGate.ts'
 import type { InvalidVersionInfo, VersionGap } from './reconciler.ts'
 import { Reconciler } from './reconciler.ts'
 import { backoffDelay, ResettableTimer, sleep } from './scheduler.ts'
-import type { FallbackTransport, ParsedSseFrame, StreamResponse } from './transport.ts'
+import type {
+  FallbackTransport,
+  ParsedSseFrame,
+  StreamResponse,
+  TransportRequest,
+} from './transport.ts'
 import { isParsedStreamResponse } from './transport.ts'
 
 // ============================================================================
@@ -81,6 +86,117 @@ export class SubscriptionStoppedError extends Error {
 }
 
 /**
+ * A request answered with a status the channel cannot use. Handed to
+ * `onStreamError` / `onPollError`, and as the `cause` of a
+ * {@link FallbackDegradedError}.
+ */
+export class FallbackHttpError extends Error {
+  readonly channel: 'poll' | 'stream'
+  readonly status: number
+  readonly request: TransportRequest
+
+  constructor(
+    message: string,
+    detail: { channel: 'poll' | 'stream'; status: number; request: TransportRequest },
+  ) {
+    super(message)
+    this.name = 'FallbackHttpError'
+    this.channel = detail.channel
+    this.status = detail.status
+    this.request = detail.request
+  }
+}
+
+/**
+ * What broke the stream, as far as a client can tell.
+ *
+ * - `'stream-refused'`: a status in `unretryableStatuses`; the stream is given up for good.
+ * - `'stream-rejected'`: any other non-200 status, or a 200 that is not `text/event-stream`
+ *   (a proxy error page, an SPA fallback route).
+ * - `'stream-silent'`: accepted, then closed or timed out without a single byte. A proxy that
+ *   buffers the response is the usual cause.
+ * - `'stream-unreachable'`: the connect threw or timed out. An offline client produces this too,
+ *   which is the one kind a reporter may want to rank lower.
+ */
+export type DegradationKind =
+  | 'stream-refused'
+  | 'stream-rejected'
+  | 'stream-silent'
+  | 'stream-unreachable'
+
+/**
+ * The stream stopped working for a reason the client can name, and the subscription is running
+ * without it: on its poll for an endpoint snapshot, or on nothing at all for a synthesized one.
+ *
+ * Delivered to `diagnostics.onDegraded` when the subscription degrades, and again every
+ * `degradationReportIntervalMs` for as long as it stays degraded, so a tab that lives on the
+ * fallback keeps showing up in an error tracker instead of reporting once and going quiet.
+ * Hand it to one as it is: the message names the route, the status and the channel left.
+ */
+export class FallbackDegradedError extends Error {
+  readonly kind: DegradationKind
+  /** The refusing or rejecting status, for `'stream-refused'` and `'stream-rejected'`. */
+  readonly status: number | undefined
+  /** The stream request that failed. */
+  readonly request: TransportRequest
+  /** Whether any stream of this subscription had carried bytes before it broke. */
+  readonly streamWasLive: boolean
+  /** Whether a poll keeps delivering while the stream is down. */
+  readonly pollCarriesDelivery: boolean
+  /** How many times this degradation has been reported, starting at 1. */
+  readonly reportCount: number
+  /** Time since the subscription degraded, 0 on the first report. */
+  readonly degradedForMs: number
+
+  constructor(detail: {
+    kind: DegradationKind
+    status?: number
+    contentType?: string
+    request: TransportRequest
+    streamWasLive: boolean
+    pollCarriesDelivery: boolean
+    reportCount: number
+    degradedForMs: number
+    cause?: unknown
+  }) {
+    super(describeDegradation(detail), { cause: detail.cause })
+    this.name = 'FallbackDegradedError'
+    this.kind = detail.kind
+    this.status = detail.status
+    this.request = detail.request
+    this.streamWasLive = detail.streamWasLive
+    this.pollCarriesDelivery = detail.pollCarriesDelivery
+    this.reportCount = detail.reportCount
+    this.degradedForMs = detail.degradedForMs
+  }
+}
+
+function describeDegradation(detail: {
+  kind: DegradationKind
+  status?: number
+  contentType?: string
+  request: TransportRequest
+  streamWasLive: boolean
+  pollCarriesDelivery: boolean
+}): string {
+  const route = `${detail.request.method.toUpperCase()} ${detail.request.path}`
+  const history = detail.streamWasLive ? 'it had been live' : 'it was never live'
+  const fault = {
+    'stream-refused': `was refused with ${detail.status}`,
+    'stream-rejected':
+      detail.status === 200
+        ? `answered 200 with content-type ${detail.contentType || '(none)'}`
+        : `was rejected with ${detail.status}`,
+    'stream-silent': 'was accepted but closed without carrying any bytes',
+    'stream-unreachable': 'could not be reached',
+  }[detail.kind]
+  const fallback = detail.pollCarriesDelivery
+    ? 'updates arrive late, on the fallback poll'
+    : 'no poll covers this binding, so nothing is delivered until it recovers'
+  return `SSE stream ${route} ${fault} (${history}); ${fallback}`
+}
+
+/**
  * Observability hooks — all optional, all no-ops by default. None of these
  * affect delivery semantics; they exist so applications can meter the
  * fallback machinery (gap rate, duplicate rate, poll errors).
@@ -88,9 +204,27 @@ export class SubscriptionStoppedError extends Error {
 export type FallbackDiagnostics = {
   onGap?: (gap: VersionGap) => void
   onDuplicate?: (event: string) => void
+  /**
+   * A snapshot was dropped because the stream had already delivered newer
+   * news: below the watermark, or, for `version: 'none'`, requested before a
+   * pushed event it would have overwritten.
+   */
   onStaleSnapshot?: () => void
   onPollError?: (error: unknown) => void
   onStreamError?: (error: unknown) => void
+  /**
+   * The stream broke for a reason a client can name and the subscription is
+   * running without it. Fires on degrading, and again on the
+   * `degradationReportIntervalMs` cadence until it recovers.
+   *
+   * This is the hook to send to an error tracker. A fallback that works is
+   * exactly what hides a broken main path: delivery carries on, late, and
+   * nothing else says why. Not fired for `mode: 'poll-only'`, which never
+   * had a stream to lose.
+   */
+  onDegraded?: (error: FallbackDegradedError) => void
+  /** A degradation reported through `onDegraded` ended: the stream carried bytes again. */
+  onRecovered?: (recovery: { kind: DegradationKind; degradedForMs: number }) => void
   /**
    * The stream was refused with a status it cannot retry past, and the
    * subscription carried on polling instead of stopping: `streamRefusal:
@@ -192,6 +326,16 @@ export type ResilientSubscription<
     listener: (status: SubscriptionStatus, detail?: SubscriptionStopDetail) => void,
   ): () => void
   /**
+   * Run a listener each time a stream connection carries its first byte.
+   *
+   * With a synthesized snapshot an accepted connect reports `'live'` before
+   * any byte, since quiet is normal there. That makes `'live'` the wrong
+   * trigger for work that must not repeat on every retry: an upstream that
+   * accepts and closes at once cycles `'reconnecting'` and `'live'` on each
+   * attempt. This fires only for a connection that delivered something.
+   */
+  onStreamEstablished(listener: () => void): () => void
+  /**
    * Why the subscription stopped, or `undefined` while it is still running.
    * Also delivered to `onStop` and `onStatusChange` at the moment it stops.
    */
@@ -237,6 +381,21 @@ type IteratorFeed<Events extends EventPayloadMap> = {
 }
 
 type AuthCredit = 'available' | 'spent-by-poll' | 'spent-by-stream' | 'declined'
+
+/** The last reason a stream connection counted as a failure. */
+type StreamFailure = {
+  kind: DegradationKind
+  status?: number
+  contentType?: string
+  cause?: unknown
+}
+
+/**
+ * Consecutive versionless polls dropped for racing a pushed event, after
+ * which the next one is delivered anyway: a busy stream must not starve the
+ * poll that repairs an outage.
+ */
+const MAX_SUPERSEDED_POLLS = 3
 
 class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State> {
   private readonly binding: FallbackBinding<Snapshot, Events, State>
@@ -284,6 +443,14 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   private streamEverProducedBytes = false
   /** Whether the stream has been given up for good, see `abandonStream`. */
   private streamAbandonedValue = false
+  private lastStreamFailure: StreamFailure | undefined
+  /** The degradation last reported through `onDegraded`, until the stream recovers. */
+  private reportedDegradation:
+    | { failure: StreamFailure; streamWasLive: boolean; since: number; reports: number }
+    | undefined
+  /** Events the stream delivered, so a versionless poll can tell it was overtaken. */
+  private streamDeliveries = 0
+  private supersededPolls = 0
 
   private pollInFlight = false
   private pollQueued = false
@@ -303,6 +470,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   private readonly budgetTimer = new ResettableTimer(() =>
     this.stopWith({ reason: 'budget-exhausted', limit: 'maxDurationMs' }),
   )
+  private readonly degradationReminder = new ResettableTimer(() => this.emitDegradation())
 
   private readonly eventListeners = new Set<(event: FallbackEvent<Events>) => void>()
   private readonly stateListeners = new Set<(state: State) => void>()
@@ -310,6 +478,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     (status: SubscriptionStatus, detail?: SubscriptionStopDetail) => void
   >()
   private readonly stopListeners = new Set<(detail: SubscriptionStopDetail) => void>()
+  private readonly establishedListeners = new Set<() => void>()
   private readonly iteratorFeeds = new Set<IteratorFeed<Events>>()
 
   constructor(
@@ -409,6 +578,11 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     return () => this.statusListeners.delete(listener)
   }
 
+  onStreamEstablished(listener: () => void): () => void {
+    this.establishedListeners.add(listener)
+    return () => this.establishedListeners.delete(listener)
+  }
+
   onStop(listener: (detail: SubscriptionStopDetail) => void): () => void {
     if (this.stopDetail !== undefined) {
       this.runListener(listener, this.stopDetail)
@@ -502,6 +676,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     this.deadman.clear()
     this.staleConnection.clear()
     this.budgetTimer.clear()
+    this.degradationReminder.clear()
     this.currentStreamAbort?.abort()
     this.abortController.abort()
     this.setStatus('stopped', detail)
@@ -509,6 +684,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     this.stopListeners.clear()
     for (const feed of this.iteratorFeeds) feed.finish()
     this.iteratorFeeds.clear()
+    this.establishedListeners.clear()
   }
 
   // --------------------------------------------------------------------
@@ -525,7 +701,9 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       this.abortController.signal.addEventListener('abort', onMasterAbort, { once: true })
 
       let connectFailed = false
+      let failure: StreamFailure | undefined
       this.streamProducedBytes = false
+      const request = this.binding.buildStreamRequest(this.params)
       // A connect that never produces headers must not park the subscription:
       // bound it here so it fails like any other connect failure (backoff,
       // degradation, fallback polling) instead of hanging forever.
@@ -534,10 +712,10 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         connectTimeout.arm(this.policy.connectTimeoutMs)
       }
       try {
-        const response = await this.transport.openStream(
-          this.binding.buildStreamRequest(this.params),
-          { signal: streamAbort.signal, lastEventId: this.lastEventId },
-        )
+        const response = await this.transport.openStream(request, {
+          signal: streamAbort.signal,
+          lastEventId: this.lastEventId,
+        })
         connectTimeout.clear()
         if (this.stopped) return
 
@@ -551,9 +729,14 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
           // chunks of a refused connect are never consumed, and without this
           // every retry would leak a socket.
           streamAbort.abort()
-          this.diagnostics.onStreamError?.(
-            new Error(`SSE connect failed with status ${response.status}`),
+          const error = new FallbackHttpError(
+            response.status === 200
+              ? `SSE connect answered 200 with content-type ${contentType}`
+              : `SSE connect failed with status ${response.status}`,
+            { channel: 'stream', status: response.status, request },
           )
+          failure = { kind: 'stream-rejected', status: response.status, contentType, cause: error }
+          this.diagnostics.onStreamError?.(error)
           if (this.policy.unretryableStatuses.includes(response.status)) {
             // An expired token is the common case behind a 401 in a SPA, and
             // recovering without a page reload is the point of this package.
@@ -563,7 +746,11 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
             if (this.stopped) return
             if (!recovered) {
               if (this.streamRefusal === 'keep-polling') {
-                this.abandonStream(response.status)
+                this.abandonStream({
+                  kind: 'stream-refused',
+                  status: response.status,
+                  cause: error,
+                })
                 return
               }
               this.stopWith({
@@ -619,6 +806,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       } catch (error) {
         if (this.stopped) return
         connectFailed = !this.streamConnected
+        failure = { kind: connectFailed ? 'stream-unreachable' : 'stream-silent', cause: error }
         this.diagnostics.onStreamError?.(error)
       } finally {
         connectTimeout.clear()
@@ -640,11 +828,13 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       // turning a broken upstream into a reconnect-and-poll storm.
       if (connectFailed || !this.streamProducedBytes) {
         this.consecutiveConnectFailures += 1
+        this.lastStreamFailure = failure ?? { kind: 'stream-silent' }
       }
       if (!this.degraded && this.consecutiveConnectFailures >= this.policy.degradedAfterFailures) {
         // The poll this drop needs is scheduled below; the deadman carries
         // the degraded cadence from its next arm.
         this.degrade({ forcePoll: false })
+        if (this.lastStreamFailure) this.reportDegradation(this.lastStreamFailure)
       } else {
         // Already degraded, a drop keeps an endpoint binding on 'polling'. A
         // synthesized one may have reported 'live' off a quiet reconnect, and
@@ -699,7 +889,8 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
    * `initialPoll: 'eager'` the hydration poll is scheduled by an accepted
    * connect, so a first connect that is refused leaves nothing armed.
    */
-  private abandonStream(status: number): void {
+  private abandonStream(refusal: StreamFailure & { status: number }): void {
+    const { status } = refusal
     this.streamAbandonedValue = true
     // A retry the STREAM spent on a refresh that worked, only to be refused
     // anyway, went to a channel that no longer exists. The poll now carries
@@ -715,6 +906,58 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     // put back into 'polling'.
     if (this.stopped || this.reconciler.isTerminated) return
     this.degrade({ forcePoll: true })
+    this.reportDegradation(refusal)
+  }
+
+  /**
+   * Report that the stream broke and the subscription runs without it, then
+   * keep reporting on `degradationReportIntervalMs` until it recovers.
+   *
+   * One report per degradation would not be enough: a tab that degraded an
+   * hour ago looks, in an error tracker, like a fault that went away. A new
+   * cause (a refusal after a run of silent connects) is reported at once.
+   */
+  private reportDegradation(failure: StreamFailure): void {
+    if (this.stopped || this.reconciler.isTerminated) return
+    const current = this.reportedDegradation
+    this.reportedDegradation = {
+      failure,
+      streamWasLive: this.streamEverProducedBytes,
+      since: current?.since ?? Date.now(),
+      reports: current?.reports ?? 0,
+    }
+    this.emitDegradation()
+  }
+
+  private emitDegradation(): void {
+    const degradation = this.reportedDegradation
+    if (!degradation || this.stopped || this.reconciler.isTerminated) return
+    degradation.reports += 1
+    const { failure } = degradation
+    const error = new FallbackDegradedError({
+      ...failure,
+      request: this.binding.buildStreamRequest(this.params),
+      streamWasLive: degradation.streamWasLive,
+      pollCarriesDelivery: this.pollCanDeliver,
+      reportCount: degradation.reports,
+      degradedForMs: Date.now() - degradation.since,
+    })
+    this.runListener(() => this.diagnostics.onDegraded?.(error), undefined)
+    if (this.stopped) return
+    const interval = this.policy.degradationReportIntervalMs
+    if (interval !== 'off') this.degradationReminder.arm(interval)
+  }
+
+  private endDegradation(): void {
+    const degradation = this.reportedDegradation
+    if (!degradation) return
+    this.reportedDegradation = undefined
+    this.degradationReminder.clear()
+    const recovery = {
+      kind: degradation.failure.kind,
+      degradedForMs: Date.now() - degradation.since,
+    }
+    this.runListener(() => this.diagnostics.onRecovered?.(recovery), undefined)
   }
 
   private consumeStream(response: StreamResponse): Promise<void> {
@@ -782,8 +1025,10 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     // leave degraded mode. Doing this here rather than at connect keeps a
     // connect-then-close loop counted as the failure it is.
     this.consecutiveConnectFailures = 0
+    this.lastStreamFailure = undefined
     this.authCredit = 'available'
     this.degraded = false
+    this.endDegradation()
     // Bytes on the wire are the only evidence that delivery works, so they are
     // what promotes the subscription to 'live' — from degraded polling, and
     // equally from the 'connecting' a byte-less stream is parked in after
@@ -792,6 +1037,10 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     // it is buffering behind has landed.
     if (!this.reconciler.isHydrating) {
       this.setStatus('live')
+    }
+    for (const listener of this.establishedListeners) {
+      if (this.stopped) return
+      this.runListener(listener, undefined)
     }
   }
 
@@ -854,7 +1103,10 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     // every 15s polled between nearly every pair of events, forever, while a
     // fully idle one backed off to `deadmanIdleBackoff.maxMs`. A poll that
     // does find news still resets it, in `executePoll`.
-    if (outcome.deliveries.length > 0) this.armDeadman()
+    if (outcome.deliveries.length > 0) {
+      this.streamDeliveries += 1
+      this.armDeadman()
+    }
 
     if (outcome.duplicate) {
       this.diagnostics.onDuplicate?.(parsed.event ?? 'message')
@@ -983,15 +1235,18 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         releaseGate = await this.pollGate.acquire({ signal: pollAbort.signal })
         if (this.stopped || this.reconciler.isTerminated) return
       }
-      const response = await this.transport.fetchSnapshot(
-        this.binding.buildSnapshotRequest(this.params),
-        { signal: pollAbort.signal },
-      )
+      const request = this.binding.buildSnapshotRequest(this.params)
+      const streamDeliveriesAtRequest = this.streamDeliveries
+      const response = await this.transport.fetchSnapshot(request, { signal: pollAbort.signal })
       if (this.stopped || this.reconciler.isTerminated) return
 
       if (response.status < 200 || response.status >= 300) {
         this.diagnostics.onPollError?.(
-          new Error(`Snapshot poll failed with status ${response.status}`),
+          new FallbackHttpError(`Snapshot poll failed with status ${response.status}`, {
+            channel: 'poll',
+            status: response.status,
+            request,
+          }),
         )
         if (this.policy.unretryableStatuses.includes(response.status)) {
           const recovered = await this.tryAuthChallenge(response.status, 'poll')
@@ -1015,6 +1270,13 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
 
       this.pollFailures = 0
       this.authCredit = 'available'
+      if (this.isSupersededByStream(streamDeliveriesAtRequest)) {
+        // Asked again rather than dropped: this may be the poll repairing an
+        // outage, and a fresh one reads a state at least as new as the event.
+        this.diagnostics.onStaleSnapshot?.()
+        this.pollQueued = true
+        return
+      }
       const outcome = this.reconciler.handleSnapshot(response.body as Snapshot)
       if (outcome.stale) {
         this.diagnostics.onStaleSnapshot?.()
@@ -1061,6 +1323,25 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         void this.executePoll()
       }
     }
+  }
+
+  /**
+   * Whether a versionless snapshot was overtaken by the stream while it was
+   * in flight. Its body may predate the pushed event, and with no version to
+   * compare, delivering it would overwrite newer news with older.
+   */
+  private isSupersededByStream(streamDeliveriesAtRequest: number): boolean {
+    if (this.binding.config.version !== 'none') return false
+    if (this.streamDeliveries === streamDeliveriesAtRequest) {
+      this.supersededPolls = 0
+      return false
+    }
+    if (this.supersededPolls >= MAX_SUPERSEDED_POLLS) {
+      this.supersededPolls = 0
+      return false
+    }
+    this.supersededPolls += 1
+    return true
   }
 
   /**
@@ -1294,6 +1575,7 @@ export function createResilientSubscription<
       return impl.streamAbandoned
     },
     onStatusChange: (listener) => impl.onStatusChange(listener),
+    onStreamEstablished: (listener) => impl.onStreamEstablished(listener),
     get result() {
       return impl.result
     },

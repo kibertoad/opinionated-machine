@@ -179,14 +179,26 @@ export class TestTransport implements FallbackTransport {
   /** Called for every stream connect attempt after it is accepted. */
   onStreamConnect?: (stream: TestStreamHandle) => void
   /** Statuses (or an Error) to reject/deny the next N stream connects with. */
-  private readonly connectDenials: Array<{ status?: number; error?: Error; hold?: true }> = []
+  private readonly connectDenials: Array<{
+    status?: number
+    headers?: Record<string, string>
+    error?: Error
+    hold?: true
+  }> = []
   readonly snapshotCalls: TransportRequest[] = []
   readonly streamConnects: TransportRequest[] = []
   /** Whether each denied connect's request was aborted by the core. */
   readonly deniedConnectAborts: boolean[] = []
 
-  /** Queue a denial for the next stream connect (non-200 status or network error). */
-  denyNextStreamConnect(denial: { status?: number; error?: Error }): void {
+  /**
+   * Queue a denial for the next stream connect: a status (with the headers it
+   * answers with, a 200 carrying the wrong content-type included) or a network error.
+   */
+  denyNextStreamConnect(denial: {
+    status?: number
+    headers?: Record<string, string>
+    error?: Error
+  }): void {
     this.connectDenials.push(denial)
   }
 
@@ -253,7 +265,7 @@ export class TestTransport implements FallbackTransport {
       )
       return Promise.resolve({
         status: denial.status,
-        headers: {},
+        headers: denial.headers ?? {},
         chunks: emptyChunks(),
       })
     }
