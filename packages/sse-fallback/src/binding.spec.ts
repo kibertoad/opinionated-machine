@@ -113,11 +113,13 @@ describe('defineFallbackBinding', () => {
     defineFallbackBinding(uploadStatusContract, {
       // @ts-expect-error 'nope' is not a declared event
       snapshotToEvents: () => [{ event: 'nope', data: {} }],
+      snapshotSource: 'endpoint',
       version: { ofSnapshot: (s) => s.version },
     })
     defineFallbackBinding(uploadStatusContract, {
       // @ts-expect-error payload shape mismatch for uploadFinished
       snapshotToEvents: () => [{ event: 'uploadFinished', data: { wrong: true } }],
+      snapshotSource: 'endpoint',
       version: { ofSnapshot: (s) => s.version },
     })
   })
@@ -164,6 +166,29 @@ describe('defineFallbackBinding', () => {
         version: { ofSnapshot: (s) => s.version },
       }),
     ).toThrow(/exactly one/)
+  })
+
+  it('rejects a missing or misspelled snapshotSource instead of switching polling off', () => {
+    for (const snapshotSource of [undefined, 'Endpoint']) {
+      expect(() =>
+        defineFallbackBinding(uploadStatusContract, {
+          snapshotToEvents: () => [],
+          snapshotSource: snapshotSource as unknown as 'endpoint',
+          version: { ofSnapshot: (s) => s.version },
+        }),
+      ).toThrow(/snapshotSource must be 'endpoint' or 'synthesized'/)
+    }
+  })
+
+  it('rejects a state layer beside a synthesized snapshot, which could never initialize it', () => {
+    expect(() =>
+      defineFallbackBinding(uploadStatusContract, {
+        snapshotToEvents: () => [],
+        snapshotSource: 'synthesized',
+        version: { ofSnapshot: (s) => s.version },
+        state: { init: () => 0, apply: (count) => count + 1 },
+      }),
+    ).toThrow(/state requires snapshotSource: 'endpoint'/)
   })
 
   it('stamps the binding on the contract for server-side introspection', () => {

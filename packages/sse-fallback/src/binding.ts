@@ -99,6 +99,35 @@ function validateConfig(config: FallbackBindingConfig<never, EventPayloadMap, un
       'FallbackBindingConfig requires exactly one of snapshotToEvents / snapshotEvent.',
     )
   }
+  validateSnapshotSource(config)
+}
+
+/**
+ * `snapshotSource` decides whether the poll channel runs at all, so a value
+ * that is missing or misspelled (a JS caller, a spread of an older config)
+ * must fail here rather than quietly switch polling off.
+ *
+ * Also run by `createResilientSubscription`, since a hand-built binding never
+ * passes through `defineFallbackBinding`.
+ */
+export function validateSnapshotSource(config: {
+  readonly snapshotSource: unknown
+  readonly state?: unknown
+}): void {
+  const source = config.snapshotSource
+  if (source !== 'endpoint' && source !== 'synthesized') {
+    throw new Error(
+      `FallbackBindingConfig.snapshotSource must be 'endpoint' or 'synthesized', got ${JSON.stringify(source)}.`,
+    )
+  }
+  if (source === 'synthesized' && config.state !== undefined) {
+    // The state layer is initialized, and repaired after a gap, only from a
+    // snapshot, and a synthesized one is never fetched: `getState()` would
+    // stay `undefined` for the life of the subscription.
+    throw new Error(
+      "FallbackBindingConfig.state requires snapshotSource: 'endpoint'. A synthesized snapshot is never fetched, so there is nothing to initialize or repair state from. Reduce the events in an onEvent listener instead.",
+    )
+  }
 }
 
 /** Expand the `snapshotEvent` shorthand into `snapshotToEvents`. */

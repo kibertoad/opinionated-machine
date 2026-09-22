@@ -123,7 +123,8 @@ export type FallbackBindingConfig<Snapshot, Events extends EventPayloadMap, Stat
    *   nothing the stream did not, so none are run: no hydration poll, no
    *   deadman, no fallback cadence, and a refused stream stops the
    *   subscription instead of pretending a poll covers it. Repair after a
-   *   reconnect is the consumer's job, off `onStatusChange`.
+   *   reconnect is the consumer's job, off `onStatusChange`. With no snapshot
+   *   to initialize it from, {@link state} is rejected alongside it.
    *
    * Required, and not inferable: both shapes implement the same binding, and
    * the difference only shows up in what the transport does at runtime.
@@ -145,7 +146,8 @@ export type FallbackBindingConfig<Snapshot, Events extends EventPayloadMap, Stat
    * the subscription handle exposes `getState()` / `onStateChange()`.
    * Snapshots REPLACE state via `init`; live events update it via `apply`.
    * Events synthesized from a snapshot are not applied (the snapshot already
-   * subsumes them).
+   * subsumes them). Requires `snapshotSource: 'endpoint'`: a synthesized
+   * snapshot is never fetched, so there would be nothing to `init` from.
    */
   state?: {
     init: (snapshot: Snapshot) => State

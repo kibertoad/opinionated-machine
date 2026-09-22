@@ -103,8 +103,8 @@ for await (const event of sub.events()) { ... }
 sub.onStateChange((state) => render(state))
 
 sub.status                        // 'connecting' | 'live' | 'reconnecting' | 'polling' | 'stopped'
-sub.nudge()                       // force a repair now: a poll, or a reconnect
-                                  // when the snapshot is synthesized
+sub.nudge()                       // force a repair now: a poll, or, when the snapshot
+                                  // is synthesized, a reconnect that skips the backoff
 sub.streamAbandoned               // true once a refusal took the stream for good
 sub.stop()
 ```
@@ -302,9 +302,16 @@ const binding: FallbackBinding<unknown, SegmentEvents> = {
 
 `'synthesized'` switches the poll channel off rather than running it into a
 wall: no hydration poll, no deadman, no fallback cadence, and `nudge()`
-reconnects a silent stream instead of fetching nothing. The status machine
-loses `'polling'`, since there is nothing to poll, and a stream that is down
-reports `'reconnecting'`.
+reconnects a stream waiting out its backoff instead of fetching nothing (a
+stream that is connecting or open is left to the stale-connection watchdog,
+since quiet is normal here). The status machine loses `'polling'`, since there
+is nothing to poll: a stream that is down reports `'reconnecting'`, and one
+that is accepted reports `'live'` without waiting for a byte, after a
+degradation as much as on the first connect.
+
+With no snapshot ever fetched there is nothing to initialize a `state` layer
+from, so `defineFallbackBinding` rejects `state` beside `'synthesized'`; reduce
+the events in an `onEvent` listener instead.
 
 A refused stream stops the subscription, which is what this shape wants: the
 stop is the only signal that live updates are gone, and something has to act
@@ -343,8 +350,7 @@ signal to hide the indicator, instead of a cadence nobody perceives as live.
 
 ### Combinations the constructor rejects
 
-Both throw at `createResilientSubscription`, rather than at the first failure
-hours later:
+These throw at construction, rather than at the first failure hours later:
 
 - `mode: 'poll-only'` with `snapshotSource: 'synthesized'`. No stream is ever
   opened and the poll delivers nothing, so the subscription could only sit
@@ -352,6 +358,16 @@ hours later:
 - `streamRefusal: 'keep-polling'` with `snapshotSource: 'synthesized'`. The
   poll cannot stand in for a refused stream, so the subscription would report
   itself healthy and deliver nothing.
+- `state` with `snapshotSource: 'synthesized'`.
+  State is initialized and repaired from a snapshot, and a synthesized one is
+  never fetched, so `getState()` would stay `undefined`.
+- A `snapshotSource` that is neither `'endpoint'` nor `'synthesized'`, from a
+  JS caller or a config spread from an older one: the value decides whether
+  the poll channel runs at all.
+
+The last two are checked by `defineFallbackBinding` / `bindFallbackContracts`
+as well, so they fail where the binding is declared; a hand-built binding meets
+them at `createResilientSubscription`.
 
 ## The version gate
 
