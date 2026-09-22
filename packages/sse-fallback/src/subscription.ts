@@ -552,24 +552,23 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
           this.serverRetryHintMs = undefined
 
           if (firstConnect) {
-            // A synthesized snapshot hydrates nothing and proves nothing, so
-            // neither branch applies: `onStreamActivity` promotes this
-            // subscription to 'live' when the first byte arrives, the only
-            // evidence its one channel has.
-            if (this.pollCanDeliver) {
-              if (this.policy.initialPoll === 'eager') {
-                // Subscribe-first hydration: buffer live events until the
-                // snapshot lands, a zero missed-event window.
-                this.reconciler.beginHydration()
-                this.schedulePoll()
-              } else {
-                this.setStatus('live')
-              }
+            // A synthesized snapshot has nothing to hydrate from, so it takes
+            // the second branch: quiet is the normal state for a stream whose
+            // events are rare, and holding it out of 'live' until a byte
+            // arrives would mark a healthy surface as broken for hours. A
+            // connection that is open and dead is the stale watchdog's job.
+            if (this.pollCanDeliver && this.policy.initialPoll === 'eager') {
+              // Subscribe-first hydration: buffer live events until the
+              // snapshot lands, a zero missed-event window.
+              this.reconciler.beginHydration()
+              this.schedulePoll()
+            } else {
+              this.setStatus('live')
             }
           } else {
             // While degraded, an accepted connect is not evidence of anything:
             // only bytes downgrade the status back out of 'polling'.
-            if (!this.degraded && this.pollCanDeliver) {
+            if (!this.degraded) {
               this.setStatus('live')
             }
             if ((this.binding.config.replay ?? 'untrusted') === 'untrusted') {

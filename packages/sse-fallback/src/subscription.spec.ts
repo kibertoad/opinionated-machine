@@ -1245,7 +1245,10 @@ describe('createResilientSubscription: synthesized snapshots', () => {
 
     // initialPoll: 'eager' would have hydrated an endpoint binding here.
     expect(transport.snapshotCalls).toHaveLength(0)
-    expect(sub.status).toBe('connecting')
+    // Quiet is normal for a push-only surface, so an accepted connect is
+    // enough for 'live'; a connection that is open and dead is the stale
+    // watchdog's job.
+    expect(sub.status).toBe('live')
 
     streams[0]?.pushEvent('progress', { percent: 10 }, { id: '1' })
     await flush()
@@ -1261,9 +1264,9 @@ describe('createResilientSubscription: synthesized snapshots', () => {
 
   it('reports reconnecting rather than polling while the stream is down', async () => {
     const { transport } = makeHarness()
-    transport.denyNextStreamConnect({ error: new Error('connect refused') })
-    transport.denyNextStreamConnect({ error: new Error('connect refused') })
-    transport.denyNextStreamConnect({ error: new Error('connect refused') })
+    for (let i = 0; i < 6; i += 1) {
+      transport.denyNextStreamConnect({ error: new Error('connect refused') })
+    }
     const statuses: string[] = []
     const sub = createResilientSubscription(pushOnly(), {
       transport,
@@ -1271,11 +1274,16 @@ describe('createResilientSubscription: synthesized snapshots', () => {
       random: () => 1,
     })
     sub.onStatusChange((status) => statuses.push(status))
-    await vi.advanceTimersByTimeAsync(500)
+    await vi.advanceTimersByTimeAsync(350)
 
-    // Degraded (the backoff is capped, a silent connect cannot claim 'live'),
-    // but 'polling' would name a channel that delivers nothing here.
+    // Past degradedAfterFailures, so an endpoint binding would be 'polling'
+    // by now. Here that would name a channel which delivers nothing.
     expect(sub.status).toBe('reconnecting')
+    expect(transport.streamConnects.length).toBeGreaterThan(2)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(sub.status).toBe('live')
     expect(statuses).not.toContain('polling')
     expect(transport.snapshotCalls).toHaveLength(0)
   })
