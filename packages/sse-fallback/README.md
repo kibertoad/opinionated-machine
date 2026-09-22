@@ -327,10 +327,12 @@ sub.onStatusChange((status) => {
 ```
 
 A snapshot route that exists but cannot be expressed as events belongs here
-too. An endpoint that answers 204 when no process is running gives
-`snapshotToEvents` nothing to return, and a read model that ten call sites
-already share through a query cache is better invalidated on reconnect than
-duplicated into the version gate.
+too, and the subscription never dispatches it. An endpoint that answers 204
+when no process is running gives `snapshotToEvents` nothing to return, and a
+read model that ten call sites already share through a query cache is better
+invalidated on reconnect than duplicated into the version gate. Declaring such
+a route `'endpoint'` would poll it for nothing and report `'polling'` while no
+update can arrive.
 
 ### Latency is the product
 

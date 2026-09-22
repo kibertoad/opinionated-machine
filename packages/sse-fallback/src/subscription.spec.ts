@@ -1414,6 +1414,26 @@ describe('createResilientSubscription: synthesized snapshots', () => {
     expect(transport.snapshotCalls).toHaveLength(0)
   })
 
+  it('honours a nudge made by a listener as it is told the stream is reconnecting', async () => {
+    const { transport, streams } = makeHarness()
+    const sub = createResilientSubscription(pushOnly(), {
+      transport,
+      policy: { ...TEST_POLICY, sseRetryBackoff: { baseMs: 10_000, factor: 1, maxMs: 10_000 } },
+      random: () => 1,
+    })
+    sub.onStatusChange((status) => {
+      if (status === 'reconnecting') sub.nudge()
+    })
+    await flush()
+    expect(transport.streamConnects).toHaveLength(1)
+
+    streams[0]?.close()
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(transport.streamConnects).toHaveLength(2)
+    expect(sub.status).toBe('live')
+  })
+
   it('leaves a connect in flight alone on nudge', async () => {
     const { transport } = makeHarness()
     transport.holdNextStreamConnect()

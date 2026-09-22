@@ -629,6 +629,11 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
 
       if (this.stopped || this.streamAbandoned || this.reconciler.isTerminated) return
 
+      // Armed before any status is published below, so a listener that
+      // nudges on 'reconnecting' cuts this backoff short.
+      const backoffWake = new AbortController()
+      this.reconnectBackoffWake = backoffWake
+
       // A connection only counts as successful once it has actually carried
       // bytes. A stream that is accepted and then closes immediately would
       // otherwise reset the backoff on every attempt and never degrade,
@@ -657,7 +662,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
         this.serverRetryHintMs !== undefined && !connectFailed
           ? this.serverRetryHintMs
           : backoffDelay(backoffConfig, this.consecutiveConnectFailures, this.random)
-      await this.waitOutReconnectBackoff(delay)
+      await this.waitOutReconnectBackoff(delay, backoffWake)
       if (this.stopped) return
     }
   }
@@ -667,14 +672,12 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
    * A nudge ends the wait without stopping anything, so the caller tells the
    * two apart by `stopped`.
    */
-  private async waitOutReconnectBackoff(delayMs: number): Promise<void> {
-    // A status listener run on the way here may already have stopped it.
-    if (this.stopped) return
-    const wake = new AbortController()
+  private async waitOutReconnectBackoff(delayMs: number, wake: AbortController): Promise<void> {
     const onMasterAbort = () => wake.abort()
     this.abortController.signal.addEventListener('abort', onMasterAbort, { once: true })
-    this.reconnectBackoffWake = wake
     try {
+      // A status listener run on the way here may already have stopped it.
+      if (this.stopped) return
       await sleep(delayMs, wake.signal)
     } finally {
       this.reconnectBackoffWake = undefined
