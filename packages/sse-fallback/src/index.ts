@@ -54,7 +54,10 @@ export { backoffDelay, ResettableTimer, sleep } from './scheduler.ts'
 export {
   type CreateResilientSubscriptionOptions,
   createResilientSubscription,
+  type DegradationKind,
+  FallbackDegradedError,
   type FallbackDiagnostics,
+  FallbackHttpError,
   type ResilientSubscription,
   type StopReason,
   type SubscriptionStatus,

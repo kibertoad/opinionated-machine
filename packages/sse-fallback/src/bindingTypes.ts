@@ -343,6 +343,14 @@ export type FallbackPolicy = {
    * @default 'auto'
    */
   streamRefusal: 'auto' | 'stop' | 'keep-polling'
+  /**
+   * How often `diagnostics.onDegraded` repeats while the subscription stays
+   * degraded. A fallback that keeps delivering is what lets a broken stream
+   * become the permanent state unnoticed, so the report does not stop at the
+   * first one. `'off'` reports each degradation once.
+   * @default 600_000
+   */
+  degradationReportIntervalMs: number | 'off'
 }
 
 export const DEFAULT_POLICY: FallbackPolicy = {
@@ -364,6 +372,7 @@ export const DEFAULT_POLICY: FallbackPolicy = {
   unretryableStatuses: [401, 403, 404],
   authChallengeStatuses: [401],
   streamRefusal: 'auto',
+  degradationReportIntervalMs: 600_000,
 }
 
 /**

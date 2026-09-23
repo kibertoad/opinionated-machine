@@ -993,7 +993,7 @@ describe('createResilientSubscription — auth challenge', () => {
   })
 
   it('recovers a stream connect refused with 401', async () => {
-    const { transport, snapshots } = makeHarness()
+    const { transport } = makeHarness()
     transport.denyNextStreamConnect({ status: 401 })
     const sub = createResilientSubscription(makeBinding(), {
       transport,
@@ -1001,11 +1001,12 @@ describe('createResilientSubscription — auth challenge', () => {
       random: () => 1,
       onAuthChallenge: () => true,
     })
-    await vi.advanceTimersByTimeAsync(200)
+    await flush()
 
-    expect(transport.streamConnects.length).toBeGreaterThan(1)
+    // Retried at once, without the reconnect backoff.
+    expect(transport.streamConnects).toHaveLength(2)
+    expect(sub.status).toBe('live')
     expect(sub.result).toBeUndefined()
-    expect(snapshots.length).toBeGreaterThan(0)
   })
 })
 

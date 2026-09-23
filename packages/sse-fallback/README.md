@@ -106,6 +106,7 @@ sub.status                        // 'connecting' | 'live' | 'reconnecting' | 'p
 sub.nudge()                       // force a repair now: a poll, or, when the snapshot
                                   // is synthesized, a reconnect that skips the backoff
 sub.streamAbandoned               // true once a refusal took the stream for good
+sub.onStreamEstablished(() => {}) // a connection carried its first byte
 sub.stop()
 ```
 
@@ -134,6 +135,47 @@ try {
 | `'unretryable-status'` | refused with a status in `unretryableStatuses` (`status`, `channel`); a stream refusal lands here unless the poll can carry the subscription alone |
 | `'budget-exhausted'` | `subscriptionBudget` ran out (`limit`) — show an error and offer a retry |
 | `'manual'` | the caller called `stop()`, or the creation `signal` aborted |
+
+### Reporting a broken stream
+
+A fallback that works hides the fault that engaged it. Delivery carries on
+over the poll, a few seconds late, and without a report nobody learns that the
+stream behind it has been refused since the last deploy. So a subscription
+that degrades hands an `Error` to `diagnostics.onDegraded`, and hands it again
+every `degradationReportIntervalMs` (10 minutes by default) until the stream
+carries bytes again:
+
+```ts
+createResilientSubscription(binding, {
+  transport,
+  diagnostics: {
+    onDegraded: (error) => errorTracker.notify(error),
+    onRecovered: ({ kind, degradedForMs }) => metrics.timing('sse.degraded', degradedForMs),
+  },
+})
+```
+
+The error is a `FallbackDegradedError`, and its message reads on its own in an
+error tracker:
+
+```
+SSE stream GET /projects/42/events was refused with 404 (it was never live); updates arrive late, on the fallback poll
+```
+
+| `kind` | Meaning |
+|---|---|
+| `'stream-refused'` | a status in `unretryableStatuses`; the stream is given up for good, so the report repeats for the life of the subscription |
+| `'stream-rejected'` | any other non-200 status, or a 200 that is not `text/event-stream` (a proxy error page, an SPA fallback route) |
+| `'stream-silent'` | accepted, then closed or timed out without a byte, which is what a buffering proxy looks like |
+| `'stream-unreachable'` | the connect threw or timed out; an offline client produces this too, so it is the one kind worth ranking lower |
+
+It also carries `status`, the `request`, `streamWasLive`,
+`pollCarriesDelivery` (false for a synthesized snapshot, where nothing is
+delivered at all), `reportCount` and `degradedForMs`, and the underlying
+failure as `cause`. A non-200 answer on either channel reaches
+`onStreamError` / `onPollError` as a `FallbackHttpError` with `channel`,
+`status` and `request`. `mode: 'poll-only'` never reports: it had no stream to
+lose.
 
 ### Bounding a pending operation
 
@@ -170,6 +212,10 @@ createResilientSubscription(binding, {
 The retry is granted once per failure streak: a second refusal with no
 successful request in between stops the subscription with
 `'unretryable-status'`.
+
+A refusal the hook recovers is not a failure. The retry runs at once, with no
+backoff, does not count toward `degradedAfterFailures`, and never reaches
+`diagnostics.onDegraded`.
 
 ### Adopting before the SSE endpoint exists
 
@@ -320,11 +366,16 @@ could reach from one withdrawn mid-session. Repair after a reconnect is the
 consumer's job too, since only they know what to re-read:
 
 ```ts
-sub.onStatusChange((status) => {
-  if (status === 'live') queryClient.invalidateQueries({ queryKey: ['segments', projectId] })
-  if (status === 'stopped') reportToErrorTracker('live segment updates are off')
+sub.onStreamEstablished(() => {
+  queryClient.invalidateQueries({ queryKey: ['segments', projectId] })
 })
+sub.onStop((detail) => reportToErrorTracker('live segment updates are off', detail))
 ```
+
+`onStreamEstablished` fires when a connection carries its first byte, which
+the server's heartbeat makes prompt. `'live'` is the wrong trigger for a
+repair: it arrives on the accepted connect, so an upstream that accepts and
+closes at once would repeat the repair on every retry.
 
 A snapshot route that exists but cannot be expressed as events belongs here
 too, and the subscription never dispatches it. An endpoint that answers 204
@@ -384,6 +435,13 @@ version exceeds the high-watermark. This one rule handles:
 
 `version: 'none'` opts into at-least-once/last-writer-wins semantics as an
 adoption bridge — strongly prefer real versions.
+
+Without a version the stale-poll race has no watermark to settle it, so the
+subscription settles it by arrival order instead: a snapshot requested before
+the stream delivered an event is dropped (`onStaleSnapshot`) and requested
+again, since its body may predate the pushed news. After three overtaken
+polls in a row the next one is delivered anyway, so a busy stream cannot
+starve the poll that repairs an outage.
 
 ## Server-side guarantees (the adopting team's checklist)
 
@@ -487,6 +545,7 @@ responsibility.
 | `streamRefusal` | `'auto'` | follows `snapshotSource`: keep polling on an endpoint snapshot, stop on a synthesized one |
 | `mode` | `'dual'` | `'poll-only'` never opens a stream |
 | `subscriptionBudget` | unset | `{ maxDurationMs, maxPolls }` — a hard give-up bound |
+| `degradationReportIntervalMs` | 600 000 | how often `onDegraded` repeats while degraded; `'off'` reports once |
 
 Every wait in the machine is bounded, because an unbounded one turns the
 fallback into no fallback at all: a hung connect or a poll that never settles
