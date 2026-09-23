@@ -290,7 +290,8 @@ export function asMessageQueueHandlerClass<T = object>(
 ): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type as unknown as Constructor<T>, {
     // these follow message-queue-toolkit conventions
-    asyncInit: 'start',
+    // consumers only set up their own queue and subscription, so they do not have to start one by one
+    asyncInit: { method: 'start', concurrent: true },
     asyncDispose: 'close',
     asyncDisposePriority: 10,
 
@@ -316,7 +317,8 @@ export function asEnqueuedJobWorkerClass<T = object>(
 ): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type as unknown as Constructor<T>, {
     // these follow background-jobs-common conventions
-    asyncInit: 'start',
+    // workers only attach to their own queue, so they do not have to start one by one
+    asyncInit: { method: 'start', concurrent: true },
     asyncDispose: 'dispose',
     asyncDisposePriority: 15,
     public: false,
