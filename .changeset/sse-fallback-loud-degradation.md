@@ -11,3 +11,5 @@ With `version: 'none'`, a snapshot requested before the stream delivered an even
 A stream connect refused with a status that `onAuthChallenge` recovers no longer counts toward `degradedAfterFailures` or adds to the reconnect backoff: the retry with fresh credentials runs at once, as a recovered poll already did.
 
 `TestTransport.denyNextStreamConnect` accepts the response `headers`.
+
+BREAKING: `FallbackPolicy` has a new required field, `degradationReportIntervalMs`. The `policy` option takes a `Partial<FallbackPolicy>`, so passing overrides is unaffected; code that builds or annotates a complete `FallbackPolicy` without spreading `DEFAULT_POLICY` has to add it.
