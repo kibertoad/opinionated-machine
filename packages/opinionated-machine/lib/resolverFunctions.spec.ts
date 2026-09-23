@@ -33,4 +33,14 @@ describe('asEnqueuedJobWorkerClass', () => {
 
     expect(resolver.asyncInit).toEqual({ method: 'start', concurrent: true })
   })
+
+  it('lets the caller opt back into a sequential start', () => {
+    const resolver = asEnqueuedJobWorkerClass(
+      Consumer,
+      { queueName: 'queue', diOptions },
+      { asyncInit: 'start' },
+    )
+
+    expect(resolver.asyncInit).toBe('start')
+  })
 })
