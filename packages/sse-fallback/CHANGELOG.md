@@ -1,5 +1,21 @@
 # @opinionated-machine/sse-fallback
 
+## 0.3.0
+
+### Minor Changes
+
+- 6f4482b: Report a broken stream instead of hiding it behind the fallback. A subscription that degrades hands a `FallbackDegradedError` to the new `diagnostics.onDegraded`, naming the route, the status and the channel left, and repeats it every `degradationReportIntervalMs` (default 10 minutes, `'off'` for once) until the stream carries bytes again, which `diagnostics.onRecovered` reports. Its `kind` separates a refused stream, a rejected one (a non-200, or a 200 that is not `text/event-stream`), one accepted and closed without a byte, and one that could not be reached. Non-200 answers now reach `onStreamError` / `onPollError` as a `FallbackHttpError` carrying `channel`, `status` and `request`.
+  
+  Add `subscription.onStreamEstablished`, which fires when a connection carries its first byte. A synthesized binding reports `'live'` on the accepted connect, so repair work hung off `'live'` repeats on every retry against an upstream that accepts and closes at once.
+  
+  With `version: 'none'`, a snapshot requested before the stream delivered an event is dropped and requested again rather than allowed to overwrite the newer pushed value, up to three times in a row.
+  
+  A stream connect refused with a status that `onAuthChallenge` recovers no longer counts toward `degradedAfterFailures` or adds to the reconnect backoff: the retry with fresh credentials runs at once, as a recovered poll already did.
+  
+  `TestTransport.denyNextStreamConnect` accepts the response `headers`.
+  
+  BREAKING: `FallbackPolicy` has a new required field, `degradationReportIntervalMs`. The `policy` option takes a `Partial<FallbackPolicy>`, so passing overrides is unaffected; code that builds or annotates a complete `FallbackPolicy` without spreading `DEFAULT_POLICY` has to add it.
+
 ## 0.2.0
 
 ### Minor Changes
