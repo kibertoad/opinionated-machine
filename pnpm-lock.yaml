@@ -308,8 +308,8 @@ importers:
         specifier: ^3.1.1
         version: 3.1.1
       '@lokalise/fastify-api-contracts':
-        specifier: ^7.0.0
-        version: 7.0.0(@fastify/sse@0.6.0(fastify@5.12.5))(@lokalise/api-contracts@8.0.1(zod@4.6.5))(@lokalise/node-core@14.9.1(zod@4.6.5))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.5)(openapi-types@12.1.3)(zod@4.6.5))(fastify@5.12.5)(zod@4.6.5)
+        specifier: ^7.0.1
+        version: 7.0.1(@fastify/sse@0.6.0(fastify@5.12.5))(@lokalise/api-contracts@8.0.1(zod@4.6.5))(@lokalise/node-core@14.9.1(zod@4.6.5))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.5)(openapi-types@12.1.3)(zod@4.6.5))(fastify@5.12.5)(zod@4.6.5)
       '@lokalise/node-core':
         specifier: ^14.7.4
         version: 14.9.1(zod@4.6.5)
@@ -638,8 +638,8 @@ packages:
   '@lokalise/biome-config@3.1.1':
     resolution: {integrity: sha512-B0VeqoX/PeVOIEgZhmnOIAFo9w8MV+MRdDue6lO7LnIjNB92vz+0onRV0v4RY2oACXoxVS3B2CfIzLbBpmbpQQ==}
 
-  '@lokalise/fastify-api-contracts@7.0.0':
-    resolution: {integrity: sha512-g2/7+3qDrl5UVL+teXKqlnzH3a39jd1qDKK+an2Q2AhHt2qFl1zU4GvTscWeDh8wpmyN34ZmCPUb+SZ+S+PruA==}
+  '@lokalise/fastify-api-contracts@7.0.1':
+    resolution: {integrity: sha512-Mx3lI7N7u08342KcyCuKqAtHSDrIxg+78YCFYVjFbtRnIbImQKpJD7C6aNGBVdG6mIPqNLKuiZeSM52wvjJXqQ==}
     peerDependencies:
       '@fastify/sse': '>=0.5.0'
       '@lokalise/api-contracts': '>=8.0.0'
@@ -1838,7 +1838,7 @@ snapshots:
 
   '@lokalise/biome-config@3.1.1': {}
 
-  '@lokalise/fastify-api-contracts@7.0.0(@fastify/sse@0.6.0(fastify@5.12.5))(@lokalise/api-contracts@8.0.1(zod@4.6.5))(@lokalise/node-core@14.9.1(zod@4.6.5))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.5)(openapi-types@12.1.3)(zod@4.6.5))(fastify@5.12.5)(zod@4.6.5)':
+  '@lokalise/fastify-api-contracts@7.0.1(@fastify/sse@0.6.0(fastify@5.12.5))(@lokalise/api-contracts@8.0.1(zod@4.6.5))(@lokalise/node-core@14.9.1(zod@4.6.5))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.5)(openapi-types@12.1.3)(zod@4.6.5))(fastify@5.12.5)(zod@4.6.5)':
     dependencies:
       '@lokalise/api-contracts': 8.0.1(zod@4.6.5)
       '@lokalise/node-core': 14.9.1(zod@4.6.5)
