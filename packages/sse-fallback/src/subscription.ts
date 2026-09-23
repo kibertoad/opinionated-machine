@@ -387,6 +387,7 @@ type StreamFailure = {
   kind: DegradationKind
   status?: number
   contentType?: string
+  request: TransportRequest
   cause?: unknown
 }
 
@@ -443,7 +444,6 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
   private streamEverProducedBytes = false
   /** Whether the stream has been given up for good, see `abandonStream`. */
   private streamAbandonedValue = false
-  private lastStreamFailure: StreamFailure | undefined
   /** The degradation last reported through `onDegraded`, until the stream recovers. */
   private reportedDegradation:
     | { failure: StreamFailure; streamWasLive: boolean; since: number; reports: number }
@@ -735,7 +735,13 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
               : `SSE connect failed with status ${response.status}`,
             { channel: 'stream', status: response.status, request },
           )
-          failure = { kind: 'stream-rejected', status: response.status, contentType, cause: error }
+          failure = {
+            kind: 'stream-rejected',
+            status: response.status,
+            contentType,
+            request,
+            cause: error,
+          }
           this.diagnostics.onStreamError?.(error)
           if (this.policy.unretryableStatuses.includes(response.status)) {
             // An expired token is the common case behind a 401 in a SPA, and
@@ -749,6 +755,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
                 this.abandonStream({
                   kind: 'stream-refused',
                   status: response.status,
+                  request,
                   cause: error,
                 })
                 return
@@ -806,7 +813,11 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       } catch (error) {
         if (this.stopped) return
         connectFailed = !this.streamConnected
-        failure = { kind: connectFailed ? 'stream-unreachable' : 'stream-silent', cause: error }
+        failure = {
+          kind: connectFailed ? 'stream-unreachable' : 'stream-silent',
+          request,
+          cause: error,
+        }
         this.diagnostics.onStreamError?.(error)
       } finally {
         connectTimeout.clear()
@@ -826,15 +837,18 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       // bytes. A stream that is accepted and then closes immediately would
       // otherwise reset the backoff on every attempt and never degrade,
       // turning a broken upstream into a reconnect-and-poll storm.
+      let countedFailure: StreamFailure | undefined
       if (connectFailed || !this.streamProducedBytes) {
         this.consecutiveConnectFailures += 1
-        this.lastStreamFailure = failure ?? { kind: 'stream-silent' }
+        countedFailure = failure ?? { kind: 'stream-silent', request }
+        // Reminders name the cause as it stands now, not the one that degraded it.
+        if (this.reportedDegradation) this.reportedDegradation.failure = countedFailure
       }
       if (!this.degraded && this.consecutiveConnectFailures >= this.policy.degradedAfterFailures) {
         // The poll this drop needs is scheduled below; the deadman carries
         // the degraded cadence from its next arm.
         this.degrade({ forcePoll: false })
-        if (this.lastStreamFailure) this.reportDegradation(this.lastStreamFailure)
+        if (countedFailure) this.reportDegradation(countedFailure)
       } else {
         // Already degraded, a drop keeps an endpoint binding on 'polling'. A
         // synthesized one may have reported 'live' off a quiet reconnect, and
@@ -936,7 +950,6 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     const { failure } = degradation
     const error = new FallbackDegradedError({
       ...failure,
-      request: this.binding.buildStreamRequest(this.params),
       streamWasLive: degradation.streamWasLive,
       pollCarriesDelivery: this.pollCanDeliver,
       reportCount: degradation.reports,
@@ -1025,10 +1038,11 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
     // leave degraded mode. Doing this here rather than at connect keeps a
     // connect-then-close loop counted as the failure it is.
     this.consecutiveConnectFailures = 0
-    this.lastStreamFailure = undefined
     this.authCredit = 'available'
     this.degraded = false
     this.endDegradation()
+    // `onRecovered` may have stopped the subscription, which must stay 'stopped'.
+    if (this.stopped) return
     // Bytes on the wire are the only evidence that delivery works, so they are
     // what promotes the subscription to 'live' — from degraded polling, and
     // equally from the 'connecting' a byte-less stream is parked in after

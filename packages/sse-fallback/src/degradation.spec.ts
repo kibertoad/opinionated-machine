@@ -236,6 +236,49 @@ describe('createResilientSubscription: degradation reports', () => {
     ])
   })
 
+  it('names the current cause in a reminder, not the one that degraded it', async () => {
+    const { transport } = makeHarness()
+    const reports: FallbackDegradedError[] = []
+    transport.denyNextStreamConnect({ error: new TypeError('Failed to fetch') })
+    transport.denyNextStreamConnect({ error: new TypeError('Failed to fetch') })
+    for (let i = 0; i < 200; i += 1) transport.denyNextStreamConnect({ status: 502 })
+    createResilientSubscription(makeBinding(), {
+      transport,
+      policy: POLICY,
+      diagnostics: { onDegraded: (error) => reports.push(error) },
+      random: () => 1,
+    })
+    await vi.advanceTimersByTimeAsync(10_500)
+
+    expect(reports.map((report) => [report.kind, report.status, report.reportCount])).toEqual([
+      ['stream-unreachable', undefined, 1],
+      ['stream-rejected', 502, 2],
+    ])
+  })
+
+  it('stays stopped when onRecovered stops the subscription', async () => {
+    const { transport, streams, snapshots } = makeHarness()
+    transport.denyNextStreamConnect({ status: 502 })
+    transport.denyNextStreamConnect({ status: 502 })
+    let established = 0
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: POLICY,
+      diagnostics: { onRecovered: () => sub.stop() },
+      random: () => 1,
+    })
+    sub.onStreamEstablished(() => {
+      established += 1
+    })
+    await vi.advanceTimersByTimeAsync(5_000)
+    for (const call of snapshots) call.respond({ status: 'pending', version: 1 })
+    streams[0]?.pushHeartbeat()
+    await flush()
+
+    expect(sub.status).toBe('stopped')
+    expect(established).toBe(0)
+  })
+
   it('reports once when the reminder is off', async () => {
     const { transport } = makeHarness()
     const reports: FallbackDegradedError[] = []
