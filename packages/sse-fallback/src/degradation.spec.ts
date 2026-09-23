@@ -279,6 +279,26 @@ describe('createResilientSubscription: degradation reports', () => {
     expect(established).toBe(0)
   })
 
+  it('does not count a 401 that onAuthChallenge recovered as a stream failure', async () => {
+    const { transport } = makeHarness()
+    const reports: FallbackDegradedError[] = []
+    transport.denyNextStreamConnect({ status: 502 })
+    transport.denyNextStreamConnect({ status: 401 })
+    const sub = createResilientSubscription(makeBinding(), {
+      transport,
+      policy: POLICY,
+      diagnostics: { onDegraded: (error) => reports.push(error) },
+      onAuthChallenge: () => true,
+      random: () => 1,
+    })
+    // The 502 backs off 100ms; the retry after the refresh does not wait.
+    await vi.advanceTimersByTimeAsync(150)
+
+    expect(transport.streamConnects).toHaveLength(3)
+    expect(reports).toHaveLength(0)
+    expect(sub.status).not.toBe('polling')
+  })
+
   it('reports once when the reminder is off', async () => {
     const { transport } = makeHarness()
     const reports: FallbackDegradedError[] = []

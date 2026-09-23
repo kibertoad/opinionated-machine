@@ -213,6 +213,10 @@ The retry is granted once per failure streak: a second refusal with no
 successful request in between stops the subscription with
 `'unretryable-status'`.
 
+A refusal the hook recovers is not a failure. The retry runs at once, with no
+backoff, does not count toward `degradedAfterFailures`, and never reaches
+`diagnostics.onDegraded`.
+
 ### Adopting before the SSE endpoint exists
 
 `policy.mode: 'poll-only'` (or the `POLL_ONLY_POLICY` preset) never opens a

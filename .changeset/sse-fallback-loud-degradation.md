@@ -8,4 +8,6 @@ Add `subscription.onStreamEstablished`, which fires when a connection carries it
 
 With `version: 'none'`, a snapshot requested before the stream delivered an event is dropped and requested again rather than allowed to overwrite the newer pushed value, up to three times in a row.
 
+A stream connect refused with a status that `onAuthChallenge` recovers no longer counts toward `degradedAfterFailures` or adds to the reconnect backoff: the retry with fresh credentials runs at once, as a recovered poll already did.
+
 `TestTransport.denyNextStreamConnect` accepts the response `headers`.

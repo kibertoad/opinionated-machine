@@ -111,6 +111,7 @@ export class FallbackHttpError extends Error {
  * What broke the stream, as far as a client can tell.
  *
  * - `'stream-refused'`: a status in `unretryableStatuses`; the stream is given up for good.
+ *   A refusal that `onAuthChallenge` recovers is not a failure and has no kind.
  * - `'stream-rejected'`: any other non-200 status, or a 200 that is not `text/event-stream`
  *   (a proxy error page, an SPA fallback route).
  * - `'stream-silent'`: accepted, then closed or timed out without a single byte. A proxy that
@@ -279,6 +280,9 @@ export type CreateResilientSubscriptionOptions = {
    * throw, to stop the subscription with `'unretryable-status'`. The retry is
    * granted once per auth failure streak: a second refusal with no successful
    * request in between stops the subscription.
+   *
+   * A refusal the hook recovers is not a stream failure: the retry runs at
+   * once, with no backoff, and does not count toward `degradedAfterFailures`.
    */
   onAuthChallenge?: (challenge: {
     status: number
@@ -702,6 +706,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
 
       let connectFailed = false
       let failure: StreamFailure | undefined
+      let credentialsRefreshed = false
       this.streamProducedBytes = false
       const request = this.binding.buildStreamRequest(this.params)
       // A connect that never produces headers must not park the subscription:
@@ -768,6 +773,9 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
               })
               return
             }
+            // A refreshed token says nothing about the stream's health, so
+            // the retry skips the failure count and the backoff, as a poll does.
+            credentialsRefreshed = true
           }
         } else {
           this.serverRetryHintMs = undefined
@@ -827,6 +835,7 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       }
 
       if (this.stopped || this.streamAbandoned || this.reconciler.isTerminated) return
+      if (credentialsRefreshed) continue
 
       // Armed before any status is published below, so a listener that
       // nudges on 'reconnecting' cuts this backoff short.
