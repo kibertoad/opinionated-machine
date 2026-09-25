@@ -25,7 +25,7 @@
         "@lokalise/biome-config": "^3.1.1",
         "@lokalise/tsconfig": "^3.1.0",
         "@types/node": "^22.19.7",
-        "turbo": "2.10.13",
+        "turbo": "2.11.1",
         "typescript": "^5.9.3",
         "vitest": "^4.1.11"
     }
