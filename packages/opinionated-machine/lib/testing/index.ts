@@ -16,16 +16,13 @@ export type {
   InjectApiSSEResult,
 } from './apiSseTestTypes.js'
 export {
-  type HasSessionSpy,
   SSEHttpClient,
   type SSEHttpConnectOptions,
   type SSEHttpConnectResult,
   type SSEHttpConnectWithSessionSpyOptions,
-  type SSEHttpConnectWithSpyOptions,
   type SSEHttpMethod,
 } from './sseHttpClient.js'
 export { SSEInjectClient, SSEInjectConnection } from './sseInjectClient.js'
-export { injectPayloadSSE, injectSSE } from './sseInjectHelpers.js'
 export {
   type CreateSSESessionSpyResult,
   createSSESessionSpy,
@@ -34,9 +31,6 @@ export {
 } from './sseSessionSpyFactory.js'
 export { SSETestServer } from './sseTestServer.js'
 export type {
-  InjectPayloadSSEOptions,
-  InjectSSEOptions,
-  InjectSSEResult,
   SSEConnectOptions,
   SSEInjectMethod,
   SSEResponse,

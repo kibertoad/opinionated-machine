@@ -24,8 +24,8 @@ export const ROUTE_STREAMING_SYMBOL = Symbol.for('opinionated-machine.route.stre
  *   a non-SSE body.
  *
  * Failures are not covered by either value. A 4xx or 5xx is an ordinary JSON
- * response on both kinds of route, including the early-return
- * `sse.respond(404, ...)` path that answers before the stream starts. So a
+ * response on both kinds of route, including a handler that returns
+ * `{ status: 404, body }` before starting the stream. So a
  * generator can size timeouts and buffering from this marker, but must not
  * assume the content type of a response that failed.
  *
@@ -35,8 +35,7 @@ export type RouteStreamingMode = 'sse' | 'dual'
 
 /**
  * Which branch a dual-mode route serves when the client does not ask for one
- * specifically (no `Accept` header, or `Accept: *\/*`). Mirrors the
- * `defaultMode` route option that `determineMode()` falls back to.
+ * specifically (no `Accept` header, or `Accept: *\/*`).
  *
  * A gateway that splits a dual route into two must know this, or it applies
  * request-shaped timeouts to a response that is actually a stream.

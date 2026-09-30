@@ -1,9 +1,9 @@
-import { injectDelete } from '@lokalise/fastify-api-contracts'
+import { injectByApiContract } from '@lokalise/fastify-api-contracts'
 import { asClass, createContainer, type NameAndRegistrationPair } from 'awilix'
 import { fastify } from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { describe, expect, it } from 'vitest'
-import type { AbstractModule } from '../lib/AbstractModule.js'
+import { AbstractModule, type MandatoryNameAndRegistrationPair } from '../lib/AbstractModule.js'
 import { type DependencyInjectionOptions, DIContext } from '../lib/DIContext.js'
 import { TestController } from './TestController.js'
 import {
@@ -128,13 +128,30 @@ describe('opinionated-machine', () => {
       })
       await app.ready()
 
-      const response = await injectDelete(app, TestController.contracts.deleteItem, {
+      const response = await injectByApiContract(app, TestController.contracts.deleteItem, {
         pathParams: {
           userId: '1',
         },
       })
 
       expect(response.statusCode).toBe(200)
+    })
+
+    it('rejects controllers not registered with asApiControllerClass', () => {
+      class PlainControllerModule extends AbstractModule<object> {
+        resolveDependencies() {
+          return {}
+        }
+
+        override resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
+          return { plainController: asClass(TestController) }
+        }
+      }
+      const context = new DIContext<object, Config>(createTestContainer<object>(), {}, {})
+
+      expect(() =>
+        context.registerDependencies({ modules: [new PlainControllerModule()] }, undefined),
+      ).toThrow('Controller "plainController" must be registered with asApiControllerClass()')
     })
   })
 

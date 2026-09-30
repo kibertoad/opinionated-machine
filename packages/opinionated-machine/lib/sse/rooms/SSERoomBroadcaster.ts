@@ -12,8 +12,9 @@ const MAX_DEDUP_CACHE_SIZE = 1000
  * Shared, non-generic room broadcaster that can be registered once in DI
  * and used by multiple controllers and domain services.
  *
- * Controllers register their `sendEvent` callback via `registerSender()`.
- * Domain services receive the broadcaster directly from the DI container.
+ * `buildApiRoute` routes that pass it as `sseRooms` register their sessions
+ * with it via `registerSender()`. Domain services receive the broadcaster
+ * directly from the DI container.
  *
  * Requires `sseRoomManager` to be registered in the DI container.
  *
@@ -65,14 +66,14 @@ export class SSERoomBroadcaster {
 
   /**
    * Public getter for the underlying room manager.
-   * Used by the route builder for `session.rooms`.
+   * Used by the `buildApiRoute` connection registry for `getSessionRooms()`.
    */
   get roomManager(): SSERoomManager {
     return this._roomManager
   }
 
   /**
-   * Register a sender callback (typically from a controller's sendEvent).
+   * Register a sender callback (the `buildApiRoute` connection registry registers one per broadcaster).
    * When broadcasting, each registered sender is tried — the first to return `true` wins.
    */
   registerSender(sendFn: (connId: string, msg: SSEMessage) => Promise<boolean>): void {
@@ -115,7 +116,7 @@ export class SSERoomBroadcaster {
   /**
    * Lower-level broadcast API — sends a raw SSEMessage to all connections in one or more rooms.
    *
-   * The controller's typed `broadcastToRoom()` delegates here after constructing the message.
+   * The typed `broadcastToRoom()` delegates here after constructing the message.
    *
    * @param room - Room name or array of room names
    * @param message - The SSE message to broadcast
@@ -181,14 +182,14 @@ export class SSERoomBroadcaster {
 
   /**
    * Clean up dedup cache for a disconnected connection.
-   * Called by the controller when a connection is unregistered.
+   * Called when a connection is unregistered.
    */
   cleanupConnection(connectionId: string): void {
     this.dedupCache.delete(connectionId)
   }
 
   /**
-   * Try each registered sender until one succeeds (only the owning controller can send).
+   * Try each registered sender until one succeeds (only the sender that owns the connection can send).
    */
   private async sendToConnection(connId: string, msg: SSEMessage): Promise<boolean> {
     for (const sender of this.senders) {

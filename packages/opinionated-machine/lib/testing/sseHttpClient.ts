@@ -1,15 +1,10 @@
 import type { ApiContract } from '@lokalise/api-contracts'
+import type { SSESession } from '@lokalise/fastify-api-contracts'
 import { createSSEStreamParser, type ParsedSSEEvent } from '@opinionated-machine/sse-parser'
 import { stringify } from 'fast-querystring'
-import type { SSESession } from '../routes/fastifyRouteTypes.ts'
 import type { SpiedSSESession, SSESessionSpy } from '../sse/SSESessionSpy.ts'
 import { resolveApiSseSchemas, validateApiSseEvent } from './apiSseEventValidation.ts'
 import type { ApiSSEEvent } from './apiSseTestTypes.ts'
-
-/**
- * Interface for objects that have a sessionSpy (e.g., SSE controllers in test mode).
- */
-export type HasSessionSpy = { connectionSpy: SSESessionSpy }
 
 /** Canonical, on-the-wire spelling of a supported method. */
 type NormalizedSSEHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH'
@@ -18,7 +13,7 @@ type NormalizedSSEHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH'
  * HTTP methods supported when connecting to an SSE endpoint.
  *
  * Both spellings are accepted and normalized internally, so the lowercase form
- * used by route contracts (`buildContract({ method: 'post' })`) can be handed
+ * used by contracts (`defineApiContract({ method: 'post' })`) can be handed
  * over as-is.
  */
 export type SSEHttpMethod = NormalizedSSEHttpMethod | Lowercase<NormalizedSSEHttpMethod>
@@ -59,28 +54,7 @@ export type SSEHttpConnectOptions = {
 
 /**
  * Options for connecting with automatic server-side connection waiting,
- * driven by a controller's built-in `connectionSpy`.
- */
-export type SSEHttpConnectWithSpyOptions = SSEHttpConnectOptions & {
-  /**
-   * Wait for server-side connection registration after HTTP headers are received.
-   * This eliminates the race condition between `connect()` returning and the
-   * server-side handler completing connection registration.
-   */
-  awaitServerConnection: {
-    /** The SSE controller (must have connectionSpy enabled via isTestMode) */
-    controller: HasSessionSpy
-    /** Timeout in milliseconds (default: 5000) */
-    timeout?: number
-  }
-}
-
-/**
- * Options for connecting with automatic server-side connection waiting,
  * driven by a standalone spy from `createSSESessionSpy()`.
- *
- * Use this for routes built with `buildApiRoute`, which have no controller to
- * read a `connectionSpy` off of.
  */
 export type SSEHttpConnectWithSessionSpyOptions<TSession extends SpiedSSESession> =
   SSEHttpConnectOptions & {
@@ -212,7 +186,7 @@ function buildRequestBody(
  * })
  *
  * // 3. Server can now send events at any time
- * controller.sendEvent(connectionId, { event: 'notification', data: { msg: 'Hello' } })
+ * await session.send('notification', { msg: 'Hello' })
  *
  * // 4. Collect events as they arrive
  * const events = await client.collectEvents(3) // wait for 3 events
@@ -322,17 +296,8 @@ export class SSEHttpClient {
    * expect(client.response.status).toBe(200)
    * expect(client.response.headers.get('content-type')).toContain('text/event-stream')
    *
-   * // With awaitServerConnection (waits for server-side registration)
-   * const { client, serverConnection } = await SSEHttpClient.connect(
-   *   'http://localhost:3000',
-   *   '/api/stream',
-   *   { awaitServerConnection: { controller } }
-   * )
-   * // serverConnection is ready to use immediately
-   * await controller.sendEvent(serverConnection.id, { event: 'test', data: {} })
-   *
-   * // Same, for a `buildApiRoute` route with no controller: wire a standalone
-   * // spy into the route's hooks with createSSESessionSpy()
+   * // With awaitServerConnection (waits for server-side registration):
+   * // wire a standalone spy into the route's hooks with createSSESessionSpy()
    * const { spy, routeOptions } = createSSESessionSpy()
    * const { client, serverConnection } = await SSEHttpClient.connect(
    *   'http://localhost:3000',
@@ -342,11 +307,6 @@ export class SSEHttpClient {
    * await serverConnection.send('test', {})
    * ```
    */
-  static async connect(
-    baseUrl: string,
-    path: string,
-    options: SSEHttpConnectWithSpyOptions,
-  ): Promise<SSEHttpConnectResult>
   static async connect<TSession extends SpiedSSESession>(
     baseUrl: string,
     path: string,
@@ -360,10 +320,7 @@ export class SSEHttpClient {
   static async connect(
     baseUrl: string,
     path: string,
-    options?:
-      | SSEHttpConnectOptions
-      | SSEHttpConnectWithSpyOptions
-      | SSEHttpConnectWithSessionSpyOptions<SpiedSSESession>,
+    options?: SSEHttpConnectOptions | SSEHttpConnectWithSessionSpyOptions<SpiedSSESession>,
   ): Promise<SSEHttpClient | SSEHttpConnectResult<SpiedSSESession>> {
     // Build path with query string
     let pathWithQuery = path
@@ -408,12 +365,7 @@ export class SSEHttpClient {
           conn.request.url === pathWithQuery && conn.request.method.toUpperCase() === method,
       }
       try {
-        // Both branches call the same method; the spy is invariant in its session
-        // type, so they cannot be collapsed into one reference.
-        const serverConnection =
-          'spy' in awaitOptions
-            ? await awaitOptions.spy.waitForConnection(waitOptions)
-            : await awaitOptions.controller.connectionSpy.waitForConnection(waitOptions)
+        const serverConnection = await awaitOptions.spy.waitForConnection(waitOptions)
         return { client, serverConnection }
       } catch (error) {
         // The HTTP connection is already established and the caller never gets a

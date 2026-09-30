@@ -1,25 +1,27 @@
-import { buildSseContract as buildContract } from '@lokalise/api-contracts'
-import { z } from 'zod'
+import { defineApiContract, sseBody } from '@lokalise/api-contracts'
+import type { SSESession } from '@lokalise/fastify-api-contracts'
+import type { RouteOptions } from 'fastify'
+import { z } from 'zod/v4'
 import {
   AbstractModule,
-  AbstractSSEController,
   asSingletonClass,
   asSingletonFunction,
-  asSSEControllerClass,
-  type BuildFastifySSERoutesReturnType,
-  buildHandler,
-  type DependencyInjectionOptions,
+  type CreateSSESessionSpyResult,
   defineEventMetadata,
   type FilterVerdict,
   type IncomingEvent,
   type MandatoryNameAndRegistrationPair,
   type ResolverResult,
-  type SSEControllerConfig,
   SSERoomBroadcaster,
   SSERoomManager,
   SSESubscriptionManager,
   type SubscriptionContext,
 } from '../../../index.js'
+import {
+  AbstractApiController,
+  asApiControllerClass,
+  buildApiRoute,
+} from '../../../lib/api-contracts/index.ts'
 
 // ============================================================================
 // Types
@@ -31,27 +33,31 @@ export type TestUserContext = {
   mutedEventTypes: Set<string>
 }
 
-export type TestEventMetadata = { scope: 'project'; projectId: string } | { scope: 'global' }
+export type TestEventMetadata = { scope: 'project'; projectId: string }
 
-export const testMeta = defineEventMetadata<TestEventMetadata>()('scope', ['project', 'global'])
+export const testMeta = defineEventMetadata<TestEventMetadata>()('scope', ['project'])
 
 // ============================================================================
 // Contract
 // ============================================================================
 
-export const subscriptionStreamContract = buildContract({
+export const subscriptionStreamContract = defineApiContract({
   visibility: 'public',
   method: 'get',
+  summary: 'User-centered subscription stream',
   pathResolver: () => '/api/subscriptions/stream',
-  requestPathParamsSchema: z.object({}),
   requestQuerySchema: z.object({
     userId: z.string().optional(),
   }),
-  requestHeaderSchema: z.object({}),
-  serverSentEventSchemas: {
-    announcement: z.object({ message: z.string() }),
-    alert: z.object({ level: z.string(), message: z.string() }),
-    update: z.object({ entity: z.string(), action: z.string() }),
+  responsesByStatusCode: {
+    200: {
+      content: {
+        'text/event-stream': sseBody({
+          announcement: z.object({ message: z.string() }),
+          update: z.object({ entity: z.string(), action: z.string() }),
+        }),
+      },
+    },
   },
 })
 
@@ -96,13 +102,7 @@ export class ProjectMembershipResolver {
   }
 
   onConnect(ctx: SubscriptionContext<TestUserContext>): ResolverResult<TestUserContext> {
-    const memberships = this.projectService.getMemberships(ctx.userContext.userId)
-    const projectIds = new Set(memberships)
-
-    return {
-      userContext: { ...ctx.userContext, projectIds },
-      rooms: Array.from(projectIds).map((id) => `project:${id}`),
-    }
+    return this.resolve(ctx)
   }
 
   evaluate(
@@ -114,18 +114,15 @@ export class ProjectMembershipResolver {
         ? { action: 'allow' }
         : { action: 'deny', reason: 'not a project member' }
     }
-    // Global-scoped events have no project gate — allow them through.
-    // Without this, `defaultPolicy: 'deny'` would drop every global event.
-    if (testMeta.global(event.metadata)) {
-      return { action: 'allow' }
-    }
     return { action: 'defer' }
   }
 
   refresh(ctx: SubscriptionContext<TestUserContext>): ResolverResult<TestUserContext> {
-    const memberships = this.projectService.getMemberships(ctx.userContext.userId)
-    const projectIds = new Set(memberships)
+    return this.resolve(ctx)
+  }
 
+  private resolve(ctx: SubscriptionContext<TestUserContext>): ResolverResult<TestUserContext> {
+    const projectIds = new Set(this.projectService.getMemberships(ctx.userContext.userId))
     return {
       userContext: { ...ctx.userContext, projectIds },
       rooms: Array.from(projectIds).map((id) => `project:${id}`),
@@ -142,11 +139,7 @@ export class MutePreferencesResolver {
   }
 
   onConnect(ctx: SubscriptionContext<TestUserContext>): ResolverResult<TestUserContext> {
-    const mutedTypes = this.preferencesService.getMutedTypes(ctx.userContext.userId)
-    return {
-      userContext: { ...ctx.userContext, mutedEventTypes: new Set(mutedTypes) },
-      rooms: [],
-    }
+    return this.resolve(ctx)
   }
 
   evaluate(
@@ -160,6 +153,10 @@ export class MutePreferencesResolver {
   }
 
   refresh(ctx: SubscriptionContext<TestUserContext>): ResolverResult<TestUserContext> {
+    return this.resolve(ctx)
+  }
+
+  private resolve(ctx: SubscriptionContext<TestUserContext>): ResolverResult<TestUserContext> {
     const mutedTypes = this.preferencesService.getMutedTypes(ctx.userContext.userId)
     return {
       userContext: { ...ctx.userContext, mutedEventTypes: new Set(mutedTypes) },
@@ -172,52 +169,55 @@ export class MutePreferencesResolver {
 // Controller
 // ============================================================================
 
-export type SubscriptionStreamContracts = {
-  subscriptionStream: typeof subscriptionStreamContract
+/**
+ * Wraps the route's SSE lifecycle hooks, e.g. `createSSESessionSpy().withSpy`.
+ * It has to be applied when the route is built, so it is a dependency.
+ */
+export type SubscriptionStreamHooksDecorator = CreateSSESessionSpyResult['withSpy']
+
+export type SubscriptionStreamControllerDependencies = {
+  sseRoomManager: SSERoomManager
+  sseRoomBroadcaster: SSERoomBroadcaster
+  projectService: MockProjectService
+  preferencesService: MockPreferencesService
+  subscriptionStreamHooksDecorator: SubscriptionStreamHooksDecorator | undefined
 }
 
-export class SubscriptionStreamController extends AbstractSSEController<SubscriptionStreamContracts> {
-  public static contracts = {
-    subscriptionStream: subscriptionStreamContract,
-  } as const
+/**
+ * Wires an `SSESubscriptionManager` to a `buildApiRoute` SSE route:
+ *
+ * - `sseRooms` registers each session with the shared broadcaster, so the rooms
+ *   the manager joins (directly on `SSERoomManager`) are delivered to it.
+ * - `onConnect` runs `handleConnect`, which resolves the user context from the
+ *   request and joins the rooms the resolvers declare.
+ * - `onClose` runs `handleDisconnect`.
+ */
+export class SubscriptionStreamController extends AbstractApiController<
+  typeof SubscriptionStreamController.contracts
+> {
+  static contracts = { subscriptionStream: subscriptionStreamContract } as const
 
-  public readonly subscriptionManager: SSESubscriptionManager<TestUserContext, TestEventMetadata>
+  readonly routes: Record<keyof typeof SubscriptionStreamController.contracts, RouteOptions>
 
-  // Tracks in-flight handleConnect() promises keyed by connection id, so that
-  // onClose can wait for connect to settle before dispatching the matching
-  // disconnect. Without this, a client closing during the resolver chain would
-  // produce an out-of-order disconnect→connect and leak a managed entry.
-  // Tests can also await this via {@link awaitSubscriptionConnect} to avoid
-  // racy fixed sleeps after `awaitServerConnection`.
+  readonly subscriptionManager: SSESubscriptionManager<TestUserContext, TestEventMetadata>
+
+  // `onConnect` is not awaited by the route builder, so the client can close
+  // while `handleConnect` is still running the resolver chain. `onClose` waits
+  // for the matching connect to settle; otherwise disconnect would run first
+  // and the connect would then leave a managed entry behind.
   private readonly pendingConnects = new Map<string, Promise<void>>()
 
-  /**
-   * Test helper: resolve once the SSESubscriptionManager has finished
-   * processing handleConnect() for `connectionId`. Use after
-   * `awaitServerConnection` (which only waits for SSE-level registration).
-   */
-  awaitSubscriptionConnect(connectionId: string): Promise<void> {
-    return this.pendingConnects.get(connectionId) ?? Promise.resolve()
-  }
-
-  constructor(
-    deps: {
-      sseRoomManager: SSERoomManager
-      sseRoomBroadcaster: SSERoomBroadcaster
-      projectService: MockProjectService
-      preferencesService: MockPreferencesService
-    },
-    sseConfig?: SSEControllerConfig,
-  ) {
-    super(deps, sseConfig)
+  constructor(deps: SubscriptionStreamControllerDependencies) {
+    super()
 
     this.subscriptionManager = new SSESubscriptionManager<TestUserContext, TestEventMetadata>(
       {
-        resolveUserContext: async (request) => ({
-          userId: (request.query as { userId?: string }).userId ?? 'anonymous',
-          projectIds: new Set<string>(),
-          mutedEventTypes: new Set<string>(),
-        }),
+        resolveUserContext: (request) =>
+          Promise.resolve({
+            userId: (request.query as { userId?: string }).userId ?? 'anonymous',
+            projectIds: new Set<string>(),
+            mutedEventTypes: new Set<string>(),
+          }),
         resolvers: [
           new ProjectMembershipResolver(deps.projectService),
           new MutePreferencesResolver(deps.preferencesService),
@@ -230,64 +230,48 @@ export class SubscriptionStreamController extends AbstractSSEController<Subscrip
         sseRoomBroadcaster: deps.sseRoomBroadcaster,
       },
     )
-  }
 
-  buildSSERoutes(): BuildFastifySSERoutesReturnType<SubscriptionStreamContracts> {
-    return {
-      subscriptionStream: this.handleSubscriptionStream,
+    const hooks = {
+      onConnect: (session: SSESession) => this.connect(session),
+      onClose: (session: SSESession) => this.disconnect(session),
+    }
+    const decorate = deps.subscriptionStreamHooksDecorator
+
+    this.routes = {
+      subscriptionStream: buildApiRoute(
+        SubscriptionStreamController.contracts.subscriptionStream,
+        (_request, _reply, { sse }) => {
+          sse.start('keepAlive')
+        },
+        { ...(decorate ? decorate(hooks) : hooks), sseRooms: deps.sseRoomBroadcaster },
+      ),
     }
   }
 
-  private handleSubscriptionStream = buildHandler(
-    subscriptionStreamContract,
-    {
-      sse: (request, sse) => {
-        const session = sse.start('keepAlive', {
-          context: { userId: (request.query as { userId?: string }).userId },
-        })
+  private connect(session: SSESession): Promise<void> {
+    const connected = this.subscriptionManager.handleConnect(session)
+    // The route logs a rejected onConnect; the pending entry must not reject,
+    // so that disconnect still runs after a failed connect.
+    const settled = connected
+      .catch(() => {})
+      .finally(() => {
+        this.pendingConnects.delete(session.id)
+      })
+    this.pendingConnects.set(session.id, settled)
+    return connected
+  }
 
-        // Track the connect promise so onClose can wait for it. We surface
-        // setup failures via console.error rather than swallowing them, but
-        // we still resolve so disconnect can proceed without dangling on a
-        // rejected promise.
-        const connectPromise = this.subscriptionManager
-          .handleConnect(session)
-          .catch((err) => {
-            // Surface setup failures so a flaky resolver doesn't get hidden.
-            // biome-ignore lint/suspicious/noConsole: test fixture diagnostics
-            console.error('SubscriptionStream: handleConnect failed', err)
-          })
-          .finally(() => {
-            this.pendingConnects.delete(session.id)
-          })
-        this.pendingConnects.set(session.id, connectPromise)
-      },
-    },
-    {
-      onClose: async (session) => {
-        // Wait for any in-flight handleConnect to finish so we don't dispatch
-        // disconnect before connect has registered the connection. If connect
-        // already settled, this is a no-op.
-        const pending = this.pendingConnects.get(session.id)
-        if (pending) {
-          await pending
-        }
-        this.subscriptionManager.handleDisconnect(session)
-      },
-    },
-  )
+  private async disconnect(session: SSESession): Promise<void> {
+    await this.pendingConnects.get(session.id)
+    this.subscriptionManager.handleDisconnect(session)
+  }
 }
 
 // ============================================================================
 // Module
 // ============================================================================
 
-export type SubscriptionTestModuleDependencies = {
-  sseRoomManager: SSERoomManager
-  sseRoomBroadcaster: SSERoomBroadcaster
-  projectService: MockProjectService
-  preferencesService: MockPreferencesService
-}
+export type SubscriptionTestModuleDependencies = SubscriptionStreamControllerDependencies
 
 export type SubscriptionTestModuleControllers = {
   subscriptionStreamController: SubscriptionStreamController
@@ -296,32 +280,35 @@ export type SubscriptionTestModuleControllers = {
 export class SubscriptionTestModule extends AbstractModule<SubscriptionTestModuleDependencies> {
   private readonly projectService: MockProjectService
   private readonly preferencesService: MockPreferencesService
+  private readonly hooksDecorator: SubscriptionStreamHooksDecorator | undefined
 
-  constructor(projectService: MockProjectService, preferencesService: MockPreferencesService) {
+  constructor(options: {
+    projectService: MockProjectService
+    preferencesService: MockPreferencesService
+    hooksDecorator?: SubscriptionStreamHooksDecorator
+  }) {
     super()
-    this.projectService = projectService
-    this.preferencesService = preferencesService
+    this.projectService = options.projectService
+    this.preferencesService = options.preferencesService
+    this.hooksDecorator = options.hooksDecorator
   }
 
   resolveDependencies(): MandatoryNameAndRegistrationPair<SubscriptionTestModuleDependencies> {
-    const projectService = this.projectService
-    const preferencesService = this.preferencesService
+    const { projectService, preferencesService, hooksDecorator } = this
     return {
       sseRoomManager: asSingletonFunction((): SSERoomManager => new SSERoomManager()),
       sseRoomBroadcaster: asSingletonClass(SSERoomBroadcaster),
       projectService: asSingletonFunction((): MockProjectService => projectService),
       preferencesService: asSingletonFunction((): MockPreferencesService => preferencesService),
+      subscriptionStreamHooksDecorator: asSingletonFunction(
+        (): SubscriptionStreamHooksDecorator | undefined => hooksDecorator,
+      ),
     }
   }
 
-  override resolveControllers(
-    diOptions: DependencyInjectionOptions,
-  ): MandatoryNameAndRegistrationPair<unknown> {
+  override resolveControllers(): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      subscriptionStreamController: asSSEControllerClass(SubscriptionStreamController, {
-        diOptions,
-        rooms: true,
-      }),
+      subscriptionStreamController: asApiControllerClass(SubscriptionStreamController),
     }
   }
 }

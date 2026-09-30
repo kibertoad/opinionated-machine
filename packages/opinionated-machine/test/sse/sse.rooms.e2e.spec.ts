@@ -1,19 +1,27 @@
-import { createContainer } from 'awilix'
+import { defineApiContract, sseBody } from '@lokalise/api-contracts'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod/v4'
 import type { SSEMessage, SSERoomAdapter, SSERoomMessageHandler } from '../../index.js'
-import { DIContext, SSEHttpClient } from '../../index.js'
-import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
-import type { TestRoomSSEController } from './fixtures/testControllers.js'
 import {
-  TestRoomSSEModule,
-  type TestRoomSSEModuleControllers,
-  type TestRoomSSEModuleDependencies,
-} from './fixtures/testModules.js'
+  buildApiRoute,
+  createSSESessionSpy,
+  getSessionRooms,
+  SSEHttpClient,
+  SSERoomBroadcaster,
+  SSERoomManager,
+  type SSESessionSpy,
+} from '../../index.js'
+import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 
 /**
- * Mock adapter for testing remote broadcast deduplication.
- * Allows manually triggering the onMessage handler to simulate messages from other nodes.
+ * Room behaviour of `buildApiRoute` sessions that `test/api-contracts/api.rooms*.spec.ts`
+ * does not cover: multi-room membership through `getSessionRooms`, and delivery of
+ * broadcasts arriving from other nodes through the room adapter.
+ */
+
+/**
+ * Adapter that lets a test inject a message as if another node had published it.
  */
 class MockAdapter implements SSERoomAdapter {
   private messageHandler?: SSERoomMessageHandler
@@ -42,529 +50,199 @@ class MockAdapter implements SSERoomAdapter {
     this.messageHandler = handler
   }
 
-  /** Simulate receiving a message from another node */
   simulateRemoteMessage(room: string, message: SSEMessage, sourceNodeId: string): void {
     this.messageHandler?.(room, message, sourceNodeId)
   }
 }
 
+const roomStreamContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'Room stream',
+  pathResolver: ({ roomId }) => `/api/rooms/${roomId}/stream`,
+  requestPathParamsSchema: z.object({ roomId: z.string() }),
+  requestQuerySchema: z.object({
+    also: z.string().optional(),
+    skip: z.string().optional(),
+  }),
+  responsesByStatusCode: {
+    200: {
+      content: {
+        'text/event-stream': sseBody({ message: z.object({ from: z.string(), text: z.string() }) }),
+      },
+    },
+  },
+})
+
+type RoomsServer = {
+  server: SSETestServerWithResources<undefined>
+  spy: SSESessionSpy
+}
+
 /**
- * E2E tests for SSE Rooms functionality.
- *
- * Tests room operations including:
- * - Joining/leaving rooms via session.rooms API
- * - Broadcasting to rooms via broadcastToRoom
- * - Auto-leave on disconnect
- * - Room queries (getConnectionsInRoom, getRooms, etc.)
+ * Serves a keepAlive stream that joins the path room plus any comma-separated
+ * `also` rooms in one `join()` call, then leaves any comma-separated `skip` rooms.
  */
-describe('SSE Rooms E2E', () => {
-  let server: SSETestServerWithResources<{
-    context: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
-  }>
-  let context: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
-  let controller: TestRoomSSEController
-
-  beforeEach(async () => {
-    const container = createContainer<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers>(
-      { injectionMode: 'PROXY' },
-    )
-    context = new DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>(
-      container,
-      { isTestMode: true },
-      {},
-    )
-    context.registerDependencies({ modules: [new TestRoomSSEModule()] }, undefined)
-
-    controller = context.diContainer.resolve<TestRoomSSEController>('testRoomSSEController')
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
+async function startRoomsServer(broadcaster: SSERoomBroadcaster): Promise<RoomsServer> {
+  const { spy, withSpy } = createSSESessionSpy()
+  const server = await createSSETestServer(
+    (app) => {
+      app.route(
+        buildApiRoute(
+          roomStreamContract,
+          (request, _reply, { sse }) => {
+            const session = sse.start('keepAlive')
+            const rooms = getSessionRooms(session)
+            const also = request.query.also?.split(',') ?? []
+            rooms.join([request.params.roomId, ...also])
+            if (request.query.skip) rooms.leave(request.query.skip.split(','))
+          },
+          { ...withSpy(), sseRooms: broadcaster },
+        ),
+      )
+    },
+    {
+      configureApp: (app) => {
+        app.setValidatorCompiler(validatorCompiler)
+        app.setSerializerCompiler(serializerCompiler)
       },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
+      setup: () => undefined,
+    },
+  )
+  return { server, spy }
+}
 
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  describe('room manager initialization', () => {
-    it('should enable rooms when configured', () => {
-      expect(controller.testRoomsEnabled).toBe(true)
-    })
-  })
-
-  describe('session.rooms API', () => {
-    it('should join room from path parameter', { timeout: 10000 }, async () => {
-      // Connect to room 'general'
-      const { client, serverConnection } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/general/stream',
-        {
-          query: { userId: 'user1' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      expect(controller.testGetConnectionsInRoom('general')).toContain(serverConnection.id)
-
-      client.close()
-    })
-
-    it('should join multiple rooms', { timeout: 10000 }, async () => {
-      const { client, serverConnection } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/lobby/stream',
-        { awaitServerConnection: { controller } },
-      )
-
-      // Manually join additional rooms
-      controller.testJoinRoom(serverConnection.id, ['premium', 'beta'])
-
-      // Verify connection is in all rooms
-      expect(controller.testGetConnectionsInRoom('lobby')).toContain(serverConnection.id)
-      expect(controller.testGetConnectionsInRoom('premium')).toContain(serverConnection.id)
-      expect(controller.testGetConnectionsInRoom('beta')).toContain(serverConnection.id)
-
-      client.close()
-    })
-
-    it('should leave rooms manually', { timeout: 10000 }, async () => {
-      const { client, serverConnection } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/room1/stream',
-        { awaitServerConnection: { controller } },
-      )
-
-      controller.testJoinRoom(serverConnection.id, ['room2', 'room3'])
-      expect(controller.testGetConnectionsInRoom('room2')).toContain(serverConnection.id)
-
-      controller.testLeaveRoom(serverConnection.id, 'room2')
-
-      expect(controller.testGetConnectionsInRoom('room2')).not.toContain(serverConnection.id)
-      expect(controller.testGetConnectionsInRoom('room3')).toContain(serverConnection.id)
-
-      client.close()
-    })
-  })
-
-  describe('broadcastToRoom', () => {
-    it('should count all connections in a room', { timeout: 10000 }, async () => {
-      // Connect two users to the same room
-      const { client: client1, serverConnection: conn1 } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/chat/stream',
-        {
-          query: { userId: 'user1' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      const { client: client2, serverConnection: conn2 } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/chat/stream',
-        {
-          query: { userId: 'user2' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      expect(controller.testGetConnectionCountInRoom('chat')).toBe(2)
-      expect(controller.testGetConnectionsInRoom('chat')).toContain(conn1.id)
-      expect(controller.testGetConnectionsInRoom('chat')).toContain(conn2.id)
-
-      client1.close()
-      client2.close()
-    })
-
-    it('should only count connections in specified room', { timeout: 10000 }, async () => {
-      // User 1 in room-a
-      const { client: client1, serverConnection: conn1 } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/room-a/stream',
-        {
-          query: { userId: 'user1' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      // User 2 in room-b
-      const { client: client2, serverConnection: conn2 } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/room-b/stream',
-        {
-          query: { userId: 'user2' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      expect(controller.testGetConnectionsInRoom('room-a')).toContain(conn1.id)
-      expect(controller.testGetConnectionsInRoom('room-a')).not.toContain(conn2.id)
-
-      expect(controller.testGetConnectionsInRoom('room-b')).toContain(conn2.id)
-      expect(controller.testGetConnectionsInRoom('room-b')).not.toContain(conn1.id)
-
-      client1.close()
-      client2.close()
-    })
-
-    it('should broadcast to all connections in room', { timeout: 10000 }, async () => {
-      // Connect two users to the same room
-      const { client: client1 } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/chat/stream',
-        {
-          query: { userId: 'user1' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      const { client: client2 } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/chat/stream',
-        {
-          query: { userId: 'user2' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      // Broadcast to all in room
-      const count = await controller.testBroadcastToRoom('chat', 'message', {
-        from: 'system',
-        text: 'Hello!',
-      })
-
-      // Should send to both connections
-      expect(count).toBe(2)
-
-      client1.close()
-      client2.close()
-    })
-
-    it('should broadcast to multiple rooms without duplicates', { timeout: 10000 }, async () => {
-      // User in both premium and beta rooms
-      const { client, serverConnection: conn } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/general/stream',
-        {
-          query: { userId: 'user1' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      controller.testJoinRoom(conn.id, ['premium', 'beta'])
-
-      // Broadcast to both rooms - should only send once to this user
-      const count = await controller.testBroadcastToRoom(['premium', 'beta'], 'message', {
-        from: 'system',
-        text: 'Feature update!',
-      })
-
-      expect(count).toBe(1) // De-duplicated
-
-      client.close()
-    })
-  })
-
-  describe('auto-leave on disconnect', () => {
-    it(
-      'should automatically leave all rooms when connection closes',
-      { timeout: 10000 },
-      async () => {
-        const { client, serverConnection: conn } = await SSEHttpClient.connect(
-          server.baseUrl,
-          '/api/rooms/test-room/stream',
-          { awaitServerConnection: { controller } },
-        )
-
-        controller.testJoinRoom(conn.id, ['room2', 'room3'])
-        expect(controller.testGetConnectionCountInRoom('test-room')).toBe(1)
-        expect(controller.testGetConnectionCountInRoom('room2')).toBe(1)
-        expect(controller.testGetConnectionCountInRoom('room3')).toBe(1)
-
-        // Close the connection
-        client.close()
-
-        // Wait for disconnect
-        await controller.connectionSpy.waitForDisconnection(conn.id)
-
-        // All rooms should be empty
-        expect(controller.testGetConnectionCountInRoom('test-room')).toBe(0)
-        expect(controller.testGetConnectionCountInRoom('room2')).toBe(0)
-        expect(controller.testGetConnectionCountInRoom('room3')).toBe(0)
-      },
-    )
-  })
-
-  describe('room queries', () => {
-    it('should return correct connection count in room', { timeout: 10000 }, async () => {
-      expect(controller.testGetConnectionCountInRoom('empty-room')).toBe(0)
-
-      const { client: client1, serverConnection: conn1 } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/counting-room/stream',
-        { awaitServerConnection: { controller } },
-      )
-
-      expect(controller.testGetConnectionCountInRoom('counting-room')).toBe(1)
-
-      const { client: client2 } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/counting-room/stream',
-        { awaitServerConnection: { controller } },
-      )
-
-      expect(controller.testGetConnectionCountInRoom('counting-room')).toBe(2)
-
-      client1.close()
-      await controller.connectionSpy.waitForDisconnection(conn1.id)
-
-      expect(controller.testGetConnectionCountInRoom('counting-room')).toBe(1)
-
-      client2.close()
-    })
-
-    it('should return all connections in a room', { timeout: 10000 }, async () => {
-      const { client: client1, serverConnection: conn1 } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/list-room/stream',
-        {
-          query: { userId: 'user1' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      const { client: client2, serverConnection: conn2 } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/list-room/stream',
-        {
-          query: { userId: 'user2' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      const connections = controller.testGetConnectionsInRoom('list-room')
-      expect(connections).toHaveLength(2)
-      expect(connections).toContain(conn1.id)
-      expect(connections).toContain(conn2.id)
-
-      client1.close()
-      client2.close()
-    })
-  })
-
-  describe('room broadcast delivery', () => {
-    it('should deliver broadcast messages to connections in room', { timeout: 10000 }, async () => {
-      // Connect a client and collect events
-      const { client } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/rooms/delivery-test/stream',
-        {
-          query: { userId: 'receiver' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      // Start collecting events
-      const eventsPromise = client.collectEvents(2, 5000)
-
-      // Broadcast messages to the room
-      await controller.testBroadcastToRoom('delivery-test', 'message', {
-        from: 'system',
-        text: 'Welcome!',
-      })
-
-      await controller.testBroadcastToRoom('delivery-test', 'message', {
-        from: 'bot',
-        text: 'How can I help?',
-      })
-
-      const events = await eventsPromise
-
-      expect(events).toHaveLength(2)
-      expect(events[0]?.event).toBe('message')
-      expect(JSON.parse(events[0]!.data)).toEqual({ from: 'system', text: 'Welcome!' })
-      expect(events[1]?.event).toBe('message')
-      expect(JSON.parse(events[1]!.data)).toEqual({ from: 'bot', text: 'How can I help?' })
-
-      client.close()
-    })
-  })
-
-  describe('remote broadcast deduplication', () => {
-    let mockAdapter: MockAdapter
-    let mockServer: SSETestServerWithResources<{
-      context: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
-    }>
-    let mockContext: DIContext<TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers, object>
-    let mockController: TestRoomSSEController
+describe('SSE rooms on buildApiRoute sessions', () => {
+  describe('multi-room membership', () => {
+    let broadcaster: SSERoomBroadcaster
+    let server: SSETestServerWithResources<undefined>
+    let spy: SSESessionSpy
 
     beforeEach(async () => {
-      mockAdapter = new MockAdapter()
-      const container = createContainer<
-        TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers
-      >({ injectionMode: 'PROXY' })
-      mockContext = new DIContext<
-        TestRoomSSEModuleDependencies & TestRoomSSEModuleControllers,
-        object
-      >(container, { isTestMode: true }, {})
-      mockContext.registerDependencies(
-        {
-          modules: [new TestRoomSSEModule({ rooms: { adapter: mockAdapter, nodeId: 'node-1' } })],
-        },
-        undefined,
-      )
-
-      mockController =
-        mockContext.diContainer.resolve<TestRoomSSEController>('testRoomSSEController')
-
-      mockServer = await createSSETestServer(
-        (app) => {
-          mockContext.registerSSERoutes(app)
-        },
-        {
-          configureApp: (app) => {
-            app.setValidatorCompiler(validatorCompiler)
-            app.setSerializerCompiler(serializerCompiler)
-          },
-          setup: () => ({ context: mockContext }),
-        },
-      )
+      broadcaster = new SSERoomBroadcaster({ sseRoomManager: new SSERoomManager() })
+      ;({ server, spy } = await startRoomsServer(broadcaster))
     })
 
     afterEach(async () => {
-      await mockServer.resources.context.destroy()
-      await mockServer.close()
+      await server.close()
     })
 
-    it('should deliver remote broadcasts to connections in room', { timeout: 10000 }, async () => {
-      const { client } = await SSEHttpClient.connect(
-        mockServer.baseUrl,
-        '/api/rooms/remote-test/stream',
-        {
-          query: { userId: 'receiver' },
-          awaitServerConnection: { controller: mockController },
-        },
+    it(
+      'joins every room passed as an array and leaves only the named ones',
+      { timeout: 10000 },
+      async () => {
+        const { client, serverConnection } = await SSEHttpClient.connect(
+          server.baseUrl,
+          '/api/rooms/lobby/stream',
+          {
+            query: { also: 'premium,beta,gamma', skip: 'beta' },
+            awaitServerConnection: { spy },
+          },
+        )
+
+        expect(broadcaster.roomManager.getRooms(serverConnection.id).sort()).toEqual([
+          'gamma',
+          'lobby',
+          'premium',
+        ])
+
+        client.close()
+      },
+    )
+
+    it('leaves every joined room when the client disconnects', { timeout: 10000 }, async () => {
+      const { client, serverConnection } = await SSEHttpClient.connect(
+        server.baseUrl,
+        '/api/rooms/lobby/stream',
+        { query: { also: 'premium,beta' }, awaitServerConnection: { spy } },
       )
+      expect(broadcaster.roomManager.getRooms(serverConnection.id)).toHaveLength(3)
 
-      const eventsPromise = client.collectEvents(1, 5000)
+      client.close()
 
-      // Simulate a remote broadcast from another node
-      mockAdapter.simulateRemoteMessage(
-        'remote-test',
-        { event: 'message', data: { from: 'remote', text: 'Hello from node 2' }, id: 'msg-1' },
+      // Room cleanup runs after the spy is notified of the close, so poll for it.
+      await vi.waitFor(() => {
+        expect(broadcaster.roomManager.getRooms(serverConnection.id)).toEqual([])
+      })
+      expect(broadcaster.roomManager.getAllRooms()).toEqual([])
+    })
+  })
+
+  describe('broadcasts from other nodes', () => {
+    let adapter: MockAdapter
+    let server: SSETestServerWithResources<undefined>
+    let spy: SSESessionSpy
+
+    beforeEach(async () => {
+      adapter = new MockAdapter()
+      const broadcaster = new SSERoomBroadcaster({
+        sseRoomManager: new SSERoomManager({ adapter, nodeId: 'node-1' }),
+      })
+      ;({ server, spy } = await startRoomsServer(broadcaster))
+    })
+
+    afterEach(async () => {
+      await server.close()
+    })
+
+    async function connectToRoom(roomId: string) {
+      const { client } = await SSEHttpClient.connect(
+        server.baseUrl,
+        `/api/rooms/${roomId}/stream`,
+        { awaitServerConnection: { spy } },
+      )
+      return client
+    }
+
+    function remoteMessage(room: string, text: string, id?: string): void {
+      adapter.simulateRemoteMessage(
+        room,
+        { event: 'message', data: { from: 'remote', text }, ...(id ? { id } : {}) },
         'node-2',
       )
+    }
+
+    it('delivers a remote broadcast to sessions in the room', { timeout: 10000 }, async () => {
+      const client = await connectToRoom('remote-test')
+      const eventsPromise = client.collectEvents(1, 5000)
+
+      remoteMessage('remote-test', 'Hello from node 2', 'msg-1')
 
       const events = await eventsPromise
-      expect(events).toHaveLength(1)
       expect(events[0]?.event).toBe('message')
+      expect(events[0]?.id).toBe('msg-1')
       expect(JSON.parse(events[0]!.data)).toEqual({ from: 'remote', text: 'Hello from node 2' })
 
       client.close()
     })
 
     it(
-      'should deduplicate remote broadcasts with same message ID',
+      'drops a remote broadcast repeating a delivered message id',
       { timeout: 10000 },
       async () => {
-        const { client } = await SSEHttpClient.connect(
-          mockServer.baseUrl,
-          '/api/rooms/dedup-test/stream',
-          {
-            query: { userId: 'receiver' },
-            awaitServerConnection: { controller: mockController },
-          },
-        )
+        const client = await connectToRoom('dedup-test')
+        const eventsPromise = client.collectEvents(2, 5000)
 
-        const eventsPromise = client.collectEvents(1, 3000)
-
-        // Simulate the same message arriving twice (e.g., connection in multiple rooms)
-        mockAdapter.simulateRemoteMessage(
-          'dedup-test',
-          { event: 'message', data: { from: 'remote', text: 'Duplicate test' }, id: 'dup-msg-1' },
-          'node-2',
-        )
-        mockAdapter.simulateRemoteMessage(
-          'dedup-test',
-          { event: 'message', data: { from: 'remote', text: 'Duplicate test' }, id: 'dup-msg-1' },
-          'node-2',
-        )
+        remoteMessage('dedup-test', 'first', 'dup-msg-1')
+        remoteMessage('dedup-test', 'first', 'dup-msg-1')
+        remoteMessage('dedup-test', 'marker', 'marker-1')
 
         const events = await eventsPromise
-        // Should only receive once despite being sent twice
-        expect(events).toHaveLength(1)
+        expect(events.map((event) => event.id)).toEqual(['dup-msg-1', 'marker-1'])
 
         client.close()
       },
     )
 
-    it('should deliver messages without ID (no deduplication)', { timeout: 10000 }, async () => {
-      const { client } = await SSEHttpClient.connect(
-        mockServer.baseUrl,
-        '/api/rooms/no-id-test/stream',
-        {
-          query: { userId: 'receiver' },
-          awaitServerConnection: { controller: mockController },
-        },
-      )
-
+    it('delivers remote broadcasts without an id every time', { timeout: 10000 }, async () => {
+      const client = await connectToRoom('no-id-test')
       const eventsPromise = client.collectEvents(2, 5000)
 
-      // Messages without ID should not be deduplicated
-      mockAdapter.simulateRemoteMessage(
-        'no-id-test',
-        { event: 'message', data: { from: 'remote', text: 'No ID 1' } },
-        'node-2',
-      )
-      mockAdapter.simulateRemoteMessage(
-        'no-id-test',
-        { event: 'message', data: { from: 'remote', text: 'No ID 2' } },
-        'node-2',
-      )
+      remoteMessage('no-id-test', 'same')
+      remoteMessage('no-id-test', 'same')
 
       const events = await eventsPromise
-      expect(events).toHaveLength(2)
-
-      client.close()
-    })
-
-    it('should deliver different message IDs separately', { timeout: 10000 }, async () => {
-      const { client } = await SSEHttpClient.connect(
-        mockServer.baseUrl,
-        '/api/rooms/diff-id-test/stream',
-        {
-          query: { userId: 'receiver' },
-          awaitServerConnection: { controller: mockController },
-        },
-      )
-
-      const eventsPromise = client.collectEvents(2, 5000)
-
-      // Different IDs should both be delivered
-      mockAdapter.simulateRemoteMessage(
-        'diff-id-test',
-        { event: 'message', data: { from: 'remote', text: 'Msg 1' }, id: 'unique-1' },
-        'node-2',
-      )
-      mockAdapter.simulateRemoteMessage(
-        'diff-id-test',
-        { event: 'message', data: { from: 'remote', text: 'Msg 2' }, id: 'unique-2' },
-        'node-2',
-      )
-
-      const events = await eventsPromise
-      expect(events).toHaveLength(2)
-      expect(events[0]?.id).toBe('unique-1')
-      expect(events[1]?.id).toBe('unique-2')
+      expect(events.map((event) => JSON.parse(event.data).text)).toEqual(['same', 'same'])
 
       client.close()
     })

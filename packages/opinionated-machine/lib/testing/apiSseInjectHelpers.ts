@@ -15,6 +15,7 @@ import type { LightMyRequestResponse } from 'fastify'
 import type { z } from 'zod'
 import {
   describeSendFailures,
+  explainReadError,
   openSSEDiagnosticsScope,
   type SSEDiagnosticsScope,
   type SSESendFailure,
@@ -31,6 +32,7 @@ import {
 import type {
   ApiDeclaredResponseBody,
   ApiDeclaredResponseStatus,
+  ApiSSEEvent,
   ApiSSEEventReader,
   ApiSSEStreamReader,
   InjectApiSSEParams,
@@ -352,11 +354,9 @@ function assertNoSendFailures(scope: SSEDiagnosticsScope, reader: string): void 
 
 /**
  * Inject an SSE request using a contract built with `defineApiContract` + `sseResponse` /
- * `sseBody` (the newer `@lokalise/api-contracts` API).
+ * `sseBody`.
  *
- * The `defineApiContract` counterpart of `injectSSE` / `injectPayloadSSE`, which are typed
- * against the legacy `SSEContractDefinition`. One function covers every method: the HTTP verb
- * comes from the contract, and `params` (`pathParams` / `queryParams` / `headers` / `body` /
+ * One function covers every method: the HTTP verb comes from the contract, and `params` (`pathParams` / `queryParams` / `headers` / `body` /
  * `pathPrefix`) is the same shape `injectByApiContract` takes, so a body is required exactly
  * when the contract declares `requestBodySchema`.
  *
@@ -470,7 +470,13 @@ export function injectApiSSE<const Contract extends ApiContract>(
     assertSSEHead(await head, 'stream()')
 
     for await (const event of pump.events(signal)) {
-      yield validateApiSseEvent<Contract>(schemaByEventName, event, 'stream()')
+      let validated: ApiSSEEvent<Contract>
+      try {
+        validated = validateApiSseEvent<Contract>(schemaByEventName, event, 'stream()')
+      } catch (err) {
+        throw explainReadError(err, scope.failures(), 'stream()')
+      }
+      yield validated
     }
 
     if (!signal?.aborted) {

@@ -150,7 +150,7 @@ export type SSERoomManagerConfig = {
 
 /**
  * Room operations available on SSE sessions.
- * Accessed via `session.rooms.join()`, `session.rooms.leave()`.
+ * Accessed via `getSessionRooms(session).join()` / `.leave()`.
  */
 export type SSERoomOperations = {
   /**
@@ -161,10 +161,10 @@ export type SSERoomOperations = {
    * @example
    * ```typescript
    * // Join a single room based on route parameter
-   * session.rooms.join(`dashboard:${request.params.dashboardId}`)
+   * getSessionRooms(session).join(`dashboard:${request.params.dashboardId}`)
    *
    * // Join multiple rooms
-   * session.rooms.join(['project:123', 'team:engineering'])
+   * getSessionRooms(session).join(['project:123', 'team:engineering'])
    * ```
    */
   join: (room: string | string[]) => void

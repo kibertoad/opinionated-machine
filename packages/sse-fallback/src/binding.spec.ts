@@ -5,7 +5,6 @@ import {
   bindFallbackContracts,
   defineFallbackBinding,
   FALLBACK_BINDING_SYMBOL,
-  fromLegacyDualModeContract,
   readFallbackBinding,
 } from './binding.ts'
 import type { FallbackEvent } from './bindingTypes.ts'
@@ -287,47 +286,6 @@ describe('bindFallbackContracts', () => {
     expect(binding.buildStreamRequest({ queryParams: { a: '1' } }).query).toEqual({
       channel: 'jobs',
     })
-  })
-})
-
-// ============================================================================
-// fromLegacyDualModeContract
-// ============================================================================
-
-describe('fromLegacyDualModeContract', () => {
-  // Structural legacy contract (buildSseContract output shape) — avoids
-  // depending on the legacy builder at runtime.
-  const legacyContract = {
-    method: 'get' as const,
-    pathResolver: (p: { jobId: string }) => `/jobs/${p.jobId}/status`,
-    isSSE: true as const,
-    isDualMode: true as const,
-    successResponseBodySchema: z.object({ status: z.string(), version: z.number() }),
-    serverSentEventSchemas: {
-      done: z.object({ result: z.string() }),
-    },
-  }
-
-  it('accepts a legacy dual-mode contract', () => {
-    const binding = fromLegacyDualModeContract(legacyContract, {
-      snapshotToEvents: (s) => {
-        expectTypeOf(s.version).toEqualTypeOf<number>()
-        return s.status === 'done' ? [{ event: 'done', data: { result: s.status } }] : []
-      },
-      snapshotSource: 'endpoint',
-      version: { ofSnapshot: (s) => s.version },
-      terminalEvents: ['done'],
-    })
-    expect(binding.buildStreamRequest({ pathParams: { jobId: 'j1' } }).path).toBe('/jobs/j1/status')
-  })
-
-  it('rejects non-dual legacy contracts', () => {
-    expect(() =>
-      fromLegacyDualModeContract(
-        { ...legacyContract, isDualMode: false as unknown as true },
-        { snapshotToEvents: () => [], snapshotSource: 'endpoint', version: 'none' },
-      ),
-    ).toThrow(/legacy dual-mode contract/)
   })
 })
 

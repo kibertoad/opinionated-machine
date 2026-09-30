@@ -1,509 +1,146 @@
-import { setTimeout as delay } from 'node:timers/promises'
-import { createContainer } from 'awilix'
-import { parse as parseQueryString } from 'fast-querystring'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  DIContext,
-  injectPayloadSSE,
-  parseSSEEvents,
-  SSEHttpClient,
-  type SSELogger,
-} from '../../index.js'
+import type { z } from 'zod/v4'
+import { type CreateSSESessionSpyResult, createSSESessionSpy, SSEHttpClient } from '../../index.js'
+import { createHandlerGate, type HandlerGate } from '../api-contracts/fixtures/sseStreamTestApp.ts'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
-import { validationTestStreamContract } from './fixtures/testContracts.js'
-import type {
-  TestSlowStartPostSSEController,
-  TestSSEController,
-} from './fixtures/testControllers.js'
 import {
-  TestAuthSSEModule,
-  TestChannelSSEModule,
-  TestLoggerSSEModule,
-  type TestLoggerSSEModuleDependencies,
-  TestOnConnectErrorSSEModule,
-  type TestOnConnectErrorSSEModuleDependencies,
-  TestOnReconnectErrorSSEModule,
-  type TestOnReconnectErrorSSEModuleDependencies,
-  TestPostSSEModule,
-  TestSSEModule,
-  type TestSSEModuleDependencies,
-  TestValidationSSEModule,
-  type TestValidationSSEModuleDependencies,
-} from './fixtures/testModules.js'
+  registerHttpE2eRoutes,
+  type serializationPayloadSchema,
+} from './fixtures/httpE2eFixtures.ts'
 
 /**
- * SSE E2E tests using SSEHttpClient (real HTTP connections).
- *
- * These tests use actual HTTP connections via fetch(), suitable for:
- * - Long-lived SSE connections (notifications, live feeds)
- * - Testing real network behavior
- * - Testing connection lifecycle (connect/disconnect events)
+ * `SSEHttpClient` over real HTTP connections against `buildApiRoute` SSE routes:
+ * long-lived sessions driven from the test, stream termination, wire format,
+ * `Last-Event-ID` reconnection, `SSESessionSpy` waiting semantics and request bodies.
  */
 
-describe('SSE HTTP E2E (long-lived connections)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
-  let context: DIContext<TestSSEModuleDependencies, object>
+const NOTIFICATIONS_PATH = '/api/notifications/stream'
 
-  beforeEach(async () => {
-    // Setup context with isTestMode to enable connection spying
-    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
-    context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
+let server: SSETestServerWithResources<undefined>
+let spy: CreateSSESessionSpyResult['spy']
+let slowWorkGate: HandlerGate
+let openClients: SSEHttpClient[]
 
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
+function track<T extends SSEHttpClient | { client: SSEHttpClient }>(connection: T): T {
+  openClients.push(connection instanceof SSEHttpClient ? connection : connection.client)
+  return connection
+}
+
+function connectNotifications(userId: string) {
+  return SSEHttpClient.connect(server.baseUrl, NOTIFICATIONS_PATH, {
+    query: { userId },
+    awaitServerConnection: { spy },
+  }).then(track)
+}
+
+beforeEach(async () => {
+  openClients = []
+  const spyResult = createSSESessionSpy()
+  spy = spyResult.spy
+  slowWorkGate = createHandlerGate()
+
+  server = await createSSETestServer(
+    (app) => registerHttpE2eRoutes(app, { spy: spyResult, slowWorkGate }),
+    {
+      configureApp: (app) => {
+        app.setValidatorCompiler(validatorCompiler)
+        app.setSerializerCompiler(serializerCompiler)
       },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
+    },
+  )
+})
 
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  function getController(): TestSSEController {
-    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
+afterEach(async () => {
+  // Unblock any handler still parked on the gate, so server.close() does not hang
+  slowWorkGate.release()
+  for (const client of openClients) {
+    client.close()
   }
+  await server.close()
+})
+
+describe('SSE HTTP E2E (long-lived connections)', () => {
+  it('keeps concurrent connections apart', { timeout: 10000 }, async () => {
+    const first = await connectNotifications('user-1')
+    const second = await connectNotifications('user-2')
+
+    // Each connect() claimed the session opened by its own request
+    expect(first.serverConnection.context).toEqual({ userId: 'user-1' })
+    expect(second.serverConnection.context).toEqual({ userId: 'user-2' })
+
+    const firstEvents = first.client.collectEvents(2)
+    const secondEvents = second.client.collectEvents(1)
+
+    await first.serverConnection.send('notification', { id: '1', message: 'For user 1' })
+    await second.serverConnection.send('notification', { id: '2', message: 'For user 2' })
+    await first.serverConnection.send('notification', { id: '3', message: 'For user 1 again' })
+
+    expect((await firstEvents).map((e) => JSON.parse(e.data).message)).toEqual([
+      'For user 1',
+      'For user 1 again',
+    ])
+    expect((await secondEvents).map((e) => JSON.parse(e.data).message)).toEqual(['For user 2'])
+  })
 
   it(
-    'receives multiple server-sent events over a long-lived connection',
+    'ends the events() generator cleanly when the server closes the session',
     { timeout: 10000 },
     async () => {
-      const controller = getController()
+      const { client, serverConnection } = await connectNotifications('server-close')
 
-      // Connect with awaitServerConnection to eliminate race condition
-      const { client, serverConnection } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/notifications/stream',
-        {
-          query: { userId: 'test-user' },
-          awaitServerConnection: { controller },
-        },
-      )
+      await serverConnection.send('notification', { id: '1', message: 'Before server close' })
 
-      expect(client.response.ok).toBe(true)
-      expect(client.response.headers.get('content-type')).toContain('text/event-stream')
-      expect(controller.connectionSpy.isConnected(serverConnection.id)).toBe(true)
+      const collected: string[] = []
+      const consumed = (async () => {
+        for await (const event of client.events()) {
+          collected.push(JSON.parse(event.data).message)
+          serverConnection.close()
+        }
+      })()
 
-      // Start collecting events in the background
-      const eventsPromise = client.collectEvents(3)
-
-      // Send multiple events from server
-      await controller.testSendEvent(serverConnection.id, {
-        event: 'notification',
-        data: { id: '1', message: 'First event' },
-      })
-
-      await controller.testSendEvent(serverConnection.id, {
-        event: 'notification',
-        data: { id: '2', message: 'Second event' },
-      })
-
-      await controller.testSendEvent(serverConnection.id, {
-        event: 'notification',
-        data: { id: '3', message: 'Third event' },
-      })
-
-      // Wait for collected events
-      const events = await eventsPromise
-
-      expect(events).toHaveLength(3)
-      expect(JSON.parse(events[0]!.data)).toEqual({ id: '1', message: 'First event' })
-      expect(JSON.parse(events[1]!.data)).toEqual({ id: '2', message: 'Second event' })
-      expect(JSON.parse(events[2]!.data)).toEqual({ id: '3', message: 'Third event' })
-
-      controller.completeHandler(serverConnection.id)
-      client.close()
+      await consumed
+      expect(collected).toEqual(['Before server close'])
+      expect(client.isClosed).toBe(true)
     },
   )
 
-  it('handles interleaved events with delays', { timeout: 10000 }, async () => {
-    const controller = getController()
+  it(
+    'returns what it got from collectEvents when the server closes the session early',
+    { timeout: 10000 },
+    async () => {
+      const { client, serverConnection } = await connectNotifications('server-close-collect')
 
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'delayed-user' },
-        awaitServerConnection: { controller },
-      },
-    )
+      const collecting = client.collectEvents(5, 5000)
+      await serverConnection.send('notification', { id: '1', message: 'Only event' })
+      serverConnection.close()
 
-    const eventsPromise = client.collectEvents(3)
+      // Resolves with the single event instead of waiting out the timeout
+      const events = await collecting
+      expect(events.map((e) => JSON.parse(e.data).message)).toEqual(['Only event'])
+    },
+  )
 
-    // Send events with delays between them
-    await controller.testSendEvent(serverConnection.id, {
-      event: 'notification',
-      data: { id: '1', message: 'Immediate' },
-    })
-
-    await delay(100)
-
-    await controller.testSendEvent(serverConnection.id, {
-      event: 'notification',
-      data: { id: '2', message: 'After 100ms' },
-    })
-
-    await delay(200)
-
-    await controller.testSendEvent(serverConnection.id, {
-      event: 'notification',
-      data: { id: '3', message: 'After 200ms more' },
-    })
-
-    const events = await eventsPromise
-    expect(events).toHaveLength(3)
-    expect(events.map((e) => JSON.parse(e.data).message)).toEqual([
-      'Immediate',
-      'After 100ms',
-      'After 200ms more',
-    ])
-
-    controller.completeHandler(serverConnection.id)
-    client.close()
-  })
-
-  it('supports multiple concurrent connections', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    // Connect two clients - predicate-based waitForConnection allows multiple connections
-    const { client: client1, serverConnection: conn1 } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'user-1' },
-        awaitServerConnection: { controller },
-      },
-    )
-    const { client: client2, serverConnection: conn2 } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'user-2' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    expect(controller.testGetConnectionCount()).toBe(2)
-    expect(conn1.id).not.toBe(conn2.id)
-
-    const events1Promise = client1.collectEvents(1)
-    const events2Promise = client2.collectEvents(1)
-
-    // Send different events to each
-    await controller.testSendEvent(conn1.id, {
-      event: 'notification',
-      data: { id: '1', message: 'For user 1' },
-    })
-    await controller.testSendEvent(conn2.id, {
-      event: 'notification',
-      data: { id: '2', message: 'For user 2' },
-    })
-
-    const [events1, events2] = await Promise.all([events1Promise, events2Promise])
-
-    expect(JSON.parse(events1[0]!.data).message).toBe('For user 1')
-    expect(JSON.parse(events2[0]!.data).message).toBe('For user 2')
-
-    controller.completeHandler(conn1.id)
-    controller.completeHandler(conn2.id)
-    client1.close()
-    client2.close()
-  })
-
-  it('handles broadcast to all connections', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    // Connect three clients
-    const connections = [
-      await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-        query: { userId: 'u1' },
-        awaitServerConnection: { controller },
-      }),
-      await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-        query: { userId: 'u2' },
-        awaitServerConnection: { controller },
-      }),
-      await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-        query: { userId: 'u3' },
-        awaitServerConnection: { controller },
-      }),
-    ]
-
-    expect(controller.testGetConnectionCount()).toBe(3)
-
-    const eventsPromises = connections.map((c) => c.client.collectEvents(1))
-
-    // Broadcast to all
-    const sentCount = await controller.testBroadcast({
-      event: 'notification',
-      data: { id: 'broadcast', message: 'Hello everyone!' },
-    })
-
-    expect(sentCount).toBe(3)
-
-    // All clients should receive the broadcast
-    const allEvents = await Promise.all(eventsPromises)
-    for (const events of allEvents) {
-      expect(JSON.parse(events[0]!.data).message).toBe('Hello everyone!')
-    }
-
-    // Cleanup
-    for (const { client, serverConnection } of connections) {
-      controller.completeHandler(serverConnection.id)
-      client.close()
-    }
-  })
-
-  it('handles broadcastIf with predicate', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    // Connect two clients with different contexts
-    const { client: vipClient, serverConnection: vipConn } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'vip-user' },
-        awaitServerConnection: { controller },
-      },
-    )
-    const { client: regularClient, serverConnection: regularConn } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'regular-user' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    const vipEventsPromise = vipClient.collectEvents(1, 2000)
-
-    // Broadcast only to VIP users
-    const sentCount = await controller.testBroadcastIf(
-      { event: 'notification', data: { id: 'vip', message: 'VIP only!' } },
-      (conn) => (conn.context as { userId?: string })?.userId?.startsWith('vip') ?? false,
-    )
-
-    expect(sentCount).toBe(1)
-
-    const vipEvents = await vipEventsPromise
-    expect(JSON.parse(vipEvents[0]!.data).message).toBe('VIP only!')
-
-    // Regular client should not have received the event (we won't wait for it)
-
-    controller.completeHandler(vipConn.id)
-    controller.completeHandler(regularConn.id)
-    vipClient.close()
-    regularClient.close()
-  })
-
-  it('properly tracks connection count', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    expect(controller.testGetConnectionCount()).toBe(0)
-
-    const { client: client1, serverConnection: conn1 } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'u1' },
-        awaitServerConnection: { controller },
-      },
-    )
-    expect(controller.testGetConnectionCount()).toBe(1)
-
-    const { client: client2, serverConnection: conn2 } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'u2' },
-        awaitServerConnection: { controller },
-      },
-    )
-    expect(controller.testGetConnectionCount()).toBe(2)
-
-    // Close one client
-    controller.completeHandler(conn1.id)
-    controller.testCloseConnection(conn1.id)
-    client1.close()
-
-    await controller.connectionSpy.waitForDisconnection(conn1.id)
-    expect(controller.testGetConnectionCount()).toBe(1)
-
-    // Close remaining
-    controller.completeHandler(conn2.id)
-    client2.close()
-  })
-
-  it('server can close connection', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'will-be-closed' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    // Send an event first
-    await controller.testSendEvent(serverConnection.id, {
-      event: 'notification',
-      data: { id: '1', message: 'Before close' },
-    })
-
-    // Server initiates close
-    controller.completeHandler(serverConnection.id)
-    const closed = controller.testCloseConnection(serverConnection.id)
-    expect(closed).toBe(true)
-
-    // Connection should be removed
-    expect(controller.testGetConnectionCount()).toBe(0)
+  it('reports a send to a client that went away as not delivered', { timeout: 10000 }, async () => {
+    const { client, serverConnection } = await connectNotifications('client-gone')
 
     client.close()
+    await spy.waitForDisconnection(serverConnection.id)
+
+    expect(serverConnection.isConnected()).toBe(false)
+    await expect(
+      serverConnection.send('notification', { id: '1', message: 'After disconnect' }),
+    ).resolves.toBe(false)
   })
 })
 
-describe('SSE HTTP E2E (error handling)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
-  let context: DIContext<TestSSEModuleDependencies, object>
+describe('SSE HTTP E2E (wire format)', () => {
+  it('round-trips JSON payloads of every shape', { timeout: 10000 }, async () => {
+    const { client, serverConnection } = await connectNotifications('serialization')
 
-  beforeEach(async () => {
-    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
-    context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  function getController(): TestSSEController {
-    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
-  }
-
-  it('handles sending to non-existent connection gracefully', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    // Try to send to non-existent connection
-    const result = await controller.testSendEvent('non-existent-id', {
-      event: 'test',
-      data: { message: 'Should not work' },
-    })
-
-    expect(result).toBe(false)
-  })
-
-  it('handles closing non-existent connection gracefully', { timeout: 10000 }, () => {
-    const controller = getController()
-
-    const result = controller.testCloseConnection('non-existent-id')
-    expect(result).toBe(false)
-  })
-
-  it('handles client disconnect during event sending', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'disconnect-test' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    // Client disconnects abruptly
-    client.close()
-
-    // Wait a bit for disconnect to propagate
-    await delay(100)
-
-    // Sending should now fail or handle gracefully
-    const result = await controller.testSendEvent(serverConnection.id, {
-      event: 'notification',
-      data: { id: '1', message: 'After disconnect' },
-    })
-
-    // Should return false since connection is dead
-    expect(result).toBe(false)
-
-    controller.completeHandler(serverConnection.id)
-  })
-})
-
-describe('SSE HTTP E2E (serialization)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
-  let context: DIContext<TestSSEModuleDependencies, object>
-
-  beforeEach(async () => {
-    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
-    context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  function getController(): TestSSEController {
-    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
-  }
-
-  it('serializes various JSON data types correctly', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'serialization-test' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    // Test data covering: nested objects, arrays, special characters, null, numbers, booleans
-    const testData = {
-      id: 'comprehensive-1',
-      message: 'Special: "quotes", \'apostrophes\', newlines\nand\ttabs, unicode: 日本語 🎉',
+    const payload: z.input<typeof serializationPayloadSchema> = {
+      // Newlines would split an SSE data line if the payload were not encoded
+      message: 'Special: "quotes", \'apostrophes\', newlines\nand\r\ntabs\t, unicode: 日本語 🎉',
       metadata: {
         nested: { deeply: { value: 42, array: [1, 2, 3] } },
         tags: ['a', 'b', 'c'],
@@ -517,1325 +154,182 @@ describe('SSE HTTP E2E (serialization)', () => {
       isDeleted: false,
     }
 
-    const eventsPromise = client.collectEvents(1)
+    const collecting = client.collectEvents(1)
+    await serverConnection.send('payload', payload)
 
-    await controller.testSendEvent(serverConnection.id, {
-      event: 'notification',
-      data: testData,
-    })
+    const [event] = await collecting
+    expect(JSON.parse(event!.data)).toEqual(payload)
+  })
 
-    const events = await eventsPromise
-    const received = JSON.parse(events[0]!.data)
+  it('carries event names and ids to the client', { timeout: 10000 }, async () => {
+    const { client, serverConnection } = await connectNotifications('metadata')
 
-    expect(received).toEqual(testData)
+    const collecting = client.collectEvents(2)
+    await serverConnection.send('notification', { id: '1', message: 'hi' }, { id: 'evt-123' })
+    await serverConnection.send('alert', { level: 'high' })
 
-    controller.completeHandler(serverConnection.id)
-    client.close()
+    const events = await collecting
+    expect(events.map(({ event, id }) => ({ event, id }))).toEqual([
+      { event: 'notification', id: 'evt-123' },
+      { event: 'alert', id: undefined },
+    ])
   })
 })
 
-describe('SSE HTTP E2E (event metadata)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
-  let context: DIContext<TestSSEModuleDependencies, object>
-
-  beforeEach(async () => {
-    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
-    context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  function getController(): TestSSEController {
-    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
-  }
-
-  it('sends event with custom ID', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'event-id-test' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    const eventsPromise = client.collectEvents(1)
-
-    await controller.testSendEvent(serverConnection.id, {
-      event: 'notification',
-      data: { id: '1', message: 'With custom ID' },
-      id: 'custom-event-id-123',
-    })
-
-    const events = await eventsPromise
-    expect(events[0]!.id).toBe('custom-event-id-123')
-
-    controller.completeHandler(serverConnection.id)
-    client.close()
-  })
-
-  it('sends events with different event types', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'event-types-test' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    const eventsPromise = client.collectEvents(3)
-
-    // Send events with different event types
-    await controller.testSendEvent(serverConnection.id, {
-      event: 'notification',
-      data: { id: '1', message: 'Notification' },
-    })
-
-    await controller.testSendEvent(serverConnection.id, {
-      event: 'alert',
-      data: { id: '2', message: 'Alert' },
-    })
-
-    await controller.testSendEvent(serverConnection.id, {
-      event: 'system',
-      data: { id: '3', message: 'System' },
-    })
-
-    const events = await eventsPromise
-    expect(events[0]!.event).toBe('notification')
-    expect(events[1]!.event).toBe('alert')
-    expect(events[2]!.event).toBe('system')
-
-    controller.completeHandler(serverConnection.id)
-    client.close()
-  })
-
-  it('sends event without explicit event type (uses message)', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'no-event-type' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    const eventsPromise = client.collectEvents(1)
-
-    // Send without event type
-    await controller.testSendEvent(serverConnection.id, {
-      data: { id: '1', message: 'No event type' },
-    })
-
-    const events = await eventsPromise
-    // Event type should be undefined when not specified
-    expect(events[0]!.event).toBeUndefined()
-    expect(JSON.parse(events[0]!.data).message).toBe('No event type')
-
-    controller.completeHandler(serverConnection.id)
-    client.close()
-  })
-})
-
-describe('SSE HTTP E2E (connection lifecycle)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
-  let context: DIContext<TestSSEModuleDependencies, object>
-
-  beforeEach(async () => {
-    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
-    context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  function getController(): TestSSEController {
-    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
-  }
-
-  it('tracks connection events and isConnected status in spy', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'lifecycle-test' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    // Check connection event was recorded and isConnected returns true
-    const events = controller.connectionSpy.getEvents()
-    const connectEvent = events.find(
-      (e) => e.type === 'connect' && e.connectionId === serverConnection.id,
-    )
-    expect(connectEvent).toBeDefined()
-    expect(connectEvent!.connection).toBeDefined()
-    expect(controller.connectionSpy.isConnected(serverConnection.id)).toBe(true)
-
-    controller.completeHandler(serverConnection.id)
-    controller.testCloseConnection(serverConnection.id)
-    client.close()
-
-    await controller.connectionSpy.waitForDisconnection(serverConnection.id)
-
-    // Check disconnect event was recorded and isConnected returns false
-    const allEvents = controller.connectionSpy.getEvents()
-    const disconnectEvent = allEvents.find(
-      (e) => e.type === 'disconnect' && e.connectionId === serverConnection.id,
-    )
-    expect(disconnectEvent).toBeDefined()
-    expect(controller.connectionSpy.isConnected(serverConnection.id)).toBe(false)
-  })
-
-  it('connection has context and metadata', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'context-user-123' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    // Check metadata
-    expect(serverConnection.id).toBeDefined()
-    expect(typeof serverConnection.id).toBe('string')
-    expect(serverConnection.connectedAt).toBeInstanceOf(Date)
-    expect(serverConnection.request).toBeDefined()
-    expect(serverConnection.reply).toBeDefined()
-
-    // Check context (handler sets context.userId from query param)
-    expect(serverConnection.context).toBeDefined()
-    expect((serverConnection.context as { userId?: string }).userId).toBe('context-user-123')
-
-    controller.completeHandler(serverConnection.id)
-    client.close()
-  })
-})
-
-describe('SSE HTTP E2E (SSESessionSpy edge cases)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
-  let context: DIContext<TestSSEModuleDependencies, object>
-
-  beforeEach(async () => {
-    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
-    context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  function getController(): TestSSEController {
-    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
-  }
-
-  it('waitForConnection times out when no connection arrives', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    // Wait for a connection that never comes - should timeout
-    await expect(controller.connectionSpy.waitForConnection({ timeout: 100 })).rejects.toThrow(
-      'Timeout waiting for connection after 100ms',
-    )
-  })
-
-  it('waitForDisconnection times out when connection stays open', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'timeout-test' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    // Wait for disconnection but don't close the connection - should timeout
-    await expect(
-      controller.connectionSpy.waitForDisconnection(serverConnection.id, { timeout: 100 }),
-    ).rejects.toThrow('Timeout waiting for disconnection after 100ms')
-
-    // Clean up
-    controller.completeHandler(serverConnection.id)
-    client.close()
-  })
-
-  it('clear() cancels pending waiters and resets state', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    // Start waiting for connection (will never arrive)
-    const waitPromise = controller.connectionSpy.waitForConnection({ timeout: 5000 })
-
-    // Give the waiter time to register
-    await delay(50)
-
-    // Clear the spy - should reject the pending waiter
-    controller.connectionSpy.clear()
-
-    await expect(waitPromise).rejects.toThrow('SessionSpy was cleared')
-
-    // Events should be empty after clear
-    expect(controller.connectionSpy.getEvents()).toHaveLength(0)
-  })
-
-  it('clear() cancels pending disconnection waiters', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'clear-test' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    // Start waiting for disconnection
-    const waitPromise = controller.connectionSpy.waitForDisconnection(serverConnection.id, {
-      timeout: 5000,
-    })
-
-    // Give the waiter time to register
-    await delay(50)
-
-    // Clear the spy
-    controller.connectionSpy.clear()
-
-    await expect(waitPromise).rejects.toThrow('SessionSpy was cleared')
-
-    controller.completeHandler(serverConnection.id)
-    client.close()
-  })
-
+describe('SSE HTTP E2E (Last-Event-ID reconnection)', () => {
   it(
-    'waitForDisconnection resolves immediately if already disconnected',
+    'replays the events after the Last-Event-ID the client sends, then streams live',
     { timeout: 10000 },
     async () => {
-      const controller = getController()
-
       const { client, serverConnection } = await SSEHttpClient.connect(
         server.baseUrl,
-        '/api/notifications/stream',
-        {
-          query: { userId: 'already-disconnected' },
-          awaitServerConnection: { controller },
-        },
-      )
+        '/api/replayable/stream',
+        { headers: { 'last-event-id': '1' }, awaitServerConnection: { spy } },
+      ).then(track)
 
-      // Close the connection first
-      controller.completeHandler(serverConnection.id)
-      controller.testCloseConnection(serverConnection.id)
-      client.close()
+      const replayed = await client.collectEvents(2)
+      expect(replayed.map(({ id, data }) => ({ id, data: JSON.parse(data) }))).toEqual([
+        { id: '2', data: { seq: 2 } },
+        { id: '3', data: { seq: 3 } },
+      ])
 
-      // Wait for the disconnect to be processed
-      await delay(100)
-
-      // Now wait for disconnection - should resolve immediately since already disconnected
-      await controller.connectionSpy.waitForDisconnection(serverConnection.id, { timeout: 100 })
-      // If we get here without timeout, the test passes
+      const live = client.collectEvents(1)
+      await serverConnection.send('update', { seq: 4 }, { id: '4' })
+      expect((await live)[0]!.id).toBe('4')
     },
   )
 
-  it(
-    'waitForConnection resolves immediately if connection already exists',
-    { timeout: 10000 },
-    async () => {
-      const controller = getController()
+  it('replays nothing on a first connection', { timeout: 10000 }, async () => {
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/replayable/stream',
+      { awaitServerConnection: { spy } },
+    ).then(track)
 
-      // This test specifically tests waitForConnection behavior, so we use manual connection
-      const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
+    const collecting = client.collectEvents(1)
+    await serverConnection.send('update', { seq: 4 }, { id: '4' })
+
+    // The first event on the wire is the live one, not history
+    expect((await collecting)[0]!.id).toBe('4')
+  })
+})
+
+describe('SSE HTTP E2E (SSESessionSpy over real sessions)', () => {
+  it('waitForConnection returns a session that registered before the wait', async () => {
+    const client = track(
+      await SSEHttpClient.connect(server.baseUrl, NOTIFICATIONS_PATH, {
         query: { userId: 'already-connected' },
-      })
-
-      // Wait for the connection to be established
-      await delay(100)
-
-      // Now waitForConnection should resolve immediately since connection exists
-      const connection = await controller.connectionSpy.waitForConnection({ timeout: 100 })
-      expect(connection).toBeDefined()
-      expect(connection.id).toBeDefined()
-
-      controller.completeHandler(connection.id)
-      client.close()
-    },
-  )
-
-  it(
-    'waitForConnection with predicate resolves when matching connection arrives (lines 40-49)',
-    { timeout: 10000 },
-    async () => {
-      const controller = getController()
-
-      // Start waiting for a connection with a specific predicate BEFORE connecting
-      const connectionPromise = controller.connectionSpy.waitForConnection({
-        timeout: 5000,
-        predicate: (c) => c.request.url.includes('predicate-user'),
-      })
-
-      // Give time for waiter to be registered
-      await delay(10)
-
-      // Now create the connection that matches the predicate
-      const client = await SSEHttpClient.connect(server.baseUrl, '/api/notifications/stream', {
-        query: { userId: 'predicate-user' },
-      })
-
-      // The waiter should resolve with the matching connection
-      const connection = await connectionPromise
-      expect(connection).toBeDefined()
-      expect(connection.request.url).toContain('predicate-user')
-
-      controller.completeHandler(connection.id)
-      client.close()
-    },
-  )
-
-  it(
-    'waitForDisconnection resolves when disconnection occurs (lines 61-65)',
-    { timeout: 10000 },
-    async () => {
-      const controller = getController()
-
-      // First establish a connection
-      const { client, serverConnection } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/notifications/stream',
-        {
-          query: { userId: 'disconnect-waiter-test' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      // Start waiting for disconnection BEFORE disconnecting
-      const disconnectionPromise = controller.connectionSpy.waitForDisconnection(
-        serverConnection.id,
-        { timeout: 5000 },
-      )
-
-      // Give time for waiter to be registered
-      await delay(10)
-
-      // Now close the connection
-      controller.completeHandler(serverConnection.id)
-      controller.testCloseConnection(serverConnection.id)
-      client.close()
-
-      // The waiter should resolve when disconnection is detected
-      await disconnectionPromise
-      // If we get here without timeout, the disconnection was properly detected
-      expect(controller.connectionSpy.isConnected(serverConnection.id)).toBe(false)
-    },
-  )
-
-  it(
-    'multiple waitForDisconnection calls for same connectionId all resolve',
-    { timeout: 10000 },
-    async () => {
-      const controller = getController()
-
-      // Establish a connection
-      const { client, serverConnection } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/notifications/stream',
-        {
-          query: { userId: 'multi-waiter-test' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      // Start multiple waiters for the same connectionId BEFORE disconnecting
-      const disconnectionPromise1 = controller.connectionSpy.waitForDisconnection(
-        serverConnection.id,
-        { timeout: 5000 },
-      )
-      const disconnectionPromise2 = controller.connectionSpy.waitForDisconnection(
-        serverConnection.id,
-        { timeout: 5000 },
-      )
-      const disconnectionPromise3 = controller.connectionSpy.waitForDisconnection(
-        serverConnection.id,
-        { timeout: 5000 },
-      )
-
-      // Give time for waiters to be registered
-      await delay(10)
-
-      // Now close the connection
-      controller.completeHandler(serverConnection.id)
-      controller.testCloseConnection(serverConnection.id)
-      client.close()
-
-      // ALL waiters should resolve when disconnection is detected
-      await Promise.all([disconnectionPromise1, disconnectionPromise2, disconnectionPromise3])
-
-      // If we get here without timeout, all disconnection waiters were properly resolved
-      expect(controller.connectionSpy.isConnected(serverConnection.id)).toBe(false)
-    },
-  )
-})
-
-describe('SSE HTTP E2E (authentication)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
-  let context: DIContext<object, object>
-
-  beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
-    context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestAuthSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
+      }),
     )
+    await vi.waitFor(() => expect(spy.getEvents()).toHaveLength(1))
+
+    const connection = await spy.waitForConnection({ timeout: 100 })
+
+    expect(connection.context).toEqual({ userId: 'already-connected' })
+    expect(client.response.ok).toBe(true)
   })
 
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it('works with real HTTP connection and auth headers', { timeout: 10000 }, async () => {
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/protected/stream', {
-      headers: { Authorization: 'Bearer real-token' },
+  it('a waiting predicate skips connections it does not match', { timeout: 10000 }, async () => {
+    const waiting = spy.waitForConnection({
+      predicate: (connection) => connection.request.url.includes('userId=wanted'),
     })
 
-    expect(client.response.ok).toBe(true)
-    expect(client.response.headers.get('content-type')).toContain('text/event-stream')
-
-    // The handler sends one event and then closes the connection
-    const events = await client.collectEvents(1)
-    expect(events[0]!.event).toBe('data')
-    expect(JSON.parse(events[0]!.data)).toEqual({ value: 'authenticated data' })
-
-    client.close()
-  })
-})
-
-describe('SSE HTTP E2E (path parameters)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
-  let context: DIContext<object, object>
-
-  beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
-    context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestChannelSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
+    track(
+      await SSEHttpClient.connect(server.baseUrl, NOTIFICATIONS_PATH, {
+        query: { userId: 'other' },
+      }),
     )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it('works with real HTTP connection and path params', { timeout: 10000 }, async () => {
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/channels/my-channel/stream')
-
-    expect(client.response.ok).toBe(true)
-
-    const events = await client.collectEvents(1)
-    expect(JSON.parse(events[0]!.data).content).toBe('Welcome to channel my-channel')
-
-    client.close()
-  })
-})
-
-describe('SSE HTTP E2E (awaitServerConnection option)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
-  let context: DIContext<TestSSEModuleDependencies, object>
-
-  beforeEach(async () => {
-    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
-    context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  function getController(): TestSSEController {
-    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
-  }
-
-  it('supports custom timeout for awaitServerConnection', { timeout: 10000 }, async () => {
-    const controller = getController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/notifications/stream',
-      {
-        query: { userId: 'timeout-test' },
-        awaitServerConnection: { controller, timeout: 2000 },
-      },
+    track(
+      await SSEHttpClient.connect(server.baseUrl, NOTIFICATIONS_PATH, {
+        query: { userId: 'wanted' },
+      }),
     )
 
-    expect(serverConnection.id).toBeDefined()
+    const connection = await waiting
+    expect(connection.context).toEqual({ userId: 'wanted' })
+  })
 
-    controller.completeHandler(serverConnection.id)
-    client.close()
+  it('waitForDisconnection times out while the session stays open', async () => {
+    const { serverConnection } = await connectNotifications('stays-open')
+
+    await expect(spy.waitForDisconnection(serverConnection.id, { timeout: 100 })).rejects.toThrow(
+      'Timeout waiting for disconnection after 100ms',
+    )
+    expect(spy.isConnected(serverConnection.id)).toBe(true)
+  })
+
+  it('resolves every waiter for a session once it closes', { timeout: 10000 }, async () => {
+    const { serverConnection } = await connectNotifications('multi-waiter')
+
+    const waiters = [1, 2, 3].map(() => spy.waitForDisconnection(serverConnection.id))
+    serverConnection.close()
+
+    await Promise.all(waiters)
+    expect(spy.isConnected(serverConnection.id)).toBe(false)
+  })
+
+  it('waitForDisconnection resolves at once for a session that already closed', async () => {
+    const { serverConnection } = await connectNotifications('already-closed')
+    serverConnection.close()
+    await vi.waitFor(() => expect(spy.isConnected(serverConnection.id)).toBe(false))
+
+    await expect(
+      spy.waitForDisconnection(serverConnection.id, { timeout: 1 }),
+    ).resolves.toBeUndefined()
+  })
+
+  it('clear() rejects pending waiters and forgets recorded sessions', async () => {
+    const { serverConnection } = await connectNotifications('clear')
+
+    const connectionWaiter = spy.waitForConnection({ timeout: 5000 })
+    const disconnectionWaiter = spy.waitForDisconnection(serverConnection.id, { timeout: 5000 })
+
+    spy.clear()
+
+    await expect(connectionWaiter).rejects.toThrow('SessionSpy was cleared')
+    await expect(disconnectionWaiter).rejects.toThrow('SessionSpy was cleared')
+    expect(spy.getEvents()).toEqual([])
+    expect(spy.isConnected(serverConnection.id)).toBe(false)
   })
 })
 
 describe('SSE HTTP E2E (large content streaming)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
-  let context: DIContext<object, object>
-
-  beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
-    context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it('streams 10MB of content via real HTTP without data loss', { timeout: 10000 }, async () => {
-    // 10MB total: 1000 chunks × 10KB each
+  it('streams 10MB of content without data loss', { timeout: 10000 }, async () => {
+    // 10MB total: 1000 chunks × 10KB each, far more than one network read
     const chunkCount = 1000
     const chunkSize = 10000
-    const expectedTotalBytes = chunkCount * chunkSize // 10MB
 
-    // Use real HTTP POST request
-    const response = await fetch(`${server.baseUrl}/api/large-content/stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-      },
-      body: JSON.stringify({ chunkCount, chunkSize }),
-    })
+    const client = track(
+      await SSEHttpClient.connect(server.baseUrl, '/api/large-content/stream', {
+        method: 'POST',
+        body: { chunkCount, chunkSize },
+      }),
+    )
 
-    expect(response.ok).toBe(true)
-    expect(response.headers.get('content-type')).toContain('text/event-stream')
+    const events = await client.collectEvents((event) => event.event === 'done', 8000)
+    const chunks = events.filter((e) => e.event === 'chunk').map((e) => JSON.parse(e.data))
 
-    // Read the entire response body
-    const body = await response.text()
-
-    // Verify body size is substantial (SSE overhead adds event:/data:/newlines)
-    // Each chunk adds: "event:chunk\ndata:{...}\n\n" where data includes ~10KB content
-    // Minimum expected: 10MB of content + SSE framing
-    expect(body.length).toBeGreaterThan(expectedTotalBytes)
-
-    // Parse SSE events manually
-    const events: Array<{ event?: string; data: string }> = []
-    const lines = body.split('\n')
-    let currentEvent: { event?: string; data: string } = { data: '' }
-
-    for (const line of lines) {
-      if (line.startsWith('event:')) {
-        currentEvent.event = line.slice(6).trim()
-      } else if (line.startsWith('data:')) {
-        currentEvent.data = line.slice(5).trim()
-      } else if (line === '' && currentEvent.data) {
-        events.push(currentEvent)
-        currentEvent = { data: '' }
-      }
+    expect(chunks).toHaveLength(chunkCount)
+    for (const [i, chunk] of chunks.entries()) {
+      expect(chunk.index).toBe(i)
+      expect(chunk.content).toHaveLength(chunkSize)
     }
-
-    const chunkEvents = events.filter((e) => e.event === 'chunk')
-    const doneEvents = events.filter((e) => e.event === 'done')
-
-    // Verify all chunks were received
-    expect(chunkEvents).toHaveLength(chunkCount)
-    expect(doneEvents).toHaveLength(1)
-
-    // Verify first, middle, and last chunks for order and content integrity
-    const checkIndices = [0, Math.floor(chunkCount / 2), chunkCount - 1]
-    for (const i of checkIndices) {
-      const data = JSON.parse(chunkEvents[i]!.data)
-      expect(data.index).toBe(i)
-      expect(data.content.length).toBe(chunkSize)
-      expect(data.content).toContain(`[chunk-${i}]`)
-    }
-
-    // Verify done event totals
-    const doneData = JSON.parse(doneEvents[0]!.data)
-    expect(doneData.totalChunks).toBe(chunkCount)
-    expect(doneData.totalBytes).toBe(expectedTotalBytes)
-  })
-})
-
-describe('SSE HTTP E2E (server closes connection)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<TestSSEModuleDependencies, object> }>
-  let context: DIContext<TestSSEModuleDependencies, object>
-
-  beforeEach(async () => {
-    const container = createContainer<TestSSEModuleDependencies>({ injectionMode: 'PROXY' })
-    context = new DIContext<TestSSEModuleDependencies, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  function getController(): TestSSEController {
-    return server.resources.context.diContainer.resolve<TestSSEController>('testSSEController')
-  }
-
-  it(
-    'events() generator completes when server closes connection (lines 218-219)',
-    { timeout: 10000 },
-    async () => {
-      const controller = getController()
-
-      const { client, serverConnection } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/notifications/stream',
-        {
-          query: { userId: 'server-close-test' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      // Send one event
-      await controller.testSendEvent(serverConnection.id, {
-        event: 'notification',
-        data: { id: '1', message: 'Before server close' },
-      })
-
-      // Use the events() generator directly
-      const collectedEvents: Array<{ event?: string; data: string }> = []
-      const generatorPromise = (async () => {
-        for await (const event of client.events()) {
-          collectedEvents.push(event)
-        }
-      })()
-
-      // Give time for the first event to be received
-      await delay(50)
-
-      // Server closes the connection
-      controller.completeHandler(serverConnection.id)
-      controller.testCloseConnection(serverConnection.id)
-
-      // Wait for the generator to complete
-      await generatorPromise
-
-      // Generator should have yielded the event and then completed (not thrown)
-      expect(collectedEvents).toHaveLength(1)
-      expect(JSON.parse(collectedEvents[0]!.data).message).toBe('Before server close')
-
-      client.close()
-    },
-  )
-
-  it(
-    'collectEvents returns early when server closes connection (line 285)',
-    { timeout: 10000 },
-    async () => {
-      const controller = getController()
-
-      const { client, serverConnection } = await SSEHttpClient.connect(
-        server.baseUrl,
-        '/api/notifications/stream',
-        {
-          query: { userId: 'server-close-collect-test' },
-          awaitServerConnection: { controller },
-        },
-      )
-
-      // Send one event
-      await controller.testSendEvent(serverConnection.id, {
-        event: 'notification',
-        data: { id: '1', message: 'Only event' },
-      })
-
-      // Start collecting more events than will arrive
-      const collectPromise = client.collectEvents(5, 5000)
-
-      // Give time for the first event to be received
-      await delay(50)
-
-      // Server closes the connection before sending 5 events
-      controller.completeHandler(serverConnection.id)
-      controller.testCloseConnection(serverConnection.id)
-
-      // collectEvents should return with only 1 event (not throw timeout)
-      const events = await collectPromise
-      expect(events).toHaveLength(1)
-      expect(JSON.parse(events[0]!.data).message).toBe('Only event')
-
-      client.close()
-    },
-  )
-})
-
-describe('SSE HTTP E2E (logger error handling)', () => {
-  let server: SSETestServerWithResources<{
-    context: DIContext<TestLoggerSSEModuleDependencies, object>
-  }>
-  let context: DIContext<TestLoggerSSEModuleDependencies, object>
-  let mockLogger: SSELogger
-
-  beforeEach(async () => {
-    // Create mock logger to capture error calls
-    mockLogger = {
-      error: vi.fn(),
-      warn: vi.fn(),
-    }
-
-    const container = createContainer<TestLoggerSSEModuleDependencies>({ injectionMode: 'PROXY' })
-    context = new DIContext<TestLoggerSSEModuleDependencies, object>(
-      container,
-      { isTestMode: true },
-      {},
-    )
-    context.registerDependencies({ modules: [new TestLoggerSSEModule(mockLogger)] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it(
-    'logs error when onClose throws and still cleans up connection',
-    { timeout: 10000 },
-    async () => {
-      // Connect to the endpoint that throws in onClose
-      const client = await SSEHttpClient.connect(server.baseUrl, '/api/logger-test/stream')
-
-      expect(client.response.ok).toBe(true)
-
-      // Collect the event sent by the handler
-      const events = await client.collectEvents(1)
-      expect(events).toHaveLength(1)
-      expect(JSON.parse(events[0]!.data)).toEqual({ text: 'Hello from logger test' })
-
-      // Close the client (this triggers onClose which throws)
-      client.close()
-
-      // Wait for the close to be processed
-      await delay(100)
-
-      // Verify the logger was called with the error
-      expect(mockLogger.error).toHaveBeenCalledTimes(1)
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        { err: expect.any(Error) },
-        'Error in SSE onClose handler',
-      )
-
-      // Verify the error message is correct
-      const errorArg = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
-        err: Error
-      }
-      expect(errorArg.err.message).toBe('Test error in onClose')
-    },
-  )
-})
-
-describe('SSE HTTP E2E (onConnect error handling)', () => {
-  let server: SSETestServerWithResources<{
-    context: DIContext<TestOnConnectErrorSSEModuleDependencies, object>
-  }>
-  let context: DIContext<TestOnConnectErrorSSEModuleDependencies, object>
-  let mockLogger: SSELogger
-
-  beforeEach(async () => {
-    // Create mock logger to capture error calls
-    mockLogger = {
-      error: vi.fn(),
-      warn: vi.fn(),
-    }
-
-    const container = createContainer<TestOnConnectErrorSSEModuleDependencies>({
-      injectionMode: 'PROXY',
-    })
-    context = new DIContext<TestOnConnectErrorSSEModuleDependencies, object>(
-      container,
-      { isTestMode: true },
-      {},
-    )
-    context.registerDependencies(
-      { modules: [new TestOnConnectErrorSSEModule(mockLogger)] },
-      undefined,
-    )
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it(
-    'logs error when onConnect throws and still processes events',
-    { timeout: 10000 },
-    async () => {
-      // Connect to the endpoint that throws in onConnect
-      const client = await SSEHttpClient.connect(server.baseUrl, '/api/on-connect-error/stream')
-
-      expect(client.response.ok).toBe(true)
-
-      // Collect the event sent by the handler (proves connection still works)
-      const events = await client.collectEvents(1)
-      expect(events).toHaveLength(1)
-      expect(JSON.parse(events[0]!.data)).toEqual({ text: 'Hello after onConnect error' })
-
-      // Verify the logger was called with the error
-      expect(mockLogger.error).toHaveBeenCalledTimes(1)
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        { err: expect.any(Error) },
-        'Error in SSE onConnect handler',
-      )
-
-      // Verify the error message is correct
-      const errorArg = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
-        err: Error
-      }
-      expect(errorArg.err.message).toBe('Test error in onConnect')
-
-      client.close()
-    },
-  )
-})
-
-describe('SSE HTTP E2E (onReconnect error handling)', () => {
-  let server: SSETestServerWithResources<{
-    context: DIContext<TestOnReconnectErrorSSEModuleDependencies, object>
-  }>
-  let context: DIContext<TestOnReconnectErrorSSEModuleDependencies, object>
-  let mockLogger: SSELogger
-
-  beforeEach(async () => {
-    // Create mock logger to capture error calls
-    mockLogger = {
-      error: vi.fn(),
-      warn: vi.fn(),
-    }
-
-    const container = createContainer<TestOnReconnectErrorSSEModuleDependencies>({
-      injectionMode: 'PROXY',
-    })
-    context = new DIContext<TestOnReconnectErrorSSEModuleDependencies, object>(
-      container,
-      { isTestMode: true },
-      {},
-    )
-    context.registerDependencies(
-      { modules: [new TestOnReconnectErrorSSEModule(mockLogger)] },
-      undefined,
-    )
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it(
-    'logs error when onReconnect throws and still processes events',
-    { timeout: 10000 },
-    async () => {
-      // Connect with Last-Event-ID to trigger onReconnect
-      const client = await SSEHttpClient.connect(server.baseUrl, '/api/on-reconnect-error/stream', {
-        headers: { 'last-event-id': '123' },
-      })
-
-      expect(client.response.ok).toBe(true)
-
-      // Collect the event sent by the handler (proves connection still works)
-      const events = await client.collectEvents(1)
-      expect(events).toHaveLength(1)
-      expect(JSON.parse(events[0]!.data)).toEqual({
-        id: 'new',
-        data: 'Hello after onReconnect error',
-      })
-
-      // Verify the logger was called with the error
-      expect(mockLogger.error).toHaveBeenCalledTimes(1)
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        { err: expect.any(Error), lastEventId: '123' },
-        'Error in SSE onReconnect handler',
-      )
-
-      // Verify the error message is correct
-      const errorArg = (mockLogger.error as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
-        err: Error
-      }
-      expect(errorArg.err.message).toBe('Test error in onReconnect')
-
-      client.close()
-    },
-  )
-})
-
-/**
- * SSE Event Validation E2E tests using Fastify inject.
- *
- * These tests verify that Zod schemas defined in contracts are used
- * for runtime validation of event data before sending.
- */
-describe('SSE Inject E2E (event validation)', () => {
-  let server: SSETestServerWithResources<{
-    context: DIContext<TestValidationSSEModuleDependencies, object>
-  }>
-  let context: DIContext<TestValidationSSEModuleDependencies, object>
-
-  beforeEach(async () => {
-    const container = createContainer<TestValidationSSEModuleDependencies>({
-      injectionMode: 'PROXY',
-    })
-    context = new DIContext<TestValidationSSEModuleDependencies, object>(
-      container,
-      { isTestMode: true },
-      {},
-    )
-    context.registerDependencies({ modules: [new TestValidationSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  it('sends valid events that match the schema', { timeout: 10000 }, async () => {
-    const { closed } = injectPayloadSSE(server.app, validationTestStreamContract, {
-      body: {
-        eventData: {
-          id: '550e8400-e29b-41d4-a716-446655440000',
-          count: 42,
-          status: 'active',
-        },
-      },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-    expect(response.headers['content-type']).toContain('text/event-stream')
-
-    const events = parseSSEEvents(response.body)
-    const validatedEvents = events.filter((e) => e.event === 'validatedEvent')
-
-    expect(validatedEvents).toHaveLength(1)
-    expect(JSON.parse(validatedEvents[0]!.data)).toEqual({
-      id: '550e8400-e29b-41d4-a716-446655440000',
-      count: 42,
-      status: 'active',
-    })
-  })
-
-  it('returns error event when event data has invalid UUID', { timeout: 10000 }, async () => {
-    const { closed } = injectPayloadSSE(server.app, validationTestStreamContract, {
-      body: {
-        eventData: {
-          id: 'not-a-uuid', // Invalid: not a UUID
-          count: 42,
-          status: 'active',
-        },
-      },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-
-    const events = parseSSEEvents(response.body)
-    const errorEvents = events.filter((e) => e.event === 'error')
-
-    expect(errorEvents).toHaveLength(1)
-    expect(JSON.parse(errorEvents[0]!.data).message).toContain('SSE event validation failed')
-  })
-
-  it('returns error event when count is not positive', { timeout: 10000 }, async () => {
-    const { closed } = injectPayloadSSE(server.app, validationTestStreamContract, {
-      body: {
-        eventData: {
-          id: '550e8400-e29b-41d4-a716-446655440000',
-          count: -5, // Invalid: not positive
-          status: 'active',
-        },
-      },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-
-    const events = parseSSEEvents(response.body)
-    const errorEvents = events.filter((e) => e.event === 'error')
-
-    expect(errorEvents).toHaveLength(1)
-    expect(JSON.parse(errorEvents[0]!.data).message).toContain('SSE event validation failed')
-  })
-
-  it('returns error event when status is not in enum', { timeout: 10000 }, async () => {
-    const { closed } = injectPayloadSSE(server.app, validationTestStreamContract, {
-      body: {
-        eventData: {
-          id: '550e8400-e29b-41d4-a716-446655440000',
-          count: 42,
-          status: 'unknown', // Invalid: not in enum ['active', 'inactive']
-        },
-      },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-
-    const events = parseSSEEvents(response.body)
-    const errorEvents = events.filter((e) => e.event === 'error')
-
-    expect(errorEvents).toHaveLength(1)
-    expect(JSON.parse(errorEvents[0]!.data).message).toContain('SSE event validation failed')
-  })
-
-  it('validates with inactive status (valid enum value)', { timeout: 10000 }, async () => {
-    const { closed } = injectPayloadSSE(server.app, validationTestStreamContract, {
-      body: {
-        eventData: {
-          id: '550e8400-e29b-41d4-a716-446655440000',
-          count: 1,
-          status: 'inactive', // Valid: in enum
-        },
-      },
-    })
-
-    const response = await closed
-
-    expect(response.statusCode).toBe(200)
-
-    const events = parseSSEEvents(response.body)
-    const validatedEvents = events.filter((e) => e.event === 'validatedEvent')
-
-    expect(validatedEvents).toHaveLength(1)
-    expect(JSON.parse(validatedEvents[0]!.data)).toEqual({
-      id: '550e8400-e29b-41d4-a716-446655440000',
-      count: 1,
-      status: 'inactive',
+    expect(chunks[chunkCount - 1].content.startsWith(`[chunk-${chunkCount - 1}]`)).toBe(true)
+    expect(JSON.parse(events.at(-1)!.data)).toEqual({
+      totalChunks: chunkCount,
+      totalBytes: chunkCount * chunkSize,
     })
   })
 })
 
 describe('SSE HTTP E2E (POST endpoints)', () => {
-  let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
-  let context: DIContext<object, object>
-
-  beforeEach(async () => {
-    const container = createContainer({ injectionMode: 'PROXY' })
-    context = new DIContext<object, object>(container, { isTestMode: true }, {})
-    context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
-
-    server = await createSSETestServer(
-      (app) => {
-        context.registerSSERoutes(app)
-      },
-      {
-        configureApp: (app) => {
-          app.setValidatorCompiler(validatorCompiler)
-          app.setSerializerCompiler(serializerCompiler)
-
-          // Lets the form-encoded body test assert that a URLSearchParams payload
-          // reaches the handler intact instead of being JSON-stringified into {}
-          app.addContentTypeParser(
-            'application/x-www-form-urlencoded',
-            { parseAs: 'string' },
-            (_request, body, done) => {
-              done(null, parseQueryString(body as string))
-            },
-          )
-
-          // Non-SSE route without a response body, to exercise a bodiless response
-          app.post('/api/no-content', (_request, reply) => reply.code(204).send())
-        },
-        setup: () => ({ context }),
-      },
-    )
-  })
-
-  afterEach(async () => {
-    await server.resources.context.destroy()
-    await server.close()
-  })
-
-  function getSlowStartController(): TestSlowStartPostSSEController {
-    return server.resources.context.diContainer.resolve<TestSlowStartPostSSEController>(
-      'testSlowStartPostSSEController',
-    )
-  }
-
   it('streams events from a POST endpoint with a JSON body', async () => {
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
-      method: 'POST',
-      body: { message: 'hello streaming world', stream: true },
-    })
+    const client = track(
+      await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+        method: 'POST',
+        body: { message: 'hello streaming world', stream: true },
+      }),
+    )
 
     expect(client.response.status).toBe(200)
     expect(client.response.headers.get('content-type')).toContain('text/event-stream')
@@ -1845,23 +339,21 @@ describe('SSE HTTP E2E (POST endpoints)', () => {
 
     expect(chunks).toEqual(['hello', 'streaming', 'world'])
     expect(JSON.parse(events.at(-1)!.data)).toEqual({ totalTokens: 3 })
-
-    client.close()
   })
 
   it('sends a raw string body verbatim and honours an explicit content-type', async () => {
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
-      method: 'POST',
-      body: JSON.stringify({ message: 'raw body', stream: true }),
-      headers: { 'Content-Type': 'application/json' },
-    })
+    const client = track(
+      await SSEHttpClient.connect(server.baseUrl, '/api/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({ message: 'raw body', stream: true }),
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
 
     expect(client.response.status).toBe(200)
 
     const events = await client.collectEvents((event) => event.event === 'done')
     expect(events.filter((e) => e.event === 'chunk')).toHaveLength(2)
-
-    client.close()
   })
 
   it('rejects a body on a GET request', async () => {
@@ -1870,92 +362,6 @@ describe('SSE HTTP E2E (POST endpoints)', () => {
         body: { message: 'hi', stream: true },
       }),
     ).rejects.toThrow('a request body requires a non-GET method')
-  })
-
-  it('exposes status and SSE headers while the handler is still running', async () => {
-    const controller = getSlowStartController()
-
-    // Handler calls sse.start() and only then does its slow work
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/slow-start/stream', {
-      method: 'POST',
-      body: { prompt: 'tell me a story' },
-    })
-
-    // The response is on the wire before the slow work finished
-    expect(client.response.status).toBe(200)
-    expect(client.response.headers.get('content-type')).toContain('text/event-stream')
-    expect(controller.pendingSlowWorkCount).toBe(1)
-
-    // Now release the slow work and consume what it produced
-    controller.releaseSlowWork()
-
-    const events = await client.collectEvents((event) => event.event === 'done')
-    expect(events.map((e) => e.event)).toEqual(['chunk', 'done'])
-    expect(JSON.parse(events[0]!.data)).toEqual({ content: 'tell me a story' })
-
-    client.close()
-  })
-
-  it('resolves the server-side connection for a POST request', async () => {
-    const controller = getSlowStartController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/slow-start/stream',
-      {
-        method: 'POST',
-        body: { prompt: 'awaited' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    expect(serverConnection.request.method).toBe('POST')
-    expect(serverConnection.request.url).toBe('/api/slow-start/stream')
-
-    controller.releaseSlowWork()
-
-    const events = await client.collectEvents((event) => event.event === 'done')
-    expect(JSON.parse(events[0]!.data)).toEqual({ content: 'awaited' })
-
-    client.close()
-  })
-
-  it('surfaces a failure raised before sse.start() as the declared JSON status', async () => {
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/slow-start/stream', {
-      method: 'POST',
-      body: { prompt: 'tell me a story', failBeforeStart: true },
-    })
-
-    expect(client.response.status).toBe(503)
-    expect(client.response.headers.get('content-type')).not.toContain('text/event-stream')
-
-    // Body is still readable as JSON - events were never consumed, so it isn't locked
-    await expect(client.response.json()).resolves.toEqual({ message: 'Upstream unavailable' })
-
-    client.close()
-  })
-
-  it('accepts the lowercase method spelling used by route contracts', async () => {
-    const controller = getSlowStartController()
-
-    const { client, serverConnection } = await SSEHttpClient.connect(
-      server.baseUrl,
-      '/api/slow-start/stream',
-      {
-        method: 'post',
-        body: { prompt: 'lowercase method' },
-        awaitServerConnection: { controller },
-      },
-    )
-
-    expect(serverConnection.request.method).toBe('POST')
-
-    controller.releaseSlowWork()
-
-    const events = await client.collectEvents((event) => event.event === 'done')
-    expect(JSON.parse(events[0]!.data)).toEqual({ content: 'lowercase method' })
-
-    client.close()
   })
 
   it('rejects a body on a lowercase GET request too', async () => {
@@ -1967,49 +373,101 @@ describe('SSE HTTP E2E (POST endpoints)', () => {
     ).rejects.toThrow('a request body requires a non-GET method')
   })
 
-  it('sends a URLSearchParams body form-encoded instead of JSON-stringifying it', async () => {
-    const controller = getSlowStartController()
+  it('resolves the server-side connection for a POST request', async () => {
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/slow-start/stream',
+      {
+        method: 'POST',
+        body: { prompt: 'awaited' },
+        awaitServerConnection: { spy },
+      },
+    ).then(track)
 
+    expect(serverConnection.request.method).toBe('POST')
+    expect(serverConnection.request.url).toBe('/api/slow-start/stream')
+
+    slowWorkGate.release()
+
+    const events = await client.collectEvents((event) => event.event === 'done')
+    expect(JSON.parse(events[0]!.data)).toEqual({ content: 'awaited' })
+  })
+
+  it('accepts the lowercase method spelling used by route contracts', async () => {
+    const { client, serverConnection } = await SSEHttpClient.connect(
+      server.baseUrl,
+      '/api/slow-start/stream',
+      {
+        method: 'post',
+        body: { prompt: 'lowercase method' },
+        awaitServerConnection: { spy },
+      },
+    ).then(track)
+
+    expect(serverConnection.request.method).toBe('POST')
+
+    slowWorkGate.release()
+
+    const events = await client.collectEvents((event) => event.event === 'done')
+    expect(JSON.parse(events[0]!.data)).toEqual({ content: 'lowercase method' })
+  })
+
+  it('surfaces a failure raised before sse.start() as the declared JSON status', async () => {
+    const client = track(
+      await SSEHttpClient.connect(server.baseUrl, '/api/slow-start/stream', {
+        method: 'POST',
+        body: { prompt: 'tell me a story', failBeforeStart: true },
+      }),
+    )
+
+    expect(client.response.status).toBe(503)
+    expect(client.response.headers.get('content-type')).not.toContain('text/event-stream')
+
+    // Body is still readable as JSON - events were never consumed, so it isn't locked
+    await expect(client.response.json()).resolves.toEqual({ message: 'Upstream unavailable' })
+  })
+
+  it('sends a URLSearchParams body form-encoded instead of JSON-stringifying it', async () => {
     const { client, serverConnection } = await SSEHttpClient.connect(
       server.baseUrl,
       '/api/slow-start/stream',
       {
         method: 'POST',
         body: new URLSearchParams({ prompt: 'form encoded prompt' }),
-        awaitServerConnection: { controller },
+        awaitServerConnection: { spy },
       },
-    )
+    ).then(track)
 
     // fetch() describes the encoding itself - we must not have overwritten it with JSON
     expect(serverConnection.request.headers['content-type']).toContain(
       'application/x-www-form-urlencoded',
     )
 
-    controller.releaseSlowWork()
+    slowWorkGate.release()
 
     const events = await client.collectEvents((event) => event.event === 'done')
     expect(JSON.parse(events[0]!.data)).toEqual({ content: 'form encoded prompt' })
-
-    client.close()
   })
 
   it('sends a typed array body verbatim', async () => {
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/slow-start/stream', {
-      method: 'POST',
-      body: Buffer.from(JSON.stringify({ prompt: 'binary prompt' })),
-    })
+    slowWorkGate.release()
+
+    const client = track(
+      await SSEHttpClient.connect(server.baseUrl, '/api/slow-start/stream', {
+        method: 'POST',
+        body: Buffer.from(JSON.stringify({ prompt: 'binary prompt' })),
+      }),
+    )
 
     expect(client.response.status).toBe(200)
 
-    getSlowStartController().releaseSlowWork()
-
     const events = await client.collectEvents((event) => event.event === 'done')
     expect(JSON.parse(events[0]!.data)).toEqual({ content: 'binary prompt' })
-
-    client.close()
   })
 
   it('streams a ReadableStream body to the server', async () => {
+    slowWorkGate.release()
+
     const payload = JSON.stringify({ prompt: 'streamed prompt' })
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -2018,19 +476,17 @@ describe('SSE HTTP E2E (POST endpoints)', () => {
       },
     })
 
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/slow-start/stream', {
-      method: 'POST',
-      body,
-    })
+    const client = track(
+      await SSEHttpClient.connect(server.baseUrl, '/api/slow-start/stream', {
+        method: 'POST',
+        body,
+      }),
+    )
 
     expect(client.response.status).toBe(200)
 
-    getSlowStartController().releaseSlowWork()
-
     const events = await client.collectEvents((event) => event.event === 'done')
     expect(JSON.parse(events[0]!.data)).toEqual({ content: 'streamed prompt' })
-
-    client.close()
   })
 
   it('rejects a body that cannot be serialized to JSON', async () => {
@@ -2043,9 +499,11 @@ describe('SSE HTTP E2E (POST endpoints)', () => {
   })
 
   it('exposes a bodiless response instead of failing to construct the client', async () => {
-    const client = await SSEHttpClient.connect(server.baseUrl, '/api/no-content', {
-      method: 'POST',
-    })
+    const client = track(
+      await SSEHttpClient.connect(server.baseUrl, '/api/no-content', {
+        method: 'POST',
+      }),
+    )
 
     expect(client.response.status).toBe(204)
 
@@ -2053,7 +511,5 @@ describe('SSE HTTP E2E (POST endpoints)', () => {
     await expect(client.collectEvents(1)).rejects.toThrow(
       'SSE response has no body to stream (status 204)',
     )
-
-    client.close()
   })
 })

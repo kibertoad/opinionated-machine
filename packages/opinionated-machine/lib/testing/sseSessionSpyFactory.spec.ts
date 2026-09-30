@@ -1,5 +1,6 @@
+import type { ApiContract } from '@lokalise/api-contracts'
 import { describe, expect, it } from 'vitest'
-import type { FastifySSERouteOptions, SSESession } from '../routes/index.ts'
+import type { ApiRouteOptions } from '../api-contracts/apiRouteBuilder.ts'
 import { createSSESessionSpy } from './sseSessionSpyFactory.ts'
 
 type TestSession = { id: string; request: { url: string; method: string } }
@@ -140,11 +141,11 @@ describe('createSSESessionSpy', () => {
     expect(routeOptions.onClose).toBeTypeOf('function')
   })
 
-  it('produces route options accepted by this package own SSE route options', () => {
-    // Type-level check: the escape hatch for `buildFastifyRoute`-built routes.
-    const { routeOptions, withSpy } = createSSESessionSpy<SSESession>()
-    const sseRouteOptions: FastifySSERouteOptions = { ...routeOptions }
-    const composedRouteOptions: FastifySSERouteOptions = withSpy({
+  it('produces route options accepted by buildApiRoute', () => {
+    // Type-level check: the default session type matches what buildApiRoute hands its hooks.
+    const { routeOptions, withSpy } = createSSESessionSpy()
+    const sseRouteOptions: ApiRouteOptions<ApiContract> = { ...routeOptions }
+    const composedRouteOptions: ApiRouteOptions<ApiContract> = withSpy({
       heartbeat: false,
       onConnect: (connection) => void connection.id,
     })

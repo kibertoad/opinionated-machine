@@ -93,7 +93,7 @@ export class SSERoomManager {
 
   /**
    * Register a handler for messages from other nodes.
-   * The controller uses this to forward messages to local connections.
+   * The broadcaster uses this to forward messages to local connections.
    *
    * @param handler - Callback invoked when a remote message is received
    */

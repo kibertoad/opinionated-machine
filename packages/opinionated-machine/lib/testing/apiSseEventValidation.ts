@@ -6,7 +6,7 @@
  * @internal
  */
 
-import type { SSEEventSchemas } from '@lokalise/api-contracts'
+import type { SseSchemaByEventName } from '@lokalise/api-contracts'
 import { type ApiContract, getSseSchemaByEventName } from '@lokalise/api-contracts'
 import type { ParsedSSEEvent } from '@opinionated-machine/sse-parser'
 import type { ApiSSEEvent } from './apiSseTestTypes.ts'
@@ -16,7 +16,7 @@ import { truncateBody } from './sseInjectShared.ts'
  * The contract's SSE schemas, merged across every declared status, or a thrown error naming
  * the reader that asked for them.
  */
-export function resolveApiSseSchemas(contract: ApiContract, reader: string): SSEEventSchemas {
+export function resolveApiSseSchemas(contract: ApiContract, reader: string): SseSchemaByEventName {
   const schemaByEventName = getSseSchemaByEventName(contract)
   if (!schemaByEventName) {
     throw new Error(`${reader} — the contract declares no SSE response`)
@@ -33,7 +33,7 @@ export function resolveApiSseSchemas(contract: ApiContract, reader: string): SSE
  *   or if the payload doesn't match the declared schema
  */
 export function validateApiSseEvent<Contract extends ApiContract>(
-  schemaByEventName: SSEEventSchemas,
+  schemaByEventName: SseSchemaByEventName,
   event: ParsedSSEEvent,
   reader: string,
 ): ApiSSEEvent<Contract> {

@@ -1,5 +1,5 @@
 import type { IncomingHttpHeaders } from 'node:http'
-import type { SSEEventSchemas } from '@lokalise/api-contracts'
+import type { SseSchemaByEventName } from '@lokalise/api-contracts'
 import type { SSESession } from '@lokalise/fastify-api-contracts'
 import type { RouteHandlerMethod } from 'fastify'
 import type { z } from 'zod'
@@ -99,7 +99,7 @@ class SSEDiagnosticsRecorder {
 
   /** Record a send that threw, and the Zod issues behind it when the payload explains it. */
   recordSendFailure(
-    schemaByEventName: SSEEventSchemas,
+    schemaByEventName: SseSchemaByEventName,
     eventName: string,
     data: unknown,
     error: unknown,
@@ -199,7 +199,7 @@ function resolveRecorder(headers: IncomingHttpHeaders): SSEDiagnosticsRecorder |
 
 /** Re-validate a payload to recover the structured issues the thrown error only carries as text. */
 function issuesFor(
-  schemaByEventName: SSEEventSchemas,
+  schemaByEventName: SseSchemaByEventName,
   eventName: string,
   data: unknown,
 ): z.core.$ZodIssue[] | undefined {
@@ -252,7 +252,7 @@ function causedBy(error: unknown, candidate: unknown): boolean {
  */
 export function attachSSESendDiagnostics(
   session: SSESession,
-  schemaByEventName: SSEEventSchemas,
+  schemaByEventName: SseSchemaByEventName,
 ): void {
   const recorder = resolveRecorder(session.request.headers)
   if (!recorder) {
@@ -362,6 +362,30 @@ export function describeSendFailures(failures: SSESendFailure[]): string {
   const lines = failures.map((failure) => `  - ${describeSendFailure(failure)}`)
   const subject = failures.length === 1 ? 'failure' : 'failures'
   return `${failures.length} SSE send ${subject} recorded for this request:\n${lines.join('\n')}`
+}
+
+/**
+ * Explain an error raised while reading a stream in terms of the sends the handler lost.
+ *
+ * A handler that fails to send leaves the stream in whatever state the app's error handler
+ * puts it in — typically a terminal `error` event the contract does not declare. Reading that
+ * event fails, but the lost send is the cause worth reporting; the read error is kept as
+ * context. Returns `err` unchanged when nothing unrecovered was recorded.
+ *
+ * @internal
+ */
+export function explainReadError(
+  err: unknown,
+  failures: SSESendFailure[],
+  reader: string,
+): unknown {
+  const unhandled = unhandledSendFailures(failures)
+  if (unhandled.length === 0) {
+    return err
+  }
+  return new Error(
+    `${reader} — ${describeSendFailures(unhandled)}\nRaised while reading: ${err instanceof Error ? err.message : String(err)}`,
+  )
 }
 
 function describeSendFailure(failure: SSESendFailure): string {

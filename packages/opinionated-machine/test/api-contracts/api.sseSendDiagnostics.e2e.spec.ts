@@ -251,14 +251,14 @@ describe('SSE send failures reach the test process', () => {
   it('does not instrument requests that carry no diagnostics scope', async () => {
     server = await registerFailingRoute()
 
-    // The same route, driven by a client that opens no scope: the stream still ends short,
-    // exactly as it did before — nothing about the route's behavior changed.
+    // The same route, driven by a client that opens no scope: the stream ends exactly as the
+    // app's error handler ends it — nothing about the route's behavior changed.
     const conn = await new SSEInjectClient(server.app).connectWithBody(
       '/api/sse-stream/lqa-issues',
       { segment: 'hello' },
     )
 
     expect(conn.getStatusCode()).toBe(200)
-    expect(conn.getReceivedEvents().map((event) => event.event)).toEqual(['issue'])
+    expect(conn.getReceivedEvents().map((event) => event.event)).toEqual(['issue', 'error'])
   })
 })

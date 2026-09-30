@@ -1,5 +1,11 @@
 import FastifySSEPlugin from '@fastify/sse'
-import fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify'
+import fastify, {
+  type FastifyError,
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+  type FastifyServerOptions,
+} from 'fastify'
 import { SSETestServer } from '../index.js'
 
 /**
@@ -29,10 +35,33 @@ export type CreateSSETestServerOptions<T> = {
 export type SSETestServerWithResources<T> = SSETestServer & { resources: T }
 
 /**
+ * The SSE-aware global error handler `@lokalise/fastify-api-contracts` requires on apps serving
+ * SSE routes. An error thrown after the stream started reaches it with the stream still open,
+ * where headers are already on the wire: the only way to report it is a terminal `error` event,
+ * after which the stream is closed. Before the stream starts it is a regular HTTP error response.
+ */
+function sseAwareErrorHandler(
+  error: FastifyError,
+  _request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> | FastifyReply {
+  const statusCode = error.statusCode ?? 500
+  const payload = { message: error.message, errorCode: error.code }
+
+  // `isConnected` alone is not enough — @fastify/sse sets it before the handler runs.
+  if (reply.sse?.isConnected && reply.raw.headersSent) {
+    return reply.sse.send({ event: 'error', data: payload }).then(() => reply.sse.close())
+  }
+
+  return reply.status(statusCode).send(payload)
+}
+
+/**
  * Internal factory for creating SSE test servers with full app setup.
  *
  * This is a convenience wrapper used only by the library's own tests.
- * It creates a Fastify app with @fastify/sse pre-registered, configures it,
+ * It creates a Fastify app with @fastify/sse and an SSE-aware error handler pre-registered,
+ * configures it,
  * registers routes, and starts it via SSETestServer.start().
  *
  * External consumers should use SSETestServer.start(app) with their own app factory.
@@ -56,6 +85,8 @@ export async function createSSETestServer<T = undefined>(
     FastifySSEPlugin as unknown as Parameters<typeof app.register>[0],
     options?.ssePluginOptions ?? {},
   )
+
+  app.setErrorHandler(sseAwareErrorHandler)
 
   // Run custom configuration
   if (options?.configureApp) {

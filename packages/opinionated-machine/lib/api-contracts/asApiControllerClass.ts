@@ -11,8 +11,7 @@ declare module 'awilix' {
 /**
  * Register an `AbstractApiController` subclass with the awilix DI container.
  *
- * The returned resolver does **not** set `isSSEController` or `isDualModeController`,
- * so `DIContext` reads its `routes` property automatically during `registerRoutes()`.
+ * `DIContext` reads the controller's `routes` property during `registerRoutes()`.
  *
  * @example
  * ```typescript

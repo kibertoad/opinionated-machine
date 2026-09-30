@@ -453,19 +453,3 @@ export type InferContractSnapshot<TContract> =
         ? z.output<TEntry>
         : never
     : never
-
-/** Event payload map inferred from a legacy `buildSseContract` dual-mode contract. */
-export type InferLegacyEvents<TContract> = TContract extends {
-  serverSentEventSchemas: infer TSchemas
-}
-  ? EventsFromSchemaMap<TSchemas>
-  : never
-
-/** Snapshot inferred from a legacy dual-mode contract's success schema. */
-export type InferLegacySnapshot<TContract> = TContract extends {
-  successResponseBodySchema: infer TSchema
-}
-  ? TSchema extends z.ZodType
-    ? z.output<TSchema>
-    : never
-  : never
