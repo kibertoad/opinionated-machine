@@ -6,7 +6,7 @@ import type {
 import type { RouteType } from '@lokalise/fastify-api-contracts'
 import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
-import type { FastifyInstance, RouteOptions } from 'fastify'
+import type { FastifyInstance, FastifyReply, onRequestHookHandler, RouteOptions } from 'fastify'
 import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
 import type { AbstractApiController } from './api-contracts/index.ts'
@@ -109,6 +109,9 @@ export class DIContext<
   // ApiContract controller dependency names (resolved from container to preserve singletons)
   private readonly apiControllerNames: string[]
   private readonly appConfig: Config
+  // SSE streams still open, closed in preClose so they don't keep app.close() waiting
+  private readonly openSSEReplies: Set<FastifyReply>
+  private isSSECloseHookRegistered: boolean
 
   constructor(
     diContainer: AwilixContainer<Dependencies>,
@@ -132,6 +135,8 @@ export class DIContext<
     this.sseControllerNames = []
     this.dualModeControllerNames = []
     this.apiControllerNames = []
+    this.openSSEReplies = new Set()
+    this.isSSECloseHookRegistered = false
   }
 
   private registerControllers(
@@ -254,6 +259,7 @@ export class DIContext<
       const controller: AbstractApiController<any> = this.diContainer.resolve(controllerName)
 
       for (const route of Object.values(controller.routes)) {
+        this.registerStreamingRouteShutdown(app, route)
         app.route(route)
       }
     }
@@ -416,6 +422,52 @@ export class DIContext<
         this.applyDualModeRouteOptions(route, options)
         app.route(route)
       }
+    }
+  }
+
+  /**
+   * Keep the route's SSE streams from holding `app.close()`.
+   *
+   * Fastify closes its HTTP server in an `onClose` hook that runs before any the app registers,
+   * and the server waits for every open connection. An open keepAlive stream would hold
+   * `app.close()` until the process is killed, and no `onClose` hook registered after it would
+   * run, the DI container dispose included. A single `preClose` hook, which runs before the
+   * server is closed:
+   * - closes the keepAlive streams still open. autoClose streams are left to finish, like any
+   *   in-flight request.
+   * - closes idle keep-alive connections until the server has closed: a response that finishes
+   *   during shutdown (such as one of those autoClose streams) would otherwise keep its socket,
+   *   and the server, open until `keepAliveTimeout`.
+   */
+  private registerStreamingRouteShutdown(app: FastifyInstance, route: RouteOptions): void {
+    // The option @fastify/sse reads, set by buildApiRoute on every route that can stream SSE
+    if (!('sse' in route)) return
+
+    const trackReply: onRequestHookHandler = (_request, reply, done) => {
+      this.openSSEReplies.add(reply)
+      reply.raw.once('close', () => this.openSSEReplies.delete(reply))
+      done()
+    }
+    const existing = route.onRequest
+    route.onRequest = existing
+      ? [trackReply, ...(Array.isArray(existing) ? existing : [existing])]
+      : trackReply
+
+    if (!this.isSSECloseHookRegistered) {
+      this.isSSECloseHookRegistered = true
+      app.addHook('preClose', (done) => {
+        for (const reply of this.openSSEReplies) {
+          // keepAlive streams never end by themselves; autoClose ones are left to finish
+          if (reply.sse?.shouldKeepAlive) reply.sse.close()
+        }
+        // A response that finishes once the server is closing still leaves its keep-alive
+        // socket open, and server.close() waits for it
+        if (app.server.listening) {
+          const sweep = setInterval(() => app.server.closeIdleConnections(), 100).unref()
+          app.server.once('close', () => clearInterval(sweep))
+        }
+        done()
+      })
     }
   }
 
