@@ -1268,7 +1268,14 @@ private handleStream = buildHandler(streamContract, {
 
 ### Graceful Shutdown
 
-SSE controllers automatically close all connections during application shutdown. This is configured by `asSSEControllerClass` which sets `closeAllConnections` as the async dispose method with priority 5 (early in shutdown sequence).
+SSE streams don't hold `app.close()`. For `buildApiRoute` routes registered through `registerRoutes`, a `preClose` 
+hook runs before Fastify closes its HTTP server:
+
+- keepAlive streams still open are closed. Left open, the server would wait for them, and no `onClose` hook, the DI 
+ container dispose included, would run until the process was killed.
+- autoClose streams still being generated are left to finish, like any in-flight request.
+- idle keep-alive connections are closed as requests complete, so a response that finishes during shutdown doesn't 
+ keep the server open until `keepAliveTimeout`.
 
 ### Error Handling
 
