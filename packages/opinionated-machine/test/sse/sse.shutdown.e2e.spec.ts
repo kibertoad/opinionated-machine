@@ -1,8 +1,7 @@
 import { setTimeout } from 'node:timers/promises'
 import { createContainer } from 'awilix'
-import type { FastifyInstance } from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
-import { afterEach, describe, expect, it, onTestFinished } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   AbstractApiController,
   AbstractModule,
@@ -13,16 +12,13 @@ import {
   type MandatoryNameAndRegistrationPair,
   SSEHttpClient,
 } from '../../index.js'
-import { createHandlerGate, type HandlerGate } from '../api-contracts/fixtures/sseStreamTestApp.ts'
+import { createHandlerGate } from '../api-contracts/fixtures/sseStreamTestApp.ts'
 import { apiLqaIssueStreamContract } from '../api-contracts/fixtures/testContracts.ts'
-import {
-  TestApiModule,
-  type TestApiModuleControllers,
-} from '../api-contracts/fixtures/testModules.ts'
+import { TestApiModule } from '../api-contracts/fixtures/testModules.ts'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
 
-// Holds the autoClose handler mid-stream; set by the test that uses it
-let autoCloseGate: HandlerGate
+// Holds the autoClose handler mid-stream
+const autoCloseGate = createHandlerGate()
 
 class AutoCloseStreamController extends AbstractApiController<
   typeof AutoCloseStreamController.contracts
@@ -52,6 +48,10 @@ class AutoCloseStreamModule extends AbstractModule<object> {
   }
 }
 
+function settleWithin(promise: Promise<unknown>, ms: number) {
+  return Promise.race([promise.then(() => 'settled' as const), setTimeout(ms, 'pending' as const)])
+}
+
 /**
  * SSE streams still open when the app closes.
  *
@@ -62,27 +62,36 @@ class AutoCloseStreamModule extends AbstractModule<object> {
  */
 describe('SSE streams on app close', () => {
   let server: SSETestServerWithResources<undefined> | undefined
-  let client: SSEHttpClient | undefined
-  const contexts: Array<{ destroy: () => Promise<void> }> = []
+  let context: DIContext<object, object> | undefined
 
   afterEach(async () => {
-    client?.close()
-    client = undefined
     await server?.close()
+    await context?.destroy()
     server = undefined
-    await Promise.all(contexts.splice(0).map((context) => context.destroy()))
+    context = undefined
   })
 
-  async function startServer(registerRoutes: (app: FastifyInstance) => void) {
+  /**
+   * Start a server with the module's routes and an `onClose` hook registered before them, like
+   * the DI dispose hook of a service.
+   */
+  async function startApp(module: AbstractModule<object>) {
+    const diContext = new DIContext<object, object>(
+      createContainer({ injectionMode: 'PROXY' }),
+      {},
+      {},
+    )
+    diContext.registerDependencies({ modules: [module] }, undefined)
+    context = diContext
+
     const onCloseHook = { ran: false }
-    server = await createSSETestServer(
+    const testServer = await createSSETestServer<undefined>(
       (app) => {
-        // Registered before the routes, like the DI dispose hook of a service
         app.addHook('onClose', (_instance, done) => {
           onCloseHook.ran = true
           done()
         })
-        registerRoutes(app)
+        diContext.registerRoutes(app)
       },
       {
         configureApp: (app) => {
@@ -91,69 +100,46 @@ describe('SSE streams on app close', () => {
         },
       },
     )
-    return { server, onCloseHook }
-  }
+    server = testServer
 
-  function closeWithin2s(app: SSETestServerWithResources<undefined>) {
-    return Promise.race([
-      app.close().then(() => 'closed' as const),
-      setTimeout(2000, 'timed out' as const),
-    ])
+    return { testServer, onCloseHook }
   }
 
   it('closes open keepAlive streams, so later onClose hooks still run', async () => {
-    const context = new DIContext<TestApiModuleControllers, object>(
-      createContainer<TestApiModuleControllers>({ injectionMode: 'PROXY' }),
-      {},
-      {},
-    )
-    context.registerDependencies({ modules: [new TestApiModule()] }, undefined)
-    contexts.push(context)
-    const { server: started, onCloseHook } = await startServer((app) => context.registerRoutes(app))
+    const { testServer, onCloseHook } = await startApp(new TestApiModule())
+    const client = await SSEHttpClient.connect(testServer.baseUrl, '/api/test/sse-keep-alive')
 
-    client = await SSEHttpClient.connect(started.baseUrl, '/api/test/sse-keep-alive')
     expect(client.response.ok).toBe(true)
 
-    await expect(closeWithin2s(started)).resolves.toBe('closed')
+    await expect(settleWithin(testServer.close(), 2000)).resolves.toBe('settled')
     expect(onCloseHook.ran).toBe(true)
-    server = undefined
+
+    client.close()
   })
 
   it('lets an autoClose stream in progress finish before the app closes', async () => {
-    autoCloseGate = createHandlerGate()
-    const context = new DIContext<object, object>(
-      createContainer({ injectionMode: 'PROXY' }),
-      {},
-      {},
-    )
-    context.registerDependencies({ modules: [new AutoCloseStreamModule()] }, undefined)
-    contexts.push(context)
-    const { server: started, onCloseHook } = await startServer((app) => context.registerRoutes(app))
-
-    const streamClient = await connectApiSSE(started.baseUrl, apiLqaIssueStreamContract, {
+    const { testServer, onCloseHook } = await startApp(new AutoCloseStreamModule())
+    const client = await connectApiSSE(testServer.baseUrl, apiLqaIssueStreamContract, {
       body: { segment: 'hello' },
     })
-    onTestFinished(() => streamClient.close())
+
     await autoCloseGate.reached
 
-    const closing = started.close().then(() => 'closed' as const)
+    const closing = testServer.close()
     // Still generating: the close waits for the stream, as for any in-flight request
-    await expect(Promise.race([closing, setTimeout(300, 'waiting' as const)])).resolves.toBe(
-      'waiting',
-    )
+    await expect(settleWithin(closing, 300)).resolves.toBe('pending')
 
     autoCloseGate.release()
     const received: string[] = []
-    for await (const event of streamClient.events()) {
+    for await (const event of client.events()) {
       received.push(event.event)
     }
 
     expect(received).toEqual(['issue', 'review'])
     // Not held open by the stream's keep-alive socket once the stream has ended
-    await expect(Promise.race([closing, setTimeout(1000, 'timed out' as const)])).resolves.toBe(
-      'closed',
-    )
+    await expect(settleWithin(closing, 1000)).resolves.toBe('settled')
     expect(onCloseHook.ran).toBe(true)
-    server = undefined
+
+    client.close()
   })
 })
