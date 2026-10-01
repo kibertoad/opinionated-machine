@@ -1177,7 +1177,10 @@ const lqaSegmentContract = defineApiContract({
   pathResolver: () => '/v1/content/actions/lqa-text-segment',
   requestBodySchema: z.object({ segment: z.string() }),
   responsesByStatusCode: {
-    200: sseResponse({ review: z.object({ score: z.number() }) }),
+    200: sseResponse({
+      issue: z.object({ severity: z.enum(['neutral', 'minor', 'major', 'critical']) }),
+      review: z.object({ score: z.number() }),
+    }),
     400: z.object({ message: z.string() }),
   },
 })
