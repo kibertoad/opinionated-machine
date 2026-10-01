@@ -1,3 +1,5 @@
+// Loads @fastify/sse's `reply.sse` augmentation of FastifyReply, read by the preClose hook
+import type {} from '@fastify/sse'
 import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance, FastifyReply, onRequestHookHandler, RouteOptions } from 'fastify'
