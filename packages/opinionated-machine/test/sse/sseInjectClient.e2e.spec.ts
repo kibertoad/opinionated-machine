@@ -1,343 +1,203 @@
-import { createContainer } from 'awilix'
-import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
-import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest'
-import { DIContext, SSEInjectClient } from '../../index.js'
+import { defineApiContract, sseResponse } from '@lokalise/api-contracts'
+import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from 'vitest'
+import { z } from 'zod/v4'
+import { buildApiRoute, SSEInjectClient } from '../../index.js'
+import { startSSEStreamTestApp } from '../api-contracts/fixtures/sseStreamTestApp.ts'
 import { createSSETestServer, type SSETestServerWithResources } from '../sseTestServerFactory.js'
-import { bodyForStatusGetContract, chatCompletionContract } from './fixtures/testContracts.js'
-import {
-  TestAuthSSEModule,
-  TestBodyForStatusModule,
-  type TestBodyForStatusModuleDependencies,
-  TestChannelSSEModule,
-  TestPostSSEModule,
-} from './fixtures/testModules.js'
+
+/** OpenAI-style completion: one `chunk` per word of the message, then `done`. */
+const chatCompletionContract = defineApiContract({
+  visibility: 'public',
+  method: 'post',
+  summary: 'Chat completion stream',
+  pathResolver: () => '/api/chat/completions',
+  requestBodySchema: z.object({ message: z.string(), stream: z.literal(true) }),
+  responsesByStatusCode: {
+    200: sseResponse({
+      chunk: z.object({ content: z.string() }),
+      done: z.object({ totalTokens: z.number() }),
+    }),
+  },
+})
+
+/** Echoes the authorization header it received, so forwarding is observable. */
+const headerEchoContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'Header echo stream',
+  pathResolver: () => '/api/header-echo/stream',
+  requestHeaderSchema: z.object({ authorization: z.string() }),
+  responsesByStatusCode: {
+    200: sseResponse({ data: z.object({ authorization: z.string() }) }),
+  },
+})
+
+/** Streams by default; `mode` selects a documented pre-stream JSON error instead. */
+const bodyForStatusContract = defineApiContract({
+  visibility: 'public',
+  method: 'get',
+  summary: 'Stream with documented pre-stream errors',
+  pathResolver: () => '/api/body-for-status/stream',
+  requestQuerySchema: z.object({ mode: z.enum(['unauthorized', 'missing']).optional() }),
+  responsesByStatusCode: {
+    200: sseResponse({ message: z.object({ text: z.string() }) }),
+    401: z.object({ message: z.string() }),
+    404: z.object({ resourceId: z.string() }),
+  },
+})
+
+const CHAT_PATH = chatCompletionContract.pathResolver()
 
 /**
- * E2E tests for SSEInjectClient with @fastify/sse.
+ * E2E tests for SSEInjectClient against `buildApiRoute` SSE routes.
  *
- * These tests validate that SSEInjectClient works correctly with the
- * AbstractSSEController pattern and @fastify/sse plugin.
- *
- * SSEInjectClient is designed for testing "request-response" style SSE streams
- * where the handler sends events and then closes the connection (like OpenAI completions).
- *
- * Note: SSEInjectClient uses Fastify's inject() which doesn't require a running server,
- * but we use createSSETestServer to get a properly configured Fastify app with @fastify/sse.
+ * SSEInjectClient is designed for "request-response" style SSE streams where the handler sends
+ * events and then closes the connection (like OpenAI completions). It uses Fastify's inject(),
+ * so no listening server is needed; the app still has to carry `@fastify/sse`.
  */
 describe('SSEInjectClient E2E', () => {
-  describe('POST requests (OpenAI-style streaming)', () => {
-    let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
+  describe('against buildApiRoute routes', () => {
+    let server: SSETestServerWithResources<undefined>
     let client: SSEInjectClient
 
-    beforeEach(async () => {
-      const container = createContainer({ injectionMode: 'PROXY' })
-      const context = new DIContext<object, object>(container, { isTestMode: true }, {})
-      context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
-
-      server = await createSSETestServer(
-        (app) => {
-          context.registerSSERoutes(app)
-        },
-        {
-          configureApp: (app) => {
-            app.setValidatorCompiler(validatorCompiler)
-            app.setSerializerCompiler(serializerCompiler)
-          },
-          setup: () => ({ context }),
-        },
-      )
-
-      // SSEInjectClient works with the app directly - no server needed
-      client = new SSEInjectClient(server.app)
-    })
-
-    afterEach(async () => {
-      await server.resources.context.destroy()
-      await server.close()
-    })
-
-    it('streams response chunks for POST request', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.pathResolver({}), {
-        message: 'Hello World Test',
-        stream: true as const,
+    beforeAll(async () => {
+      server = await startSSEStreamTestApp((app) => {
+        app.route(
+          buildApiRoute(chatCompletionContract, async (request, _reply, { sse }) => {
+            const session = sse.start('autoClose')
+            const words = request.body.message.split(' ')
+            for (const word of words) {
+              await session.send('chunk', { content: word })
+            }
+            await session.send('done', { totalTokens: words.length })
+          }),
+        )
+        app.route(
+          buildApiRoute(headerEchoContract, async (request, _reply, { sse }) => {
+            const session = sse.start('autoClose')
+            await session.send('data', { authorization: request.headers.authorization })
+          }),
+        )
+        app.route(
+          buildApiRoute(bodyForStatusContract, async (request, _reply, { sse }) => {
+            if (request.query.mode === 'unauthorized') {
+              return { status: 401, body: { message: 'Unauthorized' } }
+            }
+            if (request.query.mode === 'missing') {
+              return { status: 404, body: { resourceId: 'item-42' } }
+            }
+            const session = sse.start('autoClose')
+            await session.send('message', { text: 'hello' })
+            return
+          }),
+        )
       })
-
-      expect(conn.getStatusCode()).toBe(200)
-      expect(conn.getHeaders()['content-type']).toContain('text/event-stream')
-
-      const events = conn.getReceivedEvents()
-      expect(events.length).toBeGreaterThan(0)
-
-      // Should have chunk events for each word + done event
-      const chunks = events.filter((e) => e.event === 'chunk')
-      expect(chunks).toHaveLength(3) // "Hello", "World", "Test"
-
-      const doneEvent = events.find((e) => e.event === 'done')
-      expect(doneEvent).toBeDefined()
-      expect(JSON.parse(doneEvent!.data).totalTokens).toBe(3)
-    })
-
-    it('parses streamed content correctly', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.pathResolver({}), {
-        message: 'One Two',
-        stream: true as const,
-      })
-
-      const events = conn.getReceivedEvents()
-      const chunks = events
-        .filter((e) => e.event === 'chunk')
-        .map((e) => JSON.parse(e.data).content)
-
-      expect(chunks).toEqual(['One', 'Two'])
-    })
-
-    it('waitForEvent finds specific event type', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.pathResolver({}), {
-        message: 'Test',
-        stream: true as const,
-      })
-
-      const doneEvent = await conn.waitForEvent('done')
-      expect(JSON.parse(doneEvent.data).totalTokens).toBe(1)
-    })
-
-    it('waitForEvents returns requested count', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.pathResolver({}), {
-        message: 'A B C D',
-        stream: true as const,
-      })
-
-      const events = await conn.waitForEvents(3)
-      expect(events).toHaveLength(3)
-    })
-  })
-
-  describe('GET requests with authentication', () => {
-    let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
-    let client: SSEInjectClient
-
-    beforeEach(async () => {
-      const container = createContainer({ injectionMode: 'PROXY' })
-      const context = new DIContext<object, object>(container, { isTestMode: true }, {})
-      context.registerDependencies({ modules: [new TestAuthSSEModule()] }, undefined)
-
-      server = await createSSETestServer(
-        (app) => {
-          context.registerSSERoutes(app)
-        },
-        {
-          configureApp: (app) => {
-            app.setValidatorCompiler(validatorCompiler)
-            app.setSerializerCompiler(serializerCompiler)
-          },
-          setup: () => ({ context }),
-        },
-      )
 
       client = new SSEInjectClient(server.app)
     })
 
-    afterEach(async () => {
-      await server.resources.context.destroy()
+    afterAll(async () => {
       await server.close()
     })
 
-    it('passes authorization header', async () => {
-      const conn = await client.connect('/api/protected/stream', {
+    describe('POST requests (OpenAI-style streaming)', () => {
+      it('sends the JSON body and parses the streamed events in order', async () => {
+        const conn = await client.connectWithBody(CHAT_PATH, {
+          message: 'Hello World Test',
+          stream: true,
+        })
+
+        expect(conn.getStatusCode()).toBe(200)
+        expect(conn.getHeaders()['content-type']).toContain('text/event-stream')
+
+        const events = conn.getReceivedEvents()
+        expect(events.map((event) => event.event)).toEqual(['chunk', 'chunk', 'chunk', 'done'])
+        expect(
+          events.filter((e) => e.event === 'chunk').map((e) => JSON.parse(e.data).content),
+        ).toEqual(['Hello', 'World', 'Test'])
+        expect(JSON.parse(events[3]!.data)).toEqual({ totalTokens: 3 })
+      })
+
+      it('waitForEvent finds a specific event type', async () => {
+        const conn = await client.connectWithBody(CHAT_PATH, { message: 'Test', stream: true })
+
+        const doneEvent = await conn.waitForEvent('done')
+        expect(JSON.parse(doneEvent.data).totalTokens).toBe(1)
+      })
+
+      it('waitForEvents returns exactly the requested count', async () => {
+        const conn = await client.connectWithBody(CHAT_PATH, {
+          message: 'A B C D',
+          stream: true,
+        })
+
+        const events = await conn.waitForEvents(3)
+        expect(events.map((e) => JSON.parse(e.data).content)).toEqual(['A', 'B', 'C'])
+      })
+    })
+
+    it('forwards request headers', async () => {
+      const conn = await client.connect(headerEchoContract.pathResolver(), {
         headers: { authorization: 'Bearer valid-token' },
       })
 
       expect(conn.getStatusCode()).toBe(200)
-
       const events = conn.getReceivedEvents()
       expect(events).toHaveLength(1)
-      expect(events[0]!.event).toBe('data')
-      expect(JSON.parse(events[0]!.data).value).toBe('authenticated data')
+      expect(JSON.parse(events[0]!.data)).toEqual({ authorization: 'Bearer valid-token' })
     })
 
-    it('returns error without authorization', async () => {
-      const conn = await client.connect('/api/protected/stream')
+    describe('connection state', () => {
+      it('reports the connection closed, and close() is a no-op', async () => {
+        const conn = await client.connectWithBody(CHAT_PATH, { message: 'Test', stream: true })
 
-      // Contract requires authorization header, so validation fails with 400
-      expect(conn.getStatusCode()).toBe(400)
-      expect(conn.getReceivedEvents()).toHaveLength(0)
-    })
-  })
-
-  describe('GET requests with path params', () => {
-    let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
-    let client: SSEInjectClient
-
-    beforeEach(async () => {
-      const container = createContainer({ injectionMode: 'PROXY' })
-      const context = new DIContext<object, object>(container, { isTestMode: true }, {})
-      context.registerDependencies({ modules: [new TestChannelSSEModule()] }, undefined)
-
-      server = await createSSETestServer(
-        (app) => {
-          context.registerSSERoutes(app)
-        },
-        {
-          configureApp: (app) => {
-            app.setValidatorCompiler(validatorCompiler)
-            app.setSerializerCompiler(serializerCompiler)
-          },
-          setup: () => ({ context }),
-        },
-      )
-
-      client = new SSEInjectClient(server.app)
-    })
-
-    afterEach(async () => {
-      await server.resources.context.destroy()
-      await server.close()
-    })
-
-    it('handles path parameters', async () => {
-      const conn = await client.connect('/api/channels/my-channel/stream')
-
-      expect(conn.getStatusCode()).toBe(200)
-
-      const events = conn.getReceivedEvents()
-      expect(events).toHaveLength(1)
-      expect(events[0]!.event).toBe('message')
-
-      const data = JSON.parse(events[0]!.data)
-      expect(data.content).toContain('my-channel')
-    })
-  })
-
-  describe('connection state', () => {
-    let server: SSETestServerWithResources<{ context: DIContext<object, object> }>
-    let client: SSEInjectClient
-
-    beforeEach(async () => {
-      const container = createContainer({ injectionMode: 'PROXY' })
-      const context = new DIContext<object, object>(container, { isTestMode: true }, {})
-      context.registerDependencies({ modules: [new TestPostSSEModule()] }, undefined)
-
-      server = await createSSETestServer(
-        (app) => {
-          context.registerSSERoutes(app)
-        },
-        {
-          configureApp: (app) => {
-            app.setValidatorCompiler(validatorCompiler)
-            app.setSerializerCompiler(serializerCompiler)
-          },
-          setup: () => ({ context }),
-        },
-      )
-
-      client = new SSEInjectClient(server.app)
-    })
-
-    afterEach(async () => {
-      await server.resources.context.destroy()
-      await server.close()
-    })
-
-    it('isClosed returns true (inject responses are always complete)', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.pathResolver({}), {
-        message: 'Test',
-        stream: true as const,
+        // inject() only resolves once the response is complete
+        expect(conn.isClosed()).toBe(true)
+        conn.close()
+        expect(conn.isClosed()).toBe(true)
       })
 
-      expect(conn.isClosed()).toBe(true)
+      it('getReceivedEvents returns a copy', async () => {
+        const conn = await client.connectWithBody(CHAT_PATH, { message: 'Test', stream: true })
+
+        const events1 = conn.getReceivedEvents()
+        const events2 = conn.getReceivedEvents()
+
+        expect(events1).not.toBe(events2)
+        expect(events1).toEqual(events2)
+      })
     })
 
-    it('close is a no-op for inject connections', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.pathResolver({}), {
-        message: 'Test',
-        stream: true as const,
+    describe('response body access', () => {
+      const path = bodyForStatusContract.pathResolver()
+
+      it('exposes the JSON body of a pre-stream error response', async () => {
+        const conn = await client.connect(`${path}?mode=unauthorized`)
+
+        expect(conn.getStatusCode()).toBe(401)
+        expect(conn.getReceivedEvents()).toHaveLength(0)
+        expect(conn.getBody()).toBe(JSON.stringify({ message: 'Unauthorized' }))
+        expect(conn.json()).toMatchObject({ message: 'Unauthorized' })
       })
 
-      // Should not throw
-      conn.close()
-      expect(conn.isClosed()).toBe(true)
-    })
+      it('types the parsed body via the json() type parameter', async () => {
+        const conn = await client.connect(`${path}?mode=missing`)
 
-    it('getReceivedEvents returns a copy', async () => {
-      const conn = await client.connectWithBody(chatCompletionContract.pathResolver({}), {
-        message: 'Test',
-        stream: true as const,
+        expect(conn.getStatusCode()).toBe(404)
+
+        const body = conn.json<{ resourceId: string }>()
+        expectTypeOf(body).toEqualTypeOf<{ resourceId: string }>()
+        expect(body.resourceId).toBe('item-42')
       })
 
-      const events1 = conn.getReceivedEvents()
-      const events2 = conn.getReceivedEvents()
+      it('exposes the raw stream body for a streaming response', async () => {
+        const conn = await client.connect(path)
 
-      expect(events1).not.toBe(events2)
-      expect(events1).toEqual(events2)
-    })
-  })
-
-  describe('response body access', () => {
-    let server: SSETestServerWithResources<{
-      context: DIContext<TestBodyForStatusModuleDependencies, object>
-    }>
-    let client: SSEInjectClient
-
-    beforeEach(async () => {
-      const container = createContainer<TestBodyForStatusModuleDependencies>({
-        injectionMode: 'PROXY',
+        expect(conn.getStatusCode()).toBe(200)
+        expect(conn.getBody()).toContain('event: message')
+        // A text/event-stream body is not JSON
+        expect(() => conn.json()).toThrow('json() — body is not valid JSON')
       })
-      const context = new DIContext<TestBodyForStatusModuleDependencies, object>(
-        container,
-        { isTestMode: true },
-        {},
-      )
-      context.registerDependencies({ modules: [new TestBodyForStatusModule()] }, undefined)
-
-      server = await createSSETestServer(
-        (app) => {
-          context.registerSSERoutes(app)
-        },
-        {
-          configureApp: (app) => {
-            app.setValidatorCompiler(validatorCompiler)
-            app.setSerializerCompiler(serializerCompiler)
-          },
-          setup: () => ({ context }),
-        },
-      )
-
-      client = new SSEInjectClient(server.app)
-    })
-
-    afterEach(async () => {
-      await server.resources.context.destroy()
-      await server.close()
-    })
-
-    it('exposes the JSON body of a pre-stream error response', async () => {
-      const conn = await client.connect(
-        `${bodyForStatusGetContract.pathResolver({})}?mode=unauthorized`,
-      )
-
-      expect(conn.getStatusCode()).toBe(401)
-      expect(conn.getReceivedEvents()).toHaveLength(0)
-      expect(conn.getBody()).toBe(JSON.stringify({ message: 'Unauthorized' }))
-      expect(conn.json()).toMatchObject({ message: 'Unauthorized' })
-    })
-
-    it('types the parsed body via the json() type parameter', async () => {
-      const conn = await client.connect(`${bodyForStatusGetContract.pathResolver({})}?mode=missing`)
-
-      expect(conn.getStatusCode()).toBe(404)
-
-      const body = conn.json<{ resourceId: string }>()
-      expectTypeOf(body).toEqualTypeOf<{ resourceId: string }>()
-      expect(body.resourceId).toBe('item-42')
-    })
-
-    it('exposes the raw stream body for a streaming response', async () => {
-      const conn = await client.connect(bodyForStatusGetContract.pathResolver({}))
-
-      expect(conn.getStatusCode()).toBe(200)
-      expect(conn.getBody()).toContain('event: message')
-      // A text/event-stream body is not JSON
-      expect(() => conn.json()).toThrow('json() — body is not valid JSON')
     })
   })
 
@@ -345,9 +205,9 @@ describe('SSEInjectClient E2E', () => {
     let server: SSETestServerWithResources<undefined>
     let client: SSEInjectClient
 
-    beforeEach(async () => {
-      // A raw route, since the contract DSL has no DELETE SSE builder - this is
-      // about `connectWithBody` accepting every method inject() takes
+    beforeAll(async () => {
+      // A raw route: this is about `connectWithBody` accepting every method inject() takes,
+      // independent of what the contract DSL can declare
       server = await createSSETestServer((app) => {
         app.delete('/api/raw-delete-stream', (request, reply) => {
           reply.header('content-type', 'text/event-stream')
@@ -358,7 +218,7 @@ describe('SSEInjectClient E2E', () => {
       client = new SSEInjectClient(server.app)
     })
 
-    afterEach(async () => {
+    afterAll(async () => {
       await server.close()
     })
 

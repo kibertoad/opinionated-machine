@@ -4,7 +4,7 @@ import {
   hasAnySuccessSseResponse,
   isContentResponseEntry,
   isSseBody,
-  type SSEEventSchemas,
+  type SseSchemaByEventName,
   SUCCESSFUL_HTTP_STATUS_CODES,
 } from '@lokalise/api-contracts'
 import {
@@ -205,7 +205,7 @@ export function buildApiRoute<Contract extends ApiContract>(
  */
 function withSendDiagnostics(
   options: FastifyApiRouteOptions,
-  schemaByEventName: SSEEventSchemas,
+  schemaByEventName: SseSchemaByEventName,
 ): FastifyApiRouteOptions {
   const { onConnect } = options
   return {

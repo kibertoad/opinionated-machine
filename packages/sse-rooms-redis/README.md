@@ -18,53 +18,84 @@ npm install @opinionated-machine/sse-rooms-redis
 
 ## Usage
 
+The adapter plugs into `SSERoomManager`. Register the manager and an
+`SSERoomBroadcaster` in DI, then pass the broadcaster to the SSE routes that
+use rooms via `buildApiRoute(..., { sseRooms })`.
+
 ### With ioredis
 
 ```typescript
 import Redis from 'ioredis'
 import { RedisAdapter } from '@opinionated-machine/sse-rooms-redis'
-import { AbstractSSEController } from 'opinionated-machine'
+import {
+  asSingletonClass,
+  asSingletonFunction,
+  SSERoomBroadcaster,
+  SSERoomManager,
+} from 'opinionated-machine'
 
-class ChatSSEController extends AbstractSSEController<typeof contracts> {
-  constructor(deps: { redis: Redis }) {
-    // IMPORTANT: Subscriber client must be a separate connection
-    const pubClient = deps.redis
-    const subClient = deps.redis.duplicate()
+// IMPORTANT: the subscriber client must be a separate connection
+const pubClient = new Redis(redisUrl)
+const subClient = pubClient.duplicate()
 
-    super(deps, {
-      rooms: {
-        adapter: new RedisAdapter({ pubClient, subClient })
-      }
-    })
-  }
-
-  // ... handler code
+// In a module's resolveDependencies():
+return {
+  sseRoomManager: asSingletonFunction(
+    () => new SSERoomManager({ adapter: new RedisAdapter({ pubClient, subClient }) }),
+  ),
+  sseRoomBroadcaster: asSingletonClass(SSERoomBroadcaster),
 }
 ```
+
+```typescript
+import type { RouteOptions } from 'fastify'
+import {
+  AbstractApiController,
+  buildApiRoute,
+  getSessionRooms,
+  type SSERoomBroadcaster,
+} from 'opinionated-machine'
+
+class ChatController extends AbstractApiController<typeof ChatController.contracts> {
+  static contracts = { stream: chatStreamContract } as const
+
+  readonly routes: Record<keyof typeof ChatController.contracts, RouteOptions>
+
+  constructor({ sseRoomBroadcaster }: { sseRoomBroadcaster: SSERoomBroadcaster }) {
+    super()
+    this.routes = {
+      stream: buildApiRoute(
+        ChatController.contracts.stream,
+        (request, _reply, { sse }) => {
+          const session = sse.start('keepAlive')
+          getSessionRooms(session).join(`chat:${request.params.chatId}`)
+        },
+        { sseRooms: sseRoomBroadcaster },
+      ),
+    }
+  }
+}
+```
+
+Broadcasts sent through the broadcaster (`broadcastToRoom`, or an
+`SSERoomEventPublisher`) now reach sessions in that room on every node.
 
 ### With node-redis
 
 ```typescript
 import { createClient } from 'redis'
 import { RedisAdapter } from '@opinionated-machine/sse-rooms-redis'
-import { AbstractSSEController } from 'opinionated-machine'
+import { SSERoomManager } from 'opinionated-machine'
 
-class ChatSSEController extends AbstractSSEController<typeof contracts> {
-  constructor(deps: { pubClient: ReturnType<typeof createClient>; subClient: ReturnType<typeof createClient> }) {
-    super(deps, {
-      rooms: {
-        adapter: new RedisAdapter({ pubClient: deps.pubClient, subClient: deps.subClient })
-      }
-    })
-  }
-}
-
-// Setup (before creating controller):
 const pubClient = createClient({ url: redisUrl })
 const subClient = pubClient.duplicate()
 
 // node-redis requires explicit connect - await both before use
 await Promise.all([pubClient.connect(), subClient.connect()])
+
+const sseRoomManager = new SSERoomManager({
+  adapter: new RedisAdapter({ pubClient, subClient }),
+})
 ```
 
 ## Configuration

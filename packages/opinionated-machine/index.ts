@@ -1,4 +1,3 @@
-export { AbstractController, type BuildRoutesReturnType } from './lib/AbstractController.js'
 export {
   AbstractModule,
   type InferModuleDependencies,
@@ -26,14 +25,10 @@ export {
   isPeriodicJobEnabled,
   resolveJobQueuesEnabled,
 } from './lib/diConfigUtils.js'
-// Dual-mode (SSE + JSON)
-export * from './lib/dualmode/index.js'
 export { isErrorLike } from './lib/errorUtils.js'
 // Gateway metadata & manifest
 export * from './lib/gateway/index.js'
 export * from './lib/resolverFunctions.js'
-// Routes (unified route builder)
-export * from './lib/routes/index.js'
 // SSE
 export * from './lib/sse/index.js'
 // SSE testing utilities

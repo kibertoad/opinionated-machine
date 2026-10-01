@@ -17,7 +17,6 @@ export {
   FALLBACK_BINDING_SYMBOL,
   type FallbackBinding,
   type FallbackRequestParams,
-  fromLegacyDualModeContract,
   readFallbackBinding,
 } from './binding.ts'
 export {
@@ -31,8 +30,6 @@ export {
   type FallbackPolicy,
   type InferContractEvents,
   type InferContractSnapshot,
-  type InferLegacyEvents,
-  type InferLegacySnapshot,
   LIVE_STATE_POLICY,
   POLL_ONLY_POLICY,
   type SubscriptionBudget,

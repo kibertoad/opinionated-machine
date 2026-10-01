@@ -6,7 +6,7 @@ The route-building, handler-shape inference, response validation, and SSE stream
 
 - `AbstractApiController` — the controller base class `DIContext.registerRoutes()` understands
 - `asApiControllerClass` — the awilix resolver that tags a controller with `isApiController`
-- `buildApiRoute` — a thin wrapper over `buildFastifyApiRoute` that additionally accepts the `gatewayMetadata` option (contract-narrowed, stamped via the shared gateway Symbol)
+- `buildApiRoute` — a thin wrapper over `buildFastifyApiRoute` that additionally accepts the `gatewayMetadata` option (contract-narrowed, stamped via the shared gateway Symbol) and the `sseRooms` option (see [SSE Rooms](#sse-rooms)), and marks SSE-capable routes as streaming for the gateway manifest
 
 ## Table of Contents
 
@@ -21,14 +21,15 @@ The route-building, handler-shape inference, response validation, and SSE stream
 
 ## Overview
 
-| Feature | Old API | New API |
-|---------|---------|---------|
-| Sync JSON routes | `AbstractController` + `asControllerClass` | `AbstractApiController` + `asApiControllerClass` |
-| SSE-only routes | `AbstractSSEController` + `asSSEControllerClass` | `AbstractApiController` + `asApiControllerClass` |
-| Dual-mode routes | `AbstractDualModeController` + `asDualModeControllerClass` | `AbstractApiController` + `asApiControllerClass` |
-| Mixed route types | Three separate controllers | One controller for all modes |
-| Contract format | `buildSseContract` / `buildGetApiContract` etc. | `defineApiContract` from `@lokalise/api-contracts` |
-| Route builder | local implementation | `buildFastifyApiRoute` from `@lokalise/fastify-api-contracts` |
+One controller class, `AbstractApiController`, covers every route type:
+
+| Route type | Contract declares | Handler |
+|------------|-------------------|---------|
+| Sync JSON | a Zod schema (or `noBodyResponse()`) per status | returns `{ status, body }` |
+| SSE | `sseResponse(...)` or `sseBody(...)` in a content map | calls `sse.start(mode)`, or returns `{ status, body }` with an `AsyncIterable` of events |
+| Dual-mode | a JSON schema and an `sseBody(...)` on the same status | branches on `expectedContentType` |
+
+Contracts come from `defineApiContract` in `@lokalise/api-contracts`; routes are built by `buildFastifyApiRoute` from `@lokalise/fastify-api-contracts`. Every controller is registered with `asApiControllerClass`, and `DIContext.registerRoutes()` registers all of its routes.
 
 ## Defining Contracts
 
@@ -40,6 +41,7 @@ import { z } from 'zod/v4'
 
 // Sync JSON
 const getUserContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Get user',
   pathResolver: (p: { userId: string }) => `/users/${p.userId}`,
@@ -51,6 +53,7 @@ const getUserContract = defineApiContract({
 
 // SSE
 const streamUpdatesContract = defineApiContract({
+  visibility: 'public',
   method: 'get',
   summary: 'Stream updates',
   pathResolver: () => '/updates/stream',
@@ -68,6 +71,7 @@ const streamUpdatesContract = defineApiContract({
 
 // Dual-mode (JSON and SSE on the same status)
 const chatContract = defineApiContract({
+  visibility: 'public',
   method: 'post',
   summary: 'Chat',
   pathResolver: () => '/chat',
@@ -87,6 +91,7 @@ const chatContract = defineApiContract({
 
 // No-body response
 const deleteUserContract = defineApiContract({
+  visibility: 'public',
   method: 'delete',
   summary: 'Delete user',
   pathResolver: (p: { userId: string }) => `/users/${p.userId}`,
@@ -106,11 +111,28 @@ Every handler has the same shape — `(request, reply, context) => { status, bod
 - Returning `{ status, body }` where the status's representation is `sseBody(...)` streams the returned `AsyncIterable` of events declaratively.
 - When a status declares several media types, the result must carry `contentType`: `{ status, contentType, body }`.
 
-Response bodies are validated by the `fastify-type-provider-zod` serializer compiler — register `validatorCompiler` / `serializerCompiler` on the app. SSE-capable routes require the `@fastify/sse` plugin.
+Response bodies are validated by the `fastify-type-provider-zod` serializer compiler — register `validatorCompiler` / `serializerCompiler` on the app. SSE-capable routes require the `@fastify/sse` plugin and an SSE-aware error handler (see below).
 
 ### Error handling
 
-Errors thrown by handlers propagate to the app's global `fastify.setErrorHandler` — including on SSE routes — as described in the `@lokalise/fastify-api-contracts` README. The route builder adds no error mapping of its own: if you rely on the node-core `httpStatusCode` convention or want a terminal SSE `error` event when a handler throws mid-stream, implement it in the global error handler.
+Errors thrown by handlers propagate to the app's global `fastify.setErrorHandler` — including on SSE routes — as described in the `@lokalise/fastify-api-contracts` README. The route builder adds no error mapping of its own; if you rely on the node-core `httpStatusCode` convention, implement it in the global error handler.
+
+An error thrown before the stream starts takes the regular HTTP error path. An error thrown after `sse.start()` (or while a declarative stream is being sent) reaches the error handler with the stream **still open** and the headers already sent. An app serving SSE routes therefore **must** register an SSE-aware error handler: one that always calls `reply.status().send()` fails with `ERR_HTTP_HEADERS_SENT` and leaves the stream open. On a live stream, send a terminal event and close it:
+
+```ts
+app.setErrorHandler(async (error, request, reply) => {
+  const { statusCode, payload } = resolveError(error) // your error-to-response mapping
+  // `isConnected` alone is not enough — @fastify/sse sets it before the handler runs.
+  if (reply.sse?.isConnected && reply.raw.headersSent) {
+    await reply.sse.send({ event: 'error', data: payload })
+    reply.sse.close()
+    return
+  }
+  return reply.status(statusCode).send(payload)
+})
+```
+
+The `errorHandler` from `@lokalise/fastify-extras` handles live streams this way already.
 
 ## Creating a Controller
 
@@ -131,6 +153,7 @@ class UserController extends AbstractApiController<typeof UserController.contrac
   private readonly aiService: AIService
 
   constructor(deps: { userService: UserService; aiService: AIService }) {
+    super()
     this.userService = deps.userService
     this.aiService = deps.aiService
   }
@@ -208,7 +231,7 @@ export class UserModule extends AbstractModule {
 
 ## Route Options
 
-Pass options as the third argument to `buildApiRoute`. Everything except `gatewayMetadata` is forwarded to `buildFastifyApiRoute` unchanged:
+Pass options as the third argument to `buildApiRoute`. Everything except `gatewayMetadata` and `sseRooms` is forwarded to `buildFastifyApiRoute` unchanged:
 
 ```ts
 buildApiRoute(contract, handler, {
@@ -252,7 +275,7 @@ adds two:
 | Option | Description |
 |--------|-------------|
 | `gatewayMetadata` | Per-route gateway policy, with `match.headers` / `match.query` keys narrowed to the contract. Equivalent to wrapping the route with `withGatewayMetadata()` |
-| `sseRooms` | Enable SSE rooms for this route by passing the shared `SSERoomBroadcaster` (see [SSE Rooms](#sse-rooms)) |
+| `sseRooms` | Enable SSE rooms for this route by passing the shared `SSERoomBroadcaster`, or an `SSERoomsOptions` object `{ broadcaster, authorizeJoin?, maxSessionLifetimeMs? }` (see [SSE Rooms](#sse-rooms)) |
 
 ## SSE Rooms
 
@@ -264,8 +287,22 @@ receives `broadcastToRoom` / `broadcastMessage` deliveries, and is cleaned up
 (rooms left, dedup cache cleared) when the connection closes.
 
 `@lokalise/fastify-api-contracts` owns the `SSESession` shape and has no `rooms`
-field, so room operations are reached through `getSessionRooms(session)` rather
-than `session.rooms` (the accessor the legacy controllers expose).
+field, so room operations are reached through `getSessionRooms(session)`.
+
+Pass an `SSERoomsOptions` object instead of the bare broadcaster to add a
+per-route scope check on joins and a bounded session lifetime:
+
+```ts
+{
+  sseRooms: {
+    broadcaster: this.sseRoomBroadcaster,
+    // Refused joins are logged and dropped; the stream stays open
+    authorizeJoin: (session, room) => this.membership.canRead(session.request.user, room),
+    // Close the session after 30 minutes, forcing a re-authorized reconnect
+    maxSessionLifetimeMs: 30 * 60_000,
+  },
+}
+```
 
 This unlocks the polling-fallback serving pattern — one dual-mode route whose
 sync branch answers snapshot polls while a domain service broadcasts events
@@ -292,7 +329,11 @@ export class JobController extends AbstractApiController<typeof JobController.co
             return
           }
           // Fallback poll: current snapshot, including its version
-          return { status: 200, body: this.jobService.get(request.params.jobId) }
+          return {
+            status: 200,
+            contentType: 'application/json',
+            body: this.jobService.get(request.params.jobId),
+          }
         },
         {
           sseRooms: this.sseRoomBroadcaster,
@@ -301,7 +342,7 @@ export class JobController extends AbstractApiController<typeof JobController.co
     }
   }
 
-  readonly routes: BuildApiRoutesReturnType<typeof JobController.contracts>
+  readonly routes: Record<keyof typeof JobController.contracts, RouteOptions>
 }
 
 // Domain service, anywhere in the app — stamp monotonic ids so clients can
@@ -311,10 +352,13 @@ await this.sseRoomBroadcaster.broadcastToRoom(`job:${jobId}`, doneEvent, { resul
 })
 ```
 
-Register `sseRoomManager` + `sseRoomBroadcaster` in DI exactly as for the
-legacy controllers (see the root README's "SSE Rooms" section); the same
-broadcaster instance can serve legacy controllers and `buildApiRoute` routes
-simultaneously.
+The routes are built in the constructor rather than in a field initializer:
+field initializers run before the constructor body, so the injected
+broadcaster would not be available yet when the `sseRooms` option is read.
+
+Register `sseRoomManager` + `sseRoomBroadcaster` in DI as described in the root
+README's "SSE Rooms" section; one broadcaster instance serves every route that
+passes it.
 
 ## Testing
 
@@ -333,7 +377,7 @@ expect(JSON.parse(response.body)).toEqual({ id: '123', name: 'Alice' })
 
 ### Testing SSE routes with the contract (`injectApiSSE`)
 
-`injectApiSSE` is the `defineApiContract` counterpart of `injectSSE` / `injectPayloadSSE` (which are typed against the legacy `SSEContractDefinition`). One function covers every method — the HTTP verb comes from the contract — and `params` is the same shape `injectByApiContract` takes, so a body is required exactly when the contract declares `requestBodySchema`:
+`injectApiSSE` injects a request through Fastify and reads the SSE response through the contract. One function covers every method — the HTTP verb comes from the contract — and `params` is the same shape `injectByApiContract` takes, so a body is required exactly when the contract declares `requestBodySchema`:
 
 ```ts
 import { injectApiSSE } from 'opinionated-machine'
@@ -357,7 +401,7 @@ const { closed, events, bodyForStatus } = injectApiSSE(app, lqaSegmentContract, 
 
 It returns these accessors:
 
-- `closed` — resolves with `{ statusCode, headers, body }` once the response completes, exactly as with `injectSSE`.
+- `closed` — resolves with `{ statusCode, headers, body }` once the response completes.
 - `head` — resolves with `{ statusCode, headers }` as soon as the response head is on the wire, which for a streaming handler is the moment it calls `sse.start()`. Assert the status of a stream without waiting for the handler to finish it.
 - `events()` — parses the SSE body and validates each event against the contract's `sseResponse` / `sseBody` schemas, returning a union discriminated on `event`:
 
@@ -502,14 +546,14 @@ const server = await SSETestServer.start(app)
 const client = await SSEHttpClient.connect(server.baseUrl, '/updates/stream')
 
 client.close()
-await server.stop()
+await server.close()
 ```
 
 ### When a handler fails to send an event
 
-`session.send(name, payload)` validates the payload against the contract's schema for that event and throws when it doesn't match. That throw happens inside the handler: the event never reaches the wire, the stream just ends early with HTTP 200, and the ZodError only shows up in the server log — so the test sees an unrelated event missing.
+`session.send(name, payload)` validates the payload against the contract's schema for that event and throws when it doesn't match. That throw happens inside the handler: the event never reaches the wire, the stream ends early (with HTTP 200, and possibly a terminal `error` event from the app's error handler), and the ZodError only shows up in the server log — so the test sees an unrelated event missing.
 
-Routes built with `buildApiRoute` report those failures back to the test that is reading the stream. When the failure is what ended the stream early — nothing in the route caught it — `events()`, `stream()` and the `connectApiSSE` readers throw with the offending event name, its Zod issues and the payload that was rejected:
+Routes built with `buildApiRoute` report those failures back to the test that is reading the stream. When the failure is what ended the stream early — nothing in the route caught it — `events()`, `stream()` and the `connectApiSSE` readers throw with the offending event name, its Zod issues and the payload that was rejected. That includes a stream that then ended with an `error` event the contract does not declare, sent by an SSE-aware error handler:
 
 ```
 events() — 1 SSE send failure recorded for this request:

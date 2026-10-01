@@ -97,34 +97,31 @@ describe('AbstractApiController — error handling E2E', () => {
   })
 
   // ============================================================================
-  // Mid-stream SSE failures — pin the current silent behavior
+  // Mid-stream SSE failures
   //
-  // Since the migration to @lokalise/fastify-api-contracts, errors thrown after
-  // sse.start() no longer produce a terminal `error` SSE event; the stream just
-  // ends with HTTP 200 and only the events sent before the throw. This is
-  // documented in the changeset — these tests exist so a future peer bump that
-  // changes the behavior (in either direction) is noticed.
+  // An error thrown after sse.start() reaches the app's global error handler
+  // with the stream still open (@lokalise/fastify-api-contracts >= 8). The test
+  // server registers an SSE-aware handler, which reports the error as a
+  // terminal `error` event and closes the stream.
   // ============================================================================
 
   describe('SSE post-start error', () => {
-    it('ends the stream silently: 200, only pre-throw events, no error event', async () => {
+    it('keeps the pre-throw events and ends with a terminal error event from the error handler', async () => {
       const client = new SSEInjectClient(server.app)
       const conn = await client.connect('/api/error-test/sse-post-error')
 
       expect(conn.getStatusCode()).toBe(200)
-      const events = conn.getReceivedEvents()
-      expect(events.filter((e) => e.event === 'update')).toHaveLength(1)
-      expect(events.some((e) => e.event === 'error')).toBe(false)
+      expect(conn.getReceivedEvents().map((e) => e.event)).toEqual(['update', 'error'])
     })
   })
 
   describe('SSE event schema validation failure after start', () => {
-    it('ends the stream silently: 200, zero events, no error event', async () => {
+    it('sends no invalid event and ends with a terminal error event from the error handler', async () => {
       const client = new SSEInjectClient(server.app)
       const conn = await client.connect('/api/error-test/sse-invalid-event')
 
       expect(conn.getStatusCode()).toBe(200)
-      expect(conn.getReceivedEvents()).toHaveLength(0)
+      expect(conn.getReceivedEvents().map((e) => e.event)).toEqual(['error'])
     })
   })
 

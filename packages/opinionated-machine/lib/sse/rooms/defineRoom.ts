@@ -18,8 +18,8 @@ import type { RoomNameResolver } from './types.js'
  *   ({ dashboardId }) => `dashboard:${dashboardId}`,
  * )
  *
- * // Use in controller handler — params are type-checked
- * connection.rooms.join(dashboardRoom({ dashboardId: request.params.dashboardId }))
+ * // Use in a buildApiRoute handler — params are type-checked
+ * getSessionRooms(session).join(dashboardRoom({ dashboardId: request.params.dashboardId }))
  *
  * // Use in domain service — same resolver, same type safety
  * await broadcaster.broadcastToRoom(

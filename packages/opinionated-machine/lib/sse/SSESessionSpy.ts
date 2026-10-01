@@ -1,14 +1,12 @@
-import type { SSESession } from './AbstractSSEController.ts'
+import type { SSESession } from '@lokalise/fastify-api-contracts'
 
 /**
  * Minimal shape of an SSE session the spy needs in order to track it.
  *
- * Both the `SSESession` produced by this package's own SSE routes and the one
- * produced by `@lokalise/fastify-api-contracts` (used by `buildApiRoute`)
- * satisfy it, which lets a single spy be attached to either route style. Both
- * carry a Fastify request, so `method` is always there to match a waiter
- * against - a path served by both a GET and a POST route needs it to resolve
- * the right session.
+ * The `SSESession` produced by `@lokalise/fastify-api-contracts` (used by
+ * `buildApiRoute`) satisfies it. It carries a Fastify request, so `method` is
+ * always there to match a waiter against - a path served by both a GET and a
+ * POST route needs it to resolve the right session.
  */
 export type SpiedSSESession = {
   id: string
@@ -39,10 +37,9 @@ export type SSESessionEvent<TSession extends SpiedSSESession = SSESession> = {
  * Connection spy for testing SSE controllers.
  * Tracks connection and disconnection events separately.
  *
- * @template TSession - The session type the spy observes. Defaults to this
- *   package's `SSESession`, which is what `AbstractSSEController` reports.
- *   Tests wiring the spy to `buildApiRoute` routes get it parameterized with
- *   the contracts package session type via `createSSESessionSpy()`.
+ * @template TSession - The session type the spy observes. Defaults to the
+ *   `SSESession` from `@lokalise/fastify-api-contracts`, which is what
+ *   `buildApiRoute` hands to its hooks.
  */
 export class SSESessionSpy<TSession extends SpiedSSESession = SSESession> {
   private events: SSESessionEvent<TSession>[] = []

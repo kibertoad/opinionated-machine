@@ -225,9 +225,9 @@ export type ApiSSEStreamReader<Contract extends ApiContract> = (
 /**
  * Result of an {@link injectApiSSE} call.
  *
- * The `defineApiContract` counterpart of `InjectSSEResult`: same `closed` promise and
- * `bodyForStatus` accessor, plus `events()` for reading the stream typed against the
- * contract's `sseResponse` / `sseBody` schemas.
+ * Exposes the `closed` promise, a `bodyForStatus` accessor for documented non-stream
+ * responses, and `events()` for reading the stream typed against the contract's
+ * `sseResponse` / `sseBody` schemas.
  */
 export type InjectApiSSEResult<Contract extends ApiContract> = {
   /**

@@ -1,4 +1,4 @@
-import type { SSEEventSchemas } from '@lokalise/api-contracts'
+import type { SseSchemaByEventName } from '@lokalise/api-contracts'
 import type {
   ApiRouteOptions as FastifyApiRouteOptions,
   SSESession,
@@ -11,8 +11,7 @@ import type { SSEMessage } from '../sse/sseTypes.ts'
  * Connection registry bridging `buildApiRoute` SSE sessions to a shared
  * `SSERoomBroadcaster`.
  *
- * The legacy SSE/dual-mode controllers register their own `sendEvent` with
- * the broadcaster; `buildApiRoute` routes have no controller, so this
+ * `buildApiRoute` routes have no per-controller `sendEvent`, so this
  * registry keeps the connection-id → send mapping and registers itself
  * as a single broadcaster sender. One registry exists per broadcaster
  * (see {@link getApiSseConnectionRegistry}), shared by all routes and
@@ -242,8 +241,7 @@ const sessionRooms = new WeakMap<object, SSERoomOperations>()
 /**
  * Room operations for an SSE session opened by a `buildApiRoute` route.
  *
- * Returns no-ops when the route did not pass `sseRooms` — mirroring the legacy
- * `session.rooms` accessor, which is inert on controllers without a broadcaster.
+ * Returns no-ops when the route did not pass `sseRooms`.
  *
  * @example
  * ```ts
@@ -251,7 +249,7 @@ const sessionRooms = new WeakMap<object, SSERoomOperations>()
  * getSessionRooms(session).join(`project:${request.params.projectId}`)
  * ```
  */
-export function getSessionRooms<Events extends SSEEventSchemas, Context>(
+export function getSessionRooms<Events extends SseSchemaByEventName, Context>(
   session: SSESession<Events, Context>,
 ): SSERoomOperations {
   return sessionRooms.get(session) ?? NOOP_ROOMS

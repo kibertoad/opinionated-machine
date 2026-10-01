@@ -7,9 +7,9 @@ import { type SpiedSSESession, SSESessionSpy } from '../sse/SSESessionSpy.ts'
 /**
  * The SSE lifecycle hooks a route may declare, as far as a spy is concerned.
  *
- * Structurally a subset of the SSE route options of both `buildApiRoute` /
- * `buildFastifyApiRoute` and this package's own `buildFastifyRoute`, so any of
- * their option objects can be handed to {@link CreateSSESessionSpyResult.withSpy}.
+ * Structurally a subset of the SSE route options of `buildApiRoute` /
+ * `buildFastifyApiRoute`, so their option objects can be handed to
+ * {@link CreateSSESessionSpyResult.withSpy}.
  */
 export type SSESessionSpyHooks<TSession extends SpiedSSESession = ApiSSESession> = {
   onConnect?: (connection: TSession) => void | Promise<void>
@@ -20,8 +20,7 @@ export type SSESessionSpyHooks<TSession extends SpiedSSESession = ApiSSESession>
  * The SSE lifecycle hooks that feed a standalone {@link SSESessionSpy}.
  *
  * Shaped to be spread straight into route options that accept SSE lifecycle
- * hooks — `buildApiRoute` / `buildFastifyApiRoute` options, or this package's
- * own `buildFastifyRoute` options.
+ * hooks — `buildApiRoute` / `buildFastifyApiRoute` options.
  *
  * Spreading these over options that declare `onConnect` / `onClose` of their own
  * would silently drop one side or the other; use
@@ -78,8 +77,8 @@ const isThenable = (value: unknown): value is Promise<unknown> =>
  * on top of it would surface as an unrelated `waitForConnection` timeout much
  * later. The hook's own failure is propagated to the route builder unchanged.
  *
- * The spy is notified *after* the hook, mirroring `AbstractSSEController`, so a
- * hook that enriches the session does so before any waiter observes it.
+ * The spy is notified *after* the hook, so a hook that enriches the session does
+ * so before any waiter observes it.
  */
 function runHookThenNotify(
   hook: () => void | Promise<void>,
@@ -109,10 +108,9 @@ function runHookThenNotify(
 /**
  * Create a standalone connection spy plus the route hooks that drive it.
  *
- * `AbstractSSEController` exposes a spy of its own via `connectionSpy` (gated on
- * `{ enableConnectionSpy: true }`). Routes built with `buildApiRoute` have no
- * such controller, so this factory drives a spy from the route's `onConnect` /
- * `onClose` hooks instead. That removes the race between `connect()` returning
+ * Routes built with `buildApiRoute` have no controller-owned spy, so this
+ * factory drives one from the route's `onConnect` / `onClose` hooks. That
+ * removes the race between `connect()` returning
  * (HTTP headers received) and the server-side handler finishing its connection
  * registration.
  *
@@ -129,8 +127,7 @@ function runHookThenNotify(
  * events the client received instead.
  *
  * The spy observes `@lokalise/fastify-api-contracts` sessions by default, which
- * is what `buildApiRoute` hands to its hooks. Pass this package's `SSESession`
- * as the type argument when wiring it to `buildFastifyRoute` instead.
+ * is what `buildApiRoute` hands to its hooks.
  *
  * @example
  * ```typescript

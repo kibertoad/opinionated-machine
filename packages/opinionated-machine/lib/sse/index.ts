@@ -1,13 +1,3 @@
-// Re-export contract types from @lokalise/api-contracts
-export type {
-  AllContractEventNames,
-  AllContractEvents,
-  AnySSEContractDefinition,
-  ExtractEventSchema,
-  SSEContractDefinition,
-  SSEEventSchemas,
-  SSEMethod,
-} from '@lokalise/api-contracts'
 // The wire-format parser lives in its own package so that the browser client
 // (@opinionated-machine/sse-fallback) frames the stream with the same code the
 // server's test helpers do.
@@ -24,28 +14,6 @@ export {
   type SSEStreamParser,
   type SSEStreamParserOptions,
 } from '@opinionated-machine/sse-parser'
-// Re-export route types from routes module
-export {
-  type BuildFastifySSERoutesReturnType,
-  buildFastifyRoute,
-  buildHandler,
-  type FastifySSEHandlerConfig,
-  type FastifySSEPreHandler,
-  type FastifySSERouteOptions,
-  type InferSSERequest,
-  type RegisterSSERoutesOptions,
-  type SSEContext,
-  type SSEOnlyHandlers,
-  type SSERouteHandler,
-  type SSESession,
-} from '../routes/index.js'
-export {
-  AbstractSSEController,
-  type SSEControllerConfig,
-  type SSEEventSender,
-  type SSELogger,
-  type SSEMessage,
-} from './AbstractSSEController.js'
 export { defineEvent, type SSEEventDefinition } from './defineEvent.js'
 export {
   type AsyncEventIdSequence,
@@ -80,6 +48,7 @@ export {
   type SSEDiagnosticsScope,
   type SSESendFailure,
 } from './sseSendDiagnostics.js'
+export type { SSELogger, SSEMessage } from './sseTypes.js'
 // SSE Subscriptions
 export {
   defineEventMetadata,

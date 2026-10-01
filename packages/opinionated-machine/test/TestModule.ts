@@ -4,9 +4,9 @@ import {
   type InferModuleDependencies,
   type MandatoryNameAndRegistrationPair,
 } from '../lib/AbstractModule.js'
+import { asApiControllerClass } from '../lib/api-contracts/index.js'
 import type { DependencyInjectionOptions } from '../lib/DIContext.js'
 import {
-  asControllerClass,
   asDomainEventEmitterFunction,
   asEnqueuedJobQueueManagerFunction,
   asEnqueuedJobWorkerClass,
@@ -207,7 +207,7 @@ export class TestModule extends AbstractModule {
     _diOptions: DependencyInjectionOptions,
   ): MandatoryNameAndRegistrationPair<unknown> {
     return {
-      testController: asControllerClass(TestController),
+      testController: asApiControllerClass(TestController),
     }
   }
 }

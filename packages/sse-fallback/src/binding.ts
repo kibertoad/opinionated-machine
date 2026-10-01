@@ -3,8 +3,6 @@ import type {
   FallbackBindingConfig,
   InferContractEvents,
   InferContractSnapshot,
-  InferLegacyEvents,
-  InferLegacySnapshot,
 } from './bindingTypes.ts'
 import type { TransportRequest } from './transport.ts'
 
@@ -49,11 +47,6 @@ type ContractLike = {
   method: string
   pathResolver: (pathParams: Record<string, unknown>) => string
   responsesByStatusCode?: Record<string, unknown>
-  /** Legacy contract markers */
-  isSSE?: boolean
-  isDualMode?: boolean
-  successResponseBodySchema?: unknown
-  serverSentEventSchemas?: unknown
 }
 
 const SUCCESS_STATUS_CODES = [200, 201, 202, 203, 206, 207, 208, 226]
@@ -214,11 +207,10 @@ export function defineFallbackBinding<
 ): FallbackBinding<Snapshot, Events, State> {
   const contractLike = contract as unknown as ContractLike
   const shape = inspectApiContractResponses(contractLike)
-  const isLegacyDual = contractLike.isDualMode === true
-  if (!isLegacyDual && !(shape.hasSse && shape.hasNonSse)) {
+  if (!(shape.hasSse && shape.hasNonSse)) {
     throw new Error(
       'defineFallbackBinding requires a dual-mode contract (a success response with both an SSE and a non-SSE representation). ' +
-        'For separate poll/stream contracts use bindFallbackContracts; for legacy dual-mode contracts use fromLegacyDualModeContract.',
+        'For separate poll/stream contracts use bindFallbackContracts.',
     )
   }
 
@@ -257,9 +249,7 @@ export function bindFallbackContracts<
   TPoll extends { method: string; pathResolver: (p: never) => string },
   TStream extends { method: string; pathResolver: (p: never) => string },
   Snapshot = InferContractSnapshot<TPoll>,
-  Events extends EventPayloadMap = [InferContractEvents<TStream>] extends [never]
-    ? InferLegacyEvents<TStream>
-    : InferContractEvents<TStream>,
+  Events extends EventPayloadMap = InferContractEvents<TStream>,
   State = undefined,
 >(
   poll: TPoll,
@@ -276,11 +266,7 @@ export function bindFallbackContracts<
     )
   }
   const streamShape = inspectApiContractResponses(streamLike)
-  const streamIsLegacySse =
-    streamLike.isSSE === true ||
-    streamLike.isDualMode === true ||
-    streamLike.serverSentEventSchemas !== undefined
-  if (!streamShape.hasSse && !streamIsLegacySse) {
+  if (!streamShape.hasSse) {
     throw new Error(
       'bindFallbackContracts: the stream contract must declare an SSE success response.',
     )
@@ -298,42 +284,5 @@ export function bindFallbackContracts<
   }
   stampBinding(poll, binding)
   stampBinding(stream, binding)
-  return binding
-}
-
-// ============================================================================
-// Legacy adapter
-// ============================================================================
-
-/**
- * Declare a fallback binding on a legacy `buildSseContract` dual-mode
- * contract (`successResponseBodySchema` + `serverSentEventSchemas`).
- */
-export function fromLegacyDualModeContract<
-  TContract extends {
-    method: string
-    pathResolver: (p: never) => string
-    isDualMode: boolean
-  },
-  Snapshot = InferLegacySnapshot<TContract>,
-  Events extends EventPayloadMap = InferLegacyEvents<TContract>,
-  State = undefined,
->(
-  contract: TContract,
-  config: FallbackBindingConfig<NoInfer<Snapshot>, NoInfer<Events>, State>,
-): FallbackBinding<Snapshot, Events, State> {
-  if (contract.isDualMode !== true) {
-    throw new Error(
-      'fromLegacyDualModeContract requires a legacy dual-mode contract (buildSseContract with successResponseBodySchema).',
-    )
-  }
-  const contractLike = contract as unknown as ContractLike
-  const normalized = normalizeConfig(config)
-  const binding: FallbackBinding<Snapshot, Events, State> = {
-    config: normalized,
-    buildSnapshotRequest: (params) => buildRequest(contractLike, params),
-    buildStreamRequest: (params) => buildRequest(contractLike, params),
-  }
-  stampBinding(contract, binding)
   return binding
 }

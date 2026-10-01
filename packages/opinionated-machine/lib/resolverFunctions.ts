@@ -9,7 +9,6 @@ import {
   isPeriodicJobEnabled,
   resolveJobQueuesEnabled,
 } from './diConfigUtils.js'
-import type { SSEControllerConfig } from './sse/sseTypes.js'
 
 /**
  * Type-level representation of a class value that infers the instance type
@@ -28,8 +27,6 @@ type ClassValue<T> = { prototype: T }
 declare module 'awilix' {
   interface ResolverOptions<T> {
     public?: boolean // if module is used as secondary, only public dependencies will be exposed. default is false
-    isSSEController?: boolean // marks resolver as an SSE controller for special handling
-    isDualModeController?: boolean // marks resolver as a dual-mode controller for special handling
   }
 }
 
@@ -152,130 +149,6 @@ export function asRepositoryClass<T = object>(
     ...opts,
     lifetime: 'SINGLETON',
   })
-}
-
-export function asControllerClass<T = object>(
-  Type: ClassValue<T>,
-  opts?: BuildResolverOptions<T>,
-): BuildResolver<T> & DisposableResolver<T> {
-  return asClass(Type as unknown as Constructor<T>, {
-    public: false,
-    ...opts,
-    lifetime: 'SINGLETON',
-  })
-}
-
-export type SSEControllerModuleOptions = {
-  diOptions: DependencyInjectionOptions
-  /** Enable rooms. Resolves `sseRoomBroadcaster` from DI cradle. */
-  rooms?: boolean
-}
-
-/**
- * Register an SSE controller class with the DI container.
- *
- * SSE controllers handle Server-Sent Events connections and require
- * graceful shutdown to close all active connections.
- *
- * When `diOptions.isTestMode` is true, connection spying is enabled
- * allowing tests to await connections via `controller.connectionSpy`.
- *
- * @example
- * ```typescript
- * // Without test mode
- * notificationsSSEController: asSSEControllerClass(NotificationsSSEController),
- *
- * // With test mode (enables connection spy)
- * notificationsSSEController: asSSEControllerClass(NotificationsSSEController, { diOptions }),
- *
- * // With rooms enabled (resolves sseRoomBroadcaster from DI)
- * dashboardController: asSSEControllerClass(DashboardSSEController, { diOptions, rooms: true }),
- * ```
- */
-export function asSSEControllerClass<T = object>(
-  Type: ClassValue<T>,
-  sseOptions?: SSEControllerModuleOptions,
-  opts?: BuildResolverOptions<T>,
-): BuildResolver<T> & DisposableResolver<T> {
-  const Ctor = Type as unknown as Constructor<T>
-  const enableConnectionSpy = sseOptions?.diOptions.isTestMode ?? false
-  const enableRooms = sseOptions?.rooms ?? false
-
-  return asFunction(
-    // biome-ignore lint/suspicious/noExplicitAny: Dynamic constructor invocation with cradle proxy
-    (cradle: any) => {
-      const sseConfig: SSEControllerConfig = {
-        ...(enableConnectionSpy && { enableConnectionSpy: true }),
-        ...(enableRooms && { roomBroadcaster: cradle.sseRoomBroadcaster }),
-      }
-      return new Ctor(cradle, Object.keys(sseConfig).length > 0 ? sseConfig : undefined)
-    },
-    {
-      public: false,
-      isSSEController: true,
-      asyncDispose: 'closeAllConnections',
-      asyncDisposePriority: 5, // Close SSE connections early in shutdown
-      ...opts,
-      lifetime: 'SINGLETON',
-    },
-  )
-}
-
-export type DualModeControllerModuleOptions = {
-  diOptions: DependencyInjectionOptions
-  /** Enable rooms. Resolves `sseRoomBroadcaster` from DI cradle. */
-  rooms?: boolean
-}
-
-/**
- * Register a dual-mode controller class with the DI container.
- *
- * Dual-mode controllers handle both SSE streaming and JSON responses on the
- * same route path, automatically branching based on the `Accept` header.
- * They require graceful shutdown to close all active SSE connections.
- *
- * When `diOptions.isTestMode` is true, connection spying is enabled
- * allowing tests to await connections via `controller.connectionSpy`.
- *
- * @example
- * ```typescript
- * // Without test mode
- * chatController: asDualModeControllerClass(ChatController),
- *
- * // With test mode (enables connection spy)
- * chatController: asDualModeControllerClass(ChatController, { diOptions }),
- *
- * // With rooms enabled (resolves sseRoomBroadcaster from DI)
- * dashboardController: asDualModeControllerClass(DashboardController, { diOptions, rooms: true }),
- * ```
- */
-export function asDualModeControllerClass<T = object>(
-  Type: ClassValue<T>,
-  dualModeOptions?: DualModeControllerModuleOptions,
-  opts?: BuildResolverOptions<T>,
-): BuildResolver<T> & DisposableResolver<T> {
-  const enableConnectionSpy = dualModeOptions?.diOptions.isTestMode ?? false
-  const enableRooms = dualModeOptions?.rooms ?? false
-
-  return asFunction(
-    // biome-ignore lint/suspicious/noExplicitAny: Dynamic constructor invocation with cradle proxy
-    (cradle: any) => {
-      const Ctor = Type as unknown as Constructor<T>
-      const sseConfig: SSEControllerConfig = {
-        ...(enableConnectionSpy && { enableConnectionSpy: true }),
-        ...(enableRooms && { roomBroadcaster: cradle.sseRoomBroadcaster }),
-      }
-      return new Ctor(cradle, Object.keys(sseConfig).length > 0 ? sseConfig : undefined)
-    },
-    {
-      public: false,
-      isDualModeController: true,
-      asyncDispose: 'closeAllConnections',
-      asyncDisposePriority: 5, // Close connections early in shutdown
-      ...opts,
-      lifetime: 'SINGLETON',
-    },
-  )
 }
 
 export type MessageQueueConsumerModuleOptions = {

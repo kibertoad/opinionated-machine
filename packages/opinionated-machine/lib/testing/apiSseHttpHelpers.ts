@@ -2,6 +2,7 @@ import { type ApiContract, buildRequestPath } from '@lokalise/api-contracts'
 import type { SpiedSSESession, SSESessionSpy } from '../sse/SSESessionSpy.ts'
 import {
   describeSendFailures,
+  explainReadError,
   openSSEDiagnosticsScope,
   type SSEDiagnosticsScope,
   type SSESendFailure,
@@ -92,7 +93,11 @@ export class ApiSSEHttpClient<Contract extends ApiContract> {
   async *events(signal?: AbortSignal): AsyncGenerator<ApiSSEEvent<Contract>, void, unknown> {
     await this.assertStreamResponse('events()')
 
-    yield* this.raw.apiEvents(this.contract, signal)
+    try {
+      yield* this.raw.apiEvents(this.contract, signal)
+    } catch (err) {
+      throw explainReadError(err, this.scope.failures(), 'events()')
+    }
 
     if (!signal?.aborted) {
       // The server ended the stream: anything the handler failed to send is known now, and

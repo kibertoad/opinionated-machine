@@ -1,6 +1,5 @@
 /**
- * Helpers shared by the contract-aware SSE inject helpers (legacy
- * `SSEContractDefinition` and `defineApiContract` flavours alike).
+ * Helpers shared by the SSE inject client and the contract-aware inject helpers.
  *
  * @internal
  */

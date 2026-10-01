@@ -1,54 +1,55 @@
-import { buildRestContract } from '@lokalise/api-contracts'
-import { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
-import { boolean, z } from 'zod/v4'
-import { AbstractController, type BuildRoutesReturnType } from '../lib/AbstractController.js'
+import { defineApiContract } from '@lokalise/api-contracts'
+import { z } from 'zod/v4'
+import { AbstractApiController, buildApiRoute } from '../lib/api-contracts/index.js'
 import { withGatewayMetadata } from '../lib/gateway/index.js'
 import type { TestModuleDependencies, TestService } from './TestModule.js'
 
 const REQUEST_BODY_SCHEMA = z.object({
   name: z.string(),
 })
-const RESPONSE_BODY_SCHEMA = z.object({ success: boolean() })
+const RESPONSE_BODY_SCHEMA = z.object({ success: z.boolean() })
 const PATH_PARAMS_SCHEMA = z.object({
   userId: z.string(),
 })
 
-const deleteContract = buildRestContract({
+const deleteContract = defineApiContract({
   visibility: 'public',
   method: 'delete',
-  successResponseBodySchema: RESPONSE_BODY_SCHEMA,
+  summary: 'Delete user',
   requestPathParamsSchema: PATH_PARAMS_SCHEMA,
   pathResolver: (pathParams) => `/users/${pathParams.userId}`,
+  responsesByStatusCode: { 200: RESPONSE_BODY_SCHEMA },
 })
 
-const getContract = buildRestContract({
+const getContract = defineApiContract({
   visibility: 'public',
   method: 'get',
-  successResponseBodySchema: RESPONSE_BODY_SCHEMA,
+  summary: 'Get user',
   requestPathParamsSchema: PATH_PARAMS_SCHEMA,
   pathResolver: (pathParams) => `/users/${pathParams.userId}`,
+  responsesByStatusCode: { 200: RESPONSE_BODY_SCHEMA },
 })
 
-const updateContract = buildRestContract({
+const updateContract = defineApiContract({
   visibility: 'public',
   method: 'patch',
+  summary: 'Update user',
   requestBodySchema: REQUEST_BODY_SCHEMA,
-  successResponseBodySchema: z.undefined(),
-  isEmptyResponseExpected: true,
-  isNonJSONResponseExpected: true,
   requestPathParamsSchema: PATH_PARAMS_SCHEMA,
   pathResolver: (pathParams) => `/users/${pathParams.userId}`,
+  responsesByStatusCode: { 204: { allowNoBody: true } },
 })
 
-const createContract = buildRestContract({
+const createContract = defineApiContract({
   visibility: 'public',
   method: 'post',
+  summary: 'Create user',
   requestBodySchema: REQUEST_BODY_SCHEMA,
-  successResponseBodySchema: RESPONSE_BODY_SCHEMA,
   pathResolver: () => '/users',
+  responsesByStatusCode: { 200: RESPONSE_BODY_SCHEMA },
 })
 
-export class TestController extends AbstractController<typeof TestController.contracts> {
+export class TestController extends AbstractApiController<typeof TestController.contracts> {
   public static contracts = {
     getItem: getContract,
     deleteItem: deleteContract,
@@ -62,44 +63,31 @@ export class TestController extends AbstractController<typeof TestController.con
     this.service = testService
   }
 
-  private getItem = buildFastifyRoute(TestController.contracts.getItem, async (req, reply) => {
-    req.log.info(req.params.userId)
-    this.service.execute()
-    await reply.status(200).send({ success: true })
-  })
-
-  private deleteItem = buildFastifyRoute(
-    TestController.contracts.deleteItem,
-    async (req, reply) => {
-      req.log.info(req.params.userId)
-      this.service.execute()
-      await reply.status(200).send({ success: true })
-    },
-  )
-
-  private createItem = buildFastifyRoute(TestController.contracts.createItem, async (_, reply) => {
-    await reply.status(200).send({ success: true })
-  })
-
-  private updateItem = buildFastifyRoute(
-    TestController.contracts.updateItem,
-    async (req, reply) => {
-      req.log.info(req.params.userId)
-      this.service.execute()
-      await reply.status(200).send({ success: true })
-    },
-  )
-
-  public buildRoutes(): BuildRoutesReturnType<typeof TestController.contracts> {
-    return {
-      // Annotated with gateway metadata so DIContext.buildGatewayManifest()
-      // exercises the symbol-read path in our integration tests.
-      getItem: withGatewayMetadata(TestController.contracts.getItem, this.getItem, {
-        cache: { ttl: '60s' },
+  readonly routes = {
+    // Annotated with gateway metadata so DIContext.buildGatewayManifest()
+    // exercises the symbol-read path in our integration tests.
+    getItem: withGatewayMetadata(
+      TestController.contracts.getItem,
+      buildApiRoute(TestController.contracts.getItem, (req) => {
+        req.log.info(req.params.userId)
+        this.service.execute()
+        return { status: 200, body: { success: true } }
       }),
-      deleteItem: this.deleteItem,
-      updateItem: this.updateItem,
-      createItem: this.createItem,
-    }
+      { cache: { ttl: '60s' } },
+    ),
+    deleteItem: buildApiRoute(TestController.contracts.deleteItem, (req) => {
+      req.log.info(req.params.userId)
+      this.service.execute()
+      return { status: 200, body: { success: true } }
+    }),
+    updateItem: buildApiRoute(TestController.contracts.updateItem, (req) => {
+      req.log.info(req.params.userId)
+      this.service.execute()
+      return { status: 204, body: null }
+    }),
+    createItem: buildApiRoute(TestController.contracts.createItem, () => ({
+      status: 200,
+      body: { success: true },
+    })),
   }
 }

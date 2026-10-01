@@ -1,33 +1,34 @@
-import { buildRestContract, defineApiContract } from '@lokalise/api-contracts'
-import { buildFastifyRoute } from '@lokalise/fastify-api-contracts'
+import { defineApiContract, sseBody } from '@lokalise/api-contracts'
 import type { RouteOptions } from 'fastify'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod/v4'
-import { AbstractController, type BuildRoutesReturnType } from '../../AbstractController.ts'
 import { AbstractApiController } from '../../api-contracts/AbstractApiController.ts'
 import { buildApiRoute } from '../../api-contracts/apiRouteBuilder.ts'
 import type { GatewayMetadataValue } from '../gatewayMetadata.ts'
+import { GATEWAY_METADATA_SYMBOL } from '../gatewaySymbol.ts'
 import { withGatewayMetadata } from '../withGatewayMetadata.ts'
 import { buildGatewayManifestFrom, type CollectedController } from './buildManifest.ts'
 
-const getContract = buildRestContract({
+const getContract = defineApiContract({
   visibility: 'public',
   method: 'get',
-  successResponseBodySchema: z.object({ ok: z.boolean() }),
+  summary: 'Get user',
   requestPathParamsSchema: z.object({ userId: z.string() }),
   requestHeaderSchema: z.object({ 'x-trace-id': z.string() }),
   pathResolver: (p) => `/users/${p.userId}`,
+  responsesByStatusCode: { 200: z.object({ ok: z.boolean() }) },
 })
 
-const createContract = buildRestContract({
+const createContract = defineApiContract({
   visibility: 'public',
   method: 'post',
-  successResponseBodySchema: z.object({ ok: z.boolean() }),
+  summary: 'Create user',
   requestBodySchema: z.object({ name: z.string() }),
   pathResolver: () => '/users',
+  responsesByStatusCode: { 200: z.object({ ok: z.boolean() }) },
 })
 
-class TestUsersController extends AbstractController<typeof TestUsersController.contracts> {
+class TestUsersController extends AbstractApiController<typeof TestUsersController.contracts> {
   public static contracts = { getItem: getContract, createItem: createContract } as const
 
   public override readonly gatewayDefaults: GatewayMetadataValue = {
@@ -36,31 +37,28 @@ class TestUsersController extends AbstractController<typeof TestUsersController.
     tags: ['users'],
   }
 
-  private getItem = buildFastifyRoute(TestUsersController.contracts.getItem, async (_, reply) => {
-    await reply.status(200).send({ ok: true })
-  })
-
-  private createItem = buildFastifyRoute(
-    TestUsersController.contracts.createItem,
-    async (_, reply) => {
-      await reply.status(200).send({ ok: true })
-    },
-  )
-
-  public buildRoutes(): BuildRoutesReturnType<typeof TestUsersController.contracts> {
-    return {
-      getItem: withGatewayMetadata(TestUsersController.contracts.getItem, this.getItem, {
+  readonly routes = {
+    getItem: withGatewayMetadata(
+      TestUsersController.contracts.getItem,
+      buildApiRoute(TestUsersController.contracts.getItem, () => ({
+        status: 200,
+        body: { ok: true },
+      })),
+      {
         cache: { ttl: '60s' },
         match: { headers: { 'x-trace-id': { regex: '^[a-f0-9]+$' } } },
         tags: ['users', 'cacheable'],
-      }),
-      createItem: this.createItem,
-    }
+      },
+    ),
+    createItem: buildApiRoute(TestUsersController.contracts.createItem, () => ({
+      status: 200,
+      body: { ok: true },
+    })),
   }
 }
 
 function collected(): CollectedController[] {
-  return [{ name: 'usersController', kind: 'rest', controller: new TestUsersController() }]
+  return [{ name: 'usersController', controller: new TestUsersController() }]
 }
 
 describe('buildGatewayManifestFrom', () => {
@@ -173,7 +171,7 @@ describe('buildGatewayManifestFrom', () => {
     }
 
     const manifest = buildGatewayManifestFrom(
-      [{ name: 'inlineApi', kind: 'api', controller: new InlineApiController() }],
+      [{ name: 'inlineApi', controller: new InlineApiController() }],
       { service: 'users-api' },
     )
     const getItem = manifest.routes.find((r) => r.routeKey === 'getItem')
@@ -192,22 +190,19 @@ describe('buildGatewayManifestFrom', () => {
   })
 
   it('rejects invalid metadata at the manifest boundary', () => {
-    class BadController extends AbstractController<{ x: typeof getContract }> {
-      private getItem = buildFastifyRoute(getContract, async (_, reply) => {
-        await reply.status(200).send({ ok: true })
-      })
-      public buildRoutes(): BuildRoutesReturnType<{ x: typeof getContract }> {
-        // Invalid duration "5seconds" should fail validation.
-        return {
-          x: withGatewayMetadata(getContract, this.getItem, {
-            timeouts: { request: '5seconds' as never },
-          }),
-        }
+    class BadController extends AbstractApiController<{ x: typeof getContract }> {
+      readonly routes = {
+        x: buildApiRoute(getContract, () => ({ status: 200, body: { ok: true } })),
       }
     }
-    const list: CollectedController[] = [
-      { name: 'bad', kind: 'rest', controller: new BadController() },
-    ]
+    const controller = new BadController()
+    // Bypass the eager validation in withGatewayMetadata to exercise the manifest boundary:
+    // an invalid duration "5seconds" must still be rejected there.
+    Object.defineProperty(controller.routes.x, GATEWAY_METADATA_SYMBOL, {
+      value: { timeouts: { request: '5seconds' } },
+      enumerable: false,
+    })
+    const list: CollectedController[] = [{ name: 'bad', controller }]
     expect(() => buildGatewayManifestFrom(list, { service: 'svc' })).toThrow()
   })
 })
@@ -215,15 +210,6 @@ describe('buildGatewayManifestFrom', () => {
 // ============================================================================
 // Streaming marker
 // ============================================================================
-
-import { buildSseContract, sseBody } from '@lokalise/api-contracts'
-import {
-  AbstractDualModeController,
-  type BuildFastifyDualModeRoutesReturnType,
-  type BuildFastifySSERoutesReturnType,
-  buildHandler,
-} from '../../../index.js'
-import { AbstractSSEController } from '../../sse/AbstractSSEController.ts'
 
 const apiSseOnlyContract = defineApiContract({
   visibility: 'public',
@@ -278,62 +264,10 @@ class StreamingApiController extends AbstractApiController<{
   }
 }
 
-const legacySseContract = buildSseContract({
-  visibility: 'public',
-  method: 'get',
-  pathResolver: () => '/legacy-stream',
-  requestPathParamsSchema: z.object({}),
-  requestQuerySchema: z.object({}),
-  requestHeaderSchema: z.object({}),
-  serverSentEventSchemas: { tick: z.object({ n: z.number() }) },
-})
-
-const legacyDualContract = buildSseContract({
-  visibility: 'public',
-  method: 'get',
-  pathResolver: () => '/legacy-dual',
-  requestPathParamsSchema: z.object({}),
-  requestQuerySchema: z.object({}),
-  requestHeaderSchema: z.object({}),
-  successResponseBodySchema: z.object({ ok: z.boolean() }),
-  serverSentEventSchemas: { tick: z.object({ n: z.number() }) },
-})
-
-class LegacyStreamingController extends AbstractSSEController<{
-  stream: typeof legacySseContract
-}> {
-  buildSSERoutes(): BuildFastifySSERoutesReturnType<{ stream: typeof legacySseContract }> {
-    return { stream: this.handleStream }
-  }
-
-  private handleStream = buildHandler(legacySseContract, {
-    sse: (_request, sse) => {
-      sse.start('keepAlive')
-    },
-  })
-}
-
-class LegacyDualStreamingController extends AbstractDualModeController<{
-  dual: typeof legacyDualContract
-}> {
-  buildDualModeRoutes(): BuildFastifyDualModeRoutesReturnType<{
-    dual: typeof legacyDualContract
-  }> {
-    return { dual: this.handleDual }
-  }
-
-  private handleDual = buildHandler(legacyDualContract, {
-    sync: async () => ({ ok: true }),
-    sse: (_request, sse) => {
-      sse.start('autoClose')
-    },
-  })
-}
-
 describe('buildGatewayManifestFrom — streaming marker', () => {
   it('marks api-contract SSE and dual routes, leaves plain routes unmarked', () => {
     const manifest = buildGatewayManifestFrom(
-      [{ name: 'streamingController', kind: 'api', controller: new StreamingApiController() }],
+      [{ name: 'streamingController', controller: new StreamingApiController() }],
       { service: 'svc' },
     )
     const byKey = Object.fromEntries(manifest.routes.map((r) => [r.routeKey, r]))
@@ -341,34 +275,5 @@ describe('buildGatewayManifestFrom — streaming marker', () => {
     expect(byKey.dual?.streaming).toBe('dual')
     expect(byKey.plain?.streaming).toBeUndefined()
     expect('streaming' in (byKey.plain ?? {})).toBe(false)
-  })
-
-  it('includes legacy SSE/dual-mode controllers with streaming markers', () => {
-    const manifest = buildGatewayManifestFrom(
-      [
-        {
-          name: 'legacySse',
-          kind: 'sse-legacy',
-          controller: new LegacyStreamingController({}),
-        },
-        {
-          name: 'legacyDual',
-          kind: 'dualmode-legacy',
-          controller: new LegacyDualStreamingController({}),
-        },
-      ],
-      { service: 'svc' },
-    )
-    const byPath = Object.fromEntries(manifest.routes.map((r) => [r.path, r]))
-    expect(byPath['/legacy-stream']).toMatchObject({
-      controller: 'legacySse',
-      streaming: 'sse',
-      method: 'GET',
-    })
-    expect(byPath['/legacy-dual']).toMatchObject({
-      controller: 'legacyDual',
-      streaming: 'dual',
-      method: 'GET',
-    })
   })
 })

@@ -78,10 +78,8 @@ export const projectStateBinding = defineFallbackBinding(projectStateContract, {
 })
 ```
 
-Escape hatches: `bindFallbackContracts(pollContract, streamContract, config)`
-binds two pre-existing contracts on different paths;
-`fromLegacyDualModeContract(contract, config)` accepts legacy
-`buildSseContract` dual-mode contracts.
+Escape hatch: `bindFallbackContracts(pollContract, streamContract, config)`
+binds two pre-existing contracts on different paths.
 
 ## Subscribing
 

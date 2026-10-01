@@ -1,30 +1,18 @@
-import type { SSERouteKind } from '@fastify/sse'
-import type {
-  AnyDualModeContractDefinition,
-  AnySSEContractDefinition,
-} from '@lokalise/api-contracts'
-import type { RouteType } from '@lokalise/fastify-api-contracts'
+// Loads @fastify/sse's `reply.sse` augmentation of FastifyReply, read by the preClose hook
+import type {} from '@fastify/sse'
 import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
 import { AwilixManager } from 'awilix-manager'
 import type { FastifyInstance, FastifyReply, onRequestHookHandler, RouteOptions } from 'fastify'
-import type { AbstractController } from './AbstractController.js'
 import type { AbstractModule } from './AbstractModule.js'
 import type { AbstractApiController } from './api-contracts/index.ts'
 import { mergeConfigAndDependencyOverrides, type NestedPartial } from './configUtils.js'
 import type { ENABLE_ALL } from './diConfigUtils.js'
-import type { AbstractDualModeController } from './dualmode/AbstractDualModeController.js'
 import {
   type BuildGatewayManifestOptions,
   buildGatewayManifestFrom,
   type CollectedController,
   type GatewayManifest,
 } from './gateway/index.js'
-import {
-  buildFastifyRoute,
-  type RegisterDualModeRoutesOptions,
-  type RegisterSSERoutesOptions,
-} from './routes/index.js'
-import type { AbstractSSEController } from './sse/AbstractSSEController.js'
 
 export type RegisterDependenciesParams<Dependencies, Config, ExternalDependencies> = {
   modules: readonly AbstractModule<unknown, ExternalDependencies>[]
@@ -39,57 +27,6 @@ export type DependencyInjectionOptions = {
   enqueuedJobWorkersEnabled?: false | typeof ENABLE_ALL | string[]
   messageQueueConsumersEnabled?: false | typeof ENABLE_ALL | string[]
   periodicJobsEnabled?: false | typeof ENABLE_ALL | string[]
-  /**
-   * Enable SSE test mode features like connection spying.
-   * Only relevant for SSE controllers. Set to true in test environments.
-   * @default false
-   */
-  isTestMode?: boolean
-}
-
-type SSERouteConfigObject = {
-  kind?: SSERouteKind
-  heartbeat?: boolean
-  serializer?: (data: unknown) => string
-}
-
-/**
- * Apply registration-level SSE defaults (`heartbeat`, `serializer`) to a route.
- *
- * `@fastify/sse` reads its per-route configuration from the top-level `sse` route
- * option (not from `config.sse`), and only supports a boolean `heartbeat` there —
- * the heartbeat interval is a plugin-registration option shared by all routes.
- *
- * Values already set on the route by the route builder win over the registration-level
- * defaults.
- */
-function applyGlobalSSEOptions(
-  route: RouteOptions,
-  options?: Pick<RegisterSSERoutesOptions, 'heartbeat' | 'serializer'>,
-): void {
-  if (options?.heartbeat === undefined && options?.serializer === undefined) {
-    return
-  }
-
-  const routeWithSSE = route as RouteOptions & { sse?: unknown }
-  const routeSSEOption = routeWithSSE.sse
-  if (!routeSSEOption) {
-    return
-  }
-
-  // The route option is either `true` (plain SSE), a bare kind string, or an options object.
-  const routeSSEConfig: SSERouteConfigObject =
-    typeof routeSSEOption === 'string'
-      ? { kind: routeSSEOption as NonNullable<SSERouteConfigObject['kind']> }
-      : typeof routeSSEOption === 'object'
-        ? (routeSSEOption as SSERouteConfigObject)
-        : {}
-
-  routeWithSSE.sse = {
-    ...(options.heartbeat !== undefined && { heartbeat: options.heartbeat }),
-    ...(options.serializer !== undefined && { serializer: options.serializer }),
-    ...routeSSEConfig,
-  } satisfies SSERouteConfigObject
 }
 
 export class DIContext<
@@ -100,13 +37,7 @@ export class DIContext<
   private readonly options: DependencyInjectionOptions
   public readonly awilixManager: AwilixManager
   public readonly diContainer: AwilixContainer<Dependencies>
-  // biome-ignore lint/suspicious/noExplicitAny: all controllers are controllers
-  private readonly controllerResolvers: Array<{ name: string; resolver: Resolver<any> }>
-  // SSE controller dependency names (resolved from container to preserve singletons)
-  private readonly sseControllerNames: string[]
-  // Dual-mode controller dependency names (resolved from container to preserve singletons)
-  private readonly dualModeControllerNames: string[]
-  // ApiContract controller dependency names (resolved from container to preserve singletons)
+  // Controller dependency names (resolved from container to preserve singletons)
   private readonly apiControllerNames: string[]
   private readonly appConfig: Config
   // SSE streams still open, closed in preClose so they don't keep app.close() waiting
@@ -131,9 +62,6 @@ export class DIContext<
         eagerInject: true,
         strictBooleanEnforced: true,
       })
-    this.controllerResolvers = []
-    this.sseControllerNames = []
-    this.dualModeControllerNames = []
     this.apiControllerNames = []
     this.openSSEReplies = new Set()
     this.isSSECloseHookRegistered = false
@@ -145,21 +73,14 @@ export class DIContext<
     targetDiConfig: NameAndRegistrationPair<Dependencies>,
   ): void {
     for (const [name, resolver] of Object.entries(controllers)) {
-      if (resolver.isDualModeController) {
-        this.dualModeControllerNames.push(name)
-        // @ts-expect-error we can't really ensure type-safety here
-        targetDiConfig[name] = resolver
-      } else if (resolver.isSSEController) {
-        this.sseControllerNames.push(name)
-        // @ts-expect-error we can't really ensure type-safety here
-        targetDiConfig[name] = resolver
-      } else if (resolver.isApiController) {
-        this.apiControllerNames.push(name)
-        // @ts-expect-error we can't really ensure type-safety here
-        targetDiConfig[name] = resolver
-      } else {
-        this.controllerResolvers.push({ name, resolver: resolver as Resolver<unknown> })
+      if (!resolver.isApiController) {
+        throw new Error(
+          `Controller "${name}" must be registered with asApiControllerClass(). Controllers extend AbstractApiController and declare their routes with buildApiRoute().`,
+        )
       }
+      this.apiControllerNames.push(name)
+      // @ts-expect-error we can't really ensure type-safety here
+      targetDiConfig[name] = resolver
     }
   }
 
@@ -243,17 +164,6 @@ export class DIContext<
 
   // biome-ignore lint/suspicious/noExplicitAny: we don't care about what instance we get here
   registerRoutes(app: FastifyInstance<any, any, any, any>): void {
-    for (const { resolver } of this.controllerResolvers) {
-      // biome-ignore lint/suspicious/noExplicitAny: any controller works here
-      const controller: AbstractController<any> = resolver.resolve(this.diContainer)
-      const routes = controller.buildRoutes()
-      for (const route of Object.values(routes)) {
-        // Cast needed: GET/DELETE routes have body:undefined, POST/PATCH have body:unknown
-        // The union is incompatible with app.route() due to handler contravariance
-        app.route(route as RouteType)
-      }
-    }
-
     for (const controllerName of this.apiControllerNames) {
       // biome-ignore lint/suspicious/noExplicitAny: any api controllers works here
       const controller: AbstractApiController<any> = this.diContainer.resolve(controllerName)
@@ -266,8 +176,9 @@ export class DIContext<
   }
 
   /**
-   * Build a vendor-neutral gateway manifest from all registered REST and
-   * api-contract controllers. Routes carrying gateway metadata (attached via
+   * Build a vendor-neutral gateway manifest from all registered controllers.
+   * Routes carrying gateway metadata (passed inline via
+   * `buildApiRoute(..., { gatewayMetadata })` or attached via
    * `withGatewayMetadata()`) get that metadata merged with controller-level
    * `gatewayDefaults` and the `defaults` passed here. Routes without any
    * metadata still appear in the manifest with empty metadata.
@@ -276,11 +187,7 @@ export class DIContext<
    * like `@opinionated-machine/gateway-envoy` or
    * `@opinionated-machine/gateway-krakend` to produce a config.
    *
-   * SSE and dual-mode routes declared through `AbstractApiController` are
-   * always included and carry a `streaming: 'sse' | 'dual'` marker. Routes
-   * from legacy `AbstractSSEController` / `AbstractDualModeController`
-   * controllers are included only when `includeStreamingControllers: true`
-   * is passed (off by default so existing manifests don't silently grow).
+   * SSE and dual-mode routes carry a `streaming: 'sse' | 'dual'` marker.
    *
    * @example
    * ```ts
@@ -293,136 +200,12 @@ export class DIContext<
    * ```
    */
   buildGatewayManifest(options: BuildGatewayManifestOptions): GatewayManifest {
-    const collected: CollectedController[] = []
-
-    for (const { name, resolver } of this.controllerResolvers) {
-      // biome-ignore lint/suspicious/noExplicitAny: any controller works here
-      const controller: AbstractController<any> = resolver.resolve(this.diContainer)
-      collected.push({ name, kind: 'rest', controller })
-    }
-
-    for (const name of this.apiControllerNames) {
-      // biome-ignore lint/suspicious/noExplicitAny: any api controller works here
-      const controller: AbstractApiController<any> = this.diContainer.resolve(name)
-      collected.push({ name, kind: 'api', controller })
-    }
-
-    if (options.includeStreamingControllers) {
-      for (const name of this.sseControllerNames) {
-        // biome-ignore lint/suspicious/noExplicitAny: any SSE controller works here
-        const controller: AbstractSSEController<any> = this.diContainer.resolve(name)
-        collected.push({ name, kind: 'sse-legacy', controller })
-      }
-      for (const name of this.dualModeControllerNames) {
-        // biome-ignore lint/suspicious/noExplicitAny: any dual-mode controller works here
-        const controller: AbstractDualModeController<any> = this.diContainer.resolve(name)
-        collected.push({ name, kind: 'dualmode-legacy', controller })
-      }
-    }
+    const collected: CollectedController[] = this.apiControllerNames.map((name) => ({
+      name,
+      controller: this.diContainer.resolve(name),
+    }))
 
     return buildGatewayManifestFrom(collected, options)
-  }
-
-  /**
-   * Check if any SSE controllers are registered.
-   * Use this to conditionally call registerSSERoutes().
-   */
-  hasSSEControllers(): boolean {
-    return this.sseControllerNames.length > 0
-  }
-
-  /**
-   * Check if any dual-mode controllers are registered.
-   * Use this to conditionally call registerDualModeRoutes().
-   */
-  hasDualModeControllers(): boolean {
-    return this.dualModeControllerNames.length > 0
-  }
-
-  /**
-   * Register SSE routes with the Fastify app.
-   *
-   * Must be called separately from registerRoutes().
-   * Requires @fastify/sse plugin to be registered on the app.
-   *
-   * @param app - Fastify instance with @fastify/sse registered
-   * @param options - Optional configuration for SSE routes
-   *
-   * @example
-   * ```typescript
-   * // Register @fastify/sse plugin first
-   * await app.register(fastifySSE, { heartbeatInterval: 30000 })
-   *
-   * // Then register SSE routes
-   * context.registerSSERoutes(app)
-   * ```
-   */
-  registerSSERoutes(
-    // biome-ignore lint/suspicious/noExplicitAny: Fastify instance types are complex
-    app: FastifyInstance<any, any, any, any>,
-    options?: RegisterSSERoutesOptions,
-  ): void {
-    if (!this.hasSSEControllers()) {
-      return
-    }
-
-    for (const controllerName of this.sseControllerNames) {
-      // Resolve from container to use the singleton instance
-      const sseController: AbstractSSEController<Record<string, AnySSEContractDefinition>> =
-        this.diContainer.resolve(controllerName)
-      const sseRoutes = sseController.buildSSERoutes()
-
-      for (const routeConfig of Object.values(sseRoutes)) {
-        const route = buildFastifyRoute(sseController, routeConfig)
-        this.applySSERouteOptions(route, options)
-        app.route(route)
-      }
-    }
-  }
-
-  /**
-   * Register dual-mode routes with the Fastify app.
-   *
-   * Dual-mode routes handle both SSE streaming and JSON responses on the
-   * same path, automatically branching based on the `Accept` header.
-   *
-   * Must be called separately from registerRoutes() and registerSSERoutes().
-   * Requires @fastify/sse plugin to be registered on the app.
-   *
-   * @param app - Fastify instance with @fastify/sse registered
-   * @param options - Optional configuration for dual-mode routes
-   *
-   * @example
-   * ```typescript
-   * // Register @fastify/sse plugin first
-   * await app.register(fastifySSE, { heartbeatInterval: 30000 })
-   *
-   * // Then register dual-mode routes
-   * context.registerDualModeRoutes(app)
-   * ```
-   */
-  registerDualModeRoutes(
-    // biome-ignore lint/suspicious/noExplicitAny: Fastify instance types are complex
-    app: FastifyInstance<any, any, any, any>,
-    options?: RegisterDualModeRoutesOptions,
-  ): void {
-    if (!this.hasDualModeControllers()) {
-      return
-    }
-
-    for (const controllerName of this.dualModeControllerNames) {
-      // Resolve from container to use the singleton instance
-      const dualModeController: AbstractDualModeController<
-        Record<string, AnyDualModeContractDefinition>
-      > = this.diContainer.resolve(controllerName)
-      const dualModeRoutes = dualModeController.buildDualModeRoutes()
-
-      for (const routeConfig of Object.values(dualModeRoutes)) {
-        const route = buildFastifyRoute(dualModeController, routeConfig)
-        this.applyDualModeRouteOptions(route, options)
-        app.route(route)
-      }
-    }
   }
 
   /**
@@ -468,69 +251,6 @@ export class DIContext<
         }
         done()
       })
-    }
-  }
-
-  private applyDualModeRouteOptions(
-    route: RouteOptions,
-    options?: RegisterDualModeRoutesOptions,
-  ): void {
-    this.applyStreamRouteOptions(route, options)
-  }
-
-  private applySSERouteOptions(route: RouteOptions, options?: RegisterSSERoutesOptions): void {
-    this.applyStreamRouteOptions(route, options)
-  }
-
-  /**
-   * Apply registration-time options to an SSE/dual-mode route before app.route().
-   *
-   * Shared by the SSE-only and dual-mode registration paths: both apply the same
-   * pre-handlers, rate limit and `sse` field defaults. Route-level options
-   * (buildHandler / buildApiRoute) take precedence over these.
-   */
-  private applyStreamRouteOptions(
-    route: RouteOptions,
-    options?: RegisterSSERoutesOptions | RegisterDualModeRoutesOptions,
-  ): void {
-    if (options?.preHandler) {
-      this.applyPreHandlers(route, options.preHandler)
-    }
-    if (options?.rateLimit) {
-      this.applyRateLimit(route, options.rateLimit)
-    }
-    applyGlobalSSEOptions(route, options)
-  }
-
-  private applyPreHandlers(
-    route: RouteOptions,
-    globalPreHandler: RouteOptions['preHandler'],
-  ): void {
-    const existingPreHandler = route.preHandler
-    if (!existingPreHandler) {
-      route.preHandler = globalPreHandler
-      return
-    }
-    // biome-ignore lint/suspicious/noExplicitAny: preHandler types are complex
-    const handlers: any[] = Array.isArray(existingPreHandler)
-      ? existingPreHandler
-      : [existingPreHandler]
-    // biome-ignore lint/suspicious/noExplicitAny: preHandler types are complex
-    const globalHandlers: any[] = Array.isArray(globalPreHandler)
-      ? globalPreHandler
-      : [globalPreHandler]
-    route.preHandler = [...globalHandlers, ...handlers]
-  }
-
-  private applyRateLimit(
-    route: RouteOptions,
-    rateLimit: NonNullable<RegisterSSERoutesOptions['rateLimit']>,
-  ): void {
-    // biome-ignore lint/suspicious/noExplicitAny: config types vary by plugins
-    const routeWithConfig = route as RouteOptions & { config?: any }
-    routeWithConfig.config = {
-      ...(routeWithConfig.config || {}),
-      rateLimit,
     }
   }
 

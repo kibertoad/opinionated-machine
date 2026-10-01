@@ -12,7 +12,7 @@ export const gatewayManifestRouteSchema = z
     path: z.string().startsWith('/'),
     /** Dependency-container name of the controller. */
     controller: z.string(),
-    /** Key of the route inside the controller (`buildRoutes` map key, or array index for `AbstractApiController`). */
+    /** Key of the route inside the controller (the `routes` map key). */
     routeKey: z.string(),
     /**
      * How the route responds on the success path: `'sse'` (always streams) or
