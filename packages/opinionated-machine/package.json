@@ -33,7 +33,7 @@
         "@fastify/sse": "^0.6.1",
         "@opinionated-machine/sse-parser": "workspace:*",
         "fast-querystring": "^1.1.2",
-        "fastify-plugin": "^6.0.0",
+        "fastify-plugin": "^6.0.1",
         "ts-deepmerge": "^8.0.0"
     },
     "peerDependencies": {
