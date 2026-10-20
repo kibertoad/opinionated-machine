@@ -284,7 +284,7 @@ importers:
     dependencies:
       '@fastify/sse':
         specifier: ^0.6.1
-        version: 0.6.1(fastify@5.12.5)
+        version: 0.6.1(fastify@5.12.7)
       '@opinionated-machine/sse-parser':
         specifier: workspace:*
         version: link:../sse-parser
@@ -309,7 +309,7 @@ importers:
         version: 3.1.1
       '@lokalise/fastify-api-contracts':
         specifier: ^8.0.0
-        version: 8.0.0(@fastify/sse@0.6.1(fastify@5.12.5))(@lokalise/api-contracts@9.0.1(zod@4.6.7))(@lokalise/node-core@14.11.0(zod@4.6.7))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.5)(openapi-types@12.1.3)(zod@4.6.7))(fastify@5.12.5)(zod@4.6.7)
+        version: 8.0.0(@fastify/sse@0.6.1(fastify@5.12.7))(@lokalise/api-contracts@9.0.1(zod@4.6.7))(@lokalise/node-core@14.11.0(zod@4.6.7))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.7)(openapi-types@12.1.3)(zod@4.6.7))(fastify@5.12.7)(zod@4.6.7)
       '@lokalise/node-core':
         specifier: ^14.11.0
         version: 14.11.0(zod@4.6.7)
@@ -332,11 +332,11 @@ importers:
         specifier: ^7.1.0
         version: 7.1.0(awilix@13.0.5)
       fastify:
-        specifier: ^5.12.5
-        version: 5.12.5
+        specifier: ^5.12.7
+        version: 5.12.7
       fastify-type-provider-zod:
         specifier: ^7.0.0
-        version: 7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.5)(openapi-types@12.1.3)(zod@4.6.7)
+        version: 7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.7)(openapi-types@12.1.3)(zod@4.6.7)
       rimraf:
         specifier: ^6.1.2
         version: 6.1.3
@@ -1048,8 +1048,8 @@ packages:
       openapi-types: ^12.1.3
       zod: '>=4.1.5'
 
-  fastify@5.12.5:
-    resolution: {integrity: sha512-OB2k1dlxs5/NAABqeKV2FUHkSD2BbENsCak8yULVcymn3fHIPDVa9TI3SDnJSWYSllZmSYuZXy2gTnsT+Sut1A==}
+  fastify@5.12.7:
+    resolution: {integrity: sha512-v4pEPsTRPuqlDIYiQFB+BHjVN4SdHX9u0ABk0ZDUKbbdY1vsNryUd1j4Z+jQEZajvYIVk047Kimva9/AJ79GYw==}
 
   fastq@1.20.3:
     resolution: {integrity: sha512-XKv5nnLs6nLF71NgiKJLIZFLkPyIEuOselLG7ujZnGrRfQK8HpvY+WqKhAJUAdLomwVHErVS4LfxFlPq0/FTAw==}
@@ -1809,10 +1809,10 @@ snapshots:
       '@fastify/forwarded': 3.0.2
       ipaddr.js: 2.5.0
 
-  '@fastify/sse@0.6.1(fastify@5.12.5)':
+  '@fastify/sse@0.6.1(fastify@5.12.7)':
     dependencies:
       '@fastify/error': 4.2.0
-      fastify: 5.12.5
+      fastify: 5.12.7
       fastify-plugin: 6.0.1
 
   '@fastify/swagger@9.8.1':
@@ -1842,17 +1842,17 @@ snapshots:
 
   '@lokalise/biome-config@3.1.1': {}
 
-  '@lokalise/fastify-api-contracts@8.0.0(@fastify/sse@0.6.1(fastify@5.12.5))(@lokalise/api-contracts@9.0.1(zod@4.6.7))(@lokalise/node-core@14.11.0(zod@4.6.7))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.5)(openapi-types@12.1.3)(zod@4.6.7))(fastify@5.12.5)(zod@4.6.7)':
+  '@lokalise/fastify-api-contracts@8.0.0(@fastify/sse@0.6.1(fastify@5.12.7))(@lokalise/api-contracts@9.0.1(zod@4.6.7))(@lokalise/node-core@14.11.0(zod@4.6.7))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.7)(openapi-types@12.1.3)(zod@4.6.7))(fastify@5.12.7)(zod@4.6.7)':
     dependencies:
       '@lokalise/api-contracts': 9.0.1(zod@4.6.7)
       '@lokalise/node-core': 14.11.0(zod@4.6.7)
-      fastify: 5.12.5
-      fastify-type-provider-zod: 7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.5)(openapi-types@12.1.3)(zod@4.6.7)
+      fastify: 5.12.7
+      fastify-type-provider-zod: 7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.7)(openapi-types@12.1.3)(zod@4.6.7)
       light-my-request: 6.6.0
       negotiator: 1.1.0
       zod: 4.6.7
     optionalDependencies:
-      '@fastify/sse': 0.6.1(fastify@5.12.5)
+      '@fastify/sse': 0.6.1(fastify@5.12.7)
 
   '@lokalise/node-core@14.11.0(zod@4.6.7)':
     dependencies:
@@ -2183,15 +2183,15 @@ snapshots:
 
   fastify-plugin@6.0.1: {}
 
-  fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.5)(openapi-types@12.1.3)(zod@4.6.7):
+  fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.7)(openapi-types@12.1.3)(zod@4.6.7):
     dependencies:
       '@fastify/error': 4.2.0
       '@fastify/swagger': 9.8.1
-      fastify: 5.12.5
+      fastify: 5.12.7
       openapi-types: 12.1.3
       zod: 4.6.7
 
-  fastify@5.12.5:
+  fastify@5.12.7:
     dependencies:
       '@fastify/ajv-compiler': 4.0.6
       '@fastify/error': 4.2.0
