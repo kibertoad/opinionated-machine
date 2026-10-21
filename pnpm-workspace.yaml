@@ -3,4 +3,4 @@ packages:
 minimumReleaseAgeExclude:
   - '@lokalise/api-contracts'
   - '@lokalise/fastify-api-contracts'
-  - awilix-manager@7.1.0
+  - awilix-manager@7.2.0
