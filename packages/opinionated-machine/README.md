@@ -686,7 +686,7 @@ resolveControllers() {
 ### Message Queue Resolvers
 
 #### `asMessageQueueHandlerClass(Type, mqOptions, opts?)`
-For message queue consumers following `message-queue-toolkit` conventions. Automatically handles `start`/`close` lifecycle and respects `messageQueueConsumersEnabled` option. Consumers start concurrently with the other inits of their `asyncInitPriority` (see awilix-manager's `concurrent` option), so anything that needs a consumer to have started must use a higher `asyncInitPriority`. Pass `asyncInit: 'start'` in `opts` to start one without the `concurrent` flag. Requires `awilix-manager` 7.1.0 or later, including the copy used by `@fastify/awilix` when its `AwilixManager` is passed to `DIContext`.
+For message queue consumers following `message-queue-toolkit` conventions. Automatically handles `start`/`close` lifecycle and respects `messageQueueConsumersEnabled` option. Consumers start concurrently with the other inits of their `asyncInitPriority` (see awilix-manager's `concurrent` option), so anything that needs a consumer to have started must use a higher `asyncInitPriority`. Pass `asyncInit: 'start'` in `opts` to start one without the `concurrent` flag. They also close concurrently with the other disposes of their `asyncDisposePriority`; pass `asyncDispose: 'close'` in `opts` to close one without the flag. Requires `awilix-manager` 7.2.0 or later, including the copy used by `@fastify/awilix` when its `AwilixManager` is passed to `DIContext`.
 
 ```ts
 messageQueueConsumer: asMessageQueueHandlerClass(MessageQueueConsumer, {
@@ -698,7 +698,7 @@ messageQueueConsumer: asMessageQueueHandlerClass(MessageQueueConsumer, {
 ### Background Job Resolvers
 
 #### `asEnqueuedJobWorkerClass(Type, workerOptions, opts?)`
-For enqueued job workers following `background-jobs-common` conventions. Automatically handles `start`/`dispose` lifecycle and respects `enqueuedJobWorkersEnabled` option. Workers start concurrently with the other inits of their `asyncInitPriority`, like message queue consumers. Pass `asyncInit: 'start'` in `opts` to start one without the `concurrent` flag.
+For enqueued job workers following `background-jobs-common` conventions. Automatically handles `start`/`dispose` lifecycle and respects `enqueuedJobWorkersEnabled` option. Workers start concurrently with the other inits of their `asyncInitPriority`, like message queue consumers. Pass `asyncInit: 'start'` in `opts` to start one without the `concurrent` flag. Workers also dispose concurrently with the other disposes of their `asyncDisposePriority`; pass `asyncDispose: 'dispose'` in `opts` to dispose one without the flag.
 
 ```ts
 jobWorker: asEnqueuedJobWorkerClass(JobWorker, {
