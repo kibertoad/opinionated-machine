@@ -25,6 +25,22 @@ describe('asMessageQueueHandlerClass', () => {
 
     expect(resolver.asyncInit).toBe('start')
   })
+
+  it('closes consumers concurrently with the other disposes of their priority', () => {
+    const resolver = asMessageQueueHandlerClass(Consumer, { queueName: 'queue', diOptions })
+
+    expect(resolver.asyncDispose).toEqual({ method: 'close', concurrent: true })
+  })
+
+  it('lets the caller opt back into a sequential dispose', () => {
+    const resolver = asMessageQueueHandlerClass(
+      Consumer,
+      { queueName: 'queue', diOptions },
+      { asyncDispose: 'close' },
+    )
+
+    expect(resolver.asyncDispose).toBe('close')
+  })
 })
 
 describe('asEnqueuedJobWorkerClass', () => {
@@ -42,5 +58,21 @@ describe('asEnqueuedJobWorkerClass', () => {
     )
 
     expect(resolver.asyncInit).toBe('start')
+  })
+
+  it('disposes workers concurrently with the other disposes of their priority', () => {
+    const resolver = asEnqueuedJobWorkerClass(Consumer, { queueName: 'queue', diOptions })
+
+    expect(resolver.asyncDispose).toEqual({ method: 'dispose', concurrent: true })
+  })
+
+  it('lets the caller opt back into a sequential dispose', () => {
+    const resolver = asEnqueuedJobWorkerClass(
+      Consumer,
+      { queueName: 'queue', diOptions },
+      { asyncDispose: 'dispose' },
+    )
+
+    expect(resolver.asyncDispose).toBe('dispose')
   })
 })
