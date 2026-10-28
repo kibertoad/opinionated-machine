@@ -329,8 +329,8 @@ importers:
         specifier: ^13.0.0
         version: 13.0.5
       awilix-manager:
-        specifier: ^7.1.0
-        version: 7.1.0(awilix@13.0.5)
+        specifier: ^7.2.0
+        version: 7.2.0(awilix@13.0.5)
       fastify:
         specifier: ^5.12.7
         version: 5.12.7
@@ -911,8 +911,8 @@ packages:
   avvio@9.3.0:
     resolution: {integrity: sha512-g2tQ7LE7oOSqDfwEm3M+ZCMTJc7KiZCdJ4UwyZJb5ckTKyYu50OYmvv0mCFXPuYXoM4zkSt8zM9XQ9KCvxA74A==}
 
-  awilix-manager@7.1.0:
-    resolution: {integrity: sha512-9p5jdTt304lJgmV5Tkk7pVIqIX41aJi6pPiVLSOeGdAvF4lTO6Ktmb84MUbTg0gWdmsy7aUA0TDAZc5Z2uy/wQ==}
+  awilix-manager@7.2.0:
+    resolution: {integrity: sha512-mDGekPGrdPQ+KOGoNGilj2SdIEFthfg9QTAbisOQ2+dpG4coFii6GMik5HXmdXl6Z9jhZWYJJTFmNoTFlF1dKw==}
     engines: {node: '>=22.13'}
     peerDependencies:
       awilix: '>=9.0.0'
@@ -2076,7 +2076,7 @@ snapshots:
       '@fastify/error': 4.2.0
       fastq: 1.20.3
 
-  awilix-manager@7.1.0(awilix@13.0.5):
+  awilix-manager@7.2.0(awilix@13.0.5):
     dependencies:
       awilix: 13.0.5
 
