@@ -14,6 +14,7 @@ export {
   type SSEStreamParser,
   type SSEStreamParserOptions,
 } from '@opinionated-machine/sse-parser'
+export { defineContractEvent, defineContractEvents } from './defineContractEvent.js'
 export { defineEvent, type SSEEventDefinition } from './defineEvent.js'
 export {
   type AsyncEventIdSequence,
