@@ -29,8 +29,8 @@
             }
         },
         {
-            // Stand-alone acceptance CLI scripts: console output is intentional.
-            "includes": ["**/acceptance/*.mjs"],
+            // Stand-alone CLI scripts: console output is the point of them.
+            "includes": ["**/acceptance/*.mjs", "scripts/*.mjs"],
             "linter": {
                 "rules": {
                     "suspicious": {

@@ -1,15 +1,13 @@
 name: Release
 
+# Called by ci.yml, never triggered directly: publishing must be gated on a green
+# build of the exact commit it publishes, and `needs:` is the only gate GitHub
+# offers that cannot race. See the "Releases" section of CONTRIBUTING.md.
 on:
-  push:
-    branches:
-      - main
-  repository_dispatch:
-    types:
-      - release
+  workflow_call: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions: {}
@@ -44,6 +42,9 @@ jobs:
       - name: Build
         run: pnpm run build:all
 
+      # With changesets pending this versions them into a PR and publishes nothing.
+      # With none pending every unpublished workspace version goes to npm, authenticated
+      # by the job's OIDC token rather than by NODE_AUTH_TOKEN.
       - name: Create Release Pull Request or Publish
         id: changesets
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
@@ -53,12 +54,42 @@ jobs:
           pr-title: "Release Packages"
           commit-message: "chore: update versions"
 
+      # `changeset publish` publishes package by package and does not tag anything if
+      # one of them fails, so a partial release otherwise leaves no usable record.
+      - name: Verify the registry matches the workspace
+        if: ${{ !cancelled() && steps.changesets.conclusion != 'skipped' && steps.changesets.outputs.has-changesets != 'true' }}
+        run: pnpm run verify:published
+
+      # The version PR carries nothing but version bumps and CHANGELOG edits, and its
+      # own `ci` run never executes: GitHub creates a run for a PR opened with
+      # GITHUB_TOKEN but never starts its jobs, so every one of these runs has
+      # completed with zero jobs (runs 33105348708, 34372455173). Waiting on those
+      # checks would hang until this step timed out.
+      #
+      # The gate that matters sits on the other side of the merge instead: the
+      # dispatch below re-runs the full matrix against the merged tree, and
+      # `needs: build` in ci.yml holds the publish until that is green. Nothing
+      # reaches npm from a commit whose tests have not passed. Giving
+      # changesets/action a GitHub App token would let the version PR be verified on
+      # its own too, and is the upgrade to make if one becomes available.
       - name: Auto-merge Changesets PR
         if: steps.changesets.outputs.has-changesets == 'true'
-        run: |
-          gh pr merge --squash --admin "$PR_NUMBER"
-          gh api --method POST /repos/$REPO/dispatches -f 'event_type=release'
+        timeout-minutes: 10
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
+        run: |
+          if [ -z "$PR_NUMBER" ]; then
+            echo "::error::Changesets reported pending changesets but produced no version PR."
+            exit 1
+          fi
+
+          # No --admin: a branch protection rule added later should block this merge
+          # rather than be silently bypassed by it.
+          gh pr merge --squash "$PR_NUMBER" --repo "$REPO"
+
+          # The merge is pushed with GITHUB_TOKEN, which does not trigger workflows.
+          # repository_dispatch is one of the two events exempt from that rule, so it
+          # is what re-enters ci.yml for the publish half of the release.
+          gh api --method POST "/repos/$REPO/dispatches" -f 'event_type=release'

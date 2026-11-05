@@ -13,7 +13,8 @@
         "lint:fix": "biome check --write .",
         "test:all": "turbo run test",
         "changeset": "changeset",
-        "ci:publish": "changeset publish"
+        "ci:publish": "changeset publish",
+        "verify:published": "node scripts/verify-published.mjs"
     },
     "repository": {
         "type": "git",

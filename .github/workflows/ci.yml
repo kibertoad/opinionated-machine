@@ -8,6 +8,12 @@ on:
   push:
     branches:
       - main
+  # Sent by release.yml once it has merged a version PR. The merge itself is pushed
+  # with GITHUB_TOKEN and so triggers nothing; this re-runs the suite against the
+  # version-bumped tree and then publishes it.
+  repository_dispatch:
+    types:
+      - release
 
 permissions: {}
 
@@ -71,6 +77,7 @@ jobs:
 
   automerge:
     needs: build
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -79,3 +86,65 @@ jobs:
       - uses: fastify/github-action-merge-dependabot@73ec4cbb5e56df5591eae286972d5b2201ffe90f # v3.15.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # CONTRIBUTING.md requires a changeset on every PR that touches a published
+  # package, but nothing enforced it: a PR that forgot one merged, released
+  # nothing, and left the change sitting on main with no signal.
+  #
+  # Skipped for the changesets version PR (which edits every package and deletes
+  # the changesets that justify it) and for Dependabot (whose PRs are merged
+  # automatically and cannot stop to author one). Label a PR `skip-changeset` to
+  # opt a genuinely release-irrelevant package change out.
+  changeset:
+    name: Changeset present
+    if: >-
+      github.event_name == 'pull_request' &&
+      !startsWith(github.head_ref, 'dependabot/') &&
+      github.head_ref != 'changeset-release/main' &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-changeset')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # `changeset status` diffs against the merge base, so it needs history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          always-auth: false
+          node-version: 24.x
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify a changeset covers every changed package
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+          pnpm exec changeset status --since="origin/$BASE_REF"
+
+  # Releasing is gated on this workflow's own build so that publishing cannot race
+  # it. Both used to run on `push: main` in parallel, and the version PR was merged
+  # with --admin, so the commit that reached npm was the one commit whose tests had
+  # never run.
+  release:
+    needs: build
+    if: >-
+      github.event_name == 'repository_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: $/.github/workflows/release.yml
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
