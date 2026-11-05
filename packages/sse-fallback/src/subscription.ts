@@ -712,10 +712,17 @@ class ResilientSubscriptionImpl<Snapshot, Events extends EventPayloadMap, State>
       // A connect that never produces headers must not park the subscription:
       // bound it here so it fails like any other connect failure (backoff,
       // degradation, fallback polling) instead of hanging forever.
-      const connectTimeout = new ResettableTimer(() => streamAbort.abort())
-      if (this.policy.connectTimeoutMs !== 'off') {
-        connectTimeout.arm(this.policy.connectTimeoutMs)
+      const { connectTimeoutMs } = this.policy
+      const connectTimeout = new ResettableTimer(() =>
+        streamAbort.abort(
+          new DOMException(`SSE connect timed out after ${connectTimeoutMs} ms`, 'TimeoutError'),
+        ),
+      )
+
+      if (connectTimeoutMs !== 'off') {
+        connectTimeout.arm(connectTimeoutMs)
       }
+
       try {
         const response = await this.transport.openStream(request, {
           signal: streamAbort.signal,
