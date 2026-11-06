@@ -1535,8 +1535,11 @@ const itemCreated = defineContractEvent(itemStreamContract, 'item.created')
 publisher.publish(ItemSse.roomResolver(projectId), ItemSse.events['item.created'], item)
 ```
 
-Only event names the contract declares type check, and both throw at definition time for one it
-does not, so a renamed or removed event fails on startup rather than on its first broadcast.
+Only event names the contract declares type check, and `defineContractEvent()` throws at
+definition time for one it does not, so a renamed or removed event fails on startup rather than on
+its first broadcast. Both throw for a contract that declares no SSE response, and for one where two
+statuses declare the same event with different schemas, since a published payload could only be
+validated against one of them.
 
 #### Room Event Publisher (Fire-and-Forget)
 
