@@ -34,6 +34,30 @@ const multiStatusContract = defineApiContract({
   },
 })
 
+// Two statuses declare the same event with different schemas
+const conflictingContract = defineApiContract({
+  method: 'get',
+  visibility: 'internal',
+  summary: 'Stream item changes with conflicting schemas',
+  pathResolver: () => '/api/items/stream',
+  responsesByStatusCode: {
+    200: sseResponse({ 'item.created': itemCreatedSchema }),
+    '4xx': sseResponse({ 'item.created': itemDeletedSchema }),
+  },
+})
+
+// Two statuses declare the same event with the same schema
+const sharedSchemaContract = defineApiContract({
+  method: 'get',
+  visibility: 'internal',
+  summary: 'Stream item changes with a shared schema',
+  pathResolver: () => '/api/items/stream',
+  responsesByStatusCode: {
+    200: sseResponse({ 'item.created': itemCreatedSchema }),
+    '4xx': sseResponse({ 'item.created': itemCreatedSchema }),
+  },
+})
+
 const jsonContract = defineApiContract({
   method: 'get',
   visibility: 'internal',
@@ -59,6 +83,21 @@ describe('defineContractEvent', () => {
 
     expect(event).toEqual({ event: 'item.failed', schema: itemFailedSchema })
     expectTypeOf(event).toEqualTypeOf<SSEEventDefinition<'item.failed', typeof itemFailedSchema>>()
+  })
+
+  it('throws for an event that two statuses declare with different schemas', () => {
+    expect(() => defineContractEvent(conflictingContract, 'item.created')).toThrow(
+      'Contract declares SSE event "item.created" with different schemas',
+    )
+  })
+
+  it('defines an event that two statuses declare with the same schema', () => {
+    const event = defineContractEvent(sharedSchemaContract, 'item.created')
+
+    expect(event).toEqual({ event: 'item.created', schema: itemCreatedSchema })
+    expectTypeOf(event).toEqualTypeOf<
+      SSEEventDefinition<'item.created', typeof itemCreatedSchema>
+    >()
   })
 
   it('throws for an event the contract does not declare', () => {
@@ -100,6 +139,20 @@ describe('defineContractEvents', () => {
     expectTypeOf(events['item.failed']).toEqualTypeOf<
       SSEEventDefinition<'item.failed', typeof itemFailedSchema>
     >()
+  })
+
+  it('throws when two statuses declare an event with different schemas', () => {
+    expect(() => defineContractEvents(conflictingContract)).toThrow(
+      'Contract declares SSE event "item.created" with different schemas',
+    )
+  })
+
+  it('defines an event once when two statuses declare it with the same schema', () => {
+    const events = defineContractEvents(sharedSchemaContract)
+
+    expect(events).toEqual({
+      'item.created': { event: 'item.created', schema: itemCreatedSchema },
+    })
   })
 
   it('throws for a contract without an SSE response', () => {
