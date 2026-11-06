@@ -20,6 +20,20 @@ const streamContract = defineApiContract({
   },
 })
 
+const itemFailedSchema = z.object({ reason: z.string() })
+
+// Each status declares different events, and one of them is an error status
+const multiStatusContract = defineApiContract({
+  method: 'get',
+  visibility: 'internal',
+  summary: 'Stream item changes or a failure',
+  pathResolver: () => '/api/items/stream',
+  responsesByStatusCode: {
+    200: sseResponse({ 'item.created': itemCreatedSchema }),
+    '4xx': sseResponse({ 'item.failed': itemFailedSchema }),
+  },
+})
+
 const jsonContract = defineApiContract({
   method: 'get',
   visibility: 'internal',
@@ -38,6 +52,13 @@ describe('defineContractEvent', () => {
     expectTypeOf(event).toEqualTypeOf<
       SSEEventDefinition<'item.created', typeof itemCreatedSchema>
     >()
+  })
+
+  it('defines an event declared under any status, not only success ones', () => {
+    const event = defineContractEvent(multiStatusContract, 'item.failed')
+
+    expect(event).toEqual({ event: 'item.failed', schema: itemFailedSchema })
+    expectTypeOf(event).toEqualTypeOf<SSEEventDefinition<'item.failed', typeof itemFailedSchema>>()
   })
 
   it('throws for an event the contract does not declare', () => {
@@ -64,6 +85,21 @@ describe('defineContractEvents', () => {
     >()
     expectTypeOf(events).toHaveProperty('item.created')
     expectTypeOf(events).not.toHaveProperty('item.updated')
+  })
+
+  it('defines the events of every status when statuses declare different events', () => {
+    const events = defineContractEvents(multiStatusContract)
+
+    expect(events).toEqual({
+      'item.created': { event: 'item.created', schema: itemCreatedSchema },
+      'item.failed': { event: 'item.failed', schema: itemFailedSchema },
+    })
+    expectTypeOf(events['item.created']).toEqualTypeOf<
+      SSEEventDefinition<'item.created', typeof itemCreatedSchema>
+    >()
+    expectTypeOf(events['item.failed']).toEqualTypeOf<
+      SSEEventDefinition<'item.failed', typeof itemFailedSchema>
+    >()
   })
 
   it('throws for a contract without an SSE response', () => {

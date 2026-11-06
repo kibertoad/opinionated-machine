@@ -1,23 +1,22 @@
-import {
-  type ApiContract,
-  getSseSchemaByEventName,
-  type InferSseSuccessResponses,
-} from '@lokalise/api-contracts'
+import { type ApiContract, getSseSchemaByEventName } from '@lokalise/api-contracts'
 import type { z } from 'zod'
+import type {
+  ApiSSEEventSchemas,
+  SseEventNamesOf,
+  SseSchemaForEventName,
+} from './contractSseTypes.js'
 import { defineEvent, type SSEEventDefinition } from './defineEvent.js'
 
-type ContractEventSchemas<Contract extends ApiContract> = InferSseSuccessResponses<
-  Contract['responsesByStatusCode']
->
-
-type ContractEventName<Contract extends ApiContract> = keyof ContractEventSchemas<Contract> & string
+type ContractEventName<Contract extends ApiContract> = SseEventNamesOf<ApiSSEEventSchemas<Contract>>
 
 type ContractEventDefinition<
   Contract extends ApiContract,
   Name extends ContractEventName<Contract>,
 > = SSEEventDefinition<
   Name,
-  ContractEventSchemas<Contract>[Name] extends infer Schema extends z.ZodType ? Schema : never
+  SseSchemaForEventName<ApiSSEEventSchemas<Contract>, Name> extends infer Schema extends z.ZodType
+    ? Schema
+    : never
 >
 
 /**
