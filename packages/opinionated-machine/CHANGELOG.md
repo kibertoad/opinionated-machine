@@ -1,5 +1,11 @@
 # opinionated-machine
 
+## 13.1.0
+
+### Minor Changes
+
+- 5754831: Add `defineContractEvent(contract, name)` and `defineContractEvents(contract)`, which define SSE room events from the events a contract declares, with the schema read off the contract and event names constrained to the contract's own.
+
 ## 13.0.0
 
 ### Major Changes

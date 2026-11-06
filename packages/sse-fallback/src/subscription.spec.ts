@@ -515,6 +515,30 @@ describe('createResilientSubscription — liveness and failure bounds', () => {
     expect(sub.status).toBe('stopped')
   })
 
+  it('aborts a hung connect with a named timeout reason', async () => {
+    const { transport } = makeHarness()
+    const streamSignals: AbortSignal[] = []
+    const openStream = transport.openStream.bind(transport)
+    transport.openStream = (request, opts) => {
+      streamSignals.push(opts.signal)
+      return openStream(request, opts)
+    }
+    transport.holdNextStreamConnect()
+    createResilientSubscription(makeBinding(), {
+      transport,
+      policy: { ...TEST_POLICY, connectTimeoutMs: 3_000 },
+      random: () => 1,
+    })
+    await flush()
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(streamSignals[0]?.reason).toMatchObject({
+      name: 'TimeoutError',
+      message: 'SSE connect timed out after 3000 ms',
+    })
+  })
+
   it('counts a connect that closes without bytes as a failure and degrades', async () => {
     const { transport, streams, snapshots } = makeHarness()
     const sub = createResilientSubscription(makeBinding(), {
