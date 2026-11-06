@@ -173,8 +173,8 @@ importers:
         specifier: ^3.0.3
         version: 3.0.3
       '@lokalise/biome-config':
-        specifier: ^3.1.1
-        version: 3.1.1
+        specifier: ^4.0.0
+        version: 4.0.0
       '@lokalise/tsconfig':
         specifier: ^3.1.0
         version: 3.1.0
@@ -201,8 +201,8 @@ importers:
         specifier: 2.4.4
         version: 2.4.4
       '@lokalise/biome-config':
-        specifier: ^3.1.1
-        version: 3.1.1
+        specifier: ^4.0.0
+        version: 4.0.0
       '@lokalise/tsconfig':
         specifier: ^3.1.0
         version: 3.1.0
@@ -232,8 +232,8 @@ importers:
         specifier: 2.4.4
         version: 2.4.4
       '@lokalise/biome-config':
-        specifier: ^3.1.1
-        version: 3.1.1
+        specifier: ^4.0.0
+        version: 4.0.0
       '@lokalise/tsconfig':
         specifier: ^3.1.0
         version: 3.1.0
@@ -259,8 +259,8 @@ importers:
         specifier: 2.4.4
         version: 2.4.4
       '@lokalise/biome-config':
-        specifier: ^3.1.1
-        version: 3.1.1
+        specifier: ^4.0.0
+        version: 4.0.0
       '@lokalise/tsconfig':
         specifier: ^3.1.0
         version: 3.1.0
@@ -305,8 +305,8 @@ importers:
         specifier: ^9.0.1
         version: 9.0.1(zod@4.6.7)
       '@lokalise/biome-config':
-        specifier: ^3.1.1
-        version: 3.1.1
+        specifier: ^4.0.0
+        version: 4.0.0
       '@lokalise/fastify-api-contracts':
         specifier: ^8.0.1
         version: 8.0.1(@fastify/sse@0.6.1(fastify@5.12.7))(@lokalise/api-contracts@9.0.1(zod@4.6.7))(@lokalise/node-core@14.12.0(zod@4.6.7))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.7)(openapi-types@12.1.3)(zod@4.6.7))(fastify@5.12.7)(zod@4.6.7)
@@ -363,8 +363,8 @@ importers:
         specifier: ^9.0.1
         version: 9.0.1(zod@4.6.7)
       '@lokalise/biome-config':
-        specifier: ^3.1.1
-        version: 3.1.1
+        specifier: ^4.0.0
+        version: 4.0.0
       '@lokalise/tsconfig':
         specifier: ^3.1.0
         version: 3.1.0
@@ -387,8 +387,8 @@ importers:
         specifier: 2.4.4
         version: 2.4.4
       '@lokalise/biome-config':
-        specifier: ^3.1.1
-        version: 3.1.1
+        specifier: ^4.0.0
+        version: 4.0.0
       '@lokalise/tsconfig':
         specifier: ^3.1.0
         version: 3.1.0
@@ -408,8 +408,8 @@ importers:
         specifier: 2.4.4
         version: 2.4.4
       '@lokalise/biome-config':
-        specifier: ^3.1.1
-        version: 3.1.1
+        specifier: ^4.0.0
+        version: 4.0.0
       '@lokalise/tsconfig':
         specifier: ^3.1.0
         version: 3.1.0
@@ -638,8 +638,8 @@ packages:
     peerDependencies:
       zod: '>=3.25.56'
 
-  '@lokalise/biome-config@3.1.1':
-    resolution: {integrity: sha512-B0VeqoX/PeVOIEgZhmnOIAFo9w8MV+MRdDue6lO7LnIjNB92vz+0onRV0v4RY2oACXoxVS3B2CfIzLbBpmbpQQ==}
+  '@lokalise/biome-config@4.0.0':
+    resolution: {integrity: sha512-ShVhPJpEiXcEu+yhusmg6053YP4oHhMa5/Lzm9gPkIElpmGwsnoaclaKPOa9uMZYz2UfynRD3J3PKwts/nl46Q==}
 
   '@lokalise/fastify-api-contracts@8.0.1':
     resolution: {integrity: sha512-HLH51agJIaFww01Cu1YhrizMgATWV+O5U0YSLFARYWxwpki31f194EDidVgksYuRV9Wmp+DArNCZNK7uhPYdcA==}
@@ -1855,7 +1855,7 @@ snapshots:
     dependencies:
       zod: 4.6.7
 
-  '@lokalise/biome-config@3.1.1': {}
+  '@lokalise/biome-config@4.0.0': {}
 
   '@lokalise/fastify-api-contracts@8.0.1(@fastify/sse@0.6.1(fastify@5.12.7))(@lokalise/api-contracts@9.0.1(zod@4.6.7))(@lokalise/node-core@14.12.0(zod@4.6.7))(fastify-type-provider-zod@7.0.0(@fastify/swagger@9.8.1)(fastify@5.12.7)(openapi-types@12.1.3)(zod@4.6.7))(fastify@5.12.7)(zod@4.6.7)':
     dependencies:
