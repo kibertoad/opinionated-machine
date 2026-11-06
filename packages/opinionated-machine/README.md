@@ -48,6 +48,7 @@ Very opinionated DI framework for fastify, built on top of awilix
     - [Enabling Rooms](#enabling-rooms)
     - [Session Room Operations](#session-room-operations)
     - [Broadcasting to Rooms](#broadcasting-to-rooms)
+    - [Events From a Contract](#events-from-a-contract)
     - [Room Event Publisher (Fire-and-Forget)](#room-event-publisher-fire-and-forget)
     - [`publish` vs `safePublish`](#publish-vs-safepublish)
     - [Room Name Helpers](#room-name-helpers)
@@ -1511,6 +1512,34 @@ class MetricsService {
 ```
 
 `broadcastToRoom(room, event, data, options?)` takes `id` and `retry` in its options as well, and generates a random `id` when none is given. `broadcastMessage(room, message, options?)` sends a raw `SSEMessage` and returns `{ delivered, filtered }`. The event must also be declared in the SSE schemas of the route's contract: the session validates every message it sends, and a broadcast it rejects is logged and counted as not delivered.
+
+#### Events From a Contract
+
+A room event has to match an event the stream's contract declares, so defining it a second time
+with `defineEvent()` lets the two drift apart. `defineContractEvents()` defines every SSE event a
+contract declares, keyed by event name, with the schema read off the contract;
+`defineContractEvent()` defines a single one:
+
+```ts
+import { defineContractEvent, defineContractEvents, defineRoom } from 'opinionated-machine'
+
+export const ItemSse = {
+  roomResolver: defineRoom<string>((projectId) => `items:${projectId}`),
+  // { 'item.created': SSEEventDefinition<'item.created', ...>, 'item.deleted': ... }
+  events: defineContractEvents(itemStreamContract),
+} as const
+
+// Or one at a time
+const itemCreated = defineContractEvent(itemStreamContract, 'item.created')
+
+publisher.publish(ItemSse.roomResolver(projectId), ItemSse.events['item.created'], item)
+```
+
+Only event names the contract declares type check, and `defineContractEvent()` throws at
+definition time for one it does not, so a renamed or removed event fails on startup rather than on
+its first broadcast. Both throw for a contract that declares no SSE response, and for one where two
+statuses declare the same event with different schemas, since a published payload could only be
+validated against one of them.
 
 #### Room Event Publisher (Fire-and-Forget)
 
