@@ -613,6 +613,25 @@ await app.ready()
 
 `registerRoutes(app)` registers the routes of every controller from `resolveControllers()`, including SSE and dual-mode routes.
 
+#### Lifecycle options
+
+`context.init()` and `context.destroy()` run dependencies by `asyncInitPriority` and `asyncDisposePriority`, and consumers and workers of the same priority start and are disposed concurrently. These `DIContext` options tune this, and are passed to the `AwilixManager` that `DIContext` builds (they are ignored when you pass your own `AwilixManager`):
+
+- `maxInitConcurrency` caps how many concurrent inits of one priority run at the same time, for example so dozens of consumers do not all connect to the broker at once. Defaults to no limit.
+- `maxDisposeConcurrency` caps how many concurrent disposes of one priority run at the same time, for example so dozens of consumers do not all hit the broker at once. Defaults to no limit.
+- `onDisposeError(dependencyName, error)` receives each failed dispose. When it is set, the remaining disposes still run instead of the first failure skipping every later priority.
+
+```ts
+const context = new DIContext<ModuleDependencies, AppConfig>(container, {
+    messageQueueConsumersEnabled: [OrdersConsumer.QUEUE_ID, InvoicesConsumer.QUEUE_ID],
+    maxInitConcurrency: 5,
+    maxDisposeConcurrency: 5,
+    onDisposeError: (dependencyName, error) => {
+        logger.error({ err: error }, `Failed to dispose ${dependencyName}`)
+    },
+}, config)
+```
+
 ## Resolver Functions
 
 The library provides a set of resolver functions that wrap awilix's `asClass` and `asFunction` with sensible defaults for different types of dependencies. All resolvers create singletons by default.
@@ -687,7 +706,7 @@ resolveControllers() {
 ### Message Queue Resolvers
 
 #### `asMessageQueueHandlerClass(Type, mqOptions, opts?)`
-For message queue consumers following `message-queue-toolkit` conventions. Automatically handles `start`/`close` lifecycle and respects `messageQueueConsumersEnabled` option. Consumers start concurrently with the other inits of their `asyncInitPriority` (see awilix-manager's `concurrent` option), so anything that needs a consumer to have started must use a higher `asyncInitPriority`. Pass `asyncInit: 'start'` in `opts` to start one without the `concurrent` flag. They also close concurrently with the other disposes of their `asyncDisposePriority`; pass `asyncDispose: 'close'` in `opts` to close one without the flag. Requires `awilix-manager` 7.2.0 or later, including the copy used by `@fastify/awilix` when its `AwilixManager` is passed to `DIContext`.
+For message queue consumers following `message-queue-toolkit` conventions. Automatically handles `start`/`close` lifecycle and respects `messageQueueConsumersEnabled` option. Consumers start concurrently with the other inits of their `asyncInitPriority` (see awilix-manager's `concurrent` option), so anything that needs a consumer to have started must use a higher `asyncInitPriority`. Pass `asyncInit: 'start'` in `opts` to start one without the `concurrent` flag. They also close concurrently with the other disposes of their `asyncDisposePriority`, so anything that has to be disposed after a consumer has closed must use a higher `asyncDisposePriority`. Pass `asyncDispose: 'close'` in `opts` to close one without the flag. Requires `awilix-manager` 7.2.0 or later, including the copy used by `@fastify/awilix` when its `AwilixManager` is passed to `DIContext`.
 
 ```ts
 messageQueueConsumer: asMessageQueueHandlerClass(MessageQueueConsumer, {
@@ -699,7 +718,7 @@ messageQueueConsumer: asMessageQueueHandlerClass(MessageQueueConsumer, {
 ### Background Job Resolvers
 
 #### `asEnqueuedJobWorkerClass(Type, workerOptions, opts?)`
-For enqueued job workers following `background-jobs-common` conventions. Automatically handles `start`/`dispose` lifecycle and respects `enqueuedJobWorkersEnabled` option. Workers start concurrently with the other inits of their `asyncInitPriority`, like message queue consumers. Pass `asyncInit: 'start'` in `opts` to start one without the `concurrent` flag. Workers also dispose concurrently with the other disposes of their `asyncDisposePriority`; pass `asyncDispose: 'dispose'` in `opts` to dispose one without the flag.
+For enqueued job workers following `background-jobs-common` conventions. Automatically handles `start`/`dispose` lifecycle and respects `enqueuedJobWorkersEnabled` option. Workers start concurrently with the other inits of their `asyncInitPriority`, like message queue consumers. Pass `asyncInit: 'start'` in `opts` to start one without the `concurrent` flag. Workers also dispose concurrently with the other disposes of their `asyncDisposePriority`, so anything that has to be disposed after a worker must use a higher `asyncDisposePriority`. Pass `asyncDispose: 'dispose'` in `opts` to dispose one without the flag.
 
 ```ts
 jobWorker: asEnqueuedJobWorkerClass(JobWorker, {
@@ -709,7 +728,7 @@ jobWorker: asEnqueuedJobWorkerClass(JobWorker, {
 ```
 
 #### `asPgBossProcessorClass(Type, processorOptions, opts?)`
-For pg-boss job processor classes. Similar to `asEnqueuedJobWorkerClass` but uses `start`/`stop` lifecycle methods, initializes after pgBoss (priority 20) and starts processors one after another.
+For pg-boss job processor classes. Similar to `asEnqueuedJobWorkerClass` but uses `start`/`stop` lifecycle methods, initializes after pgBoss (priority 20) and starts processors one after another. Processors stop one after another at `asyncDisposePriority` 12, after message queue consumers (10) have closed and before enqueued job workers (15).
 
 ```ts
 enrichUserPresenceJob: asPgBossProcessorClass(EnrichUserPresenceJob, {

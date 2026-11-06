@@ -228,7 +228,8 @@ export function asPgBossProcessorClass<T extends { start(): Promise<void>; stop(
     asyncInit: 'start',
     asyncInitPriority: 20, // Initialize after pgBoss (priority 10)
     asyncDispose: 'stop',
-    asyncDisposePriority: 10,
+    // after message queue consumers (10), whose concurrent closes would otherwise overlap every stop
+    asyncDisposePriority: 12,
     public: false,
 
     enabled: isEnqueuedJobWorkersEnabled(
