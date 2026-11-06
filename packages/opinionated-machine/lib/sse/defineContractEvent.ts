@@ -60,8 +60,8 @@ const getContractEventSchemas = (contract: ApiContract): Record<string, z.ZodTyp
  * the contract's own event names and the schema is read off the contract, so the event a room
  * publishes cannot drift from the contract its stream is served under.
  *
- * @throws {Error} if the contract declares no SSE event with that name, or declares an event
- * with different schemas on different statuses.
+ * @throws {Error} if the contract declares no SSE response, no SSE event with that name, or an
+ * event with different schemas on different statuses.
  */
 export const defineContractEvent = <
   const Contract extends ApiContract,
@@ -70,10 +70,11 @@ export const defineContractEvent = <
   contract: Contract,
   name: Name,
 ): ContractEventDefinition<Contract, Name> => {
-  const schema = getContractEventSchemas(contract)?.[name]
-  if (!schema) {
-    throw new Error(`Contract declares no SSE event named "${name}"`)
-  }
+  const schemaByEventName = getContractEventSchemas(contract)
+  if (!schemaByEventName) throw new Error('Contract declares no SSE response')
+
+  const schema = Object.hasOwn(schemaByEventName, name) ? schemaByEventName[name] : undefined
+  if (!schema) throw new Error(`Contract declares no SSE event named "${name}"`)
 
   return defineEvent(name, schema) as ContractEventDefinition<Contract, Name>
 }

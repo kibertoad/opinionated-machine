@@ -106,6 +106,20 @@ describe('defineContractEvent', () => {
       'Contract declares no SSE event named "item.updated"',
     )
   })
+
+  it('throws for a name inherited from Object.prototype', () => {
+    // @ts-expect-error -- only the contract's own event names type check
+    expect(() => defineContractEvent(streamContract, 'toString')).toThrow(
+      'Contract declares no SSE event named "toString"',
+    )
+  })
+
+  it('throws for a contract without an SSE response', () => {
+    // @ts-expect-error -- a contract without an SSE response declares no event names
+    expect(() => defineContractEvent(jsonContract, 'item.created')).toThrow(
+      'Contract declares no SSE response',
+    )
+  })
 })
 
 describe('defineContractEvents', () => {
