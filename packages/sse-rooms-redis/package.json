@@ -42,7 +42,7 @@
         "@types/node": "^22.19.7",
         "ioredis": "^6.0.0",
         "opinionated-machine": "workspace:*",
-        "rimraf": "^6.1.2",
+        "rimraf": "^6.1.4",
         "typescript": "^5.9.3",
         "vitest": "^4.1.11"
     },
