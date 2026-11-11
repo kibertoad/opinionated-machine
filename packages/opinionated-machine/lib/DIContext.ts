@@ -1,7 +1,7 @@
 // Loads @fastify/sse's `reply.sse` augmentation of FastifyReply, read by the preClose hook
 import type {} from '@fastify/sse'
 import type { AwilixContainer, NameAndRegistrationPair, Resolver } from 'awilix'
-import { AwilixManager } from 'awilix-manager'
+import { AwilixManager, type DependencyErrorHandler } from 'awilix-manager'
 import type { FastifyInstance, FastifyReply, onRequestHookHandler, RouteOptions } from 'fastify'
 import type { AbstractModule } from './AbstractModule.js'
 import type { AbstractApiController } from './api-contracts/index.ts'
@@ -27,6 +27,22 @@ export type DependencyInjectionOptions = {
   enqueuedJobWorkersEnabled?: false | typeof ENABLE_ALL | string[]
   messageQueueConsumersEnabled?: false | typeof ENABLE_ALL | string[]
   periodicJobsEnabled?: false | typeof ENABLE_ALL | string[]
+  /**
+   * Caps how many concurrent inits of one `asyncInitPriority` run at the same time on `init()`.
+   * Defaults to no limit. Ignored when an `AwilixManager` is passed to the `DIContext` constructor.
+   */
+  maxInitConcurrency?: number
+  /**
+   * Caps how many concurrent disposes of one `asyncDisposePriority` run at the same time on `destroy()`.
+   * Defaults to no limit. Ignored when an `AwilixManager` is passed to the `DIContext` constructor.
+   */
+  maxDisposeConcurrency?: number
+  /**
+   * Receives each failed dispose on `destroy()`; when set, the remaining disposes still run instead of
+   * the first failure skipping every later priority. Ignored when an `AwilixManager` is passed to the
+   * `DIContext` constructor.
+   */
+  onDisposeError?: DependencyErrorHandler
 }
 
 export class DIContext<
@@ -61,6 +77,9 @@ export class DIContext<
         diContainer,
         eagerInject: true,
         strictBooleanEnforced: true,
+        maxConcurrency: options.maxInitConcurrency,
+        maxDisposeConcurrency: options.maxDisposeConcurrency,
+        onDisposeError: options.onDisposeError,
       })
     this.apiControllerNames = []
     this.openSSEReplies = new Set()
