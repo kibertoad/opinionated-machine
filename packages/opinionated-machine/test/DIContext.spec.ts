@@ -1,10 +1,15 @@
 import { injectByApiContract } from '@lokalise/fastify-api-contracts'
-import { asClass, createContainer, type NameAndRegistrationPair } from 'awilix'
+import { asClass, asFunction, createContainer, type NameAndRegistrationPair } from 'awilix'
 import { fastify } from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { describe, expect, it } from 'vitest'
 import { AbstractModule, type MandatoryNameAndRegistrationPair } from '../lib/AbstractModule.js'
 import { type DependencyInjectionOptions, DIContext } from '../lib/DIContext.js'
+import {
+  asEnqueuedJobWorkerClass,
+  asMessageQueueHandlerClass,
+  asPgBossProcessorClass,
+} from '../lib/resolverFunctions.js'
 import { TestController } from './TestController.js'
 import {
   JobWorker,
@@ -47,6 +52,63 @@ function createContext<TargetDependencies extends object = TestModuleDependencie
     },
     undefined,
   )
+  return context
+}
+
+type Deferred = { promise: Promise<void>; resolve: () => void }
+
+function createDeferred(): Deferred {
+  let resolve!: () => void
+  const promise = new Promise<void>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
+// Lets every pending init or dispose that can make progress do so, without relying on timers
+async function flushLifecycle() {
+  for (let i = 0; i < 20; i++) {
+    await Promise.resolve()
+  }
+}
+
+type Events = string[]
+
+function createDeferredClass(name: string, events: Events, deferred: Deferred | undefined) {
+  return class {
+    static readonly QUEUE_ID = name
+    start() {
+      return Promise.resolve()
+    }
+    async close() {
+      events.push(`${name}:start`)
+      await deferred?.promise
+      events.push(`${name}:end`)
+    }
+    async dispose() {
+      await this.close()
+    }
+    async stop() {
+      await this.close()
+    }
+  }
+}
+
+function createLifecycleContext(
+  resolvers: NameAndRegistrationPair<object>,
+  options: DependencyInjectionOptions = {},
+) {
+  class DisposeModule extends AbstractModule<object> {
+    resolveDependencies() {
+      return resolvers
+    }
+  }
+  const context = new DIContext<object, object>(
+    createContainer({ injectionMode: 'PROXY' }),
+    options,
+    {},
+  )
+  context.registerDependencies({ modules: [new DisposeModule()] }, undefined)
   return context
 }
 
@@ -325,6 +387,241 @@ describe('opinionated-machine', () => {
       const { testServiceWithTransitive } = context.diContainer.cradle
 
       await testServiceWithTransitive.execute()
+    })
+  })
+
+  describe('lifecycle', () => {
+    it('closes consumers and disposes workers concurrently, holding back higher priorities until they finish', async () => {
+      const events: Events = []
+      const consumerA = createDeferred()
+      const consumerB = createDeferred()
+      const workerA = createDeferred()
+      const workerB = createDeferred()
+      const diOptions = {
+        messageQueueConsumersEnabled: ['consumerA', 'consumerB'],
+        enqueuedJobWorkersEnabled: ['workerA', 'workerB'],
+      }
+      const context = createLifecycleContext(
+        {
+          consumerA: asMessageQueueHandlerClass(
+            createDeferredClass('consumerA', events, consumerA),
+            {
+              queueName: 'consumerA',
+              diOptions,
+            },
+          ),
+          consumerB: asMessageQueueHandlerClass(
+            createDeferredClass('consumerB', events, consumerB),
+            {
+              queueName: 'consumerB',
+              diOptions,
+            },
+          ),
+          workerA: asEnqueuedJobWorkerClass(createDeferredClass('workerA', events, workerA), {
+            queueName: 'workerA',
+            diOptions,
+          }),
+          workerB: asEnqueuedJobWorkerClass(createDeferredClass('workerB', events, workerB), {
+            queueName: 'workerB',
+            diOptions,
+          }),
+          connection: asFunction(() => ({}), {
+            asyncDispose: () => {
+              events.push('connection')
+              return Promise.resolve()
+            },
+            asyncDisposePriority: 20,
+          }),
+        },
+        diOptions,
+      )
+      await context.init()
+
+      const destroyed = context.destroy()
+      await flushLifecycle()
+      // both consumers are closing at the same time, nothing of a higher priority has started
+      expect(events).toEqual(['consumerA:start', 'consumerB:start'])
+
+      consumerB.resolve()
+      await flushLifecycle()
+      expect(events).toEqual(['consumerA:start', 'consumerB:start', 'consumerB:end'])
+
+      consumerA.resolve()
+      await flushLifecycle()
+      // workers dispose together only once every consumer has closed
+      expect(events).toEqual([
+        'consumerA:start',
+        'consumerB:start',
+        'consumerB:end',
+        'consumerA:end',
+        'workerA:start',
+        'workerB:start',
+      ])
+
+      workerA.resolve()
+      workerB.resolve()
+      await destroyed
+      // the higher priority dispose runs only after both workers are done
+      expect(events.slice(6)).toEqual(['workerA:end', 'workerB:end', 'connection'])
+    })
+
+    it('stops pg-boss processors only after message queue consumers have closed', async () => {
+      const events: Events = []
+      const consumer = createDeferred()
+      const diOptions = {
+        messageQueueConsumersEnabled: ['consumer'],
+        enqueuedJobWorkersEnabled: ['processor'],
+      }
+      const context = createLifecycleContext(
+        {
+          // registered first, so a shared priority would start its stop alongside the consumer close
+          processor: asPgBossProcessorClass(createDeferredClass('processor', events, undefined), {
+            queueName: 'processor',
+            diOptions,
+          }),
+          consumer: asMessageQueueHandlerClass(createDeferredClass('consumer', events, consumer), {
+            queueName: 'consumer',
+            diOptions,
+          }),
+        },
+        diOptions,
+      )
+      await context.init()
+
+      const destroyed = context.destroy()
+      await flushLifecycle()
+      expect(events).toEqual(['consumer:start'])
+
+      consumer.resolve()
+      await destroyed
+      expect(events).toEqual(['consumer:start', 'consumer:end', 'processor:start', 'processor:end'])
+    })
+
+    it('caps concurrent disposes with maxDisposeConcurrency', async () => {
+      const events: Events = []
+      const consumerA = createDeferred()
+      const consumerB = createDeferred()
+      const diOptions = { messageQueueConsumersEnabled: ['consumerA', 'consumerB'] }
+      const context = createLifecycleContext(
+        {
+          consumerA: asMessageQueueHandlerClass(
+            createDeferredClass('consumerA', events, consumerA),
+            {
+              queueName: 'consumerA',
+              diOptions,
+            },
+          ),
+          consumerB: asMessageQueueHandlerClass(
+            createDeferredClass('consumerB', events, consumerB),
+            {
+              queueName: 'consumerB',
+              diOptions,
+            },
+          ),
+        },
+        { ...diOptions, maxDisposeConcurrency: 1 },
+      )
+      await context.init()
+
+      const destroyed = context.destroy()
+      await flushLifecycle()
+      expect(events).toEqual(['consumerA:start'])
+
+      consumerA.resolve()
+      consumerB.resolve()
+      await destroyed
+      expect(events).toEqual([
+        'consumerA:start',
+        'consumerA:end',
+        'consumerB:start',
+        'consumerB:end',
+      ])
+    })
+
+    it('caps concurrent inits with maxInitConcurrency', async () => {
+      const events: Events = []
+      const consumerA = createDeferred()
+      const consumerB = createDeferred()
+      const startingClass = (name: string, deferred: Deferred) =>
+        class {
+          async start() {
+            events.push(`${name}:start`)
+            await deferred.promise
+            events.push(`${name}:end`)
+          }
+          close() {
+            return Promise.resolve()
+          }
+        }
+      const diOptions = { messageQueueConsumersEnabled: ['consumerA', 'consumerB'] }
+      const context = createLifecycleContext(
+        {
+          consumerA: asMessageQueueHandlerClass(startingClass('consumerA', consumerA), {
+            queueName: 'consumerA',
+            diOptions,
+          }),
+          consumerB: asMessageQueueHandlerClass(startingClass('consumerB', consumerB), {
+            queueName: 'consumerB',
+            diOptions,
+          }),
+        },
+        { ...diOptions, maxInitConcurrency: 1 },
+      )
+
+      const initialized = context.init()
+      await flushLifecycle()
+      expect(events).toEqual(['consumerA:start'])
+
+      consumerA.resolve()
+      consumerB.resolve()
+      await initialized
+      expect(events).toEqual([
+        'consumerA:start',
+        'consumerA:end',
+        'consumerB:start',
+        'consumerB:end',
+      ])
+    })
+
+    it('keeps disposing later priorities when onDisposeError is set', async () => {
+      const events: Events = []
+      const failures: string[] = []
+      const diOptions = { messageQueueConsumersEnabled: ['consumer'] }
+      const FailingConsumer = class {
+        start() {
+          return Promise.resolve()
+        }
+        close() {
+          return Promise.reject(new Error('channel already closed'))
+        }
+      }
+      const context = createLifecycleContext(
+        {
+          consumer: asMessageQueueHandlerClass(FailingConsumer, {
+            queueName: 'consumer',
+            diOptions,
+          }),
+          connection: asFunction(() => ({}), {
+            asyncDispose: () => {
+              events.push('connection')
+              return Promise.resolve()
+            },
+            asyncDisposePriority: 20,
+          }),
+        },
+        {
+          ...diOptions,
+          onDisposeError: (dependencyName) => {
+            failures.push(dependencyName)
+          },
+        },
+      )
+      await context.init()
+
+      await context.destroy()
+
+      expect(failures).toEqual(['consumer'])
+      expect(events).toEqual(['connection'])
     })
   })
 })
