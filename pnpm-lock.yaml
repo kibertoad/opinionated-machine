@@ -326,11 +326,11 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(vitest@4.1.11)
       awilix:
-        specifier: ^13.0.0
-        version: 13.0.5
+        specifier: ^13.0.7
+        version: 13.0.7
       awilix-manager:
         specifier: ^7.2.0
-        version: 7.2.0(awilix@13.0.5)
+        version: 7.2.0(awilix@13.0.7)
       fastify:
         specifier: ^5.12.7
         version: 5.12.7
@@ -923,8 +923,8 @@ packages:
     peerDependencies:
       awilix: '>=9.0.0'
 
-  awilix@13.0.5:
-    resolution: {integrity: sha512-ORtca6suBdYA1FyTzqHEZDvEuUwo3lPDDBRm7GrzHgi6STESzJKdBtpqfTzObdMj1NGQUWX6k26E3EbQaGJX5Q==}
+  awilix@13.0.7:
+    resolution: {integrity: sha512-M7B1oVIyWrkY7RmQgczsdqpCI+j0+t0UjL5h1G/qqr4fRFo+zxI5E/0QUuOc5zdPg740BpUv4V+QSXNNBQlonQ==}
     engines: {node: '>=20.0.0'}
 
   balanced-match@4.0.4:
@@ -2096,11 +2096,11 @@ snapshots:
       '@fastify/error': 4.2.0
       fastq: 1.20.3
 
-  awilix-manager@7.2.0(awilix@13.0.5):
+  awilix-manager@7.2.0(awilix@13.0.7):
     dependencies:
-      awilix: 13.0.5
+      awilix: 13.0.7
 
-  awilix@13.0.5:
+  awilix@13.0.7:
     dependencies:
       fast-glob: 3.3.3
 
