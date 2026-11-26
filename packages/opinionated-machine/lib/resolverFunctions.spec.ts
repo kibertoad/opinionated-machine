@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { asEnqueuedJobWorkerClass, asMessageQueueHandlerClass } from './resolverFunctions.ts'
 
-class Consumer {
+class Lifecycle {
   start() {
     return Promise.resolve()
   }
@@ -9,38 +9,35 @@ class Consumer {
 
 const diOptions = {}
 
-describe('asMessageQueueHandlerClass', () => {
-  it('starts consumers concurrently with the other inits of their priority', () => {
-    const resolver = asMessageQueueHandlerClass(Consumer, { queueName: 'queue', diOptions })
+describe.each([
+  [asMessageQueueHandlerClass, 'close'],
+  [asEnqueuedJobWorkerClass, 'dispose'],
+] as const)('%o', (helper, disposeMethod) => {
+  it('starts concurrently with the other inits of its priority', () => {
+    const resolver = helper(Lifecycle, { queueName: 'queue', diOptions })
 
     expect(resolver.asyncInit).toEqual({ method: 'start', concurrent: true })
   })
 
   it('lets the caller opt back into a sequential start', () => {
-    const resolver = asMessageQueueHandlerClass(
-      Consumer,
-      { queueName: 'queue', diOptions },
-      { asyncInit: 'start' },
-    )
+    const resolver = helper(Lifecycle, { queueName: 'queue', diOptions }, { asyncInit: 'start' })
 
     expect(resolver.asyncInit).toBe('start')
   })
-})
 
-describe('asEnqueuedJobWorkerClass', () => {
-  it('starts workers concurrently with the other inits of their priority', () => {
-    const resolver = asEnqueuedJobWorkerClass(Consumer, { queueName: 'queue', diOptions })
+  it('disposes concurrently with the other disposes of its priority', () => {
+    const resolver = helper(Lifecycle, { queueName: 'queue', diOptions })
 
-    expect(resolver.asyncInit).toEqual({ method: 'start', concurrent: true })
+    expect(resolver.asyncDispose).toEqual({ method: disposeMethod, concurrent: true })
   })
 
-  it('lets the caller opt back into a sequential start', () => {
-    const resolver = asEnqueuedJobWorkerClass(
-      Consumer,
+  it('lets the caller opt back into a sequential dispose', () => {
+    const resolver = helper(
+      Lifecycle,
       { queueName: 'queue', diOptions },
-      { asyncInit: 'start' },
+      { asyncDispose: disposeMethod },
     )
 
-    expect(resolver.asyncInit).toBe('start')
+    expect(resolver.asyncDispose).toBe(disposeMethod)
   })
 })

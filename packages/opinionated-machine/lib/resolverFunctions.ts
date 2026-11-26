@@ -163,9 +163,10 @@ export function asMessageQueueHandlerClass<T = object>(
 ): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type as unknown as Constructor<T>, {
     // these follow message-queue-toolkit conventions
-    // consumers only set up their own queue and subscription, so they do not have to start one by one
+    // consumers only set up and close their own queue and subscription, so they do not have to start
+    // or close one by one
     asyncInit: { method: 'start', concurrent: true },
-    asyncDispose: 'close',
+    asyncDispose: { method: 'close', concurrent: true },
     asyncDisposePriority: 10,
 
     enabled: isMessageQueueConsumerEnabled(
@@ -190,9 +191,10 @@ export function asEnqueuedJobWorkerClass<T = object>(
 ): BuildResolver<T> & DisposableResolver<T> {
   return asClass(Type as unknown as Constructor<T>, {
     // these follow background-jobs-common conventions
-    // workers only attach to their own queue, so they do not have to start one by one
+    // workers only attach to and detach from their own queue, so they do not have to start or dispose
+    // one by one
     asyncInit: { method: 'start', concurrent: true },
-    asyncDispose: 'dispose',
+    asyncDispose: { method: 'dispose', concurrent: true },
     asyncDisposePriority: 15,
     public: false,
 
@@ -226,7 +228,8 @@ export function asPgBossProcessorClass<T extends { start(): Promise<void>; stop(
     asyncInit: 'start',
     asyncInitPriority: 20, // Initialize after pgBoss (priority 10)
     asyncDispose: 'stop',
-    asyncDisposePriority: 10,
+    // after message queue consumers (10), whose concurrent closes would otherwise overlap every stop
+    asyncDisposePriority: 12,
     public: false,
 
     enabled: isEnqueuedJobWorkersEnabled(
